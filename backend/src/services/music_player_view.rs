@@ -159,16 +159,26 @@ pub fn project_qq_player_playlist(
     playlist_id: &str,
     upstream: &Value,
 ) -> Result<PlayerPlaylist, QqPlaylistError> {
+    // Both QQ endpoints use zero for success. Reject upstream errors before
+    // looking at the payload so an error cannot become a cached empty playlist.
+    for field in ["code", "subcode"] {
+        if let Some(code) = upstream.get(field)
+            && code.as_i64() != Some(0)
+        {
+            return Err(QqPlaylistError::Invalid);
+        }
+    }
+    // v8 nests cdlist under data; retain the legacy response shape as well.
     let cdlist = upstream
-        .get("cdlist")
+        .pointer("/data/cdlist")
+        .or_else(|| upstream.get("cdlist"))
         .and_then(Value::as_array)
         .filter(|list| !list.is_empty())
         .ok_or(QqPlaylistError::Invalid)?;
     let songlist = cdlist[0]
         .get("songlist")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+        .ok_or(QqPlaylistError::Invalid)?;
     Ok(PlayerPlaylist {
         code: 200,
         source: PlayerMusicSource::Qq,
@@ -232,7 +242,9 @@ fn project_netease_track(track: &Value) -> Option<PlayerSong> {
 }
 
 fn project_qq_track(song: &Value) -> Option<PlayerSong> {
-    let id = json_id(song.get("songmid").or_else(|| song.get("id"))?)?;
+    // Playback/lyrics resolve a song MID, not the numeric song id or media_mid.
+    // An empty upstream url is expected: playback URLs are resolved on demand.
+    let id = json_id(song.get("mid").or_else(|| song.get("songmid"))?)?;
     let name = song
         .get("songname")
         .or_else(|| song.get("name"))
@@ -252,6 +264,7 @@ fn project_qq_track(song: &Value) -> Option<PlayerSong> {
         .to_string();
     let cover = song
         .get("albummid")
+        .or_else(|| song.pointer("/album/mid"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|mid| !mid.is_empty())
@@ -266,7 +279,8 @@ fn project_qq_track(song: &Value) -> Option<PlayerSong> {
         .get("isVip")
         .and_then(Value::as_bool)
         .unwrap_or_else(|| {
-            song.pointer("/pay/payplay")
+            song.pointer("/pay/pay_play")
+                .or_else(|| song.pointer("/pay/payplay"))
                 .and_then(Value::as_i64)
                 .unwrap_or(0)
                 > 0
@@ -438,6 +452,108 @@ mod tests {
                 is_vip: true,
             }
         );
+    }
+
+    #[test]
+    fn qq_v8_projects_mid_nested_album_and_empty_url() {
+        let upstream = json!({
+            "code": 0,
+            "subcode": 0,
+            "data": {"cdlist": [{"songlist": [
+                {
+                    "id": 123,
+                    "mid": "000M3Yxt2tIuHZ",
+                    "name": "Free song",
+                    "singer": [{"name": "A"}, {"name": "B"}],
+                    "album": {"name": "Album", "mid": "0011AmNK31mn3Z"},
+                    "file": {"media_mid": "differentMediaMid"},
+                    "interval": 123,
+                    "pay": {"pay_play": 0, "pay_month": 1, "pay_down": 1},
+                    "url": ""
+                },
+                {
+                    "id": 456,
+                    "mid": "004aJoYT3ia7al",
+                    "name": "Paid song",
+                    "pay": {"pay_play": 1},
+                    "url": ""
+                }
+            ]}]}
+        });
+        let view = project_qq_player_playlist("99", &upstream).expect("valid v8 playlist");
+        assert_eq!(view.code, 200);
+        assert_eq!(view.source, PlayerMusicSource::Qq);
+        assert_eq!(view.playlist_id, "99");
+        assert_eq!(view.songs.len(), 2);
+        assert_eq!(
+            view.songs[0],
+            PlayerSong {
+                id: "000M3Yxt2tIuHZ".into(),
+                name: "Free song".into(),
+                artist: "A, B".into(),
+                album: "Album".into(),
+                cover: "https://y.gtimg.cn/music/photo_new/T002R300x300M0000011AmNK31mn3Z.jpg".into(),
+                duration: 123,
+                is_vip: false,
+            }
+        );
+        assert_eq!(view.songs[1].id, "004aJoYT3ia7al");
+        assert!(view.songs[1].is_vip);
+    }
+
+    #[test]
+    fn qq_v8_empty_songlist_is_ok() {
+        let upstream = json!({
+            "code": 0,
+            "subcode": 0,
+            "data": {"cdlist": [{"songlist": []}]}
+        });
+        let view = project_qq_player_playlist("99", &upstream).unwrap();
+        assert!(view.songs.is_empty());
+    }
+
+    #[test]
+    fn qq_upstream_error_codes_are_not_cached_as_success() {
+        for (code, subcode) in [(1, 0), (0, 1), (-1, 0)] {
+            let upstream = json!({
+                "code": code,
+                "subcode": subcode,
+                "data": {"cdlist": [{"songlist": []}]},
+                "cdlist": [{"songlist": []}]
+            });
+            assert_eq!(
+                project_qq_player_playlist("99", &upstream),
+                Err(QqPlaylistError::Invalid)
+            );
+        }
+    }
+
+    #[test]
+    fn qq_missing_or_malformed_songlist_is_invalid() {
+        for playlist in [json!({}), json!({"songlist": null}), json!({"songlist": {}})] {
+            for upstream in [
+                json!({"code": 0, "data": {"cdlist": [playlist.clone()]}}),
+                json!({"code": 0, "cdlist": [playlist.clone()]}),
+            ] {
+                assert_eq!(
+                    project_qq_player_playlist("99", &upstream),
+                    Err(QqPlaylistError::Invalid)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn qq_numeric_id_is_not_a_playable_mid() {
+        let upstream = json!({"cdlist": [{"songlist": [
+            {"id": 123},
+            {"id": 456, "mid": ""},
+            {"id": 789, "songmid": "   "},
+            {"id": 101, "mid": " 000M3Yxt2tIuHZ "}
+        ]}]});
+        let view = project_qq_player_playlist("99", &upstream).unwrap();
+        assert_eq!(view.songs.len(), 1);
+        assert_eq!(view.songs[0].id, "000M3Yxt2tIuHZ");
     }
 
     #[test]

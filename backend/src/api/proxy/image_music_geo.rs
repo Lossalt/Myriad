@@ -1425,31 +1425,57 @@ pub async fn proxy_qq_audio(Path(song_mid): Path<String>) -> Response {
     }
 }
 
-/// 代理 QQ 歌单。只缓存播放器瘦视图；不再写只写不读的胖 `qq_playlist:` JSON。
+/// Public QQ playlist metadata, without a QQ login cookie.
+fn qq_playlist_request(client: &reqwest::Client, playlist_id: &str) -> reqwest::RequestBuilder {
+    // reqwest 0.13 gates RequestBuilder::query behind an optional feature.
+    // Keep query encoding in the existing url dependency instead.
+    let mut url = url::Url::parse("https://c.y.qq.com/v8/fcg-bin/fcg_v8_playlist_cp.fcg")
+        .expect("static QQ playlist URL must be valid");
+    url.query_pairs_mut().extend_pairs([
+        ("id", playlist_id),
+        ("format", "json"),
+        ("newsong", "1"),
+        ("platform", "jqspaframe.json"),
+    ]);
+    client.get(url).header("Referer", "http://y.qq.com")
+}
+
+/// 代理 QQ 歌单。只缓存播放器瘦视图；播放地址仍由歌曲 MID 按需解析。
 pub async fn proxy_qq_playlist(Path(playlist_id): Path<String>) -> Response {
-    let result = music_player_view::load_player_playlist(PlayerMusicSource::Qq, &playlist_id, || async {
-        let key = format!("qq_playlist:{playlist_id}");
-        if !RATE_LIMITER.write().await.check_rate_limit(&key) {
-            return Err(music_player_view::PlayerPlaylistError::RateLimited);
+    let playlist_id = match playlist_id.parse::<u64>() {
+        Ok(id) if id > 0 => id.to_string(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(AppError::public_json("Invalid playlist ID")),
+            )
+                .into_response();
         }
-        let url = format!(
-            "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&disstid={}&g_tk=5381&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0",
-            playlist_id
-        );
-        let fetch = async {
-            let response = MEDIA_FETCH_CLIENT.get(&url)
-                .header("Referer", "https://y.qq.com/")
-                .header("Origin", "https://y.qq.com")
-                .send().await.map_err(|error| error.to_string())?;
-            let data = read_limited_json(response).await?;
-            music_player_view::project_qq_player_playlist(&playlist_id, &data)
-                .map_err(|_| "QQ playlist missing cdlist".to_string())
-        }.await;
-        fetch.map_err(|error| {
-            tracing::error!(%error, "Failed to fetch QQ playlist");
-            music_player_view::PlayerPlaylistError::FetchFailed
+    };
+    let result =
+        music_player_view::load_player_playlist(PlayerMusicSource::Qq, &playlist_id, || async {
+            let key = format!("qq_playlist:{playlist_id}");
+            if !RATE_LIMITER.write().await.check_rate_limit(&key) {
+                return Err(music_player_view::PlayerPlaylistError::RateLimited);
+            }
+            let fetch = async {
+                let response = qq_playlist_request(&MEDIA_FETCH_CLIENT, &playlist_id)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .error_for_status()
+                    .map_err(|error| error.to_string())?;
+                let data = read_limited_json(response).await?;
+                music_player_view::project_qq_player_playlist(&playlist_id, &data)
+                    .map_err(|_| "Invalid QQ playlist response".to_string())
+            }
+            .await;
+            fetch.map_err(|error| {
+                tracing::error!(%error, "Failed to fetch QQ playlist");
+                music_player_view::PlayerPlaylistError::FetchFailed
+            })
         })
-    }).await;
+        .await;
     player_playlist_result(result)
 }
 
@@ -1868,6 +1894,44 @@ pub async fn proxy_qq_lyrics(Path(song_mid): Path<String>) -> Response {
         Err(e) => {
             tracing::error!("Failed to fetch QQ lyrics: {}", e);
             (StatusCode::BAD_GATEWAY, "Failed to fetch lyrics").into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod qq_playlist_tests {
+    use super::*;
+
+    #[test]
+    fn qq_playlist_request_uses_public_v8_endpoint_without_credentials() {
+        let client = reqwest::Client::new();
+        let request = qq_playlist_request(&client, "9780150005").build().unwrap();
+        assert_eq!(request.method(), reqwest::Method::GET);
+        assert_eq!(request.url().scheme(), "https");
+        assert_eq!(request.url().host_str(), Some("c.y.qq.com"));
+        assert_eq!(request.url().path(), "/v8/fcg-bin/fcg_v8_playlist_cp.fcg");
+        let query: HashMap<_, _> = request.url().query_pairs().into_owned().collect();
+        assert_eq!(query.len(), 4);
+        assert_eq!(query.get("id").map(String::as_str), Some("9780150005"));
+        assert_eq!(query.get("format").map(String::as_str), Some("json"));
+        assert_eq!(query.get("newsong").map(String::as_str), Some("1"));
+        assert_eq!(
+            query.get("platform").map(String::as_str),
+            Some("jqspaframe.json")
+        );
+        assert_eq!(
+            request.headers()[reqwest::header::REFERER],
+            "http://y.qq.com"
+        );
+        assert!(!request.headers().contains_key(reqwest::header::COOKIE));
+        assert!(!request.headers().contains_key(reqwest::header::AUTHORIZATION));
+    }
+
+    #[tokio::test]
+    async fn qq_playlist_rejects_invalid_ids_before_fetching() {
+        for id in ["", "0", "-1", "abc", "99&newsong=0", "18446744073709551616"] {
+            let response = proxy_qq_playlist(Path(id.to_string())).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "id={id}");
         }
     }
 }
