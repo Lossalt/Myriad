@@ -162,8 +162,16 @@ async fn status(State(st): State<ApiState>) -> Result<Json<StatusResp>, ApiError
     // Product tracks. Commit mode is only valid when channel == preview (enforced
     // in validate_channel_for_mode); the channel list itself does not change.
     let available_channels = vec!["stable", "preview"];
-    let self_update_last = read_self_update_last(st.state.root());
-    let proxy_update_last = crate::worker::proxy_update::read_proxy_update_last(st.state.root());
+    let self_update_last = crate::docker::self_update_helper::read_status(st.state.root())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "self-update outcome unavailable");
+            None
+        });
+    let proxy_update_last = crate::worker::proxy_update::read_proxy_update_last(st.state.root())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "proxy update outcome unavailable");
+            None
+        });
     let proxy_version = crate::env_file::EnvFile::load(&st.worker.cli().env_file)
         .ok()
         .and_then(|env| env.get("PROXY_TAG").map(str::to_owned))
@@ -203,17 +211,9 @@ async fn status(State(st): State<ApiState>) -> Result<Json<StatusResp>, ApiError
     }))
 }
 
-fn read_self_update_last(
-    state_root: &std::path::Path,
-) -> Option<crate::docker::self_update_helper::SelfUpdateLastStatus> {
-    let path = state_root.join("self-update-last.json");
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
-}
-
 /// Token-authenticated compatibility view of legacy `state/self-update-last.json`.
 async fn self_update_last(State(st): State<ApiState>) -> Result<Json<Value>, ApiError> {
-    match read_self_update_last(st.state.root()) {
+    match crate::docker::self_update_helper::read_status(st.state.root())? {
         Some(s) => Ok(Json(serde_json::to_value(s)?)),
         None => Ok(Json(json!(null))),
     }
@@ -928,6 +928,7 @@ async fn proxy_update(
         "new_proxy_tag": report.new_proxy_tag,
         "image_ref": report.image_ref,
         "pulled_digest": report.pulled_digest,
+        "scheduled": report.scheduled,
     })))
 }
 
@@ -976,7 +977,6 @@ async fn diagnostics(State(st): State<ApiState>) -> Result<Json<Value>, ApiError
         "updater_version": crate::self_version(),
         "config": {
             "channel": st.config.channel.to_string(),
-            "registry_mirror": st.config.registry_mirror,
             "check_interval_secs": st.config.check_interval_secs,
             "db_mode": db_mode.as_str(),
             "pgdata_snapshot_enabled": db_mode.pgdata_snapshot_enabled(),

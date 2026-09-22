@@ -11,8 +11,6 @@ pub struct ComposeProbe {
     /// Which command is invokable: "docker compose" (v2) or "docker-compose" (v1) or None.
     pub binary: Option<ComposeBinary>,
     pub compose_files: Vec<PathBuf>,
-    /// True if compose.yaml/yml references `${MYRIAD_TAG}` (and friends) as required by spec.
-    pub references_required_tag_vars: bool,
     pub project_name_pinned: bool,
     pub error: Option<String>,
 }
@@ -33,33 +31,11 @@ pub async fn probe(compose_dir: &Path) -> ComposeProbe {
             return ComposeProbe {
                 binary,
                 compose_files: Vec::new(),
-                references_required_tag_vars: false,
                 project_name_pinned: false,
                 error: Some(error),
             };
         }
     };
-
-    let mut refs_tag = false;
-    for f in &files {
-        let s = match std::fs::read_to_string(f) {
-            Ok(s) => s,
-            Err(error) => {
-                let path = f.display().to_string();
-                return ComposeProbe {
-                    binary,
-                    compose_files: files,
-                    references_required_tag_vars: false,
-                    project_name_pinned: false,
-                    error: Some(format!("cannot read compose file {path}: {error}")),
-                };
-            }
-        };
-        if s.contains("${MYRIAD_TAG}") || s.contains("$MYRIAD_TAG") {
-            refs_tag = true;
-            break;
-        }
-    }
 
     let mut project_name_pinned = std::env::var("COMPOSE_PROJECT_NAME").is_ok();
     if !project_name_pinned {
@@ -71,7 +47,6 @@ pub async fn probe(compose_dir: &Path) -> ComposeProbe {
                     return ComposeProbe {
                         binary,
                         compose_files: files,
-                        references_required_tag_vars: refs_tag,
                         project_name_pinned: false,
                         error: Some(format!("cannot read compose file {path}: {error}")),
                     };
@@ -100,7 +75,6 @@ pub async fn probe(compose_dir: &Path) -> ComposeProbe {
     ComposeProbe {
         binary,
         compose_files: files,
-        references_required_tag_vars: refs_tag,
         project_name_pinned,
         error,
     }
@@ -114,22 +88,26 @@ async fn detect_binary() -> Option<ComposeBinary> {
         .stderr(Stdio::null())
         .status()
         .await
-        && out.success() {
-            return Some(ComposeBinary::DockerComposeV2);
-        }
+        && out.success()
+    {
+        return Some(ComposeBinary::DockerComposeV2);
+    }
     if let Ok(out) = Command::new("docker-compose")
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .await
-        && out.success() {
-            return Some(ComposeBinary::DockerComposeV1);
-        }
+        && out.success()
+    {
+        return Some(ComposeBinary::DockerComposeV1);
+    }
     None
 }
 
-fn collect_compose_files(compose_dir: &Path) -> std::result::Result<Vec<PathBuf>, String> {
+pub(crate) fn collect_compose_files(
+    compose_dir: &Path,
+) -> std::result::Result<Vec<PathBuf>, String> {
     let names = [
         "compose.yaml",
         "compose.yml",
@@ -156,7 +134,8 @@ fn collect_compose_files(compose_dir: &Path) -> std::result::Result<Vec<PathBuf>
             }
             for name in names {
                 let p = entry.path().join(name);
-                if crate::probe::filesystem::path_is_present(&p).map_err(|error| error.to_string())?
+                if crate::probe::filesystem::path_is_present(&p)
+                    .map_err(|error| error.to_string())?
                 {
                     files.push(p);
                 }
@@ -188,6 +167,19 @@ impl ComposeBinary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_subdirectory_is_used_only_when_root_has_no_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("myriad");
+        std::fs::create_dir(&nested).unwrap();
+        let child = nested.join("docker-compose.yml");
+        std::fs::write(&child, "services: {}\n").unwrap();
+        assert_eq!(collect_compose_files(dir.path()).unwrap(), vec![child]);
+        let root = dir.path().join("compose.yaml");
+        std::fs::write(&root, "services: {}\n").unwrap();
+        assert_eq!(collect_compose_files(dir.path()).unwrap(), vec![root]);
+    }
 
     #[test]
     fn collect_compose_files_does_not_treat_exists_false_as_absence() {

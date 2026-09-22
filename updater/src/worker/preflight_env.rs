@@ -5,7 +5,7 @@
 //! Complements startup `probe::run_all` (which can go stale after a panel edits the stack)
 //! and the network allowlist preflight.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use tracing::info;
@@ -13,6 +13,7 @@ use tracing::info;
 use crate::config::DbMode;
 use crate::env_file::EnvFile;
 use crate::error::{Result, UpdaterError};
+
 use crate::worker::Worker;
 
 /// Fixed `container_name` values assumed by production compose, network preflight, and
@@ -49,13 +50,14 @@ pub async fn check_compose_contract(
     worker: &Arc<Worker>,
     compose_config: &serde_json::Value,
     project: &str,
+    workers: [bool; 2],
 ) -> Result<()> {
     let db_mode = worker.cli().db_mode;
-    check_compose_topology(compose_config, db_mode)?;
-    check_federation_http_storage(compose_config)?;
-    check_federation_edge(worker.as_ref()).await?;
-    check_persona_runtime(compose_config)?;
-    check_persona_edge(worker.as_ref()).await?;
+    check_target_topology(compose_config, db_mode, workers)?;
+    if workers[1] {
+        check_persona_runtime(compose_config)?;
+    }
+    check_worker_routes(worker.as_ref(), workers).await?;
     check_postgres_pgdata_volume(compose_config, db_mode)?;
     check_running_compose_project(worker.as_ref(), project).await?;
     info!(
@@ -68,66 +70,18 @@ pub async fn check_compose_contract(
 /// The edge is TCB and must already understand split routing before a business
 /// image removes these endpoints from web. Inspect the running image and env,
 /// not merely the host file an operator may not have applied yet.
-async fn check_federation_edge(worker: &Worker) -> Result<()> {
-    let proxy = worker
-        .docker()
-        .raw()
-        .inspect_container("myriad-proxy", None)
-        .await
-        .map_err(|error| UpdaterError::Precondition(format!("inspect federation edge: {error}")))?;
-    let running = proxy.state.as_ref().and_then(|state| state.running) == Some(true);
-    let routing_env = proxy
-        .config
-        .as_ref()
-        .and_then(|config| config.env.as_ref())
-        .is_some_and(|env| {
-            env.iter()
-                .any(|value| value == "PROXY_FEDERATION_UPSTREAM=http://federation-worker:1103")
-        });
-    let image = proxy
-        .image
-        .as_deref()
-        .ok_or_else(|| UpdaterError::Precondition("proxy image identity missing".into()))?;
-    let image = worker
-        .docker()
-        .raw()
-        .inspect_image(image)
-        .await
-        .map_err(|error| {
-            UpdaterError::Precondition(format!("inspect federation edge capability: {error}"))
-        })?;
-    let capable = image
-        .config
-        .and_then(|config| config.labels)
-        .is_some_and(|labels| {
-            labels
-                .get("io.myriad.proxy.federation-routing")
-                .is_some_and(|value| value == "1")
-        });
-    if !running || !routing_env || !capable {
-        return Err(UpdaterError::Precondition(
-            "upgrade/recreate the proxy TCB with federation-routing support and PROXY_FEDERATION_UPSTREAM=http://federation-worker:1103 before upgrading the backend".into(),
-        ));
+async fn check_worker_routes(worker: &Worker, required: [bool; 2]) -> Result<()> {
+    if !required.into_iter().any(|enabled| enabled) {
+        return Ok(());
     }
-    Ok(())
-}
-
-async fn check_persona_edge(worker: &Worker) -> Result<()> {
     let proxy = worker
         .docker()
         .raw()
         .inspect_container("myriad-proxy", None)
         .await
-        .map_err(|error| UpdaterError::Precondition(format!("inspect persona edge: {error}")))?;
+        .map_err(|error| UpdaterError::Precondition(format!("inspect proxy: {error}")))?;
     let running = proxy.state.as_ref().and_then(|state| state.running) == Some(true);
-    let routing_env = proxy
-        .config
-        .as_ref()
-        .and_then(|config| config.env.as_ref())
-        .is_some_and(|env| {
-            env.iter()
-                .any(|value| value == "PROXY_PERSONA_UPSTREAM=http://persona-worker:1103")
-        });
+    let env = proxy.config.as_ref().and_then(|config| config.env.as_ref());
     let image = proxy
         .image
         .as_deref()
@@ -138,20 +92,36 @@ async fn check_persona_edge(worker: &Worker) -> Result<()> {
         .inspect_image(image)
         .await
         .map_err(|error| {
-            UpdaterError::Precondition(format!("inspect persona edge capability: {error}"))
+            UpdaterError::Precondition(format!("inspect proxy capability: {error}"))
         })?;
-    let capable = image
-        .config
-        .and_then(|config| config.labels)
-        .is_some_and(|labels| {
-            labels
-                .get("io.myriad.proxy.persona-routing")
-                .is_some_and(|value| value == "1")
-        });
-    if !running || !routing_env || !capable {
-        return Err(UpdaterError::Precondition(
-            "upgrade/recreate the proxy TCB with persona-routing support and PROXY_PERSONA_UPSTREAM=http://persona-worker:1103 before upgrading the backend".into(),
-        ));
+    let labels = image.config.and_then(|config| config.labels);
+    for (required, role, route, capability) in [
+        (
+            required[0],
+            "federation",
+            "PROXY_FEDERATION_UPSTREAM=http://federation-worker:1103",
+            "io.myriad.proxy.federation-routing",
+        ),
+        (
+            required[1],
+            "persona",
+            "PROXY_PERSONA_UPSTREAM=http://persona-worker:1103",
+            "io.myriad.proxy.persona-routing",
+        ),
+    ] {
+        if !required {
+            continue;
+        }
+        let routed = env.is_some_and(|env| env.iter().any(|value| value == route));
+        let capable = labels
+            .as_ref()
+            .and_then(|labels| labels.get(capability))
+            .is_some_and(|value| value == "1");
+        if !running || !routed || !capable {
+            return Err(UpdaterError::Precondition(format!(
+                "upgrade/recreate the proxy TCB with {role}-routing support and {route} before upgrading the backend"
+            )));
+        }
     }
     Ok(())
 }
@@ -232,84 +202,6 @@ fn check_persona_runtime(config: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-fn check_federation_http_storage(config: &serde_json::Value) -> Result<()> {
-    let mounts = config
-        .pointer("/services/federation-worker/volumes")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| {
-            UpdaterError::Precondition("federation worker volume mounts missing".into())
-        })?;
-    let data_root = mounts.iter().any(|mount| {
-        mount["type"] == "volume"
-            && mount["source"] == "backend_data"
-            && mount["target"] == "/app/data"
-            && mount.get("read_only").and_then(serde_json::Value::as_bool) == Some(true)
-            && mount
-                .pointer("/volume/subpath")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(str::is_empty)
-    });
-    let required = [
-        ("backend_data", "/app/data/federation", "federation"),
-        (
-            "backend_data",
-            "/app/data/federation_media",
-            "federation_media",
-        ),
-        ("backend_data", "/app/data/media", "media"),
-        ("backend_cache", "/tmp/cache/images", "images"),
-    ];
-    let missing = required
-        .iter()
-        .filter(|(source, target, subpath)| {
-            !mounts.iter().any(|mount| {
-                mount["type"] == "volume"
-                    && mount["source"] == *source
-                    && mount["target"] == *target
-                    && mount
-                        .pointer("/volume/subpath")
-                        .and_then(serde_json::Value::as_str)
-                        == Some(*subpath)
-                    && mount
-                        .pointer("/volume/nocopy")
-                        .and_then(serde_json::Value::as_bool)
-                        == Some(true)
-                    && mount.get("read_only").and_then(serde_json::Value::as_bool) != Some(true)
-            })
-        })
-        .map(|(source, target, subpath)| format!("{source}/{subpath} at {target}"))
-        .collect::<Vec<_>>();
-
-    // Keep this check strict: an extra mount is not harmless for the read-only
-    // worker boundary, and docker-guard applies the same fixed allowlist later.
-    // Report the exact mismatch instead of making operators guess which of the
-    // four subpaths an older panel-generated Compose file omitted.
-    let mut problems = Vec::new();
-    if !data_root {
-        problems.push("read-only backend_data root at /app/data".to_string());
-    }
-    if !missing.is_empty() {
-        problems.push(format!(
-            "missing writable subpath(s): {}",
-            missing.join(", ")
-        ));
-    }
-    if mounts.len() != 1 + required.len() {
-        problems.push(format!(
-            "found {} federation-worker volume mounts, expected {}",
-            mounts.len(),
-            1 + required.len()
-        ));
-    }
-    if !problems.is_empty() {
-        return Err(UpdaterError::Precondition(format!(
-            "federation HTTP requires the read-only backend_data root and exactly four fixed writable subpaths: {}. Update the host Compose file before upgrading; do not bypass this check",
-            problems.join("; ")
-        )));
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Tag / path / docker API
 // ---------------------------------------------------------------------------
@@ -330,107 +222,7 @@ fn check_manageable_tag_vars(worker: &Worker) -> Result<()> {
         )));
     }
 
-    let files = discover_compose_files(&worker.cli().compose_dir)?;
-    if files.is_empty() {
-        return Err(UpdaterError::Precondition(format!(
-            "no compose file under {} (or one level below); cannot verify ${{MYRIAD_TAG}} wiring",
-            worker.cli().compose_dir.display()
-        )));
-    }
-    compose_files_reference_tag(&files)
-}
-
-/// Scan every discovered compose candidate for a `${MYRIAD_TAG}` reference.
-///
-/// A candidate that cannot be read must not hide a readable one: panels often
-/// leave stray files (or directories) named like a compose file beside the real
-/// one. Unreadable candidates are recorded and the scan continues; the fault is
-/// only surfaced when no readable candidate wires `${MYRIAD_TAG}`.
-fn compose_files_reference_tag(files: &[PathBuf]) -> Result<()> {
-    let mut unreadable = Vec::new();
-    for f in files {
-        let s = match std::fs::read_to_string(f) {
-            Ok(s) => s,
-            Err(error) => {
-                unreadable.push(format!("{}: {error}", f.display()));
-                continue;
-            }
-        };
-        if s.contains("${MYRIAD_TAG}") || s.contains("$MYRIAD_TAG") {
-            return Ok(());
-        }
-    }
-    if !unreadable.is_empty() {
-        return Err(UpdaterError::Precondition(format!(
-            "no readable compose file references ${{MYRIAD_TAG}}; refusing update. \
-             Unreadable candidate(s): {}",
-            unreadable.join("; ")
-        )));
-    }
-    Err(UpdaterError::Precondition(
-        "compose file does not reference ${MYRIAD_TAG}; refusing update \
-         (panel-rewritten compose often drops tag interpolation)"
-            .into(),
-    ))
-}
-
-/// Presence probe for compose candidates under the deployment root.
-///
-/// [`crate::probe::filesystem::path_is_present`] reports a non-NotFound stat
-/// fault as `Internal`, which surfaces as HTTP 500 and reads like an updater
-/// bug. Under the deployment root the same fault is an operator-fixable mount or
-/// permission problem, so report it as a `Precondition` (HTTP 412) instead.
-fn probe_present(path: &Path) -> Result<bool> {
-    match std::fs::metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(UpdaterError::Precondition(format!(
-            "cannot inspect {}: {error}",
-            path.display()
-        ))),
-    }
-}
-
-fn discover_compose_files(compose_dir: &Path) -> Result<Vec<PathBuf>> {
-    let names = [
-        "compose.yaml",
-        "compose.yml",
-        "docker-compose.yaml",
-        "docker-compose.yml",
-    ];
-    let mut files = Vec::new();
-    for name in names {
-        let p = compose_dir.join(name);
-        if probe_present(&p)? {
-            files.push(p);
-        }
-    }
-    if files.is_empty() {
-        let rd = std::fs::read_dir(compose_dir).map_err(|error| {
-            UpdaterError::Precondition(format!(
-                "cannot list compose dir {}: {error}",
-                compose_dir.display()
-            ))
-        })?;
-        for entry in rd {
-            let entry = entry.map_err(|error| {
-                UpdaterError::Precondition(format!(
-                    "cannot read compose dir {}: {error}",
-                    compose_dir.display()
-                ))
-            })?;
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            for name in names {
-                let p = entry.path().join(name);
-                if probe_present(&p)? {
-                    files.push(p);
-                }
-            }
-        }
-    }
-    Ok(files)
+    Ok(())
 }
 
 fn check_paths_writable(worker: &Worker) -> Result<()> {
@@ -463,7 +255,7 @@ fn assert_writable_dir(path: &Path, label: &str) -> Result<()> {
     let probe = path.join(format!(".myriad-preflight-write.{}", std::process::id()));
     std::fs::write(&probe, b"ok").map_err(|e| {
         UpdaterError::Precondition(format!(
-            "{label} {} is not writable: {e}. Mount the deployment root read-write for updater.",
+            "{label} {} is not writable: {e}. Check the writable state mount.",
             path.display()
         ))
     })?;
@@ -525,7 +317,16 @@ async fn check_docker_api(worker: &Worker) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Fail if required services missing or `container_name` rewritten away from production names.
+#[cfg(test)]
 pub fn check_compose_topology(config: &serde_json::Value, db_mode: DbMode) -> Result<()> {
+    check_target_topology(config, db_mode, [true, true])
+}
+
+fn check_target_topology(
+    config: &serde_json::Value,
+    db_mode: DbMode,
+    workers: [bool; 2],
+) -> Result<()> {
     let Some(services) = config.get("services").and_then(|v| v.as_object()) else {
         return Err(UpdaterError::Precondition(
             "compose config has no services map; refusing update".into(),
@@ -534,18 +335,23 @@ pub fn check_compose_topology(config: &serde_json::Value, db_mode: DbMode) -> Re
 
     // Reject before maintenance/stop: a new image must never discover the
     // missing role only after the running installation has been taken offline.
-    if config
-        .pointer("/services/backend/environment/MYRIAD_PROCESS_ROLE")
-        .and_then(serde_json::Value::as_str)
-        != Some("web")
+    if workers.iter().any(|required| *required)
+        && config
+            .pointer("/services/backend/environment/MYRIAD_PROCESS_ROLE")
+            .and_then(serde_json::Value::as_str)
+            != Some("web")
     {
         return Err(UpdaterError::Precondition(
             "migrate Compose and updater/Guard before upgrading: backend requires explicit MYRIAD_PROCESS_ROLE=web, federation-worker and persona-worker; implicit combined execution is no longer supported".into(),
         ));
     }
     let mut required = required_services(db_mode);
-    required.push("federation-worker");
-    required.push("persona-worker");
+    if workers[0] {
+        required.push("federation-worker");
+    }
+    if workers[1] {
+        required.push("persona-worker");
+    }
     let mut missing_svc = Vec::new();
     let mut name_issues = Vec::new();
 
@@ -734,67 +540,51 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn federation_http_storage_requires_exact_existing_volume_subpaths() {
-        let mut mounts = vec![
-            json!({"type":"volume", "source":"backend_data", "target":"/app/data", "read_only":true}),
-        ];
-        for (source, subpath, target) in [
-            ("backend_data", "federation", "/app/data/federation"),
-            (
-                "backend_data",
-                "federation_media",
-                "/app/data/federation_media",
-            ),
-            ("backend_data", "media", "/app/data/media"),
-            ("backend_cache", "images", "/tmp/cache/images"),
-        ] {
-            mounts.push(json!({"type":"volume", "source":source, "target":target,
-                "volume":{"subpath":subpath,"nocopy":true}}));
-        }
-        let config = json!({"services":{"federation-worker":{"volumes":mounts}}});
-        assert!(check_federation_http_storage(&config).is_ok());
-        for (path, value) in [
-            (
-                "/services/federation-worker/volumes/0/read_only",
-                json!(false),
-            ),
-            (
-                "/services/federation-worker/volumes/1/volume/subpath",
-                json!("agent"),
-            ),
-            (
-                "/services/federation-worker/volumes/2/source",
-                json!("other_data"),
-            ),
-            (
-                "/services/federation-worker/volumes/4/volume/nocopy",
-                json!(false),
-            ),
-        ] {
-            let mut altered = config.clone();
-            *altered.pointer_mut(path).unwrap() = value;
-            assert!(
-                check_federation_http_storage(&altered).is_err(),
-                "accepted {path}"
-            );
-        }
+    #[ignore = "requires Docker Compose CLI; no daemon or network needed"]
+    fn v053_published_compose_satisfies_business_upgrade_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let compose = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &compose,
+            include_str!("../../testdata/v0.5.3/docker-compose.yml"),
+        )
+        .unwrap();
+        let output = std::process::Command::new("docker")
+            .args(["compose", "-p", "myriad", "-f"])
+            .arg(&compose)
+            .args(["config", "--format", "json"])
+            .envs([
+                ("MYRIAD_TAG", "v0.5.3"),
+                ("UPDATER_TAG", "v0.5.3"),
+                ("PROXY_TAG", "v0.5.3"),
+                ("MYRIAD_SETUP_SECRET", "test"),
+                ("GUARD_SELF_UPDATE_TOKEN", "test"),
+                ("PERSONA_DB_PASSWORD", "test"),
+                ("FEDERATION_DB_PASSWORD", "test"),
+                ("POSTGRES_PASSWORD", "test"),
+                ("UPDATE_TOKEN", "test"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let model: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        check_target_topology(&model, DbMode::Bundled, [true, true]).unwrap();
+        check_postgres_pgdata_volume(&model, DbMode::Bundled).unwrap();
+        check_persona_runtime(&model).unwrap();
     }
 
     #[test]
-    fn federation_http_storage_reports_legacy_missing_media_subpath() {
-        let mounts = vec![
-            json!({"type":"volume", "source":"backend_data", "target":"/app/data", "read_only":true}),
-            json!({"type":"volume", "source":"backend_data", "target":"/app/data/federation",
-                "volume":{"subpath":"federation","nocopy":true}}),
-            json!({"type":"volume", "source":"backend_data", "target":"/app/data/federation_media",
-                "volume":{"subpath":"federation_media","nocopy":true}}),
-            json!({"type":"volume", "source":"backend_cache", "target":"/tmp/cache/images",
-                "volume":{"subpath":"images","nocopy":true}}),
-        ];
-        let config = json!({"services":{"federation-worker":{"volumes":mounts}}});
-        let error = check_federation_http_storage(&config).unwrap_err();
-        assert!(error.to_string().contains("backend_data/media"), "{error}");
-        assert!(error.to_string().contains("/app/data/media"), "{error}");
+    fn combined_backend_target_does_not_require_split_workers() {
+        let config = json!({"services": {
+            "backend": {"container_name":"myriad-backend"},
+            "frontend": {"container_name":"myriad-frontend"}
+        }});
+        assert!(check_target_topology(&config, DbMode::External, [false, false]).is_ok());
+        assert!(check_target_topology(&config, DbMode::External, [true, true]).is_err());
     }
 
     #[test]
@@ -927,49 +717,15 @@ mod tests {
     }
 
     #[test]
-    fn tag_scan_skips_unreadable_candidate_and_keeps_scanning() {
-        let dir = tempfile::tempdir().unwrap();
-        // A directory named like a compose file is the panel-stray case: it stats
-        // fine but cannot be read as a file.
-        std::fs::create_dir(dir.path().join("compose.yaml")).unwrap();
-        std::fs::write(
-            dir.path().join("docker-compose.yml"),
-            "services:\n  backend:\n    image: x:${MYRIAD_TAG}\n",
-        )
-        .unwrap();
-        let files = discover_compose_files(dir.path()).unwrap();
-        assert_eq!(files.len(), 2, "{files:?}");
-        compose_files_reference_tag(&files).unwrap();
-    }
-
-    #[test]
-    fn tag_scan_reports_unreadable_candidate_when_nothing_matches() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("compose.yaml")).unwrap();
-        std::fs::write(dir.path().join("docker-compose.yml"), "services: {}\n").unwrap();
-        let files = discover_compose_files(dir.path()).unwrap();
-        let err = compose_files_reference_tag(&files).unwrap_err();
-        assert!(err.to_string().contains("Unreadable"), "{err}");
-        assert!(err.to_string().contains("compose.yaml"), "{err}");
-    }
-
-    #[test]
-    fn tag_scan_plain_miss_keeps_original_message() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("docker-compose.yml"), "services: {}\n").unwrap();
-        let files = discover_compose_files(dir.path()).unwrap();
-        let err = compose_files_reference_tag(&files).unwrap_err();
-        assert!(err.to_string().contains("does not reference"), "{err}");
-    }
-
-    #[test]
-    fn probe_present_reports_io_faults_as_precondition() {
+    fn compose_discovery_reports_io_faults_as_precondition() {
         // ENOTDIR (a file used as a directory) is not NotFound, so it must not be
         // swallowed as absence nor surfaced as an Internal/HTTP 500 error.
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("not-a-dir");
         std::fs::write(&file, "x").unwrap();
-        let err = probe_present(&file.join("compose.yaml")).unwrap_err();
+        let err = crate::probe::compose::collect_compose_files(&file)
+            .map_err(UpdaterError::Precondition)
+            .unwrap_err();
         assert!(matches!(err, UpdaterError::Precondition(_)), "got {err}");
     }
 }

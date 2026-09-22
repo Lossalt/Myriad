@@ -76,14 +76,16 @@ These are **by design** for single-tenant self-host, not open bugs:
 - An **admin with update rights** can change the running stack (images, tags,
   maintenance). That is the product surface.
 - A **compromised updater** can still change the explicitly writable deployment
-  data (`.env`, `pgdata`, `state`), but the deployment root/Compose file and
-  `./guard-policy/docker-guard.env` are read-only to it. Those changes cannot select a new
-  Guard image or expand the Guard operation/image policy.
+  data (`.env`, `pgdata`, `state`), including managed Compose content under
+  `state/compose`. The deployment root and `./guard-policy/docker-guard.env`
+  remain read-only. Guard still authorizes container mutations; editing Compose
+  cannot recreate TCB services or expand Guard policy through its generic API.
+  Host administrators should treat managed Compose as updater-writable input
+  when running privileged Compose commands directly.
 - The self-update helper is itself trusted target-image code. During a handoff
   it receives the deployment root at `/host/write` and the Guard-policy parent
   directory read-write so atomic file replacement works. Compose definitions
-  are separately mounted read-only and the helper validates the fixed three-service
-  model, but narrowing the writable host surface further remains desirable.
+  are separately mounted read-only and the helper checks the three selected service images, but narrowing the writable host surface further remains desirable.
 - `GUARD_SELF_UPDATE_TOKEN` is a second defense against accidental guard-network
   membership drift, not a defense against the updater that legitimately reads
   it. If another service is attached to guard-net and also receives this secret,
@@ -96,7 +98,7 @@ These are **by design** for single-tenant self-host, not open bugs:
 The normal path is the admin UI's one-click TCB upgrade. Updater provides only a
 tag intent plus the host-policy capability; Guard fixes the official repository,
 resolves the pulled image to an
-exact digest, validates the current TCB/downgrade fences, and launches a fixed
+exact digest, records the current component images, and launches a fixed
 handoff from that exact image. The handoff updates the host policy and the three
 TCB services, verifies their resulting digests, and automatically restores the
 previous policy/image on failure.
@@ -113,10 +115,10 @@ Compose file and deploy script, and run `deploy.sh doctor`. Keep a copy of the
 previous policy/digest as the manual recovery point; updater-writable state is
 never the source of repository or digest identity.
 
-If three fixed previous-digest recovery attempts are exhausted, Guard keeps the
-mutation gate closed and preserves the daemon sentinel
-`myriad-tcb-self-update-recovery-exhausted`. Restore and verify the three TCB
-services from the host first; only then remove that sentinel and restart Guard.
+Guard owns recovery attempts; the helper does not retry the full rollback internally.
+After recovery fails and helper execution has stopped, the failed result remains visible and
+a new update can be requested. Cleanup is not a prerequisite for saving the result.
+An executor that cannot yet be stopped retains exclusion until it is stopped.
 
 ---
 

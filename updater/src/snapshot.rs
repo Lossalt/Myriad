@@ -22,7 +22,6 @@ use std::process::Stdio;
 #[cfg(test)]
 use chrono::DateTime;
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tracing::{info, warn};
 use walkdir::WalkDir;
@@ -139,7 +138,7 @@ impl<'a> SnapshotManager<'a> {
         fsync_dir(&snapshots_dir)?;
 
         // 6. record metadata.
-        let (size, count, sample) = measure_and_sample(&final_path)?;
+        let (size, count) = measure(&final_path)?;
         let meta = SnapshotMeta {
             id: snapshot_id.to_string(),
             created_at: Utc::now(),
@@ -147,7 +146,6 @@ impl<'a> SnapshotManager<'a> {
             size_bytes: size,
             file_count: count,
             keep: false,
-            sample_sha256: Some(sample),
         };
         let mut sf = self.state.read_snapshots()?;
         sf.items.push(meta.clone());
@@ -355,7 +353,7 @@ impl<'a> SnapshotManager<'a> {
             fsync_dir(&dest)?;
             fsync_dir(&self.state.snapshots_dir())?;
         }
-        let (size, count, sample) = measure_and_sample(&dest)?;
+        let (size, count) = measure(&dest)?;
         let mut sf = self.state.read_snapshots()?;
         if !sf.items.iter().any(|m| m.id == id) {
             sf.items.push(SnapshotMeta {
@@ -365,7 +363,6 @@ impl<'a> SnapshotManager<'a> {
                 size_bytes: size,
                 file_count: count,
                 keep: true,
-                sample_sha256: Some(sample),
             });
             self.state.write_snapshots(&sf)?;
         }
@@ -765,12 +762,10 @@ fn fsync_dir(p: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Walk the snapshot tree to compute size, file count, and a sample digest covering the
-/// first 4KB of up to 64 deterministic paths.
-fn measure_and_sample(root: &Path) -> Result<(u64, u64, String)> {
+/// Measure the metadata consumed by snapshot listings and retention.
+fn measure(root: &Path) -> Result<(u64, u64)> {
     let mut size: u64 = 0;
     let mut count: u64 = 0;
-    let mut paths: Vec<PathBuf> = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -781,21 +776,9 @@ fn measure_and_sample(root: &Path) -> Result<(u64, u64, String)> {
             if let Ok(meta) = entry.metadata() {
                 size += meta.len();
             }
-            paths.push(entry.path().to_path_buf());
         }
     }
-    paths.sort();
-    let mut hasher = Sha256::new();
-    let sample_step = (paths.len().max(1) / 64).max(1);
-    for p in paths.iter().step_by(sample_step).take(64) {
-        if let Ok(bytes) = std::fs::read(p) {
-            let head = &bytes[..bytes.len().min(4096)];
-            hasher.update(p.to_string_lossy().as_bytes());
-            hasher.update(b"\0");
-            hasher.update(head);
-        }
-    }
-    Ok((size, count, hex::encode(hasher.finalize())))
+    Ok((size, count))
 }
 
 #[cfg(test)]
@@ -984,7 +967,6 @@ mod tests {
             size_bytes: 1,
             file_count: 1,
             keep,
-            sample_sha256: None,
         });
         state.write_snapshots(&sf).unwrap();
     }
@@ -1120,7 +1102,6 @@ mod tests {
             size_bytes: 1,
             file_count: 1,
             keep,
-            sample_sha256: None,
         });
         state.write_snapshots(&sf).unwrap();
     }
@@ -1327,7 +1308,6 @@ mod tests {
             size_bytes: 1,
             file_count: 1,
             keep: false,
-            sample_sha256: None,
         });
         state.write_snapshots(&sf).unwrap();
         std::fs::write(state.snapshots_dir().join("bad-old"), b"not-a-dir").unwrap();

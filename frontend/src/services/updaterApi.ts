@@ -85,6 +85,8 @@ export interface UpdaterStatus {
   snapshot_limit_enabled?: boolean
   /** 1–20 */
   snapshot_limit?: number
+  /** False on external-DB deployments: no pgdata snapshot, so no data rollback. */
+  pgdata_snapshot_enabled?: boolean
   maintenance_active: boolean
   maintenance_phase: string
   job_in_flight: string | null
@@ -185,7 +187,6 @@ export interface SnapshotMeta {
   size_bytes: number
   file_count: number
   keep: boolean
-  sample_sha256: string | null
 }
 
 export interface SnapshotsResponse {
@@ -513,6 +514,7 @@ export function makeUpdaterApi(
         new_proxy_tag: string
         image_ref: string
         pulled_digest: string
+        scheduled?: boolean
       }>(
         'POST',
         mode === 'backend' ? '/proxy-update' : '/admin/proxy-update',

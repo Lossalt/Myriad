@@ -160,19 +160,41 @@ async fn main() -> Result<()> {
         config.clone(),
         worker_cli,
     ));
-    // Pre-swap crash recovery only cleared maintenance; services may still be stopped.
-    if matches!(recovery, RecoveryReport::ClearedPreSwap) {
-        match worker.restore_stack_after_pre_swap().await {
-            Ok(()) => info!("recovery: pre-swap stack restore completed"),
-            Err(e) => {
-                error!(
-                    err = %e,
-                    "recovery: pre-swap stack restore failed; site may stay down until manual compose up"
-                );
-                let _ =
-                    state.append_history(&format!("recovery: pre-swap stack restore failed: {e}"));
+    if matches!(
+        recovery,
+        RecoveryReport::ClearedPreSwap | RecoveryReport::Resume { .. }
+    ) {
+        let recovering = worker.clone();
+        let recovery_job = state.read_current_job()?;
+        tokio::spawn(async move {
+            let result = match recovery {
+                RecoveryReport::ClearedPreSwap => recovering.restore_stack_after_pre_swap().await,
+                RecoveryReport::Resume { job_id, rollback } => {
+                    myriad_updater::worker::update::resume(recovering.clone(), &job_id, rollback)
+                        .await
+                }
+                _ => unreachable!(),
+            };
+            if let Err(error) = result {
+                warn!(%error, "recovered update did not complete on its target");
+                if let Some(job_id) = recovery_job
+                    && recovering
+                        .state()
+                        .read_current_job()
+                        .ok()
+                        .flatten()
+                        .as_deref()
+                        == Some(job_id.as_str())
+                {
+                    let _ = myriad_updater::worker::record_recovery_failure(
+                        recovering.state(),
+                        &job_id,
+                        &error.to_string(),
+                    );
+                }
             }
-        }
+            let _ = recovering.reconcile_current_deploy().await;
+        });
     }
     if let Err(e) = worker.reconcile_current_deploy().await {
         warn!(err = %e, "failed to reconcile current deploy identity; continuing with persisted state");
@@ -199,7 +221,7 @@ async fn main() -> Result<()> {
     let app = api::router(api_state);
 
     let listener = tokio::net::TcpListener::bind(&worker.cli().listen).await?;
-    info!(addr = %worker.cli().listen, "HTTP API listening");
+    info!("HTTP API listening on {}", listener.local_addr()?);
 
     axum::serve(
         listener,

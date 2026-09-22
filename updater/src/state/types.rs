@@ -320,7 +320,6 @@ pub struct SnapshotMeta {
     pub size_bytes: u64,
     pub file_count: u64,
     pub keep: bool,
-    pub sample_sha256: Option<String>,
 }
 
 fn default_schema() -> u32 {
@@ -330,6 +329,25 @@ fn default_schema() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v053_snapshot_index_survives_removal_of_sample_hash() {
+        let old = serde_json::json!({"schema_version":1,"items":[{
+            "id":"before-upgrade", "created_at":"2026-09-21T02:20:54Z",
+            "source_version":"v0.5.3", "size_bytes":123, "file_count":2,
+            "keep":true, "sample_sha256":"obsolete-sample"
+        }]});
+        let snapshots: SnapshotsFile = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            snapshots.items[0].source_version.as_ref().unwrap().as_str(),
+            "v0.5.3"
+        );
+        assert!(snapshots.items[0].keep);
+        let saved = serde_json::to_value(&snapshots).unwrap();
+        assert!(saved["items"][0].get("sample_sha256").is_none());
+        let reloaded: SnapshotsFile = serde_json::from_value(saved).unwrap();
+        assert_eq!(reloaded.items[0].id, "before-upgrade");
+    }
 
     #[test]
     fn rollback_version_reads_legacy_state_name_and_writes_the_new_name() {

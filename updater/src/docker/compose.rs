@@ -121,6 +121,7 @@ pub(crate) fn validate_guard_policy_file(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct ComposeRunner {
     binary: ComposeBinary,
     project: String,
@@ -157,6 +158,16 @@ impl ComposeOutput {
 }
 
 impl ComposeRunner {
+    pub(crate) fn files(&self) -> &[PathBuf] {
+        &self.files
+    }
+
+    pub(crate) fn with_files(&self, files: Vec<PathBuf>) -> Self {
+        Self {
+            files,
+            ..self.clone()
+        }
+    }
     pub fn new(
         binary: ComposeBinary,
         project: impl Into<String>,
@@ -201,8 +212,17 @@ impl ComposeRunner {
 
     /// Run `compose <args...>` with a timeout. Captures stdout/stderr (last 32 KiB each).
     pub async fn run(&self, args: &[&str], timeout: Duration) -> Result<ComposeOutput> {
+        self.run_with_env(args, timeout, &[]).await
+    }
+
+    pub(crate) async fn run_with_env(
+        &self,
+        args: &[&str],
+        timeout: Duration,
+        env: &[(&str, &str)],
+    ) -> Result<ComposeOutput> {
         let mut cmd = self.base_cmd();
-        cmd.args(args);
+        cmd.args(args).envs(env.iter().copied());
         debug!(?args, project = %self.project, "compose exec");
 
         let mut child = cmd
@@ -244,102 +264,56 @@ impl ComposeRunner {
         })
     }
 
-    /// Optional on older host compose files. New topology uses the same backend
-    /// image with a fixed dedicated executable; role support is an image capability.
-    pub async fn federation_worker_image(&self) -> Result<Option<String>> {
-        let config = self.config_json().await?;
-        let Some(worker) = config.pointer("/services/federation-worker") else {
-            return Ok(None);
-        };
-        let image = worker
-            .get("image")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| UpdaterError::Precondition("federation worker image missing".into()))?;
-        if config
-            .pointer("/services/backend/image")
-            .and_then(serde_json::Value::as_str)
-            != Some(image)
-        {
-            return Err(UpdaterError::Precondition(
-                "federation worker must use the backend image".into(),
-            ));
-        }
-        Ok(Some(image.into()))
-    }
-
-    pub async fn persona_worker_image(&self) -> Result<Option<String>> {
-        let config = self.config_json().await?;
-        let Some(worker) = config.pointer("/services/persona-worker") else {
-            return Ok(None);
-        };
-        let image = worker
-            .get("image")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| UpdaterError::Precondition("persona worker image missing".into()))?;
-        if config
-            .pointer("/services/backend/image")
-            .and_then(serde_json::Value::as_str)
-            != Some(image)
-        {
-            return Err(UpdaterError::Precondition(
-                "persona worker must use the backend image".into(),
-            ));
-        }
-        Ok(Some(image.into()))
-    }
-
-    async fn application_services<'a>(
-        &self,
-        requested: &[&'a str],
-        starting: bool,
-    ) -> Result<Vec<&'a str>> {
+    async fn application_services<'a>(&self, requested: &[&'a str]) -> Result<Vec<&'a str>> {
         let mut services = requested.to_vec();
-        if requested.contains(&"backend") && !requested.contains(&"federation-worker")
-            && let Some(image) = self.federation_worker_image().await? {
-                let supported = !starting
-                    || super::DockerClient::connect()
-                        .await?
-                        .supports_federation_worker(&image)
-                        .await?;
-                if supported {
-                    services.insert(0, "federation-worker");
-                }
+        if !requested.contains(&"backend") {
+            return Ok(services);
+        }
+        let config = self.config_json().await?;
+        let backend = config
+            .pointer("/services/backend/image")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| UpdaterError::Precondition("backend image missing".into()))?;
+        let docker = super::DockerClient::connect().await?;
+        let supported = docker.worker_support(backend).await?;
+        for (role, supported) in super::client::APP_WORKERS.into_iter().zip(supported) {
+            let Some(worker) = config["services"].get(role) else {
+                continue;
+            };
+            if worker["image"].as_str() != Some(backend) {
+                return Err(UpdaterError::Precondition(format!(
+                    "{role} must use the backend image"
+                )));
             }
-        if requested.contains(&"backend") && !requested.contains(&"persona-worker")
-            && let Some(image) = self.persona_worker_image().await? {
-                let supported = !starting
-                    || super::DockerClient::connect()
-                        .await?
-                        .supports_persona_worker(&image)
-                        .await?;
-                if supported {
-                    services.insert(0, "persona-worker");
-                }
+            if supported && !services.contains(&role) {
+                services.insert(0, role);
             }
+        }
         Ok(services)
     }
 
     pub async fn stop(&self, services: &[&str], timeout_secs: u32) -> Result<ComposeOutput> {
-        if services.contains(&"backend") {
-            super::DockerClient::connect()
-                .await?
-                .stop_federation_worker()
-                .await?;
-            super::DockerClient::connect()
-                .await?
-                .stop_persona_worker()
-                .await?;
+        let stop_workers = services.contains(&"backend");
+        if stop_workers {
+            let docker = super::DockerClient::connect().await?;
+            for role in super::client::APP_WORKERS {
+                docker.stop_worker(role).await?;
+            }
         }
-        let services = self.application_services(services, false).await?;
         let timeout_str = timeout_secs.to_string();
-        let mut args: Vec<&str> = vec!["stop", "-t", &timeout_str];
-        args.extend_from_slice(&services);
-        self.run(&args, Duration::from_secs((timeout_secs as u64) + 60))
+        let mut args = vec!["stop", "-t", &timeout_str];
+        args.extend(
+            services
+                .iter()
+                .copied()
+                .filter(|service| !stop_workers || !super::client::APP_WORKERS.contains(service)),
+        );
+        self.run(&args, Duration::from_secs(u64::from(timeout_secs) + 60))
             .await
     }
 
     pub async fn start(&self, services: &[&str]) -> Result<ComposeOutput> {
-        let services = self.application_services(services, true).await?;
+        let services = self.application_services(services).await?;
         let mut args: Vec<&str> = vec!["start"];
         args.extend_from_slice(&services);
         self.run(&args, Duration::from_secs(120)).await
@@ -360,8 +334,8 @@ impl ComposeRunner {
         services: &[&str],
         force_recreate: bool,
     ) -> Result<ComposeOutput> {
-        let services = self.application_services(services, true).await?;
-        let mut args: Vec<&str> = vec!["up", "-d", "--no-deps"];
+        let services = self.application_services(services).await?;
+        let mut args: Vec<&str> = vec!["up", "-d", "--no-deps", "--pull", "never"];
         if force_recreate {
             args.push("--force-recreate");
         }
@@ -381,6 +355,8 @@ impl ComposeRunner {
                     "-d",
                     "--no-deps",
                     "--force-recreate",
+                    "--pull",
+                    "never",
                     "backend-volume-init",
                 ],
                 Duration::from_secs(600),
@@ -507,8 +483,24 @@ impl ComposeRunner {
     /// Used by preflight network allowlist checks — must not truncate lest we
     /// parse incomplete JSON on larger stacks.
     pub async fn config_json(&self) -> Result<serde_json::Value> {
+        self.read_config(false).await
+    }
+
+    pub(crate) async fn source_json(&self) -> Result<serde_json::Value> {
+        self.read_config(true).await
+    }
+
+    async fn read_config(&self, source: bool) -> Result<serde_json::Value> {
         let mut cmd = self.base_cmd();
         cmd.args(["config", "--format", "json"]);
+        if source {
+            cmd.args([
+                "--no-interpolate",
+                "--no-normalize",
+                "--no-path-resolution",
+                "--no-env-resolution",
+            ]);
+        }
         debug!(project = %self.project, "compose config --format json");
 
         let mut child = cmd

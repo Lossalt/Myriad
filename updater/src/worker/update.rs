@@ -1,16 +1,15 @@
 //! Normal update flow. State machine progression per spec §7.
 //! Supports release (GitHub `release.json` when present, else Docker Hub `vX.Y.Z` images)
-//! and commit (CI image tags) modes. Swap/health use `PreflightReport` digests and tags;
-//! a missing `pre.manifest` is fine for the Docker Hub release path.
+//! and commit (CI image tags) modes. Swap/health use the local image IDs selected during preflight;
+//! The selected images and Compose changes are persisted before stopping services.
 //!
 //! # Failure invariants (do not regress)
 //!
 //! 1. **After app stop**: any `Err` must go through `dispatch_update_failure` → restart app
 //!    (`PreSwap`) or full rollback (`PostSwap`).
 //! 2. **`post_swap` only after `swap_tag` Ok** — failed tag write must not snapshot-restore.
-//! 3. **`committed` immediately after health Ok** — never rollback a live healthy stack.
-//! 4. **After `committed`**: always leave job=`Succeeded` + maintenance clear; return `Ok`
-//!    even if bookkeeping I/O fails.
+//! 3. **After health Ok**: finish state writes without returning to the rollback path.
+//! 4. Durable success allows restart recovery to finish the same state writes.
 //! 5. **Preflight / maintenance entry failures**: always clear maintenance (best-effort).
 //! 6. **Rollback paths**: failed restoration keeps writers stopped and maintenance
 //!    active for explicit recovery; never start services on uncertain pgdata.
@@ -87,12 +86,20 @@ pub async fn run(
     let _ = worker.state().append_audit(&audit);
 
     if let Err(e) = rec.enter(Phase::Preflight, "updater.phase.preflight") {
-        record_preflight_failure(&worker, &rec, &e);
+        record_preflight_failure(worker.state(), &rec, &e);
         let _ = rec.finalize(JobStatus::Failed);
         let _ = crate::worker::machine::clear_maintenance(worker.state());
         return Err(e);
     }
-    let pre = match preflight::run(worker.clone(), &target, mode, risk).await {
+    let pre = match preflight::run(worker.clone(), &target, mode, risk)
+        .await
+        .and_then(|r| {
+            crate::state::atomic::write_atomic_json(
+                &worker.state().prepared_report_path(&job_id),
+                &r,
+            )?;
+            Ok(r)
+        }) {
         Ok(r) => {
             let _ = rec.finish_step_ok();
             r
@@ -100,9 +107,8 @@ pub async fn run(
         Err(e) => {
             error!(job = %job_id, err = %e, "preflight failed");
             let _ = rec.finish_step_err(format!("preflight: {e}"));
-            // Surface reason on About → update block; stop auto-install so a
-            // broken pre-check does not keep firing until the operator fixes it.
-            record_preflight_failure(&worker, &rec, &e);
+            // Surface the failure; the next scheduled attempt keeps the user preference.
+            record_preflight_failure(worker.state(), &rec, &e);
             let _ = rec.finalize(JobStatus::Failed);
             let _ = crate::worker::machine::clear_maintenance(worker.state());
             return Err(e);
@@ -162,7 +168,6 @@ pub async fn run(
         &mut flow,
         &pre,
         &target,
-        mode,
         &job_id,
     )
     .await
@@ -183,8 +188,6 @@ pub(crate) struct UpdateFlowCtx {
     snapshot_id: String,
     /// Previous MYRIAD_TAG to restore on rollback.
     from_tag: Option<String>,
-    /// Health passed and deploy was recorded — never auto-rollback after this.
-    committed: bool,
 }
 
 impl UpdateFlowCtx {
@@ -194,7 +197,6 @@ impl UpdateFlowCtx {
             post_swap: false,
             snapshot_id: String::new(),
             from_tag: None,
-            committed: false,
         }
     }
 }
@@ -204,14 +206,10 @@ impl UpdateFlowCtx {
 pub(crate) enum UpdateFailureKind {
     PreSwap(PreSwapRestoreScope),
     PostSwap,
-    /// Health already passed; log-only (do not destroy the new stack).
-    Committed,
 }
 
 pub(crate) fn classify_update_failure(flow: &UpdateFlowCtx) -> UpdateFailureKind {
-    if flow.committed {
-        UpdateFailureKind::Committed
-    } else if flow.post_swap {
+    if flow.post_swap {
         UpdateFailureKind::PostSwap
     } else {
         UpdateFailureKind::PreSwap(flow.scope)
@@ -228,31 +226,6 @@ async fn dispatch_update_failure(
 ) -> Result<()> {
     let kind = classify_update_failure(flow);
     match kind {
-        UpdateFailureKind::Committed => {
-            // Health already passed and the new stack is live. Bookkeeping errors must
-            // NOT mark the job Failed or leave maintenance up — that reads as "update
-            // failed without rollback" while the site is actually on the new version.
-            warn!(
-                err = %err,
-                "post-health bookkeeping error; treating deploy as succeeded (no rollback)"
-            );
-            let _ = rec.finish_step_err(format!("post-health bookkeeping: {err}"));
-            // Prefer Succeeded so UI/status match the running stack.
-            let _ = rec.finalize(JobStatus::Succeeded);
-            let _ = crate::worker::machine::clear_maintenance(worker.state());
-            // Same retention as a clean success: free extras now that job.current is clear.
-            worker.best_effort_prune_snapshots("update_success_bookkeeping_err");
-            let _ = worker.state().append_history(&format!(
-                "job {}: SUCCESS_WITH_BOOKKEEPING_ERR ({err})",
-                rec.job_id
-            ));
-            let _ = worker.state().append_audit(&format!(
-                "audit: update_succeeded_with_bookkeeping_err job={} err={err}",
-                rec.job_id
-            ));
-            // Stack is healthy — report Ok so callers do not treat a live deploy as failed.
-            Ok(())
-        }
         UpdateFailureKind::PostSwap => {
             let _ = rec.finish_step_err(err.to_string());
             finish_with_rollback(
@@ -287,7 +260,6 @@ async fn run_update_body(
     flow: &mut UpdateFlowCtx,
     pre: &preflight::PreflightReport,
     target: &DeployTag,
-    mode: UpdateMode,
     job_id: &str,
 ) -> Result<()> {
     // ----- Stop app -----
@@ -358,13 +330,10 @@ async fn run_update_body(
         // Postgres is back; only app containers remain down.
         flow.scope = PreSwapRestoreScope::App;
         flow.snapshot_id = snapshot_id.clone();
-        // Snapshot id is best-effort metadata — failure must not leave stack down.
-        if let Ok(mut job) = worker.state().read_job(job_id) {
-            job.snapshot_id = Some(snapshot_id);
-            if let Err(e) = worker.state().write_job(&job) {
-                warn!(err = %e, "failed to record snapshot_id on job; continuing");
-            }
-        }
+        // Recovery must know the snapshot before any new-version writer can start.
+        let mut job = worker.state().read_job(job_id)?;
+        job.snapshot_id = Some(snapshot_id);
+        worker.state().write_job(&job)?;
     }
     rec.finish_step_ok()?;
 
@@ -378,6 +347,7 @@ async fn run_update_body(
     flow.from_tag = from_tag_hint.clone();
     // Keep post_swap=false until swap_tag succeeds so a failed tag write does not
     // trigger snapshot restore (postgres stop) — only app restart via PreSwap.
+    pre.compose.install()?;
     let from_tag_backup = swap_tag(&worker, target.as_str())?;
     flow.post_swap = true;
     flow.from_tag = Some(from_tag_backup.clone());
@@ -417,85 +387,160 @@ async fn run_update_body(
         }
     }
 
+    start_and_finish(&worker, rec, compose, pre).await
+}
+
+async fn start_and_finish(
+    worker: &Arc<Worker>,
+    rec: &PhaseRecorder<'_>,
+    compose: &ComposeRunner,
+    pre: &preflight::PreflightReport,
+) -> Result<()> {
+    let target = &pre.target;
+    let job_id = &rec.job_id;
     // ----- Start new -----
     rec.enter(Phase::StartingNew, "updater.phase.starting_new")?;
-    let volume_init = compose.init_backend_volumes().await.map_err(|e| {
-        UpdaterError::Internal(anyhow::anyhow!(
-            "backend volume ownership initialization failed: {e}"
-        ))
-    })?;
-    if !volume_init.ok() {
-        return Err(UpdaterError::Internal(anyhow::anyhow!(
-            "backend volume ownership initialization failed: {}",
-            volume_init.error_summary()
-        )));
+    // Do not run migrations/initializers from a different image than preflight.
+    let model = compose.config_json().await?;
+    for (service, expected) in [
+        ("backend", &pre.backend_image_id),
+        ("frontend", &pre.frontend_image_id),
+        ("backend-volume-init", &pre.backend_image_id),
+    ] {
+        let reference = model
+            .pointer(&format!("/services/{service}/image"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| UpdaterError::Precondition(format!("missing {service} image")))?;
+        if worker.docker().image_id(reference).await? != *expected {
+            return Err(UpdaterError::Precondition(format!(
+                "{service} does not select the preflight image"
+            )));
+        }
     }
-    tracing::info!(
-        output = %volume_init.stdout_tail.trim(),
-        diagnostics = %volume_init.stderr_tail.trim(),
-        "backend volume ownership and write verification completed"
+    let already_ready = matches!(
+        probe_one_tick(worker, [&pre.backend_image_id, &pre.frontend_image_id]).await,
+        ProbeTick::HardOk { .. }
     );
-    let up = compose
-        .up_detached_recreate(&["backend", "frontend"])
-        .await
-        .map_err(|e| UpdaterError::Internal(anyhow::anyhow!("compose up new failed: {e}")))?;
-    if !up.ok() {
-        return Err(UpdaterError::Internal(anyhow::anyhow!(
-            "compose up new failed: {}",
-            up.error_summary()
-        )));
+    if !already_ready {
+        let volume_init = compose.init_backend_volumes().await.map_err(|e| {
+            UpdaterError::Internal(anyhow::anyhow!(
+                "backend volume ownership initialization failed: {e}"
+            ))
+        })?;
+        if !volume_init.ok() {
+            return Err(UpdaterError::Internal(anyhow::anyhow!(
+                "backend volume ownership initialization failed: {}",
+                volume_init.error_summary()
+            )));
+        }
+        tracing::info!(
+            output = %volume_init.stdout_tail.trim(),
+            diagnostics = %volume_init.stderr_tail.trim(),
+            "backend volume ownership and write verification completed"
+        );
+        let up = compose
+            .up_detached_recreate(&["backend", "frontend"])
+            .await
+            .map_err(|e| UpdaterError::Internal(anyhow::anyhow!("compose up new failed: {e}")))?;
+        if !up.ok() {
+            return Err(UpdaterError::Internal(anyhow::anyhow!(
+                "compose up new failed: {}",
+                up.error_summary()
+            )));
+        }
     }
     rec.finish_step_ok()?;
 
     // ----- Health -----
     rec.enter(Phase::HealthProbing, "updater.phase.health_probing")?;
     let deadline = Duration::from_secs(300u64.max((pre.estimated_seconds as u64) * 3));
-    // Preserve original error text so is_health_probe_failure still matches.
-    health_probe_phased(&worker, target, deadline).await?;
+    health_probe(
+        worker,
+        target,
+        [&pre.backend_image_id, &pre.frontend_image_id],
+        deadline,
+    )
+    .await?;
 
-    // CRITICAL: mark committed immediately after health OK, *before* any state
-    // writes. A finish_step_ok / write_updater failure must not trigger rollback
-    // of a live, healthy new stack.
-    flow.committed = true;
-    let _ = rec.finish_step_ok();
-
-    let _ = rec.enter(Phase::SwappingProxy, "updater.phase.swapping_proxy");
-    match worker.state().read_updater() {
-        Ok(mut st) => {
-            record_successful_deploy(&mut st, target.clone(), pre.target_commit_sha.clone());
-            if let Err(e) = worker.state().write_updater(&st) {
-                warn!(err = %e, "write updater state after health ok failed; continuing finalize");
+    // The selected stack is healthy. Retry only bookkeeping; never restore old
+    // data because a state write was temporarily unavailable.
+    loop {
+        match finish_successful_deploy(worker.state(), &rec.job_id, pre.target_commit_sha.clone()) {
+            Ok(()) => break,
+            Err(error) => {
+                warn!(%error, "deployment is healthy; retrying finalization");
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
-        Err(e) => {
-            warn!(err = %e, "read updater state after health ok failed; continuing finalize");
-        }
-    }
-    let _ = rec.finish_step_ok();
-
-    let _ = rec.enter(Phase::Finalize, "updater.phase.finalize");
-    let _ = rec.finish_step_ok();
-    // After health OK we NEVER return Err: stack is live on the new tag.
-    // Bookkeeping failures are logged; job is forced Succeeded and maintenance cleared.
-    if let Err(e) = rec.finalize(JobStatus::Succeeded) {
-        warn!(err = %e, "finalize Succeeded failed after healthy deploy (forcing clear)");
-    }
-    if let Err(e) = crate::worker::machine::clear_maintenance(worker.state()) {
-        warn!(err = %e, "clear_maintenance failed after healthy deploy");
     }
     // Prune *after* clearing job.current so the just-created snapshot counts
     // toward keep_n (not as an extra in-use slot outside the limit).
     worker.best_effort_prune_snapshots("update_success");
     let _ = worker
         .state()
-        .append_history(&format!("job {job_id}: SUCCESS {target} ({mode})"));
+        .append_history(&format!("job {job_id}: SUCCESS {target}"));
     let _ = worker.state().append_audit(&format!(
-        "audit: update_succeeded job={job_id} target={} mode={}",
+        "audit: update_succeeded job={job_id} target={}",
         target.as_str(),
-        mode.as_str()
     ));
-    info!(job = %job_id, %target, ?mode, "update succeeded");
+    info!(job = %job_id, %target, "update succeeded");
     Ok(())
+}
+
+/// Restart at the first repeatable operation after the tag switch. Never take a
+/// second snapshot of a database that may already have run the new migrations.
+pub async fn resume(worker: Arc<Worker>, job_id: &str, rollback: bool) -> Result<()> {
+    let mut job = worker.state().read_job(job_id)?;
+    if job.kind == crate::state::JobKind::Rollback {
+        return rollback::run(
+            worker.clone(),
+            job_id.into(),
+            job.snapshot_id.unwrap_or_default(),
+            None,
+        )
+        .await;
+    }
+    job.status = JobStatus::Running;
+    job.finished_at = None;
+    worker.state().write_job(&job)?;
+    let rec = PhaseRecorder {
+        state: worker.state(),
+        job_id: job_id.into(),
+        from_version: job.from_version.clone(),
+        to_version: job.to_version.clone(),
+    };
+    let compose = build_compose_runner(&worker).await?;
+    let snap = SnapshotManager {
+        state: worker.state(),
+        pgdata: worker.cli().pgdata.clone(),
+    };
+    let path = worker.state().prepared_report_path(job_id);
+    // v0.5.3 did not persist preflight results. Recover that interrupted update
+    // with its existing snapshot instead; remove after the first refactor release.
+    let error = if !rollback && path.try_exists()? {
+        let attempt = async {
+            let pre: preflight::PreflightReport = serde_json::from_slice(&std::fs::read(path)?)?;
+            pre.compose.install()?;
+            start_and_finish(&worker, &rec, &compose, &pre).await
+        }
+        .await;
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        }
+    } else {
+        UpdaterError::Precondition("resuming interrupted rollback".into())
+    };
+    finish_with_rollback(
+        &worker,
+        &rec,
+        &compose,
+        &snap,
+        job.snapshot_id.as_deref().unwrap_or(""),
+        job.from_version.as_ref().map(|v| v.as_str()),
+        error,
+    )
+    .await
 }
 
 /// Pin both backend and frontend `:{previous_tag}` images as `*:myriad-rollback`.
@@ -616,6 +661,48 @@ async fn heal_rollback_pair_from_version(
     Ok(())
 }
 
+pub(crate) fn restore_compose(state: &crate::state::StateDir, job_id: &str) -> Result<()> {
+    let path = state.prepared_report_path(job_id);
+    if let Some(bytes) = crate::state::read_existing(&path)? {
+        let pre: preflight::PreflightReport = serde_json::from_slice(&bytes)?;
+        pre.compose.restore()?;
+    }
+    Ok(())
+}
+
+/// Used by the live flow and startup recovery after durable success.
+pub(crate) fn finish_successful_deploy(
+    state: &crate::state::StateDir,
+    job_id: &str,
+    commit_sha: Option<String>,
+) -> Result<()> {
+    let mut job = state.read_job(job_id)?;
+    let target = job
+        .to_version
+        .clone()
+        .ok_or_else(|| UpdaterError::State("successful update has no target".into()))?;
+    if job.status != JobStatus::Succeeded {
+        if let Some(step) = job.steps.last_mut() {
+            step.finish_ok();
+        }
+        let mut step = crate::state::JobStep::start(Phase::Finalize);
+        step.finish_ok();
+        job.steps.push(step);
+        job.status = JobStatus::Succeeded;
+        job.finished_at = Some(Utc::now());
+        state.write_job(&job)?;
+    }
+    let mut current = state.read_updater()?;
+    let commit_sha = commit_sha.or_else(|| {
+        (current.current_version.as_ref() == Some(&target))
+            .then(|| current.current_commit_sha.clone())
+            .flatten()
+    });
+    record_successful_deploy(&mut current, target, commit_sha);
+    state.write_updater(&current)?;
+    crate::worker::machine::clear_maintenance(state)
+}
+
 fn record_successful_deploy(
     state: &mut UpdaterStateFile,
     target: DeployTag,
@@ -713,8 +800,11 @@ async fn finish_pre_swap_failure(
         rec.job_id
     ));
 
-    let mut restore_err: Option<String> = None;
+    let mut restore_err = restore_compose(worker.state(), &rec.job_id)
+        .err()
+        .map(|e| e.to_string());
     match compose {
+        _ if restore_err.is_some() => {}
         Some(c) => {
             if let Err(e) = restore_previous_stack(worker, c, scope).await {
                 error!(err = %e, "pre-swap stack restore failed");
@@ -792,81 +882,8 @@ async fn finish_with_rollback(
     from_tag: Option<&str>,
     original_err: UpdaterError,
 ) -> Result<()> {
-    // Health-probe false negatives used to destroy a working stack via rollback.
-    // Before any destructive step, re-check with the hardened multi-path probe under
-    // soft-pass timing (treat elapsed as already past soft threshold).
-    if is_health_probe_failure(&original_err)
-        && let Some(target) = rec.to_version.clone()
-    {
-        info!(
-            err = %original_err,
-            target = %target,
-            "health failure: re-checking before destructive rollback"
-        );
-        // Force soft-pass window open (90s+) for this recheck; prefer live frontend via proxy.
-        // Recheck must be *stricter* than the main loop: only HardOk skips rollback.
-        // SoftOk (proxy-down, maintenance HTML, dual-image warm) used to mark SUCCESS
-        // after a real probe timeout and leave a broken site without rollback.
-        let recheck = probe_one_tick(
-            worker,
-            &target,
-            Duration::from_secs(120),
-            FrontendProbe::LiveViaProxy,
-        )
-        .await;
-        match recheck {
-            ProbeTick::HardOk { detail, pass_kind } => {
-                warn!(
-                    %detail,
-                    %pass_kind,
-                    target = %target,
-                    "health re-check HardOk after timeout — treating update as SUCCESS \
-                     (skipping rollback). Original probe was a false negative."
-                );
-                // Best-effort bookkeeping only — stack is already live.
-                let _ = rec.enter(Phase::SwappingProxy, "updater.phase.swapping_proxy");
-                if let Ok(mut st) = worker.state().read_updater() {
-                    // Recheck path has no PreflightReport; preserve commit only when
-                    // we already recorded this exact target (false-negative after success bookkeeping).
-                    let commit = if st.current_version.as_ref() == Some(&target) {
-                        st.current_commit_sha.clone()
-                    } else {
-                        None
-                    };
-                    record_successful_deploy(&mut st, target.clone(), commit);
-                    let _ = worker.state().write_updater(&st);
-                }
-                let _ = rec.finish_step_ok();
-                let _ = rec.enter(Phase::Finalize, "updater.phase.finalize");
-                let _ = rec.finish_step_ok();
-                let _ = rec.finalize(JobStatus::Succeeded);
-                let _ = crate::worker::machine::clear_maintenance(worker.state());
-                worker.best_effort_prune_snapshots("update_success_health_recheck");
-                let _ = worker.state().append_history(&format!(
-                    "job {}: SUCCESS after health false-negative recheck ({target}); \
-                         original_probe_err={original_err}",
-                    rec.job_id
-                ));
-                return Ok(());
-            }
-            ProbeTick::SoftOk { detail, pass_kind } => {
-                warn!(
-                    %detail,
-                    %pass_kind,
-                    "health re-check only SoftOk after timeout; refusing false success — rolling back"
-                );
-            }
-            ProbeTick::NotReady { detail } => {
-                warn!(
-                    %detail,
-                    "health re-check still not ready; proceeding with rollback"
-                );
-            }
-        }
-    }
-
-    // Health probe may have set maintenance.active=false; re-enter so proxy shows
-    // maintenance during destructive rollback and crash recovery can see us.
+    // Preserve maintenance throughout destructive rollback, including recovery
+    // of jobs created by an older updater that probed with maintenance disabled.
     if let Ok(mut m) = worker.state().read_maintenance()
         && !m.active
     {
@@ -955,53 +972,22 @@ async fn finish_with_rollback(
     }
 }
 
-fn is_health_probe_failure(err: &UpdaterError) -> bool {
-    let s = err.to_string();
-    s.contains("health probe") || s.contains("health:")
-}
-
-/// Persist preflight failure for the About-page update block and turn off
-/// auto-install so a hard pre-check failure cannot loop on the next tick.
-fn record_preflight_failure(worker: &Worker, rec: &PhaseRecorder<'_>, err: &UpdaterError) {
-    if let Ok(mut st) = worker.state().read_updater() {
-        let was_auto = st.auto_install;
-        let reason = if was_auto {
-            format!("preflight: {err} (auto-update disabled)")
-        } else {
-            format!("preflight: {err}")
-        };
-        st.last_failed_update = Some(crate::state::FailedUpdate {
+/// Keep the failure visible without changing the user's update preference.
+fn record_preflight_failure(
+    store: &crate::state::StateDir,
+    rec: &PhaseRecorder<'_>,
+    err: &UpdaterError,
+) {
+    if let Ok(mut state) = store.read_updater() {
+        state.last_failed_update = Some(crate::state::FailedUpdate {
             from_version: rec.from_version.clone(),
             to_version: rec.to_version.clone(),
             at: Utc::now(),
-            reason: reason.clone(),
+            reason: format!("preflight: {err}"),
             job_id: rec.job_id.clone(),
         });
-        if was_auto {
-            st.auto_install = false;
-        }
-        if let Err(e) = worker.state().write_updater(&st) {
-            warn!(err = %e, "preflight failure: write_updater failed");
-            return;
-        }
-        if was_auto {
-            info!(
-                job = %rec.job_id,
-                "preflight failed: auto_install disabled"
-            );
-            let _ = worker.state().append_history(&format!(
-                "job {}: PREFLIGHT_FAIL auto_install=off reason={reason}",
-                rec.job_id
-            ));
-            let _ = worker.state().append_audit(&format!(
-                "audit: preflight_failed_auto_install_off job={} reason={reason}",
-                rec.job_id
-            ));
-        } else {
-            let _ = worker.state().append_history(&format!(
-                "job {}: PREFLIGHT_FAIL reason={reason}",
-                rec.job_id
-            ));
+        if let Err(error) = store.write_updater(&state) {
+            warn!(%error, "cannot record preflight failure");
         }
     }
 }
@@ -1076,89 +1062,20 @@ fn swap_tag(worker: &Arc<Worker>, new_tag: &str) -> Result<String> {
     Ok(prev)
 }
 
-/// Two-phase health probe after starting new backend/frontend.
+/// Private health probe after starting new backend/frontend.
 ///
-/// 1. **Backend-only** (maintenance still active): direct `http://backend:1103/health`
-///    so DB/migrations/version identity is verified without relying on proxy.
-/// 2. **Lift maintenance** (keep job id) so proxy serves real frontend HTML.
-/// 3. **Live frontend** via `http://proxy:80/`: prefer `myriad-version` / commit meta.
-///    Soft ticks (image-tag lag, proxy-down) are degraded only — they never
-///    complete the wait.
-///
-/// No Docker exec / probe containers. Needs **2** consecutive OK ticks per phase.
-async fn health_probe_phased(
+/// Keep public maintenance active until both images and their local healthchecks
+/// pass. Frontend health is observed through Docker, so no public bypass or new
+/// proxy protocol is required for older deployments.
+async fn health_probe(
     worker: &Arc<Worker>,
     target: &DeployTag,
+    images: [&str; 2],
     deadline: Duration,
 ) -> Result<()> {
     let start = std::time::Instant::now();
-    // Spec §11.3 initial wait before first probe.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    // Phase 1 — backend hard identity while users still see maintenance page.
-    let phase1_budget = deadline.mul_f32(0.55).max(Duration::from_secs(60));
-    run_probe_loop(
-        worker,
-        target,
-        start,
-        phase1_budget,
-        FrontendProbe::BackendOnly,
-        "phase1_backend",
-    )
-    .await?;
-
-    // Lift maintenance so proxy forwards to real frontend (keep job/phase for rollback).
-    deactivate_maintenance_for_frontend_probe(worker.state())?;
-    info!(
-        target = %target,
-        "health: maintenance inactive for live frontend probe via proxy"
-    );
-    let _ = worker.state().append_history(&format!(
-        "health: lift maintenance for frontend probe (target={})",
-        target.as_str()
-    ));
-
-    // Brief settle so proxy cache of maintenance.json expires (proxy caches ~1s).
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    let remaining = deadline.saturating_sub(start.elapsed());
-    if remaining < Duration::from_secs(20) {
-        return Err(UpdaterError::Precondition(format!(
-            "health probe: insufficient time left for frontend phase ({}s)",
-            remaining.as_secs()
-        )));
-    }
-
-    run_probe_loop(
-        worker,
-        target,
-        start,
-        deadline,
-        FrontendProbe::LiveViaProxy,
-        "phase2_frontend",
-    )
-    .await
-}
-
-/// Set `active=false` without clearing job id so rollback can re-enter maintenance.
-fn deactivate_maintenance_for_frontend_probe(state: &crate::state::StateDir) -> Result<()> {
-    let mut m = state.read_maintenance()?;
-    m.active = false;
-    m.message_key = "updater.phase.health_probing_live".into();
-    m.bump_heartbeat();
-    state.write_maintenance(&m)?;
-    Ok(())
-}
-
-async fn run_probe_loop(
-    worker: &Arc<Worker>,
-    target: &DeployTag,
-    start: std::time::Instant,
-    deadline: Duration,
-    mode: FrontendProbe,
-    phase_label: &str,
-) -> Result<()> {
     const OK_STREAK_NEED: u32 = 2;
+    let phase_label = "private_health";
 
     let mut ok_streak = 0u32;
     let mut last_diag = String::new();
@@ -1169,7 +1086,7 @@ async fn run_probe_loop(
         attempts += 1;
         let elapsed = start.elapsed();
 
-        let tick = probe_one_tick(worker, target, elapsed, mode).await;
+        let tick = probe_one_tick(worker, images).await;
         let diag = match &tick {
             ProbeTick::HardOk { detail, pass_kind } => {
                 ok_streak += 1;
@@ -1190,23 +1107,6 @@ async fn run_probe_loop(
                     return Ok(());
                 }
                 format!("hard ok streak={ok_streak}/{OK_STREAK_NEED} kind={pass_kind} {detail}")
-            }
-            ProbeTick::SoftOk { detail, pass_kind } => {
-                ok_streak = 0;
-                warn!(
-                    target = %target,
-                    phase = phase_label,
-                    pass_kind = %pass_kind,
-                    attempts,
-                    elapsed_s = elapsed.as_secs(),
-                    detail = %detail,
-                    "health probe degraded (soft); not counting as recovery success"
-                );
-                let _ = worker.state().append_history(&format!(
-                    "health: degraded phase={phase_label} kind={pass_kind} target={} detail={detail}",
-                    target.as_str()
-                ));
-                format!("degraded kind={pass_kind} {detail}")
             }
             ProbeTick::NotReady { detail } => {
                 ok_streak = 0;
@@ -1233,21 +1133,8 @@ async fn run_probe_loop(
     )))
 }
 
-/// Whether this tick must verify real frontend HTML via proxy (post-maintenance).
-#[derive(Debug, Clone, Copy)]
-enum FrontendProbe {
-    /// Maintenance may still be active — only backend HTTP + image/running matter.
-    BackendOnly,
-    /// Maintenance lifted — proxy must serve real frontend (meta preferred).
-    LiveViaProxy,
-}
-
 enum ProbeTick {
     HardOk {
-        detail: String,
-        pass_kind: &'static str,
-    },
-    SoftOk {
         detail: String,
         pass_kind: &'static str,
     },
@@ -1256,68 +1143,34 @@ enum ProbeTick {
     },
 }
 
-/// Soft ticks never complete a wait. Only HardOk may.
-#[cfg(test)]
-fn probe_tick_completes_job(tick: &ProbeTick) -> bool {
-    matches!(tick, ProbeTick::HardOk { .. })
-}
-
-async fn probe_one_tick(
-    worker: &Arc<Worker>,
-    target: &DeployTag,
-    elapsed: Duration,
-    mode: FrontendProbe,
-) -> ProbeTick {
-    match worker.docker().federation_worker_healthy().await {
+async fn probe_one_tick(worker: &Arc<Worker>, images: [&str; 2]) -> ProbeTick {
+    match worker.docker().workers_healthy().await {
         Ok(true) => {}
         Ok(false) => {
             return ProbeTick::NotReady {
-                detail: "federation worker health/image not ready".into(),
+                detail: "worker health/image not ready".into(),
             };
         }
         Err(error) => {
             return ProbeTick::NotReady {
-                detail: format!("federation worker probe: {error}"),
+                detail: format!("worker probe: {error}"),
             };
         }
     }
-    match worker.docker().persona_worker_healthy().await {
-        Ok(true) => {}
-        Ok(false) => {
-            return ProbeTick::NotReady {
-                detail: "persona worker health/image not ready".into(),
-            };
-        }
-        Err(error) => {
-            return ProbeTick::NotReady {
-                detail: format!("persona worker probe: {error}"),
-            };
-        }
-    }
-    const LOOSE_FRONTEND_AFTER: Duration = Duration::from_secs(45);
-
     let docker = worker.docker();
-    let backend_running = docker.is_running("myriad-backend").await.unwrap_or(false)
-        || docker.is_running("backend").await.unwrap_or(false);
-    let frontend_running = docker.is_running("myriad-frontend").await.unwrap_or(false)
-        || docker.is_running("frontend").await.unwrap_or(false);
-
-    let backend_image = match docker.container_image_ref("myriad-backend").await {
-        Ok(s) if !s.is_empty() => s,
-        _ => docker
-            .container_image_ref("backend")
-            .await
-            .unwrap_or_default(),
-    };
-    let frontend_image = match docker.container_image_ref("myriad-frontend").await {
-        Ok(s) if !s.is_empty() => s,
-        _ => docker
-            .container_image_ref("frontend")
-            .await
-            .unwrap_or_default(),
-    };
-    let backend_img_ok = image_ref_matches_target(&backend_image, target);
-    let frontend_img_ok = image_ref_matches_target(&frontend_image, target);
+    for (name, image) in ["myriad-backend", "myriad-frontend"]
+        .into_iter()
+        .zip(images)
+    {
+        match docker.container_ready(name, image).await {
+            Ok(true) => (),
+            other => {
+                return ProbeTick::NotReady {
+                    detail: format!("{name}: expected image {image}, health={other:?}"),
+                };
+            }
+        }
+    }
 
     let be = docker
         .http_probe("http://backend:1103/health", Duration::from_secs(10))
@@ -1326,16 +1179,14 @@ async fn probe_one_tick(
         Ok(v) => v,
         Err(e) => {
             return ProbeTick::NotReady {
-                detail: format!(
-                    "backend unreachable ({e}); running={backend_running} image={backend_image}"
-                ),
+                detail: format!("backend unreachable ({e})"),
             };
         }
     };
     if be_code != 200 {
         return ProbeTick::NotReady {
             detail: format!(
-                "backend HTTP {be_code}: {} | running={backend_running} image={backend_image}",
+                "backend HTTP {be_code}: {}",
                 be_body
                     .chars()
                     .take(120)
@@ -1360,208 +1211,19 @@ async fn probe_one_tick(
     // New backends only start after a real uid-1000 storage write probe.
     let storage = backend_storage_writable(&json);
     let routes = backend_routes_full(&json);
-    let version_ok =
-        target.matches_runtime_version(version) || commit_matches_target(target, commit_sha);
-    let backend_identity_ok = version_ok || backend_img_ok;
-
     if !backend_business_ready(&json) {
         return ProbeTick::NotReady {
             detail: format!(
                 "backend up but db_connected={db} migrations_applied={mig} routes_full={routes} \
-                 storage_writable={storage} version={version:?} commit={commit_sha:?} image={backend_image}"
+                 storage_writable={storage} version={version:?} commit={commit_sha:?}"
             ),
         };
     }
 
-    // --- Phase 1: backend only ---
-    if matches!(mode, FrontendProbe::BackendOnly) {
-        if backend_identity_ok {
-            return ProbeTick::HardOk {
-                pass_kind: "hard_backend",
-                detail: format!(
-                    "backend identity ok version={version:?} commit={commit_sha:?} \
-                     be_img_ok={backend_img_ok} fe_running={frontend_running} fe_img_ok={frontend_img_ok}"
-                ),
-            };
-        }
-        if backend_running && backend_img_ok {
-            return ProbeTick::SoftOk {
-                pass_kind: "soft_backend_image",
-                detail: format!(
-                    "backend running+image tag; version stamp weak version={version:?} want={}",
-                    target.as_str()
-                ),
-            };
-        }
-        return ProbeTick::NotReady {
-            detail: format!(
-                "backend identity incomplete: version={version:?} commit={commit_sha:?} \
-                 ver_ok={version_ok} be_img_ok={backend_img_ok} want={}",
-                target.as_str()
-            ),
-        };
+    match docker.http_probe("http://proxy:80/healthz", Duration::from_secs(5)).await {
+        Ok((200, _)) => ProbeTick::HardOk { detail: "target images, local healthchecks, backend readiness and proxy liveness verified; maintenance retained".into(), pass_kind: "private_health" },
+        other => ProbeTick::NotReady { detail: format!("proxy liveness: {other:?}") },
     }
-
-    // --- Phase 2: live frontend via proxy (maintenance inactive) ---
-    // Updater is on admin-net; proxy is dual-homed — do not use frontend:1102.
-    let fe = docker
-        .http_probe("http://proxy:80/", Duration::from_secs(10))
-        .await;
-    let (fe_code, fe_body) = match fe {
-        Ok(v) => v,
-        Err(e) => {
-            if backend_identity_ok && backend_running && frontend_img_ok && frontend_running {
-                return ProbeTick::SoftOk {
-                    pass_kind: "soft_backend_fe_img_proxy_down",
-                    detail: format!(
-                        "backend OK but proxy unreachable ({e}); \
-                         fe_running={frontend_running} image={frontend_image}"
-                    ),
-                };
-            }
-            return ProbeTick::NotReady {
-                detail: format!(
-                    "frontend via proxy unreachable ({e}); backend identity ok={backend_identity_ok}"
-                ),
-            };
-        }
-    };
-
-    let looks_like_maintenance = fe_body.contains("更新维护中")
-        || fe_body.contains("maintenance")
-        || fe_body.contains("updater.phase");
-    let fe_html_ok = fe_code == 200
-        && !looks_like_maintenance
-        && (fe_body.contains("<html")
-            || fe_body.contains("<!DOCTYPE")
-            || fe_body.contains("myriad")
-            || !fe_body.is_empty());
-    let fe_meta_ok = fe_code == 200
-        && !looks_like_maintenance
-        && (fe_body.contains(&format!(
-            r#"name="myriad-version" content="{}""#,
-            target.as_str()
-        )) || frontend_meta_matches(&fe_body, target));
-
-    // Hard: real page meta, or image match + non-maintenance HTML after grace.
-    let frontend_hard_ok = fe_meta_ok
-        || (elapsed >= LOOSE_FRONTEND_AFTER
-            && fe_html_ok
-            && frontend_img_ok
-            && backend_identity_ok);
-
-    if backend_identity_ok && frontend_hard_ok {
-        let pass_kind = if fe_meta_ok {
-            "hard_fe_meta"
-        } else {
-            "hard_fe_html_image"
-        };
-        return ProbeTick::HardOk {
-            pass_kind,
-            detail: format!(
-                "version={version:?} commit={commit_sha:?} \
-                 be_img_ok={backend_img_ok} fe_meta_ok={fe_meta_ok} fe_img_ok={frontend_img_ok} \
-                 fe_code={fe_code} maint_html={looks_like_maintenance}"
-            ),
-        };
-    }
-
-    // Soft: containers + DB + both image tags; page may still be warming.
-    // Must NOT accept maintenance HTML as SoftOk — that path used to false-pass recheck
-    // and skip rollback while the site still served the maintenance page.
-    if db
-        && mig
-        && backend_running
-        && frontend_running
-        && backend_img_ok
-        && frontend_img_ok
-        && fe_html_ok
-        && !looks_like_maintenance
-    {
-        return ProbeTick::SoftOk {
-            pass_kind: "soft_dual_image",
-            detail: format!(
-                "running+db+image tags+non-maint HTML; fe_meta_ok={fe_meta_ok} \
-                 version={version:?} want={}",
-                target.as_str()
-            ),
-        };
-    }
-
-    ProbeTick::NotReady {
-        detail: format!(
-            "frontend identity incomplete: version={version:?} commit={commit_sha:?} \
-             ver_ok={version_ok} be_img_ok={backend_img_ok} fe_code={fe_code} \
-             fe_meta_ok={fe_meta_ok} fe_img_ok={frontend_img_ok} maint_html={looks_like_maintenance} \
-             want={}",
-            target.as_str()
-        ),
-    }
-}
-
-/// True when container image ref is clearly the target deploy tag
-/// (`…:dev-abc1234` or `…:v1.2.3`).
-fn image_ref_matches_target(image_ref: &str, target: &DeployTag) -> bool {
-    if image_ref.is_empty() {
-        return false;
-    }
-    let tag = target.as_str();
-    // Exact tag suffix: repo:tag or registry/repo:tag
-    if image_ref.ends_with(&format!(":{tag}")) || image_ref.ends_with(&format!("/{tag}")) {
-        return true;
-    }
-    // Digest-only refs cannot prove tag; still allow short sha substring for commit tags.
-    if let Some(sha) = target.commit_sha()
-        && image_ref.contains(sha)
-    {
-        return true;
-    }
-    image_ref.contains(tag)
-}
-
-fn frontend_meta_matches(html: &str, target: &DeployTag) -> bool {
-    // Parse content="..." of myriad-version meta loosely.
-    let marker = r#"name="myriad-version" content=""#;
-    if let Some(idx) = html.find(marker) {
-        let rest = &html[idx + marker.len()..];
-        if let Some(end) = rest.find('"') {
-            let reported = &rest[..end];
-            if target.matches_runtime_version(reported) {
-                return true;
-            }
-        }
-    }
-    // Also accept myriad-commit meta matching the target sha (commit-mode stamps).
-    if let Some(sha) = target.commit_sha() {
-        let marker = r#"name="myriad-commit" content=""#;
-        if let Some(idx) = html.find(marker) {
-            let rest = &html[idx + marker.len()..];
-            if let Some(end) = rest.find('"') {
-                let reported = &rest[..end];
-                if reported.starts_with(sha) || sha.starts_with(reported) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn commit_matches_target(target: &DeployTag, commit_sha: Option<&str>) -> bool {
-    let Some(want) = target.commit_sha() else {
-        return false;
-    };
-    let Some(got) = commit_sha.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    // Full or prefix either way (short tag vs full stamp).
-    got.eq_ignore_ascii_case(want)
-        || got
-            .to_ascii_lowercase()
-            .starts_with(&want.to_ascii_lowercase())
-        || want
-            .to_ascii_lowercase()
-            .starts_with(&got.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -1570,64 +1232,29 @@ mod health_match_tests {
     use crate::version::DeployTag;
 
     #[test]
-    fn commit_sha_matches_short_target() {
-        let t = DeployTag::parse("dev-133d1bb").unwrap();
-        assert!(commit_matches_target(
-            &t,
-            Some("133d1bb0123456789abcdef0123456789abcdef0")
-        ));
-        assert!(commit_matches_target(&t, Some("133d1bb")));
-        assert!(!commit_matches_target(&t, Some("deadbeef")));
-        assert!(!commit_matches_target(&t, None));
-    }
-
-    #[test]
-    fn frontend_meta_matches_version_and_commit() {
-        let t = DeployTag::parse("dev-133d1bb").unwrap();
-        let html = r#"<meta name="myriad-version" content="dev-133d1bb0123456789abcdef0123456789abcdef0" />"#;
-        assert!(frontend_meta_matches(html, &t));
-        let html2 =
-            r#"<meta name="myriad-commit" content="133d1bb0123456789abcdef0123456789abcdef0" />"#;
-        assert!(frontend_meta_matches(html2, &t));
-    }
-
-    #[test]
-    fn image_ref_matches_tag_suffix_and_sha() {
-        let t = DeployTag::parse("dev-133d1bb").unwrap();
-        assert!(image_ref_matches_target(
-            "docker.io/somekawahitomi/myriad-backend:dev-133d1bb",
-            &t
-        ));
-        assert!(image_ref_matches_target(
-            "somekawahitomi/myriad-backend:dev-133d1bb",
-            &t
-        ));
-        assert!(!image_ref_matches_target(
-            "docker.io/somekawahitomi/myriad-backend:v0.2.2",
-            &t
-        ));
-        let r = DeployTag::parse("v0.2.2").unwrap();
-        assert!(image_ref_matches_target(
-            "docker.io/x/myriad-backend:v0.2.2",
-            &r
-        ));
-    }
-
-    #[test]
-    fn soft_ok_never_completes_probe_wait() {
-        let soft = ProbeTick::SoftOk {
-            detail: "proxy down".into(),
-            pass_kind: "soft_backend_fe_img_proxy_down",
+    fn preflight_failure_keeps_auto_install_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::state::StateDir::open(dir.path()).unwrap();
+        state
+            .write_updater(&UpdaterStateFile {
+                auto_install: true,
+                ..Default::default()
+            })
+            .unwrap();
+        let rec = PhaseRecorder {
+            state: &state,
+            job_id: "attempt".into(),
+            from_version: None,
+            to_version: DeployTag::parse("v1.2.3").ok(),
         };
-        let hard = ProbeTick::HardOk {
-            detail: "ok".into(),
-            pass_kind: "hard_backend",
-        };
-        assert!(!probe_tick_completes_job(&soft));
-        assert!(probe_tick_completes_job(&hard));
-        assert!(!probe_tick_completes_job(&ProbeTick::NotReady {
-            detail: "down".into()
-        }));
+        record_preflight_failure(
+            &state,
+            &rec,
+            &UpdaterError::Docker("registry unavailable".into()),
+        );
+        let saved = state.read_updater().unwrap();
+        assert!(saved.auto_install);
+        assert_eq!(saved.last_failed_update.unwrap().job_id, "attempt");
     }
 
     #[test]
@@ -1700,40 +1327,5 @@ mod health_match_tests {
         );
         flow.post_swap = true;
         assert_eq!(classify_update_failure(&flow), UpdateFailureKind::PostSwap);
-        // committed wins over post_swap — never destroy a healthy stack
-        flow.committed = true;
-        assert_eq!(classify_update_failure(&flow), UpdateFailureKind::Committed);
-    }
-
-    #[test]
-    fn health_probe_failure_detector_matches_probe_errors() {
-        let e = UpdaterError::Precondition("health probe exceeded 300s".into());
-        assert!(is_health_probe_failure(&e));
-        let e2 = UpdaterError::Precondition("health: backend not ready".into());
-        assert!(is_health_probe_failure(&e2));
-        let e3 = UpdaterError::Internal(anyhow::anyhow!("compose up new failed"));
-        assert!(!is_health_probe_failure(&e3));
-    }
-
-    #[test]
-    fn soft_dual_image_rejects_maintenance_html() {
-        // Mirrors the SoftOk gate: maintenance page must not count as soft success.
-        let looks_like_maintenance = true;
-        let fe_html_ok = false; // fe_html_ok requires !looks_like_maintenance
-        assert!(!fe_html_ok || looks_like_maintenance);
-        let looks_like_maintenance = false;
-        let fe_html_ok = true;
-        assert!(fe_html_ok && !looks_like_maintenance);
-    }
-
-    #[test]
-    fn recheck_accepts_only_hard_ok_variants() {
-        // Document the recheck contract: SoftOk must not skip rollback.
-        fn recheck_skips_rollback(tick: &str) -> bool {
-            matches!(tick, "hard")
-        }
-        assert!(recheck_skips_rollback("hard"));
-        assert!(!recheck_skips_rollback("soft"));
-        assert!(!recheck_skips_rollback("not_ready"));
     }
 }

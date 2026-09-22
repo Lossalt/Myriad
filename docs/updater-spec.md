@@ -11,16 +11,23 @@ tag，而不是并行保留 A/B 两套在线分区。
 
 ## 0. 设计原则
 
-按优先级排序，冲突时按顺序优先：
+1. 下载和检查在停机前完成；检查失败不改变正在运行的部署，也不关闭用户的自动更新设置。
+2. 用实际运行镜像和健康状态判断结果，成功记录负责重启后的收尾。HTTP 受理响应不代表更新完成。
+3. 数据快照和恢复必须在数据库写入者停止后执行。更新失败自动恢复旧版本，并检查恢复结果。
+4. 以当前已发布版本为升级兼容基线。兼容转换自动执行，过渡代码注明下一版移除，避免长期维护多条更新流程。
 
-1. **绝不破坏用户数据**：宁可卡在维护模式让用户求救，也不能丢/损坏 pgdata。
-2. **绝不进入不可恢复态**：每一步都要可逆，或在不可逆前 force-stop。
-3. **可断电恢复**：任何时刻断电，重启后 updater 能从持久化状态续上。
-4. **配置容忍**：不假设 .env / compose 文件结构稳定，按 schema 解析+合并。
-5. **零外部依赖**：除 GitHub 之外，所有外部依赖都是可选的。
-6. **观测优先**：出问题时用户/外部工程师能立刻看到"卡在哪一步、上一步做了啥、下一步要做啥"。
+### 本次重构的升级兼容
 
-`updater` 被设计为"近一次性发布的基础设施"——可能数年不更新。每一处异常都必须显式处理，不依赖"下个版本修一下"。
+兼容基线为已发布的 v0.5.3。保留其 Compose、状态文件和 HTTP 请求格式；升级不要求用户编辑部署文件。测试中的 v0.5.3 Compose 是该发布标签的原文件，不能随当前模板一起改写。
+
+以下过渡逻辑在本次改动发布后的下一版移除：
+
+- v0.5.3 Guard 在写入受理状态前返回 HTTP 响应。新版 updater 在后台等待它写出新记录，期间保持更新互斥；新版 Guard 在响应中确认状态已写入，直接走异步流程。
+- v0.5.3 proxy 接口同步等待结果，替换期间可能丢失响应。页面沿用旧版 90 分钟的结果观察窗口，使用同一个状态轮询等待新结果；组件返回的 `scheduled` 缺失不会被当成错误。
+- 旧 Guard 的恢复 helper 镜像身份约定、混合版本恢复标签，以及旧的恢复耗尽容器名，由新版自动识别和处理。
+- 自更新响应中的 `helper_container_id`，以及 proxy 响应中的 `image_ref`、`pulled_digest`，只为旧客户端保留。是否完成由持久状态确定。
+
+生产代码只保留一份 Compose 文件发现、一份业务镜像准备流程和一套页面状态轮询。worker 的停止、镜像能力和健康检查共用读取结果，但 federation 正常退出与 persona 持续运行的条件分别保留。
 
 ## 1. 总体架构
 
@@ -235,7 +242,6 @@ PERSONA_DB_PASSWORD=<32+ URL-safe>      # bundled；external 另需 PERSONA_DATA
 FEDERATION_DB_PASSWORD=<32+ URL-safe>   # bundled；external 另需 FEDERATION_DATABASE_URL
 CHANNEL=stable
 GITHUB_TOKEN=    # 可选，提升 rate limit
-REGISTRY_MIRROR= # 可选
 # MYRIAD_DOCKER_NETWORK=myriad-net # 可选；默认固定 Docker 网络名
 ```
 
@@ -328,13 +334,14 @@ updater 会先从 `*:myriad-rollback` 重新创建原版本 tag，再交给 Comp
 | `preflight` | 撤销 lock，回 idle（无副作用） |
 | `maintenance_on` | 退维护，回 idle |
 | `stopping` / `snapshotting` | 清 maintenance + 标记 job failed，并 **best-effort 重启** 上一栈（postgres + backend + federation-worker + persona-worker + frontend）；不自动进入 swap |
-| `swap_tag` 之后任意步骤 | **不自动恢复**，进 `needs_manual` |
-| `health_probing` 且 `active=false`（为测前端已抬起维护） | **仍算 post-swap**：进 `needs_manual`（**禁止**当 idle） |
-| `job.current` 仍指向 Running 且 last step 为 post-swap | 即使 maintenance 文件 inactive / 损坏 → `needs_manual` |
-| `rollback_in_progress` | 检查 snapshot 在 → 继续 restore；不在 → `needs_manual` |
-| `needs_manual` | 维持，proxy 维护页显示 rescue 指令 |
+| `swap_tag` 已写入目标 tag / 后续启动或健康检查 | 从持久化准备结果接续目标；启动失败走原回滚路径 |
+| `health_probing` 且 `active=false` / 仅剩 `job.current` | 仍接续该任务，完成前保持维护与互斥 |
+| `rollback_in_progress` | 继续恢复旧编排、版本和快照，再启动旧服务 |
+| 已持久化成功 / 已完成回滚 | 仅收尾状态，不重复安装或恢复数据 |
+| `needs_manual` | 按最后执行阶段重试恢复；缺失必要恢复数据仍保留维护与错误 |
 
-**规则**：`swap_tag` 之后的任何步骤崩溃，必须人工 `POST /rescue/continue` 或 `/rescue/rollback`。
+更新准备结果包含选定镜像、目标和原始/目标 Compose，在停服前写入 `state/prepared.<job>.json`。新 backend 镜像携带内置/外置数据库两种源码模板；可信 helper 将宿主入口迁到可写 `state/compose/`，业务更新自动合并版本定义和站点配置。v0.5.3 的无模板镜像及未持久化准备结果任务保留一个发布周期的兼容。完整验收见 [mock 黑盒报告](deployment/UPDATER_BLACKBOX_ACCEPTANCE.md)。
+
 崩溃恢复决策以 `plan_crash_recovery` 为准，**不得**只看 `maintenance.active`。
 
 **审计行**：`audit: pre_swap_cleanup_ok` / `audit: pre_swap_restore_failed`（swap 前失败恢复）；
@@ -376,7 +383,8 @@ updater 会先从 `*:myriad-rollback` 重新创建原版本 tag，再交给 Comp
 
 - 通过 docker 调用 `pull` (bollard)；**不钉死 platform**，由引擎按宿主机选 amd64/arm64
 - **pull 后**读取 `RepoDigests`，与 `release.json` 中的 manifest-list digest 对账（相等或 `ends_with`）
-- 支持 `REGISTRY_MIRROR` env：retag 后 pull，digest 校验保持
+- 拉取和启动使用同一官方镜像引用；加速由 Docker daemon 的原生 registry mirror 处理。
+  旧 `REGISTRY_MIRROR` 环境变量不再改写仓库地址。
 - Docker Hub tip / 列表回退路径不做 digest 对账（只按 tag pull）
 - 失败分类：401/403 token 错误；404 版本失效；5xx/网络 重试
 
@@ -548,28 +556,29 @@ Vite dev proxy 转发；updater 仍直连 `http://backend:1103/health` 读 JSON�
 执行写入探针；探针失败时不得进入健康状态。`storage_writable` 是最近一次
 写入探测，不是启动预检本身。
 
-### 11.2 frontend 健康
+### 11.2 部署健康与镜像一致性
 
-- HTTP 200
-- index.html 包含 `<meta name="myriad-version" content="v1.2.3">`
-- index.html 包含 `<meta name="myriad-commit" content="<40-char sha>">`
-- updater 抓取并对比 target version
+预检保存拉取后的 backend/frontend 本地 Image ID；启动迁移前检查 Compose 选择的
+backend、frontend 和 backend-volume-init 确实使用这些镜像。Compose 启动使用
+`--pull never`，避免预检后再次拉取浮动 tag。
 
-### 11.2.1 two-phase probe (post-swap)
+维护模式保持开启，同时检查：
 
-After start_new, health probing is **two-phase** so frontend is checked on the live path (not only behind maintenance HTML):
+- backend/frontend 实际容器 Image ID 与预检选择一致，容器运行且 Docker health 为 healthy。
+- backend 私有 /health 的数据库、迁移、路由和存储状态就绪。
+- federation/persona worker 健康，proxy /healthz 正常。
 
-1. **Backend-only** while maintenance is still `active=true`: direct `http://backend:1103/health` (version / commit_sha / image tag identity + DB). Users still see the maintenance page.
-2. **Deactivate maintenance** (`active=false`) but **keep job id / phase** so rollback can re-enter maintenance if needed. Proxy cache settle ~2s.
-3. **Live frontend via proxy** `http://proxy:80/`: prefer real-page meta (`myriad-version` / commit); reject maintenance HTML; soft path allows dual image-tag match if stamps lag.
-
-Hard vs soft outcomes are logged with a `pass_kind` (e.g. `hard_backend`, `hard_fe_meta`, `soft_dual_image`). Needs **2** consecutive OK ticks per phase. Deadline recheck before destructive rollback uses live-via-proxy mode.
+frontend 使用容器自身的本地 HTTP healthcheck；不再猜测页面文本、版本 tag 子串，
+也不为探测提前开放用户流量。连续两次通过后持久化成功，再解除维护。
+这不等价于从公网验证用户入口；公网 DNS/TLS 不属于此探针。
 
 ### 11.3 deadline
 
-- 初始等待 ~5s（实现），再进入 phase loops
-- 每 2s 探一次；每 phase 连续 2 次 hard（或 soft 窗口后）算通过
-- 总超时 `max(300s, migrations.estimated_seconds × 3)`；phase1 约占总预算 55%（至少 60s）
+- 每 2s 探测一次，连续两次完整通过。
+- 总超时 `max(300s, migrations.estimated_seconds × 3)`。
+- 未通过则在维护模式内自动回滚；成功落盘后重启可自动完成状态收尾和解除维护。
+- 健康通过后的状态写入故障自动重试，不重新回滚，也不改为人工恢复。
+- 预检失败保留自动更新偏好，下一次定时检查可重新尝试；已切换后失败的同一目标不反复自动安装。
 
 ## 12. proxy 维护页
 
@@ -676,66 +685,49 @@ inspect 自身容器和实际 image ID，核验 Compose 项目、服务、官方
 宿主手动部署可使用官方版本 tag，旧 `DOCKER_GUARD_EXPECTED_IMAGE` 不再阻止新镜像启动。
 `.env`、容器覆盖的版本环境变量、Updater 提供的仓库/digest 或 updater 状态均不是身份权威。
 
-Guard 开始提供健康检查后，启动核验等待 Guard、updater、gateway 全部健康且运行相同
-image ID、摘要和内置版本，再同步 `.env` 的 `UPDATER_TAG`、`UPDATER_IMAGE_REF`、
-`DOCKER_GUARD_IMAGE` 和 `guard-policy/docker-guard.env` 的 `DOCKER_GUARD_IMAGE`。
+Guard 启动时读取 Guard、updater、gateway 各自实际安装的镜像身份，同步 `.env` 的
+`UPDATER_IMAGE_REF`、`UPDATER_GATEWAY_IMAGE_REF`、`DOCKER_GUARD_IMAGE` 和
+`guard-policy/docker-guard.env` 的 `DOCKER_GUARD_IMAGE`，保留用户选择的 `UPDATER_TAG`。
 回写由实际镜像中的固定维护入口执行，不拉取镜像、不重建容器；`.env` 原位写入以保留
 运行中 updater 的文件绑定挂载。两份文件不是跨文件事务，中断后再次启动核验可收敛。
-正在进行的升级/回滚优先；组件混版、不健康或无法验证时不覆盖固定值，并记录原因。
-只改 tag 而没有真正换镜像不会被视为已升级，配置会同步为实际运行版本。
+正在进行的升级/回滚优先；身份无法读取时保留原值并记录原因。元数据同步不等待健康，
+也不要求三个组件版本一致，避免旧组件故障阻止修复更新。升级结果仍以实际镜像和健康检查为准。
 
-当前私有仓库阶段的自动交接流程（#265 的显式 `dockerhub_tag` 路径）：
+自更新直接从组件自己的 Docker Hub 仓库选版本，不下载业务 release.json 或签名文件。
+版本偏好只用于默认选择；Guard 接受合法 Docker tag，不按版本号、构建时间或分支名称拒绝请求。
 
-1. Guard 只接受 `vX.Y.Z` / `dev-<sha>`，固定编译内置的官方 updater 仓库；tag 仅是意图。
-2. Guard 通过宿主 Docker daemon 拉取 `official_repo:tag`，从实际镜像 `RepoDigests` 得到
-   `official_repo@sha256`；禁止 release semver 与镜像创建时间回退。
-3. Guard 先确认当前 updater/gateway 与宿主固定的旧 Guard digest 一致，再从目标精确
-   digest 启动固定入口 `myriad-tcb-self-update`。请求方不能提供 entrypoint/argv/mount。
-4. 交接程序校验渲染后的三项服务模型、镜像、网络、挂载、entrypoint 与安全选项，只执行
-   `docker compose up --no-deps --force-recreate docker-guard updater updater-gateway`。
-5. 成功时原子写入 `.env` 的 `UPDATER_TAG` / `UPDATER_IMAGE_REF` 与宿主策略的
-   `DOCKER_GUARD_IMAGE`；任一步失败恢复旧文件并用旧精确 digest 回滚。状态写入
-   `state/self-update-last.json`，UI 在短暂断线后轮询结果。
+1. Worker 持久化 Pending 后立即返回，在后台选版本。`queued` 表示尚未交给 Guard；
+   重启后继续同一请求，查询失败写入失败结果。
+2. Guard 用独立 capability 受理，固定官方仓库，通过 Docker daemon 拉取并解析精确镜像。
+   更新前记录各服务的实际镜像，不要求旧服务已经健康。
+3. helper 使用宿主 Compose，只检查目标服务存在且选择了本次镜像；不限制健康命令、
+   挂载列表、网络列表或启动脚本的具体写法。执行 `up --pull never --no-deps --force-recreate`。
+4. helper 检查替换后的实际镜像与健康状态。它不发布失败终态，也不在内部再做一套回滚。
+   Guard 负责恢复；恢复使用先前 Guard 镜像中的 helper 和各服务原有镜像。
+5. Guard 在执行结束后写入最终结果，暂时写入失败只重试保存，不重新替换。
+   已停止 helper 的清理失败不会丢失结果或无限锁住更新。恢复失败、执行已停止时允许再次更新。
 
-这里的“原子”仅指单个策略文件的临时文件替换，不表示 Docker Compose 的三容器切换是
-事务。交接程序以固定摘要、健康检查、稳定性等待和最多两次回滚收敛保证最终一致；Guard
-异常重启时从保留的固定 helper 容器恢复意图，且在 helper 未清理或回滚未收敛时保持
-Docker mutation gate 关闭。
-三次旧摘要恢复都失败时，Guard 将失败 helper 固定重命名为
-`myriad-tcb-self-update-recovery-exhausted`；该 Docker daemon sentinel 跨 Guard 重启保留，
-阻止重启后重置重试预算。宿主完成手动 TCB 恢复和校验后才能删除它并重启 Guard。
+策略文件各自原子写入，不把多文件或多容器切换称作事务。Guard 重启从 Docker 中保留的
+helper 配置恢复执行信息；helper 不存在时核对实际运行状态并结束遗留 Pending。
+`self-update-last.json` 保存结果，`queued` 记录交接阶段；运行中的任务和 Guard 负责互斥。
 
-该路径信任 Docker Hub 官方仓库身份和 TLS/registry 控制面。Guard 解析出的 registry
-digest **没有**与签名 release manifest 中的 `expected_digest` 做字节级绑定，因此不声称
-做了 release.json/Cosign 验证。公开 GA 前按 #265 增加该签名证明路径；正常用户操作仍
-保持同一个一键按钮。
-4. 运行 `deploy.sh doctor`，确认运行镜像与期望 digest 完全一致且无旧版动态策略/token。
+这里信任官方镜像仓库及 registry 传输。digest 用于固定本次执行与恢复的内容身份，
+不声称它证明了发布者签名，也不要求用户填写摘要。
 
-回滚同样由宿主把策略文件恢复到此前已验证的 digest 后重建 TCB。不得从 updater 的
-`state/` 或 `.env` 自动决定回滚 Guard 身份。业务镜像的日常更新仍经
-`DOCKER_HOST=tcp://docker-guard:2375` 受固定请求体与镜像策略约束。
+### 14.4 proxy 升级
 
-### 14.4 手动 proxy 升级的失败回退（轻量）
+先持久化 Pending，再后台执行。Proxy 与自更新共用组件版本选择，不借用业务程序版本。
+选定后拉取镜像，按固定 digest 重建并验证健康；失败按原容器镜像恢复，即使原 tag 已移动。
+临时的 Compose 环境变量固定本次镜像，不向宿主配置添加永久覆盖文件。
+结果保存失败自动重试保存；重启后自动继续 Pending。旧结果文件无法解析时不阻断整个状态页。
 
-`POST /admin/proxy-update`（同步）在改写 `PROXY_TAG` 并 `compose up proxy` 后：
-
-1. 在 compose 网络上轮询 `http://proxy:80/healthz`（约 25s）。
-2. **compose 失败或 healthz 失败**：将 `PROXY_TAG` 写回 `previous_tag`，再
-   `compose up proxy` 尽量拉起旧镜像；写入
-   `state/proxy-update-last.json`（`status: failed`、`rolled_back`、`error`）。
-3. **成功**：写 `status: succeeded`。
-4. **`GET /status`** 可选字段 `proxy_update_last`（与 `self_update_last` 同形）。
-
-仍不保证「健康检查误报」或「旧镜像也已损坏」时的二次恢复；此时需主机手动改
-`PROXY_TAG` 后 `docker compose up -d proxy`。
 
 ### 14.2 兜底
 
 用户可在部署目录手动执行（宿主机管理员路径）：
 
 ```
-# 生产请改 UPDATER_IMAGE_REF 与 DOCKER_GUARD_IMAGE（同一 digest），再重建 TCB
-# 无 pin 的开发安装才改 UPDATER_TAG
+# 修改 UPDATER_TAG 后重建；启动时自动同步实际镜像身份
 docker compose --env-file .env --env-file ./guard-policy/docker-guard.env up -d docker-guard updater updater-gateway
 ```
 
@@ -765,7 +757,7 @@ docker compose --env-file .env --env-file ./guard-policy/docker-guard.env up -d 
   未鉴权的 Docker API（`:2375`）。
 - **允许的网络名**（create/connect）：业务 `myriad-net`、管理平面 `myriad-admin-net`
   （`MYRIAD_ADMIN_NETWORK`）、guard-net，以及 `MYRIAD_BACKEND_EXTRA_NETWORK`（默认 `myriad-backend-ext`，仅 backend / federation-worker / persona-worker）。内置兜底还放行面板网络 `1panel-network`（服务范围同上，1Panel 自行挂载，无需显式配置）。其它网络名拒绝。
-- **更新 preflight**（不改编排，仅只读探测，失败则**不停服**）：
+- **更新 preflight**（准备并验证目标编排，不改运行中的编排，失败则**不停服**）：
   1. **本地环境**：`.env` 仍含 `MYRIAD_TAG` / `PROXY_TAG` / `UPDATER_TAG`；compose 仍引用
      `${MYRIAD_TAG}`；`state/`（及 bundled 下 `state/snapshots/`）与 `.env` 可写；经
      docker-guard 的 Docker API `ping` 可达。external 模式要求 `DATABASE_URL`（不要求
@@ -782,7 +774,7 @@ docker compose --env-file .env --env-file ./guard-policy/docker-guard.env up -d 
      `vX.Y.Z` 镜像（开发频道 / 无私有 GitHub 常态）；该路径无 digest/cosign/min_from。
      cosign **硬失败** 仍不 fallback。
   5. **NeedsManual**：卡住时拒绝新的业务 update / auto-install（rescue/rollback 仍可用）。
-  6. **健康 recheck**：探针超时后仅 **HardOk** 可跳过回滚；SoftOk（含维护页）必须回滚。
+  6. **健康检查**：实际镜像身份与服务健康共同通过；不以维护页或 tag 子串判定成功。
   面板改 project / container_name / 外来网络 / pgdata named volume 时，应在此阶段被拦下。
 - **updater 不在业务 `myriad-net`**：frontend/postgres 与 updater HTTP 无共享 L2；
   backend 经 admin-net 访问 `updater-gateway`。
@@ -794,7 +786,7 @@ docker compose --env-file .env --env-file ./guard-policy/docker-guard.env up -d 
   `UPDATE_TOKEN` 进入 backend 进程）。客户端若自带 `X-Update-Token`，gateway 拒绝并覆盖注入。
 - updater 重建只允许单一部署根 bind；postgres pgdata bind 会逐级拒绝符号链接、异常文件
   类型和共享/从属 mount propagation。
-- 健康探测只走 Compose 内网 HTTP，不使用 Docker exec，也不临时创建探测容器。
+- 健康探测使用 Docker inspect（实际镜像和已有 healthcheck）与 Compose 内网 HTTP；不新增 Docker exec 或临时探测容器。
 - 所有外部输入严格校验
 - updater 侧仍强制 `UPDATE_TOKEN`；backend→gateway 强制 `UPDATER_GATEWAY_SECRET`（不再仅靠
   admin-net 成员关系）
@@ -928,6 +920,13 @@ M1 release 前必须跑通。状态：
 | 19 | frontend cache 旧版本 | health meta 失败 → 回滚 | manual |
 | 20 | proxy 重启 | 维护状态从磁盘恢复 | **e2e ✓** (fail-open + maintenance.json 切换) |
 
+组件更新的 mock 黑盒测试位于 `updater/tests/component_update_api.rs` 和
+`updater/tests/self_update_handoff.rs`，可运行
+`cargo test --test component_update_api --test self_update_handoff`。
+测试启动真实 updater/helper 进程，模拟 Docker、Guard 和镜像仓库故障，覆盖立即受理、
+发现失败后重试、v0.5.3 响应丢失、重启续接、proxy 自动恢复、已完成更新不重复执行，
+以及三个组件按各自旧镜像恢复。无需真实部署或外部仓库凭据；这些测试不替代真实升级演练。
+
 E2E 实际覆盖（11 项 / 全过，2026-07-17）：
 
 - proxy `/healthz`、`/_proxy/status`、`/_updater/*` 转发、维护页 503 切换、删 maintenance.json 后 fail-open
@@ -952,7 +951,7 @@ E2E 实际覆盖（11 项 / 全过，2026-07-17）：
 
 - btrfs/zfs snapshot 优化
 - ~~cosign 验签~~ ✅ 已实现（§15.4）
-- registry mirror（基础支持已实现，通过 `REGISTRY_MIRROR` env）
+- Docker daemon 原生 registry mirror（保持镜像仓库引用不变）
 
 ### M3（可选，可能永不做）
 

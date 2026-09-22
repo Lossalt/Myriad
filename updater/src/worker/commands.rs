@@ -106,6 +106,7 @@ impl Worker {
         audit: &str,
     ) -> Result<()> {
         let path = self.cli.state_dir.join(name);
+        self.require_no_component_update()?;
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

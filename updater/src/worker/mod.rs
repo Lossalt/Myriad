@@ -25,8 +25,8 @@ pub use prefs::{
     validate_snapshot_limit,
 };
 pub use recovery::{
-    CrashRecoveryPlan, RecoveryReport, commit_pre_swap_stack_restored,
-    freeze_pre_swap_restore_failed, plan_crash_recovery,
+    CrashRecoveryPlan, RecoveryReport, commit_pre_swap_stack_restored, plan_crash_recovery,
+    record_recovery_failure,
 };
 
 use std::sync::Arc;
@@ -170,6 +170,7 @@ pub struct Worker {
     cli: WorkerCli,
     tx: mpsc::Sender<Command>,
     rx: Mutex<Option<mpsc::Receiver<Command>>>,
+    component_task: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Worker {
@@ -187,16 +188,37 @@ impl Worker {
             cli,
             tx,
             rx: Mutex::new(Some(rx)),
+            component_task: std::sync::Mutex::new(None),
         }
     }
 
     /// Block business updates while the stack is in a stuck rescue state.
     ///
-    /// `NeedsManual` clears `job.current` when the spawn ends, so conflict alone
-    /// is not enough — operators (or auto_install) could start another update
-    /// and overwrite maintenance while services are still half-down.
+    /// Maintenance remains authoritative even when no current job is recorded.
     pub(crate) fn refuse_update_if_stuck(&self) -> Result<()> {
         refuse_update_if_stuck_in(&self.state)
+    }
+
+    fn require_no_component_update(&self) -> Result<()> {
+        if self
+            .component_task
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+        {
+            return Err(UpdaterError::Conflict);
+        }
+        self_update::require_no_pending_handoff(&self.state)?;
+        proxy_update::require_no_pending(&self.state)
+    }
+
+    fn require_idle_mutation(&self) -> Result<()> {
+        self.require_no_component_update()?;
+        if self.state.read_current_job()?.is_some() {
+            return Err(UpdaterError::Conflict);
+        }
+        self.refuse_update_if_stuck()
     }
 
     pub fn cli(&self) -> &WorkerCli {
@@ -230,6 +252,22 @@ impl Worker {
 
     pub fn dockerhub_client(&self) -> Result<DockerHubClient> {
         DockerHubClient::new()
+    }
+
+    async fn component_target(&self, repo: &str, requested: Option<String>) -> Result<String> {
+        if let Some(tag) = requested {
+            crate::version::validate_image_tag(&tag).map_err(UpdaterError::InvalidInput)?;
+            return Ok(tag);
+        }
+        let tags = self
+            .dockerhub_client()?
+            .list_immutable_tags(repo, 25)
+            .await?;
+        crate::release::select_component_tip(&tags, self.effective_mode()? == UpdateMode::Release)
+            .map(|target| target.tag.clone())
+            .ok_or_else(|| {
+                UpdaterError::Precondition(format!("No component image available in {repo}"))
+            })
     }
 
     /// Image repositories are explicit deployment inputs. Shared by commit-mode preflight,
@@ -308,43 +346,18 @@ impl Worker {
     /// only after restore succeeds.
     pub async fn restore_stack_after_pre_swap(self: &Arc<Self>) -> Result<()> {
         let job_id = self.state.read_current_job()?;
-        let compose = match update::build_compose_runner_pub(self).await {
-            Ok(c) => c,
-            Err(e) => {
-                if let Some(id) = job_id.as_deref() {
-                    freeze_pre_swap_restore_failed(&self.state, id, &e.to_string())?;
-                }
-                return Err(e);
-            }
-        };
-        // Conservative: always try postgres (no-op-ish if already up / external skip via scope)
-        // AppAndPostgres is safe for external mode — restore_previous_stack skips pg.
-        match update::restore_previous_stack(
-            self,
-            &compose,
-            update::PreSwapRestoreScope::AppAndPostgres,
-        )
-        .await
-        {
-            Ok(()) => commit_pre_swap_stack_restored(&self.state),
-            Err(e) => {
-                if let Some(id) = job_id.as_deref() {
-                    freeze_pre_swap_restore_failed(&self.state, id, &e.to_string())?;
-                }
-                Err(e)
-            }
+        if let Some(id) = &job_id {
+            update::restore_compose(&self.state, id)?;
         }
+        let compose = update::build_compose_runner_pub(self).await?;
+        update::restore_previous_stack(self, &compose, update::PreSwapRestoreScope::AppAndPostgres)
+            .await?;
+        commit_pre_swap_stack_restored(&self.state)
     }
 
-    /// Pull an image, applying REGISTRY_MIRROR rewriting if configured. Returns the digest
-    /// of the pulled image (`sha256:...`).
-    pub async fn docker_pull_with_mirror(&self, image_ref: &str) -> Result<String> {
-        let actual_ref = match &self.config.registry_mirror {
-            Some(mirror) => rewrite_with_mirror(image_ref, mirror),
-            None => image_ref.to_string(),
-        };
-        let digest = self.docker.pull(&actual_ref, None).await?;
-        // Strip "<image>@" prefix, keep only "sha256:..."
+    /// Keep the official reference unchanged. Docker's registry mirrors are transparent.
+    pub async fn pull_image(&self, image_ref: &str) -> Result<String> {
+        let digest = self.docker.pull(image_ref, None).await?;
         Ok(digest.split('@').next_back().unwrap_or(&digest).to_string())
     }
 
@@ -360,6 +373,11 @@ impl Worker {
     /// deploy tag through GitHub. If the backend is not ready yet, MYRIAD_TAG from the managed
     /// `.env` still prevents a fresh/cleared state directory from reporting "unknown".
     pub async fn reconcile_current_deploy(&self) -> Result<()> {
+        // An in-flight update owns its version; probing partially started services
+        // must not publish a new current_version before that update commits.
+        if self.state.read_current_job()?.is_some() {
+            return Ok(());
+        }
         let mut st = self.state.read_updater()?;
         let updater_identity_changed = self.heal_running_updater_identity(&mut st);
         let previous_version = st.current_version.clone();
@@ -487,6 +505,8 @@ impl Worker {
             .take()
             .expect("worker rx already taken");
         let me = self.clone();
+        proxy_update::resume_pending(self.clone());
+        self_update::resume_pending(self.clone());
 
         // Periodic poller. Interval is re-read each cycle so prefs hot-reload without restart.
         // Each tick enqueues CheckUpdates on the single-slot worker channel.
@@ -614,24 +634,32 @@ impl Worker {
                     limit,
                     reply,
                 } => {
-                    let res = self.clone().handle_list_commits(branch, limit).await;
-                    let _ = reply.send(res);
+                    let worker = self.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(worker.handle_list_commits(branch, limit).await);
+                    });
                 }
                 Command::ListBuilds { limit, reply } => {
-                    let res = self.clone().handle_list_builds(limit).await;
-                    let _ = reply.send(res);
+                    let worker = self.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(worker.handle_list_builds(limit).await);
+                    });
                 }
                 Command::ListReleases {
                     channel,
                     limit,
                     reply,
                 } => {
-                    let res = self.clone().handle_list_releases(channel, limit).await;
-                    let _ = reply.send(res);
+                    let worker = self.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(worker.handle_list_releases(channel, limit).await);
+                    });
                 }
                 Command::Compare { from, to, reply } => {
-                    let res = self.clone().handle_compare(from, to).await;
-                    let _ = reply.send(res);
+                    let worker = self.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(worker.handle_compare(from, to).await);
+                    });
                 }
                 Command::Rollback {
                     snapshot_id,
@@ -690,7 +718,10 @@ impl Worker {
                     let _ = reply.send(res);
                 }
                 Command::SelfUpdate { actor, reply } => {
-                    let res = self_update::run(self.clone(), actor).await;
+                    let res = match self.require_idle_mutation() {
+                        Ok(()) => self_update::schedule(self.clone(), actor),
+                        Err(error) => Err(error),
+                    };
                     let _ = reply.send(res);
                 }
                 Command::ProxyUpdate {
@@ -698,7 +729,10 @@ impl Worker {
                     explicit_tag,
                     reply,
                 } => {
-                    let res = proxy_update::run(self.clone(), actor, explicit_tag).await;
+                    let res = match self.require_idle_mutation() {
+                        Ok(()) => proxy_update::schedule(self.clone(), actor, explicit_tag),
+                        Err(error) => Err(error),
+                    };
                     let _ = reply.send(res);
                 }
             }
@@ -733,6 +767,7 @@ impl Worker {
             return Ok(jid);
         }
 
+        self.require_no_component_update()?;
         if let Some(_existing) = self.state.read_current_job()? {
             return Err(UpdaterError::Conflict);
         }
@@ -773,7 +808,6 @@ impl Worker {
             {
                 error!(job = %job_id_clone, err = %e, "update flow exited with error");
             }
-            let _ = me.state.set_current_job(None);
         });
 
         Ok(job_id)
@@ -784,7 +818,10 @@ impl Worker {
         snapshot_id: String,
         actor: Option<String>,
     ) -> Result<String> {
-        if let Some(_existing) = self.state.read_current_job()? {
+        self.require_no_component_update()?;
+        if let Some(existing) = self.state.read_current_job()?
+            && self.state.read_job(&existing)?.status != JobStatus::NeedsManual
+        {
             return Err(UpdaterError::Conflict);
         }
         let job_id = uuid::Uuid::new_v4().simple().to_string();
@@ -810,7 +847,6 @@ impl Worker {
             if let Err(e) = rollback::run(me.clone(), id.clone(), snapshot_id, actor).await {
                 error!(job = %id, err = %e, "rollback flow exited with error");
             }
-            let _ = me.state.set_current_job(None);
         });
         Ok(job_id)
     }
@@ -921,15 +957,6 @@ fn strip_image_repo_tag(raw: &str) -> String {
         return before.to_string();
     }
     s.to_string()
-}
-
-fn rewrite_with_mirror(image_ref: &str, mirror: &str) -> String {
-    // image_ref looks like "docker.io/foo/bar:v1". Replace the registry host with `mirror`.
-    let mirror = mirror.trim_end_matches('/');
-    match image_ref.split_once('/') {
-        Some((_host, rest)) => format!("{mirror}/{rest}"),
-        None => format!("{mirror}/{image_ref}"),
-    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@
 //!     maintenance.json
 //!     job.current
 //!     job.<id>.json
+//!     prepared.<id>.json    (preflight report + Compose before/after for one job)
 //!     lock                  (flock-style process lock)
 //!     manual-override       (touch to enable rescue endpoints)
 //!     snapshots/            (pgdata snapshots)
@@ -29,11 +30,52 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, UpdaterError};
 
-fn read_existing(path: &Path) -> Result<Option<Vec<u8>>> {
+pub(crate) fn read_existing(path: &Path) -> Result<Option<Vec<u8>>> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Optional component outcome, not the execution lock. Invalid history must not
+/// take down /status; running tasks and Guard retain execution ownership.
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let Some(bytes) = read_existing(path)? else {
+        return Ok(None);
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            tracing::warn!(%error, "ignoring unreadable component outcome");
+            Ok(None)
+        }
+    }
+}
+
+/// Durable component outcome that keeps "no request recorded" apart from
+/// "recorded but unreadable".
+///
+/// `/status` may stay fail-open, but mutation admission and recovery must not:
+/// collapsing a corrupt outcome file into "no request" admits a second mutation
+/// while the previous Guard/helper task may still be running, and leaves nothing
+/// for `resume_pending` to recover.
+pub(crate) enum Outcome<T> {
+    Absent,
+    Present(T),
+    Unreadable(serde_json::Error),
+}
+
+pub(crate) fn read_outcome<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Outcome<T>> {
+    let Some(bytes) = read_existing(path)? else {
+        return Ok(Outcome::Absent);
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Ok(Outcome::Present(value)),
+        Err(error) => {
+            tracing::warn!(%error, "unreadable component outcome");
+            Ok(Outcome::Unreadable(error))
+        }
     }
 }
 
@@ -200,6 +242,78 @@ impl StateDir {
         self.root.join(format!("job.{id}.json"))
     }
 
+    /// Preflight report (selected images, Compose before/after) persisted before the
+    /// destructive zone so a crash can resume or roll back this exact job.
+    pub fn prepared_report_path(&self, job_id: &str) -> PathBuf {
+        self.root.join(format!("prepared.{job_id}.json"))
+    }
+
+    /// Drop persisted preflight reports that can no longer be used.
+    ///
+    /// A report belongs to one job and carries that job's Compose before/after. It is
+    /// live only while the job is in flight or while `snap-<job>` still exists, because
+    /// the rollback path restores the pgdata snapshot and the Compose snapshot together.
+    /// Without this sweep they accumulate one file per update, forever.
+    pub fn sweep_prepared_reports(&self) -> Result<Vec<String>> {
+        self.sweep_prepared_reports_with(|| {})
+    }
+
+    /// `interleave` runs immediately before the directory listing so a test can
+    /// admit a job in the middle of a sweep.
+    ///
+    /// The listing comes *first*, and the live references are read *after* it.
+    /// Admission publishes `job.current` before the report exists, so any report
+    /// visible in the listing already had its reference published too — a job
+    /// admitted while the sweep runs cannot lose the report that its resume and
+    /// rollback depend on. Reading the references first (the previous order) let a
+    /// job admitted in between have its report deleted as an orphan.
+    fn sweep_prepared_reports_with<F: FnOnce()>(&self, interleave: F) -> Result<Vec<String>> {
+        let mut candidates = Vec::new();
+        for entry in std::fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(job_id) = name
+                .strip_prefix("prepared.")
+                .and_then(|rest| rest.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            candidates.push((job_id.to_string(), entry.path()));
+        }
+        interleave();
+        let current = self.read_current_job()?;
+        let snapshots: std::collections::HashSet<String> = self
+            .read_snapshots()?
+            .items
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        let mut removed = Vec::new();
+        for (job_id, path) in candidates {
+            if current.as_deref() == Some(job_id.as_str())
+                || snapshots.contains(&format!("snap-{job_id}"))
+            {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    tracing::info!(job = %job_id, "removed stale preflight report");
+                    removed.push(job_id);
+                }
+                Err(error) => {
+                    tracing::warn!(job = %job_id, %error, "failed to remove stale preflight report");
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     pub fn read_snapshots(&self) -> Result<SnapshotsFile> {
         let path = self.root.join("snapshots.json");
         let Some(bytes) = read_existing(&path)? else {
@@ -224,6 +338,18 @@ impl StateDir {
     /// Prefer the `audit: …` line style used in history for machine grepping.
     pub fn append_audit(&self, line: &str) -> Result<()> {
         audit::append(&self.root.join("audit.log"), line)
+    }
+
+    /// Record one operational line in both history and audit. Unlike a bare
+    /// `let _ =`, a failure is logged: this trail is the only record of what an
+    /// update did to a host, so it must not vanish silently.
+    pub fn record_operation(&self, line: &str) {
+        if let Err(error) = self.append_history(line) {
+            tracing::warn!(%error, "history append failed");
+        }
+        if let Err(error) = self.append_audit(line) {
+            tracing::warn!(%error, "audit append failed");
+        }
     }
 }
 
@@ -277,12 +403,19 @@ mod tests {
             .expect("manual_override_enabled");
         assert!(!override_fn.contains("path.exists()"));
         assert!(override_fn.contains("path_is_present"));
-        for name in ["read_updater", "read_maintenance", "read_current_job", "read_snapshots"] {
+        for name in [
+            "read_updater",
+            "read_maintenance",
+            "read_current_job",
+            "read_snapshots",
+        ] {
             let start = src.find(&format!("pub fn {name}")).expect(name);
             let body = &src[start..];
             let end = body[1..]
-                .find("
-    pub fn ")
+                .find(
+                    "
+    pub fn ",
+                )
                 .map(|i| i + 1)
                 .unwrap_or(body.len());
             let fn_src = &body[..end];
@@ -304,5 +437,77 @@ mod tests {
             matches!(err, UpdaterError::Json(_)),
             "corrupt maintenance with no job pointer must not become idle, got {err}"
         );
+    }
+
+    fn plant_prepared(state: &StateDir, job_id: &str) {
+        std::fs::write(state.prepared_report_path(job_id), b"{}").unwrap();
+    }
+
+    fn plant_snapshot(state: &StateDir, id: &str) {
+        let mut sf = state.read_snapshots().unwrap();
+        sf.items.push(SnapshotMeta {
+            id: id.to_string(),
+            created_at: chrono::Utc::now(),
+            source_version: None,
+            size_bytes: 1,
+            file_count: 1,
+            keep: false,
+        });
+        state.write_snapshots(&sf).unwrap();
+    }
+
+    /// Regression: reports used to be kept forever, one per update.
+    #[test]
+    fn sweep_prepared_reports_keeps_in_flight_and_snapshot_backed_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+        plant_prepared(&state, "live");
+        plant_prepared(&state, "rollbackable");
+        plant_prepared(&state, "orphan");
+        plant_snapshot(&state, "snap-rollbackable");
+        state.set_current_job(Some("live")).unwrap();
+
+        let removed = state.sweep_prepared_reports().unwrap();
+
+        assert_eq!(removed, vec!["orphan".to_string()]);
+        assert!(state.prepared_report_path("live").is_file());
+        assert!(state.prepared_report_path("rollbackable").is_file());
+        assert!(!state.prepared_report_path("orphan").exists());
+    }
+
+    /// Once the job is no longer current and its snapshot is gone, the report follows.
+    #[test]
+    fn sweep_prepared_reports_drops_finished_jobs_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+        std::fs::write(state.root().join("job.done.json"), b"{}").unwrap();
+        plant_prepared(&state, "done");
+
+        assert_eq!(
+            state.sweep_prepared_reports().unwrap(),
+            vec!["done".to_string()]
+        );
+        assert!(state.sweep_prepared_reports().unwrap().is_empty());
+        assert!(state.root().join("job.done.json").is_file());
+    }
+
+    /// Regression: a job admitted while the sweep runs must not lose its report.
+    /// The sweep used to read the live references before listing the directory, so
+    /// a job admitted in between had its `prepared` file deleted as an orphan.
+    #[test]
+    fn sweep_prepared_reports_keeps_a_job_admitted_during_the_sweep() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+
+        let removed = state
+            .sweep_prepared_reports_with(|| {
+                // Admission publishes job.current before writing the report.
+                state.set_current_job(Some("arriving")).unwrap();
+                plant_prepared(&state, "arriving");
+            })
+            .unwrap();
+
+        assert!(removed.is_empty(), "kept nothing to remove, got {removed:?}");
+        assert!(state.prepared_report_path("arriving").is_file());
     }
 }

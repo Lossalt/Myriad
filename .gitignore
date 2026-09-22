@@ -329,6 +329,11 @@ backend/data/.bootstrap-claimed
 !/frontend/tests/browser/agentSessionStartup.spec.ts
 !/frontend/tests/browser/fixture/agentSessionStartup.tsx
 
+# Updater lifecycle and previous-release browser regressions
+!/frontend/tests/browser/updater.spec.ts
+!/frontend/tests/browser/fixture/updater.html
+!/frontend/tests/browser/fixture/updater.tsx
+
 !frontend/tests/browser/friendLinks.spec.ts
 !frontend/tests/browser/fixture/friendLinks.html
 !frontend/tests/browser/fixture/friendLinks.tsx

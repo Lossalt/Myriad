@@ -112,9 +112,6 @@ pub struct Config {
     ///   images publicly).
     pub github_token: Option<SecretString>,
 
-    /// Optional image mirror prefix (e.g. `mirror.local`). Applied as a rewrite.
-    pub registry_mirror: Option<String>,
-
     /// How often to poll GitHub for new releases. Set to 0 to disable polling.
     pub check_interval_secs: u64,
 
@@ -223,10 +220,6 @@ impl Config {
 
         let github_token = optional_secret(std::env::var("GITHUB_TOKEN").ok());
 
-        let registry_mirror = std::env::var("REGISTRY_MIRROR")
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-
         let check_interval_secs: u64 = std::env::var("CHECK_INTERVAL_SECS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -245,7 +238,6 @@ impl Config {
             channel,
             github_repo,
             github_token,
-            registry_mirror,
             check_interval_secs,
             cosign_verify,
         })
@@ -354,7 +346,6 @@ mod tests {
             channel: Channel::Stable,
             github_repo: "Myriad-You/Myriad".into(),
             github_token: None,
-            registry_mirror: None,
             check_interval_secs: 3600,
             cosign_verify: "off".into(),
         };

@@ -54,7 +54,7 @@ updater (内网) ─► docker-guard ─► docker.sock
 只有 `proxy` 暴露宿主端口。`HTTP_PORT` 可以在 `.env` 调（默认 80）。原始 Docker socket
 只挂载给 `docker-guard`；updater 通过内部网络访问经项目/镜像/请求体白名单限制的 API。
 updater 对部署根本身只读，仅通过独立挂载写入 `./.env`、`./pgdata`、`./state`；Compose
-文件和 `./guard-policy/` 对 updater 只读。
+入口由可信 helper 自动迁为指向 `state/compose/` 的相对链接，业务更新可写入新版本定义，失败时恢复旧内容；`./guard-policy/` 继续只读。用户无需手改挂载。
 
 当前拓扑见 [deployment/DOCKER_DEPLOYMENT.md](./DOCKER_DEPLOYMENT.md)
 （三网 + docker-guard + updater-gateway）。首次或改拓扑请在宿主执行
@@ -67,6 +67,34 @@ Updater 使用宿主策略 capability 提交意图；Guard 固定官方 updater 
 恢复旧 digest 与配置。当前私有仓库阶段使用 #265 定义的显式 `dockerhub_tag` 信任路径；
 该 registry digest 尚未与签名 release manifest 的 expected digest 做字节级绑定，因此不会
 把它描述成 release.json/Cosign 路径。日常业务 Docker API 仍经 Guard 固定策略代理。
+
+### 2.1 编排的归属：哪些键属于版本、哪些属于站点
+
+业务更新时，更新器用目标版本的模板重建 `backend`、`frontend`、`backend-volume-init`、
+`federation-worker`、`persona-worker` 这 5 个服务的定义。因此这些服务上**部分字段属于版本、
+部分字段属于站点**：
+
+| 归属 | 字段 | 行为 |
+| --- | --- | --- |
+| 版本 | `image`、`command`、`entrypoint`、`healthcheck`、`ulimits`、`deploy`、`tmpfs`、`user`、`cap_add`、`security_opt` 等 | 每次更新以目标模板为准，站点改动会被覆盖 |
+| 站点 | `ports`、`networks`、`extra_hosts`、`dns`、`dns_search`、`logging`、`restart`、`env_file`、`labels` | 保留站点值 |
+| 站点 | `environment` 中目标只用 `${...}` 占位的键，以及站点自定义的键 | 保留站点值 |
+| 版本 | `volumes` | 以目标模板的挂载列表为准。Guard 只放行模板已有的卷（见下），站点自加的挂载无法启动 |
+| 站点 | 顶层 `volumes` / `networks` / `configs` / `secrets` 的名称 | 只增不改，卷名保持站点原有身份 |
+
+`proxy`、`updater`、`docker-guard`、`updater-gateway`、`postgres` 不在这 5 个服务内，更新器
+**不迁移**它们的定义；发行版若改了这些服务（例如新增挂载），需要宿主按
+[deployment/DOCKER_DEPLOYMENT.md](./DOCKER_DEPLOYMENT.md) 手动同步。
+
+这 5 个服务的挂载由 `docker-guard` 校验：只接受模板自带的 `*_backend_data` /
+`*_backend_cache` 卷及其固定容器路径（例如 `federation-worker` 的 `/app/data/media`
+子挂载）。宿主自加的绑定挂载或第三方卷会被 Guard 拒绝，容器在停服切换后无法启动，
+所以更新器不会把它们保留到新编排里。
+
+**不要直接编辑被托管的 Compose 文件。** 宿主 Compose 入口已是指向 `state/compose/` 的相对
+链接（见上），更新器每次更新都会重写其内容。站点侧的改动应放在 `.env`、站点配置，或上表
+「站点」一列的字段里。多份 Compose 分片（面板生成的 `*.yml`）会被合并进第一个文件，其余
+文件在更新时被置空；置空记录同样写入 history/audit（`audit: compose_fragments_blanked ...`）。
 
 ## 3. 打开 updater UI
 
@@ -235,7 +263,9 @@ preflight → maintenance_on → stopping → snapshotting → swap_tag
   → starting_new → health_probing → swapping_proxy → finalize
 ```
 
-失败时的自动恢复分两段（这是用户最常踩的点）：
+更新中断后会自动恢复：切换 tag 前恢复旧栈，切换后接续已保存的目标，目标启动失败则回滚；回滚中断后继续恢复。健康目标不会重复启动。
+
+运行中的操作报错时，恢复分两段：
 
 | 失败时机 | 自动行为 | 不会做的事 |
 | -------- | -------- | ---------- |
@@ -256,13 +286,15 @@ history 是否有 `PRE_SWAP_FAIL` / `ROLLBACK_OK` / `NEEDS_MANUAL`；再按 §5 
 「上次更新未成功」横幅，避免误以为升级成功。横幅可永久关闭（`POST /last-failed/dismiss`）；
 下次失败会再出现。
 
+升级与中断的 mock 验收、运行方法和覆盖边界见 [黑盒验收报告](UPDATER_BLACKBOX_ACCEPTANCE.md)。
+
 本地回归：
 
 ```bash
 # 无 Docker 的决策矩阵 + schema 冒烟
 ./scripts/extra/test-updater-smoke.sh
 
-# 需 release 二进制 + Docker：含 crash recovery（health_probing active=false → needs_manual）
+# 需 release 二进制 + Docker：含旧任务缺失快照时的恢复失败检查
 cd updater && cargo build --release --bins
 cd proxy && cargo build --release
 ./scripts/extra/test-updater-e2e.sh
@@ -284,7 +316,10 @@ touch ./state/manual-override
 docker exec myriad-updater myriad-rescue exit-maintenance --force
 ```
 
-`manual-override` 是宿主文件级 flag，proxy 一旦读到不存在的话所有 rescue 端点都返回 403。这阻止远端通过 API 单独触发 rescue。
+`manual-override` 是宿主文件级 flag，只约束 `/rescue/exit-maintenance` 与 `/rescue/forget-current`
+（缺该文件时返回 403），用来阻止远端仅凭 token 强制退出维护、或丢掉当前任务。
+`/rescue/continue`（管理 UI 的「一键回退到升级前版本」，见 §5.2）**不需要**它：它只回滚到失败任务
+已经关联的那个快照，权限与 `/rollback` 相同。端点的分层见 `updater/src/api/routes.rs:26-68`。
 
 ### 5.2 升级后服务起不来 / needs_manual
 
