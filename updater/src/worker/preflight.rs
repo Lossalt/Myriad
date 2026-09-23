@@ -11,10 +11,10 @@
 //! Direction gates (fail-closed):
 //! - pure upgrade → ok
 //! - pure downgrade → requires `allow_downgrade`
-//! - diverged → requires `allow_diverged` / `allow_risk`
-//! - **commit/dev**: unknown ancestry does **not** require `allow_unknown` (build-time
-//!   newer / different tag is enough). Release + full manifest still treats unknown as risk;
-//!   release Docker Hub fallback (no git compare) matches commit without ancestry.
+//! - diverged → requires `allow_diverged` / `allow_risk` (release→release and commit→commit only)
+//! - **commit/dev → release**: dev/preview builds are ephemeral and routinely diverge from
+//!   (or sit ahead of) the release line, so moving to a release is always allowed — no
+//!   downgrade/diverged gate, and unknown ancestry does **not** require `allow_unknown`.
 //! - irreversible migration + downgrade → requires both flags (manifest path only)
 //!
 //! Local gates (before image pull when possible):
@@ -48,8 +48,27 @@ pub struct PreflightReport {
     pub target_commit_sha: Option<String>,
     pub backend_image_id: String,
     pub frontend_image_id: String,
+    /// Pulled local image id of the proxy image shipped by this release, when the
+    /// release actually ships one (proxy keeps its own `PROXY_TAG` cadence).
+    #[serde(default)]
+    pub proxy_image_id: Option<String>,
+    /// Tag to write into `PROXY_TAG` when this release ships a proxy image.
+    #[serde(default)]
+    pub proxy_target_tag: Option<String>,
+    /// `PROXY_TAG` value before the swap, restored on rollback when it changed.
+    #[serde(default)]
+    pub previous_proxy_tag: Option<String>,
     pub compose: crate::deployment::PreparedCompose,
     pub estimated_seconds: u32,
+}
+
+/// Local image identities resolved by [`prepare_images`].
+struct ResolvedImages {
+    backend_image_id: String,
+    frontend_image_id: String,
+    proxy_image_id: Option<String>,
+    proxy_target_tag: Option<String>,
+    previous_proxy_tag: Option<String>,
 }
 
 /// Operator confirmation flags. `allow_risk` is a backward-compatible umbrella that
@@ -60,6 +79,7 @@ pub struct RiskFlags {
     pub allow_diverged: bool,
     pub allow_unknown: bool,
     pub allow_irreversible: bool,
+    pub allow_compose_override: bool,
 }
 
 impl RiskFlags {
@@ -70,12 +90,14 @@ impl RiskFlags {
         allow_diverged: Option<bool>,
         allow_unknown: Option<bool>,
         allow_irreversible: Option<bool>,
+        allow_compose_override: Option<bool>,
     ) -> Self {
         Self {
             allow_downgrade: allow_downgrade || allow_risk,
             allow_diverged: allow_diverged.unwrap_or(allow_risk),
             allow_unknown: allow_unknown.unwrap_or(allow_risk),
             allow_irreversible: allow_irreversible.unwrap_or(allow_risk),
+            allow_compose_override: allow_compose_override.unwrap_or(allow_risk),
         }
     }
 }
@@ -215,7 +237,6 @@ async fn run_release_with_manifest(
     let from_version = st.current_version.clone();
 
     let mut is_downgrade = false;
-    let mut is_diverged = false;
 
     // Semver direction when both sides are releases.
     if let (Some(curr), Some(tgt)) = (&from_version, target.as_release()) {
@@ -239,49 +260,20 @@ async fn run_release_with_manifest(
                 }
             }
             _ => {
-                // Current is commit/branch while target is release — use git compare when possible.
+                // Current is a `dev-<sha>` or branch tip while the target is a formal
+                // release. Moving to a release is always allowed: dev/preview builds
+                // are ephemeral and routinely diverge from (or sit ahead of) the
+                // release line, so the downgrade/diverged direction gates do not apply.
+                // Only a no-op (target already at the same commit) is rejected.
                 match gh.compare_deploy_to_ref(Some(curr), target.as_str()).await {
-                    Ok(Some(f)) => {
-                        is_downgrade = f.is_downgrade();
-                        is_diverged = matches!(f.relation, CommitRelation::Diverged);
-                        if matches!(f.relation, CommitRelation::Identical) {
-                            return Err(UpdaterError::Precondition(format!(
-                                "target {} points at the same git commit as current {}",
-                                target.as_str(),
-                                curr
-                            )));
-                        }
-                        if matches!(f.relation, CommitRelation::Unknown) {
-                            require_flag(
-                                risk.allow_unknown,
-                                &format!(
-                                    "cannot determine whether {} is newer than current {}; \
-                                 re-submit with allow_unknown=true (or allow_risk=true)",
-                                    target.as_str(),
-                                    curr
-                                ),
-                            )?;
-                        }
+                    Ok(Some(f)) if matches!(f.relation, CommitRelation::Identical) => {
+                        return Err(UpdaterError::Precondition(format!(
+                            "target {} points at the same git commit as current {}",
+                            target.as_str(),
+                            curr
+                        )));
                     }
-                    Ok(None) => {
-                        require_flag(
-                            risk.allow_unknown,
-                            &format!(
-                                "cannot resolve current deploy {curr} to a git commit for comparison \
-                             with release {}; re-submit with allow_unknown=true (or allow_risk=true)",
-                                target.as_str()
-                            ),
-                        )?;
-                    }
-                    Err(e) => {
-                        require_flag(
-                            risk.allow_unknown,
-                            &format!(
-                                "git compare failed ({e}); refusing update without known direction. \
-                             Fix GitHub access or re-submit with allow_unknown=true (or allow_risk=true)"
-                            ),
-                        )?;
-                    }
+                    _ => {}
                 }
             }
         }
@@ -305,16 +297,6 @@ async fn run_release_with_manifest(
         }
         warn!(to = %target, "preflight: explicit release DOWNgrade allowed");
     }
-    if is_diverged {
-        require_flag(
-            risk.allow_diverged,
-            &format!(
-                "target {} diverged from current history; re-submit with allow_diverged=true \
-                 (or allow_risk=true)",
-                target.as_str()
-            ),
-        )?;
-    }
 
     // min_from only when upgrading between releases.
     if let (Some(curr), Some(min_from)) = (&from_version, &manifest.min_from_version)
@@ -336,11 +318,12 @@ async fn run_release_with_manifest(
         .image("frontend")
         .ok_or_else(|| UpdaterError::Precondition("manifest lacks frontend image".into()))?;
 
-    let ([backend_image_id, frontend_image_id], compose) = prepare_images(
+    let (resolved, compose) = prepare_images(
         &worker,
         Some(&manifest),
         [&backend.r#ref, &frontend.r#ref],
         target,
+        &risk,
     )
     .await?;
     let estimated = manifest.migrations.estimated_seconds;
@@ -358,8 +341,11 @@ async fn run_release_with_manifest(
         from_version,
         target: target.clone(),
         target_commit_sha,
-        backend_image_id,
-        frontend_image_id,
+        backend_image_id: resolved.backend_image_id,
+        frontend_image_id: resolved.frontend_image_id,
+        proxy_image_id: resolved.proxy_image_id,
+        proxy_target_tag: resolved.proxy_target_tag,
+        previous_proxy_tag: resolved.previous_proxy_tag,
         compose,
         estimated_seconds: estimated,
     })
@@ -384,7 +370,6 @@ async fn run_release_via_dockerhub(
 
     let from_version = worker.state().read_updater()?.current_version.clone();
     let mut is_downgrade = false;
-    let mut is_diverged = false;
 
     // Semver when both sides are releases (no GitHub needed).
     if let (Some(curr), Some(tgt)) = (&from_version, target.as_release()) {
@@ -407,54 +392,20 @@ async fn run_release_via_dockerhub(
                 }
             }
             _ => {
-                // Commit/branch → release without reliable git compare (no release.json path).
-                // Mirror commit mode: do not require allow_unknown solely for missing ancestry.
-                if worker.github_commit_metadata_enabled() {
-                    if let Ok(gh) = worker.github_client() {
-                        match gh.compare_deploy_to_ref(Some(curr), target.as_str()).await {
-                            Ok(Some(f)) => {
-                                is_downgrade = f.is_downgrade();
-                                is_diverged = matches!(f.relation, CommitRelation::Diverged);
-                                if matches!(f.relation, CommitRelation::Identical) {
-                                    return Err(UpdaterError::Precondition(format!(
-                                        "target {} points at the same git commit as current {}",
-                                        target.as_str(),
-                                        curr
-                                    )));
-                                }
-                                if matches!(f.relation, CommitRelation::Unknown) {
-                                    info!(
-                                        target = %target,
-                                        current = %curr,
-                                        "preflight(release/dh): unknown git relation; proceeding \
-                                         without allow_unknown (no release.json)"
-                                    );
-                                }
-                            }
-                            Ok(None) => {
-                                info!(
-                                    target = %target,
-                                    current = %curr,
-                                    "preflight(release/dh): cannot resolve current deploy to git; \
-                                     proceeding (semver/tag differ is sufficient without release.json)"
-                                );
-                            }
-                            Err(e) => {
-                                warn!(
-                                    target = %target,
-                                    err = %e,
-                                    "preflight(release/dh): git compare failed; proceeding without allow_unknown"
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    info!(
-                        target = %target,
-                        current = %curr,
-                        "preflight(release/dh): GITHUB_TOKEN unset; skipping git ancestry for \
-                         commit→release (image pull verifies tags exist)"
-                    );
+                // Commit/branch → release: dev/preview builds are ephemeral and
+                // routinely diverge from the release line, so moving to a release is
+                // always allowed (no downgrade/diverged gate). Only a no-op (same
+                // commit) is rejected when GitHub ancestry is available.
+                if worker.github_commit_metadata_enabled()
+                    && let Ok(gh) = worker.github_client()
+                    && let Ok(Some(f)) = gh.compare_deploy_to_ref(Some(curr), target.as_str()).await
+                    && matches!(f.relation, CommitRelation::Identical)
+                {
+                    return Err(UpdaterError::Precondition(format!(
+                        "target {} points at the same git commit as current {}",
+                        target.as_str(),
+                        curr
+                    )));
                 }
             }
         }
@@ -464,16 +415,6 @@ async fn run_release_via_dockerhub(
         require_downgrade(risk.allow_downgrade, target.as_str())?;
         warn!(to = %target, "preflight: explicit release DOWNgrade allowed (Docker Hub path)");
     }
-    if is_diverged {
-        require_flag(
-            risk.allow_diverged,
-            &format!(
-                "target {} diverged from current history; re-submit with allow_diverged=true \
-                 (or allow_risk=true)",
-                target.as_str()
-            ),
-        )?;
-    }
 
     // No manifest: cannot enforce min_from_version / irreversible / min_updater_version.
     let (backend_repo, frontend_repo) = worker.image_repos_required()?;
@@ -481,8 +422,8 @@ async fn run_release_via_dockerhub(
     let backend_ref = format!("{backend_repo}:{tag}");
     let frontend_ref = format!("{frontend_repo}:{tag}");
 
-    let ([backend_image_id, frontend_image_id], compose) =
-        prepare_images(&worker, None, [&backend_ref, &frontend_ref], target).await?;
+    let (resolved, compose) =
+        prepare_images(&worker, None, [&backend_ref, &frontend_ref], target, &risk).await?;
 
     // Optional commit_sha when GitHub is reachable but only the release asset was missing.
     let target_commit_sha = if worker.github_commit_metadata_enabled() {
@@ -508,8 +449,11 @@ async fn run_release_via_dockerhub(
         from_version,
         target: target.clone(),
         target_commit_sha,
-        backend_image_id,
-        frontend_image_id,
+        backend_image_id: resolved.backend_image_id,
+        frontend_image_id: resolved.frontend_image_id,
+        proxy_image_id: resolved.proxy_image_id,
+        proxy_target_tag: resolved.proxy_target_tag,
+        previous_proxy_tag: resolved.previous_proxy_tag,
         compose,
         estimated_seconds: 60,
     })
@@ -672,14 +616,17 @@ async fn run_commit(
     let backend_ref = format!("{backend_repo}:{tag}");
     let frontend_ref = format!("{frontend_repo}:{tag}");
 
-    let ([backend_image_id, frontend_image_id], compose) =
-        prepare_images(&worker, None, [&backend_ref, &frontend_ref], &effective).await?;
+    let (resolved, compose) =
+        prepare_images(&worker, None, [&backend_ref, &frontend_ref], &effective, &risk).await?;
     Ok(PreflightReport {
         from_version,
         target: effective,
         target_commit_sha,
-        backend_image_id,
-        frontend_image_id,
+        backend_image_id: resolved.backend_image_id,
+        frontend_image_id: resolved.frontend_image_id,
+        proxy_image_id: resolved.proxy_image_id,
+        proxy_target_tag: resolved.proxy_target_tag,
+        previous_proxy_tag: resolved.previous_proxy_tag,
         compose,
         estimated_seconds: 60,
     })
@@ -691,7 +638,8 @@ async fn prepare_images(
     manifest: Option<&Manifest>,
     images: [&str; 2],
     target: &DeployTag,
-) -> Result<([String; 2], crate::deployment::PreparedCompose)> {
+    risk: &RiskFlags,
+) -> Result<(ResolvedImages, crate::deployment::PreparedCompose)> {
     check_env_keys(worker, manifest)?;
     check_disk(worker)?;
     crate::worker::preflight_env::check_local_environment(worker).await?;
@@ -714,17 +662,72 @@ async fn prepare_images(
             )));
         }
     }
+    // The proxy keeps its own `PROXY_TAG` cadence: it is only pulled/swapped when
+    // the target release actually ships one (manifest carries `images.proxy`). The
+    // Docker Hub fallback and commit mode leave the proxy image untouched.
+    let (proxy_image_id, proxy_target_tag, previous_proxy_tag) =
+        match manifest.and_then(|manifest| manifest.image("proxy")) {
+            Some(proxy) => {
+                if proxy.r#ref.ends_with(":latest") {
+                    return Err(UpdaterError::Precondition(format!(
+                        "image ref must use immutable tag, got: {}",
+                        proxy.r#ref
+                    )));
+                }
+                let pulled = worker
+                    .pull_image(&proxy.r#ref)
+                    .await
+                    .map_err(|error| UpdaterError::Precondition(format!("pull proxy {}: {error}", proxy.r#ref)))?;
+                if !digest_matches(&pulled, &proxy.digest) {
+                    return Err(UpdaterError::Precondition(format!(
+                        "proxy digest mismatch: pulled {pulled}, expected {}",
+                        proxy.digest
+                    )));
+                }
+                let target_tag = image_ref_tag(&proxy.r#ref).ok_or_else(|| {
+                    UpdaterError::Precondition(format!("proxy image ref has no tag: {}", proxy.r#ref))
+                })?;
+                let previous = EnvFile::load(&worker.cli().env_file)
+                    .ok()
+                    .and_then(|env| env.get("PROXY_TAG").map(str::to_owned));
+                (
+                    Some(worker.docker().image_id(&proxy.r#ref).await?),
+                    Some(target_tag),
+                    previous,
+                )
+            }
+            None => (None, None, None),
+        };
     let runner = crate::worker::update::build_compose_runner_pub(worker).await?;
-    let (prepared, candidate) =
+    let (prepared, candidate, compose_changed) =
         crate::deployment::prepare(worker, &runner, images[0], target).await?;
+    // Fail closed when the deployment compose will be overwritten but the operator
+    // did not acknowledge it: the on-disk compose differs from what the updater last
+    // wrote (or there is no baseline yet).
+    if compose_changed && !risk.allow_compose_override {
+        return Err(UpdaterError::Precondition(
+            "the deployment compose will be overwritten; re-submit with \
+             allow_compose_override=true (or allow_risk=true)"
+                .into(),
+        ));
+    }
     check_compose_networks(worker, images[0], &candidate).await?;
     Ok((
-        [
-            worker.docker().image_id(images[0]).await?,
-            worker.docker().image_id(images[1]).await?,
-        ],
+        ResolvedImages {
+            backend_image_id: worker.docker().image_id(images[0]).await?,
+            frontend_image_id: worker.docker().image_id(images[1]).await?,
+            proxy_image_id,
+            proxy_target_tag,
+            previous_proxy_tag,
+        },
         prepared,
     ))
+}
+
+/// Tag portion of an image reference (`repo:tag` → `tag`). The repo may contain a
+/// host:port prefix; only the final `:` separates the tag.
+fn image_ref_tag(image_ref: &str) -> Option<String> {
+    image_ref.rsplit_once(':').map(|(_, tag)| tag.to_string())
 }
 
 fn require_downgrade(allowed: bool, target: &str) -> Result<()> {
@@ -1135,20 +1138,22 @@ mod risk_flag_tests {
 
     #[test]
     fn allow_risk_umbrellas_granular_flags() {
-        let r = RiskFlags::from_api(false, true, None, None, None);
+        let r = RiskFlags::from_api(false, true, None, None, None, None);
         assert!(r.allow_downgrade);
         assert!(r.allow_diverged);
         assert!(r.allow_unknown);
         assert!(r.allow_irreversible);
+        assert!(r.allow_compose_override);
     }
 
     #[test]
     fn granular_flags_override_umbrella_defaults() {
-        let r = RiskFlags::from_api(true, false, Some(true), Some(false), None);
+        let r = RiskFlags::from_api(true, false, Some(true), Some(false), None, Some(false));
         assert!(r.allow_downgrade);
         assert!(r.allow_diverged);
         assert!(!r.allow_unknown);
         assert!(!r.allow_irreversible);
+        assert!(!r.allow_compose_override);
     }
 }
 

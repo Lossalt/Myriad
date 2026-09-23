@@ -180,8 +180,9 @@ jobs:
 镜像 CI 使用 `CARGO_PROFILE=ci-release`（thin LTO）；本地 `cargo build --release`
 与默认 Docker 构建仍为全量 LTO。消费侧只认 tag + manifest-list digest，无需区分。
 
-自更新 / proxy 更新：读 channel 内最近若干份 `release.json`，取**仍列出**
-`images.updater` / `images.proxy` 的最新一份；都没有则回退 Docker Hub tip。
+自更新：读 channel 内最近若干份 `release.json`，取**仍列出**
+`images.updater` 的最新一份；都没有则回退 Docker Hub tip。业务更新里，proxy 只在目标
+release 的 `images.proxy` 存在时随业务一起切换。
 
 ### 4.2 docker-publish.yml（push 条件打包 + workflow_dispatch）
 
@@ -340,7 +341,7 @@ updater 会先从 `*:myriad-rollback` 重新创建原版本 tag，再交给 Comp
 | 已持久化成功 / 已完成回滚 | 仅收尾状态，不重复安装或恢复数据 |
 | `needs_manual` | 按最后执行阶段重试恢复；缺失必要恢复数据仍保留维护与错误 |
 
-更新准备结果包含选定镜像、目标和原始/目标 Compose，在停服前写入 `state/prepared.<job>.json`。新 backend 镜像携带内置/外置数据库两种源码模板；可信 helper 将宿主入口迁到可写 `state/compose/`，业务更新自动合并版本定义和站点配置。v0.5.3 的无模板镜像及未持久化准备结果任务保留一个发布周期的兼容。完整验收见 [mock 黑盒报告](deployment/UPDATER_BLACKBOX_ACCEPTANCE.md)。
+更新准备结果包含选定镜像、目标和原始/目标 Compose，在停服前写入 `state/prepared.<job>.json`。新 backend 镜像携带内置/外置数据库两种源码模板；更新器把目标模板**就地写入宿主 Compose 文件**（写前备份到 `state/compose-backup/`），并把归一化结果存为基线。升级前把当前 Compose 与基线做语义比对，发现手动改动（或没有基线）则要求 `allow_compose_override` 确认。v0.5.3 的无模板镜像及未持久化准备结果任务保留一个发布周期的兼容。完整验收见 [mock 黑盒报告](deployment/UPDATER_BLACKBOX_ACCEPTANCE.md)。
 
 崩溃恢复决策以 `plan_crash_recovery` 为准，**不得**只看 `maintenance.active`。
 
@@ -598,8 +599,8 @@ now - maintenance.updated_at > 10min → 维护页加红色横幅 "更新疑似�
 
 ### 12.3 proxy 升级
 
-- proxy 自身升级有短暂 downtime（< 10s）
-- 不在自动更新流程中，需用户手动触发
+- proxy 是业务容器之一，随业务更新自动迁移与重建
+- 只有当目标 release 发布了新 proxy 镜像（`images.proxy`）时，业务更新才会一并切换 `PROXY_TAG`；否则保留宿主现有 `PROXY_TAG`
 
 ## 13. HTTP API
 
@@ -633,7 +634,6 @@ proxy 通道开关：proxy 启动时读 `PROXY_ALLOW_DIRECT_UPDATER`，未开启
 | POST | `/last-failed/dismiss` | token | 永久关闭「上次更新未成功」横幅 |
 | POST | `/rollback` | token | `{snapshot_id}` |
 | POST | `/admin/self-update` | token | 一键请求可信 TCB 交接；Updater 仅提交 tag intent |
-| POST | `/admin/proxy-update` | token | 手动升级 proxy（可选 body `{target_version}`；默认频道最新 release） |
 | GET | `/snapshots` | token | 可恢复快照 |
 | POST | `/rescue/exit-maintenance` | token + manual | 强制清维护 |
 | POST | `/rescue/continue` | token | 一键回退：对 stuck job 的 snapshot 执行与 `/rollback` 相同的恢复（pgdata + MYRIAD_TAG） |
@@ -797,7 +797,7 @@ docker compose --env-file .env --env-file ./guard-policy/docker-guard.env up -d 
 - version / tag 走白名单：`^v\d+\.\d+\.\d+(-[a-z0-9.]+)?$`
 - compose 路径限定预设路径
 - 高风险更新：当 body 含 `allow_risk` / `allow_downgrade` / `allow_diverged|unknown|irreversible`
-  为 true 时，另需 `confirm_risk: true` 或 header `X-Myriad-Confirm-Risk: true`。普通升级无额外字段。
+  / `allow_compose_override` 为 true 时，另需 `confirm_risk: true` 或 header `X-Myriad-Confirm-Risk: true`。普通升级无额外字段。
 
 ### 15.3 token / gateway secret
 

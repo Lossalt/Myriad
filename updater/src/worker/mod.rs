@@ -9,7 +9,6 @@ pub mod backend_health;
 pub mod machine;
 pub mod preflight;
 pub mod preflight_env;
-pub mod proxy_update;
 pub mod rollback;
 pub mod self_update;
 pub mod update;
@@ -68,6 +67,7 @@ pub enum Command {
         allow_diverged: Option<bool>,
         allow_unknown: Option<bool>,
         allow_irreversible: Option<bool>,
+        allow_compose_override: Option<bool>,
         idempotency_key: Option<String>,
         /// Optional admin actor from backend (`X-Update-Actor`), for audit only.
         actor: Option<String>,
@@ -124,20 +124,9 @@ pub enum Command {
     DismissSelfUpdateLast {
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    /// Clear durable proxy-update last-outcome (`proxy-update-last.json`).
-    DismissProxyUpdateLast {
-        reply: tokio::sync::oneshot::Sender<Result<()>>,
-    },
     SelfUpdate {
         actor: Option<String>,
         reply: tokio::sync::oneshot::Sender<Result<self_update::SelfUpdateReport>>,
-    },
-    /// Manual proxy image upgrade (not part of business auto-update).
-    ProxyUpdate {
-        actor: Option<String>,
-        /// When set, fetch this release's proxy image; otherwise latest for channel.
-        explicit_tag: Option<String>,
-        reply: tokio::sync::oneshot::Sender<Result<proxy_update::ProxyUpdateReport>>,
     },
     Shutdown,
 }
@@ -217,9 +206,7 @@ impl Worker {
         // dismiss that would clear it — for the lifetime of the system. A readable
         // `Pending` record still refuses below.
         self_update::converge_unreadable_outcome(&self.state)?;
-        proxy_update::converge_unreadable_outcome(&self.state)?;
-        self_update::require_no_pending_handoff(&self.state)?;
-        proxy_update::require_no_pending(&self.state)
+        self_update::require_no_pending_handoff(&self.state)
     }
 
     fn require_idle_mutation(&self) -> Result<()> {
@@ -308,11 +295,6 @@ impl Worker {
             ));
         }
         Ok((backend, frontend))
-    }
-
-    /// Proxy image repository (no tag). Prefer `.env` `PROXY_IMAGE`; else compose default.
-    pub fn proxy_image_repo(&self) -> Result<String> {
-        self.optional_image_repo("PROXY_IMAGE", "docker.io/somekawahitomi/myriad-proxy")
     }
 
     /// Updater image repository (no tag). Prefer `.env` `UPDATER_IMAGE`; else compose default.
@@ -514,7 +496,6 @@ impl Worker {
             .take()
             .expect("worker rx already taken");
         let me = self.clone();
-        proxy_update::resume_pending(self.clone());
         self_update::resume_pending(self.clone());
 
         // Periodic poller. Interval is re-read each cycle so prefs hot-reload without restart.
@@ -618,6 +599,7 @@ impl Worker {
                     allow_diverged,
                     allow_unknown,
                     allow_irreversible,
+                    allow_compose_override,
                     idempotency_key,
                     actor,
                     reply,
@@ -632,6 +614,7 @@ impl Worker {
                             allow_diverged,
                             allow_unknown,
                             allow_irreversible,
+                            allow_compose_override,
                             idempotency_key,
                             actor,
                         )
@@ -719,27 +702,9 @@ impl Worker {
                     );
                     let _ = reply.send(res);
                 }
-                Command::DismissProxyUpdateLast { reply } => {
-                    let res = self.clone().handle_dismiss_state_file(
-                        proxy_update::PROXY_UPDATE_LAST_FILE,
-                        "audit: proxy_update_last_dismissed",
-                    );
-                    let _ = reply.send(res);
-                }
                 Command::SelfUpdate { actor, reply } => {
                     let res = match self.require_idle_mutation() {
                         Ok(()) => self_update::schedule(self.clone(), actor),
-                        Err(error) => Err(error),
-                    };
-                    let _ = reply.send(res);
-                }
-                Command::ProxyUpdate {
-                    actor,
-                    explicit_tag,
-                    reply,
-                } => {
-                    let res = match self.require_idle_mutation() {
-                        Ok(()) => proxy_update::schedule(self.clone(), actor, explicit_tag),
                         Err(error) => Err(error),
                     };
                     let _ = reply.send(res);
@@ -758,6 +723,7 @@ impl Worker {
         allow_diverged: Option<bool>,
         allow_unknown: Option<bool>,
         allow_irreversible: Option<bool>,
+        allow_compose_override: Option<bool>,
         idempotency_key: Option<String>,
         actor: Option<String>,
     ) -> Result<String> {
@@ -769,6 +735,7 @@ impl Worker {
             allow_diverged,
             allow_unknown,
             allow_irreversible,
+            allow_compose_override,
         );
         // A keyed job the executor system already accepted replays its id. A keyed
         // job whose admission never committed (Pending, never started, not
@@ -827,6 +794,7 @@ impl Worker {
             allow_diverged,
             allow_unknown,
             allow_irreversible,
+            allow_compose_override,
         );
         tokio::spawn(async move {
             if let Err(e) =
@@ -895,6 +863,7 @@ pub(crate) fn refuse_update_if_stuck_in(state: &StateDir) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_request_fingerprint(
     target: &DeployTag,
     mode: UpdateMode,
@@ -903,6 +872,7 @@ pub(crate) fn update_request_fingerprint(
     allow_diverged: Option<bool>,
     allow_unknown: Option<bool>,
     allow_irreversible: Option<bool>,
+    allow_compose_override: Option<bool>,
 ) -> String {
     fn flag(v: Option<bool>) -> &'static str {
         match v {
@@ -912,7 +882,7 @@ pub(crate) fn update_request_fingerprint(
         }
     }
     format!(
-        "update|{}|{}|downgrade={}|risk={}|diverged={}|unknown={}|irreversible={}",
+        "update|{}|{}|downgrade={}|risk={}|diverged={}|unknown={}|irreversible={}|compose_override={}",
         target.as_str(),
         mode.as_str(),
         allow_downgrade,
@@ -920,6 +890,7 @@ pub(crate) fn update_request_fingerprint(
         flag(allow_diverged),
         flag(allow_unknown),
         flag(allow_irreversible),
+        flag(allow_compose_override),
     )
 }
 
@@ -1211,6 +1182,7 @@ mod stuck_and_idempotency_tests {
             None,
             None,
             None,
+            None,
         );
         let b = update_request_fingerprint(
             &DeployTag::parse("v1.0.1").unwrap(),
@@ -1220,12 +1192,14 @@ mod stuck_and_idempotency_tests {
             None,
             None,
             None,
+            None,
         );
         let c = update_request_fingerprint(
             &DeployTag::parse("v1.0.0").unwrap(),
             UpdateMode::Release,
             true,
             false,
+            None,
             None,
             None,
             None,
@@ -1242,6 +1216,7 @@ mod stuck_and_idempotency_tests {
                 None,
                 None,
                 None,
+                None,
             )
         );
     }
@@ -1255,6 +1230,7 @@ mod stuck_and_idempotency_tests {
             UpdateMode::Release,
             false,
             false,
+            None,
             None,
             None,
             None,
@@ -1275,6 +1251,7 @@ mod stuck_and_idempotency_tests {
             None,
             None,
             None,
+            None,
         );
         let err = replay_idempotent_update(&state, "k1", &other).unwrap_err();
         assert!(
@@ -1287,7 +1264,7 @@ mod stuck_and_idempotency_tests {
     fn idempotent_lookup_survives_process_restart_via_job_files() {
         let dir = tempfile::tempdir().unwrap();
         let state = StateDir::open(dir.path()).unwrap();
-        let fp = "update|v1.2.3|release|downgrade=false|risk=false|diverged=unset|unknown=unset|irreversible=unset";
+        let fp = "update|v1.2.3|release|downgrade=false|risk=false|diverged=unset|unknown=unset|irreversible=unset|compose_override=unset";
         state
             .write_job(&sample_job("durable", Some("restart-key"), Some(fp)))
             .unwrap();
