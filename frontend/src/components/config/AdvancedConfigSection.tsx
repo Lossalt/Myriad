@@ -18,6 +18,15 @@ import {
   restoreSettingsBackup,
   updateConfig,
 } from '../../lib/api'
+import {
+  clearRestoreNotice,
+  EMPTY_RESTORE_NOTICE,
+  formatRestoreNotice,
+  hasRestoreNotice,
+  readRestoreNotice,
+  stashRestoreNotice,
+  summarizeKeys,
+} from '../../lib/settingsRestoreNotice'
 
 import { getCSRFToken } from '../../utils/csrf'
 import { purgeFrontendCachesAndReload } from '../../utils/frontendCachePurge'
@@ -217,8 +226,27 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
   updateUiFieldValue,
   onMessage,
 }) => {
-  const { t } = useI18n()
+  const { t, format } = useI18n()
   const { catalog: g, bindGuide } = useSettingGuide()
+  // Carried across the reload that follows a restore; shown until dismissed.
+  const [restoreNotice, setRestoreNotice] = useState(() => readRestoreNotice())
+  const formattedRestoreNotice = hasRestoreNotice(restoreNotice)
+    ? formatRestoreNotice(
+        restoreNotice,
+        {
+          mediaTitle: t.config.restoreUnresolvedMediaTitle,
+          skippedTitle: t.config.restoreSkippedSettingsTitle,
+          more: t.config.restoreUnresolvedMediaMore,
+          wallpaper: t.config.restoreUnresolvedMediaWallpaper,
+          sticker: t.config.restoreUnresolvedMediaSticker,
+        },
+        format,
+      )
+    : null
+  const dismissRestoreNotice = useCallback(() => {
+    clearRestoreNotice()
+    setRestoreNotice(EMPTY_RESTORE_NOTICE)
+  }, [])
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const [cachePurgeArmed, setCachePurgeArmed] = useState(false)
   const [cachePurgeLoading, setCachePurgeLoading] = useState(false)
@@ -232,6 +260,7 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
   const [restorePreview, setRestorePreview] =
     useState<SettingsRestorePreview | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const invalidPreviewKeys = summarizeKeys(restorePreview?.invalid_keys ?? [])
   const previewText = {
     restore: t.config.importPreviewRestore,
     preserve: t.config.importPreviewPreserve,
@@ -334,13 +363,30 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
 
     try {
       await getCSRFToken(true)
+      let attentionCount = 0
       if (isVersionedSettingsBackup(pendingImportData)) {
-        await restoreSettingsBackup(pendingImportData)
+        const result = await restoreSettingsBackup(pendingImportData)
         restoreClientPreferences(pendingClientRestore)
+        attentionCount =
+          result.unresolved_media.length + result.skipped_settings.length
+        // An empty notice also clears one left by an earlier restore.
+        stashRestoreNotice({
+          unresolvedMedia: result.unresolved_media,
+          skippedSettings: result.skipped_settings,
+        })
       } else {
         await updateConfig(pendingImportData)
       }
-      onMessage?.(t.config.importConfigSuccess, 'success')
+      if (attentionCount > 0) {
+        onMessage?.(
+          format(t.config.importConfigSuccessNeedsAttention, {
+            count: attentionCount,
+          }),
+          'warning',
+        )
+      } else {
+        onMessage?.(t.config.importConfigSuccess, 'success')
+      }
       setTimeout(() => {
         window.location.reload()
       }, 2000)
@@ -355,7 +401,7 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
       setPendingClientRestore(null)
       setRestorePreview(null)
     }
-  }, [pendingClientRestore, pendingImportData, t, onMessage])
+  }, [pendingClientRestore, pendingImportData, t, format, onMessage])
 
   const clearCachePurgeArmTimer = useCallback(() => {
     if (cachePurgeArmTimerRef.current != null) {
@@ -558,6 +604,47 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
         {...bindGuide('advanced.backup', g.advanced.backup)}
         icon={<FaSave />}
       >
+        {formattedRestoreNotice && (
+          <div
+            className="settings-stat-chip is-warning settings-restore-media-notice"
+            role="status"
+          >
+            {formattedRestoreNotice.skipped && (
+              <>
+                <p className="settings-restore-media-title">
+                  {formattedRestoreNotice.skipped.title}
+                </p>
+                <ul className="settings-restore-media-list">
+                  {formattedRestoreNotice.skipped.lines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                {formattedRestoreNotice.skipped.more && (
+                  <p>{formattedRestoreNotice.skipped.more}</p>
+                )}
+              </>
+            )}
+            {formattedRestoreNotice.media && (
+              <>
+                <p className="settings-restore-media-title">
+                  {formattedRestoreNotice.media.title}
+                </p>
+                <p>{t.config.restoreUnresolvedMediaHint}</p>
+                <ul className="settings-restore-media-list">
+                  {formattedRestoreNotice.media.lines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                {formattedRestoreNotice.media.more && (
+                  <p>{formattedRestoreNotice.media.more}</p>
+                )}
+              </>
+            )}
+            <SettingsButton variant="secondary" onClick={dismissRestoreNotice}>
+              {t.config.restoreUnresolvedMediaDismiss}
+            </SettingsButton>
+          </div>
+        )}
         <ButtonItem
           itemKey="export_config"
           label={t.config.exportConfig}
@@ -688,6 +775,15 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
                   {restorePreview.invalid_count > 0 && (
                     <div className="settings-stat-chip is-danger is-wide">
                       {previewText.invalid}: {restorePreview.invalid_count}
+                      {invalidPreviewKeys.shown.length > 0 && (
+                        <span className="settings-restore-invalid-keys">
+                          {invalidPreviewKeys.shown.join(', ')}
+                          {invalidPreviewKeys.hidden > 0 &&
+                            ` ${format(t.config.restoreUnresolvedMediaMore, {
+                              count: invalidPreviewKeys.hidden,
+                            })}`}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

@@ -101,8 +101,8 @@ pub struct SettingsRestorePreview {
 }
 
 pub(crate) struct SettingsRestorePlan {
-    entries: Vec<SettingsBackupEntry>,
-    preview: SettingsRestorePreview,
+    pub(crate) entries: Vec<SettingsBackupEntry>,
+    pub(crate) preview: SettingsRestorePreview,
 }
 
 pub(crate) fn validate_settings_backup(backup: &SettingsBackup) -> Result<(), String> {
@@ -215,6 +215,19 @@ fn normalize_registered_setting_value(key: &str, value: Value) -> Result<Value, 
     ) -> Result<Value, String> {
         let parsed = serde_json::from_value::<T>(value).map_err(|error| error.to_string())?;
         serde_json::to_value(transform(parsed)).map_err(|error| error.to_string())
+    }
+
+    // URL-like settings follow exactly the policy saving them enforces. A value
+    // it rejects makes the entry invalid: the preview reports it and the restore
+    // skips it, keeping the current value. Errors never echo the value.
+    if let Some(sanitize) = super::secrets::url_setting_sanitizer(key) {
+        return match value {
+            Value::Null => Ok(Value::Null),
+            Value::String(raw) => sanitize(&raw)
+                .map(Value::String)
+                .ok_or_else(|| format!("{key} failed the URL policy for this setting")),
+            _ => Err(format!("{key} must be a string")),
+        };
     }
 
     match key {
@@ -480,6 +493,123 @@ pub async fn preview_settings_restore(
     )
 }
 
+#[derive(Debug)]
+pub(crate) enum RestoreWriteError {
+    Db(sea_orm::DbErr),
+    Media(crate::services::media::MediaError),
+}
+
+impl From<sea_orm::DbErr> for RestoreWriteError {
+    fn from(error: sea_orm::DbErr) -> Self {
+        Self::Db(error)
+    }
+}
+
+/// Config value as the text its reader parses; `None` means unset.
+fn restored_setting_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// Restored setting that cites local media missing on this instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnresolvedRestoredMedia {
+    pub setting: String,
+    pub url: String,
+}
+
+/// Bind the media references of restored settings like saving them, so restored
+/// media keeps deletion protection, and rewrite values to what a save stores
+/// (published, path-only local URLs). Unlike saving, local media that definitely
+/// does not exist here (such as a media volume that did not come along) does not
+/// fail the restore: it stays as stored, unbound, and is reported back.
+async fn bind_restored_media(
+    txn: &impl ConnectionTrait,
+    entries: &mut [SettingsBackupEntry],
+    origins: &[String],
+    legacy: &crate::services::media::LegacyPaths,
+) -> Result<Vec<UnresolvedRestoredMedia>, crate::services::media::MediaError> {
+    let mut unresolved = Vec::new();
+    for entry in entries {
+        let text = restored_setting_text(&entry.value);
+        let raw = text.as_deref().unwrap_or("");
+        let (stored, dead) = match entry.key.as_str() {
+            "ui_wallpaper_url" => {
+                crate::services::media::bind_restored_wallpaper(txn, raw, origins, legacy).await?
+            }
+            "dashboard_layout" => {
+                crate::services::media::bind_restored_dashboard_layout(txn, raw, origins, legacy)
+                    .await?
+            }
+            _ => continue,
+        };
+        for url in dead {
+            tracing::warn!(
+                setting = %entry.key,
+                url = %url,
+                "restored setting cites local media that does not exist here; left unbound"
+            );
+            unresolved.push(UnresolvedRestoredMedia {
+                setting: entry.key.clone(),
+                url,
+            });
+        }
+        // An unset value still clears stale references above, but stays unset.
+        if text.is_some() {
+            entry.value = Value::String(stored);
+        }
+    }
+    Ok(unresolved)
+}
+
+/// Write restored settings in the caller's transaction, media bindings included.
+/// Returns the local media citations left unresolved.
+pub(crate) async fn write_restored_configurations(
+    txn: &impl ConnectionTrait,
+    mut entries: Vec<SettingsBackupEntry>,
+    origins: &[String],
+    legacy: &crate::services::media::LegacyPaths,
+) -> Result<Vec<UnresolvedRestoredMedia>, RestoreWriteError> {
+    // Entries come from `build_settings_restore_plan`, which already dropped
+    // settings failing their save policy; nothing here publishes those.
+    let unresolved = bind_restored_media(txn, &mut entries, origins, legacy)
+        .await
+        .map_err(RestoreWriteError::Media)?;
+    for entry in entries {
+        txn.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+                INSERT INTO configurations
+                    (key, value, description, category, is_encrypted, is_public, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    description = COALESCE(EXCLUDED.description, configurations.description),
+                    category = COALESCE(EXCLUDED.category, configurations.category),
+                    is_encrypted = COALESCE(EXCLUDED.is_encrypted, configurations.is_encrypted),
+                    is_public = COALESCE(EXCLUDED.is_public, configurations.is_public),
+                    updated_at = CURRENT_TIMESTAMP
+            "#,
+            vec![
+                entry.key.clone().into(),
+                // 备份里是明文（见 export_settings），落库前重新加密。
+                crate::services::data_key::seal_config_value(&entry.key, entry.value)
+                    .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?
+                    .into(),
+                entry.description.into(),
+                entry.category.into(),
+                entry.is_encrypted.into(),
+                entry.is_public.into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(unresolved)
+}
+
 pub async fn restore_settings(
     State(db): State<DatabaseConnection>,
     State(dynamic_config): State<std::sync::Arc<tokio::sync::RwLock<crate::config::DynamicConfig>>>,
@@ -513,6 +643,10 @@ pub async fn restore_settings(
         .notification_preferences
         .normalized();
 
+    // Same origin set as saving the wallpaper and the media upgrade backfill.
+    let origins = crate::services::media::upgrade::configured_origins().await;
+    let legacy =
+        crate::services::media::LegacyPaths::from_data_paths(crate::services::data_paths::paths());
     let transaction = match db.begin().await {
         Ok(transaction) => transaction,
         Err(error) => {
@@ -526,37 +660,9 @@ pub async fn restore_settings(
         }
     };
 
-    let restore_result: Result<(), sea_orm::DbErr> = async {
-        for entry in entries {
-            transaction
-                .execute_raw(Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"
-                        INSERT INTO configurations
-                            (key, value, description, category, is_encrypted, is_public, created_at, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                        ON CONFLICT (key) DO UPDATE SET
-                            value = EXCLUDED.value,
-                            description = COALESCE(EXCLUDED.description, configurations.description),
-                            category = COALESCE(EXCLUDED.category, configurations.category),
-                            is_encrypted = COALESCE(EXCLUDED.is_encrypted, configurations.is_encrypted),
-                            is_public = COALESCE(EXCLUDED.is_public, configurations.is_public),
-                            updated_at = CURRENT_TIMESTAMP
-                    "#,
-                    vec![
-                        entry.key.clone().into(),
-                        // 备份里是明文（见 export_settings），落库前重新加密。
-                        crate::services::data_key::seal_config_value(&entry.key, entry.value)
-                            .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?
-                            .into(),
-                        entry.description.into(),
-                        entry.category.into(),
-                        entry.is_encrypted.into(),
-                        entry.is_public.into(),
-                    ],
-                ))
-                .await?;
-        }
+    let restore_result: Result<Vec<UnresolvedRestoredMedia>, RestoreWriteError> = async {
+        let unresolved =
+            write_restored_configurations(&transaction, entries, &origins, &legacy).await?;
 
         let notification_value = serde_json::to_value(&notification_preferences)
             .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
@@ -578,23 +684,34 @@ pub async fn restore_settings(
             ))
             .await?;
         if update_result.rows_affected() == 0 {
-            return Err(sea_orm::DbErr::Custom(
+            return Err(RestoreWriteError::Db(sea_orm::DbErr::Custom(
                 "Authenticated user no longer exists".to_string(),
-            ));
+            )));
         }
 
         transaction.commit().await?;
-        Ok(())
+        Ok(unresolved)
     }
     .await;
 
-    if let Err(error) = restore_result {
-        tracing::error!("Failed to restore settings: {}", error);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to restore settings", "code": "settings_backup_failed"})),
-        );
-    }
+    let unresolved_media = match restore_result {
+        Ok(unresolved) => unresolved,
+        Err(RestoreWriteError::Media(error)) => {
+            // Invalid media, or media that exists here but cannot be protected
+            // yet, answers like saving the setting: nothing is restored.
+            tracing::warn!(%error, "settings restore rejected: media references could not be bound");
+            return super::extras::media_binding_failed(&error);
+        }
+        Err(RestoreWriteError::Db(error)) => {
+            tracing::error!("Failed to restore settings: {}", error);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    json!({"error": "Failed to restore settings", "code": "settings_backup_failed"}),
+                ),
+            );
+        }
+    };
 
     let config_service = crate::services::config_service::ConfigService::new(db.clone());
     match config_service.load_config().await {
@@ -640,7 +757,8 @@ pub async fn restore_settings(
             "success": true,
             "message": "Settings restored successfully",
             "requires_reload": false,
-            "preview": preview
+            "preview": preview,
+            "unresolved_media": unresolved_media
         })),
     )
 }
@@ -1458,6 +1576,66 @@ mod settings_backup_tests {
         assert_eq!(
             sanitize_wallpaper_url("https://user:pass@cdn.example.com/a.jpg"),
             None
+        );
+    }
+
+    #[test]
+    fn restore_plan_marks_url_settings_failing_the_save_policy_invalid() {
+        /// Restored value, or `None` when the plan skips the setting as invalid.
+        fn restore_one(key: &str, value: Value) -> Option<Value> {
+            let plan = build_settings_restore_plan(&backup_with_entries(vec![
+                SettingsBackupEntry {
+                    value,
+                    ..entry(key)
+                },
+                entry("restore_probe"),
+            ]));
+            // The rest of the backup is still restored.
+            assert!(plan.entries.iter().any(|e| e.key == "restore_probe"));
+            let restored = plan.entries.into_iter().find(|e| e.key == key);
+            let invalid = plan.preview.invalid_keys.iter().any(|k| k == key);
+            assert_eq!(restored.is_none(), invalid, "{key}");
+            assert_eq!(plan.preview.invalid_count, usize::from(invalid));
+            restored.map(|e| e.value)
+        }
+        for (key, unsafe_value) in [
+            ("ui_wallpaper_url", "javascript:alert(1)"),
+            ("ui_wallpaper_url", "data:image/png;base64,aaa"),
+            ("ui_wallpaper_url", "http://127.0.0.1/a.jpg"),
+            ("ui_wallpaper_url", "/javascript:alert(1)"),
+            ("site_favicon", "data:text/html,<script>alert(1)</script>"),
+            ("site_og_image", "javascript:alert(1)"),
+            ("google_site_verification", "<script>alert(1)</script>"),
+            ("umami_script_url", "javascript:alert(1)"),
+            ("proxy_url", "file:///etc/passwd"),
+            ("gemini_base_url", "javascript:alert(1)"),
+            ("github_api_base_url", "ftp://example.com"),
+        ] {
+            assert_eq!(restore_one(key, json!(unsafe_value)), None, "{key}");
+        }
+        assert_eq!(restore_one("umami_script_url", json!(42)), None);
+        // Accepted values are restored in the form saving would store.
+        assert_eq!(
+            restore_one(
+                "google_site_verification",
+                json!(r#"<meta name="google-site-verification" content="Tok_en-1" />"#)
+            ),
+            Some(json!("Tok_en-1"))
+        );
+        assert_eq!(
+            restore_one("github_api_base_url", json!("https://api.github.com/")),
+            Some(json!("https://api.github.com"))
+        );
+        assert_eq!(
+            restore_one("ui_wallpaper_url", json!("/media/assets/a/w.png")),
+            Some(json!("/media/assets/a/w.png"))
+        );
+        assert_eq!(restore_one("ui_wallpaper_url", json!("")), Some(json!("")));
+        assert_eq!(restore_one("proxy_url", Value::Null), Some(Value::Null));
+        // Settings without a URL policy pass through untouched.
+        assert_eq!(
+            restore_one("site_title", json!("javascript:alert(1)")),
+            Some(json!("javascript:alert(1)"))
         );
     }
 

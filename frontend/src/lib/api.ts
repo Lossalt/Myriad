@@ -1,7 +1,8 @@
 import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
+import type { UnresolvedRestoredMedia } from './settingsRestoreNotice'
 import axios from 'axios'
-import { API_URL } from '../config'
 
+import { API_URL } from '../config'
 import { hostLocaleHeaders } from '../i18n/hostLocaleHeaders'
 import { currentCopy } from '../i18n/localeCopy'
 import { parseApiErrorBody } from '../services/api'
@@ -17,6 +18,10 @@ import {
 import { invalidatePermissionConfig } from '../utils/permissionConfig'
 import { checkRateLimit, RateLimitError } from '../utils/rateLimiter'
 import { isUselessErrorText, userFacingError } from '../utils/userFacingError'
+import {
+  parseSettingKeys,
+  parseUnresolvedRestoredMedia,
+} from './settingsRestoreNotice'
 
 const API_BASE_URL =
   API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
@@ -307,7 +312,23 @@ export async function previewSettingsBackup(backup: unknown) {
   return response.data.preview as SettingsRestorePreview
 }
 
-export async function restoreSettingsBackup(backup: unknown) {
+export interface SettingsRestoreResult {
+  success: true
+  message?: string
+  requires_reload?: boolean
+  preview?: SettingsRestorePreview
+  /** Local media the backup cites that does not exist here; left unbound. */
+  unresolved_media: UnresolvedRestoredMedia[]
+  /**
+   * Settings the restore skipped as invalid, keeping their current values
+   * (`preview.invalid_keys`, key names only).
+   */
+  skipped_settings: string[]
+}
+
+export async function restoreSettingsBackup(
+  backup: unknown,
+): Promise<SettingsRestoreResult> {
   const response = await api.post('/api/config/settings-backup', backup)
   if (response.data?.success !== true) {
     const restoreError =
@@ -319,7 +340,13 @@ export async function restoreSettingsBackup(backup: unknown) {
     )
   }
   invalidatePermissionConfig()
-  return response.data
+  return {
+    ...response.data,
+    unresolved_media: parseUnresolvedRestoredMedia(
+      response.data.unresolved_media,
+    ),
+    skipped_settings: parseSettingKeys(response.data.preview?.invalid_keys),
+  } as SettingsRestoreResult
 }
 
 export async function fetchPermissionsConfig() {
