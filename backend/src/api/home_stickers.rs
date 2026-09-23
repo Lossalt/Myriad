@@ -248,7 +248,8 @@ pub async fn generate_home_sticker(
     )
     .await
     .map_err(map_generation_error)?;
-    let (bytes, _) = image_generation::load_generated_bytes(&generated)
+    let (width, height) = (generated.width, generated.height);
+    let (bytes, _) = image_generation::load_generated_bytes(generated)
         .await
         .map_err(map_generation_error)?;
     let png = crate::services::sticker_cutout::prepare_sticker_png(bytes)
@@ -263,7 +264,7 @@ pub async fn generate_home_sticker(
                     crate::services::media::MediaSource::Generated,
                 ),
                 crate::services::media::NewMediaBytes {
-                    bytes: png,
+                    bytes: png.into(),
                     claimed_mime: "image/png".into(),
                     filename: "sticker.png".into(),
                     max_bytes: MAX_STICKER_UPLOAD_BYTES,
@@ -278,8 +279,8 @@ pub async fn generate_home_sticker(
 
     Ok(Json(GenerateHomeStickerResponse {
         image_url: asset.catalog_url(),
-        width: generated.width,
-        height: generated.height,
+        width,
+        height,
     }))
 }
 
@@ -301,7 +302,7 @@ pub async fn upload_home_sticker(
                     crate::services::media::MediaSource::Upload,
                 ),
                 crate::services::media::NewMediaBytes {
-                    bytes,
+                    bytes: bytes.into(),
                     claimed_mime: media_type.to_string(),
                     filename: "sticker".into(),
                     max_bytes: MAX_STICKER_UPLOAD_BYTES,

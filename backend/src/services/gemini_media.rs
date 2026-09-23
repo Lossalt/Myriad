@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use crate::services::http_client::get_long_running_client;
 use crate::services::image_generation::{
-    GeneratedImage, ImageGenerationConfig, ImageGenerationError, ImageReference,
+    GeneratedImage, GeneratedImageSource, ImageGenerationConfig, ImageGenerationError,
+    ImageReference,
 };
 
 const DEFAULT_GEMINI_BASE: &str = "https://generativelanguage.googleapis.com";
@@ -163,7 +164,7 @@ pub async fn generate_image(
         .ok_or_else(|| ImageGenerationError::InvalidResponse(gemini_empty_message(&value)))?;
     let media_type = normalize_image_media_type(&media_type, &bytes);
     Ok(GeneratedImage {
-        source: format!("data:{media_type};base64,{}", BASE64.encode(&bytes)),
+        source: GeneratedImageSource::Inline(bytes),
         media_type,
         width,
         height,
@@ -409,7 +410,7 @@ mod tests {
     #[test]
     fn image_body_includes_reference_and_aspect() {
         let reference = ImageReference {
-            bytes: b"\x89PNG\r\n\x1a\n".to_vec(),
+            bytes: b"\x89PNG\r\n\x1a\n".to_vec().into(),
             media_type: "image/png".to_string(),
         };
         let body = image_request_body("portrait", 1024, 1536, &[reference]);
@@ -429,11 +430,11 @@ mod tests {
     fn image_body_preserves_multiple_reference_order_and_text_only() {
         let references = [
             ImageReference {
-                bytes: vec![1],
+                bytes: vec![1].into(),
                 media_type: "image/png".into(),
             },
             ImageReference {
-                bytes: vec![2],
+                bytes: vec![2].into(),
                 media_type: "image/jpeg".into(),
             },
         ];
