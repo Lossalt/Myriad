@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+// Appearance saves authenticate through the shared API client, which reads the session's CSRF token.
+const CSRF_TOKEN = `v1.${'a'.repeat(24)}.${'b'.repeat(43)}`
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/csrf-token', route => route.fulfill({ json: { csrf_token: CSRF_TOKEN, expires_in: 3600 } }))
+})
+
 test('title readers observe updates before subscription and share current state on remount', async ({ page }) => {
   await page.route('**/api/config/ui', route => route.fulfill({ json: {} }))
   await page.goto('/titleStyle.html')
@@ -40,7 +47,7 @@ for (const firstToFinish of ['A', 'B']) {
       } })
     })
     await page.route('**/api/config/ui', route => route.fulfill({ json: {} }))
-    const saves: unknown[] = []
+    const saves: { title_font?: string }[] = []
     await page.route('**/api/config/dashboard', route => {
       saves.push(route.request().postDataJSON())
       return route.fulfill({ json: { success: true } })
@@ -53,7 +60,8 @@ for (const firstToFinish of ['A', 'B']) {
     await page.evaluate(name => (window as any).finishFont(name), firstToFinish === 'A' ? 'B' : 'A')
     await expect(page.locator('[data-font]')).toHaveText('henny-penny')
     await expect(page.locator('[data-loading]')).toHaveText('false')
-    await expect.poll(() => saves).toEqual([{ title_font: 'henny-penny' }])
+    // Earlier edits may merge into the same save; only the font choice is under test.
+    await expect.poll(() => saves.map(save => save.title_font)).toEqual(['henny-penny'])
   })
 }
 
@@ -68,7 +76,7 @@ test('the lazy writer merges independent style fields into one authenticated sav
   await page.getByRole('button', { name: 'Save size and color' }).click()
   await expect(page.locator('[data-reader="early"]')).toHaveText('0.8')
   await expect(page.locator('[data-color]')).toHaveText('accent')
-  await expect.poll(() => saves).toEqual([{ body: { title_font_size: 0.8, title_color: 'accent' }, token: 'fixture-token' }])
+  await expect.poll(() => saves).toEqual([{ body: { title_font_size: 0.8, title_color: 'accent' }, token: CSRF_TOKEN }])
 })
 
 test('slow saves serialize while later edits merge into the next request', async ({ page }) => {

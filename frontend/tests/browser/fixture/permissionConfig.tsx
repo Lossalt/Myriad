@@ -1,6 +1,6 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { updatePermissionsConfig } from '../../../src/lib/api'
+import { updatePermissionsConfig } from '../../../src/services/configApi'
 import { canUseAgent, DEFAULT_MODULE_VISIBILITY_PREFERENCES } from '../../../src/utils/moduleVisibility'
 import { usePermissionConfig } from '../../../src/utils/permissionConfig'
 
