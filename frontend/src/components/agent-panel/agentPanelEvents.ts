@@ -1,5 +1,6 @@
 import type { AgentAttachment } from './agentAttachments'
 import type { AgentPanelMode } from './agentPanelMode'
+import { createStore, patchStore } from '../../utils/store'
 import { getAgentPanelMode, isAgentPanelMode } from './agentPanelMode'
 
 export const AGENT_PANEL_SUBMIT_EVENT = 'agent-panel-submit'
@@ -126,37 +127,26 @@ export interface QueuedAgentSessionOpen {
  * 面板/引擎挂上之前（访问检查、语言包、懒加载 chunk）打开请求没有监听者。
  * 先记在这里，由挂上的一方 attach 时消费；attach 之后由它自己听事件，不再排队。
  */
-let queuedAgentPanelOpen: QueuedAgentPanelOpen | null = null
+const panelQueue = createStore<{ open: QueuedAgentPanelOpen | null, attached: boolean }>({
+  open: null,
+  attached: false,
+})
 let queuedAgentSessionOpen: QueuedAgentSessionOpen | null = null
-let panelAttached = false
 let engineAttached = false
 
-const queueListeners = new Set<() => void>()
-
-function notifyQueue(): void {
-  for (const listener of queueListeners) listener()
-}
-
 /** Fires when a panel open is queued, consumed or discarded, or the panel attaches/detaches. */
-export function subscribeAgentOpenQueue(listener: () => void): () => void {
-  queueListeners.add(listener)
-  return () => {
-    queueListeners.delete(listener)
-  }
-}
+export const subscribeAgentOpenQueue = panelQueue.subscribe
 
 export function isAgentPanelAttached(): boolean {
-  return panelAttached
+  return panelQueue.get().attached
 }
 
 export function queueAgentPanelOpen(next: QueuedAgentPanelOpen): void {
-  if (panelAttached) return
-  queuedAgentPanelOpen = next
-  notifyQueue()
+  if (!panelQueue.get().attached) patchStore(panelQueue, { open: next })
 }
 
 export function hasQueuedAgentPanelOpen(): boolean {
-  return queuedAgentPanelOpen !== null
+  return panelQueue.get().open !== null
 }
 
 /** 面板 mount：取走排队的打开请求，并接管后续打开。 */
@@ -164,15 +154,12 @@ export function attachAgentPanelOpenQueue(): {
   queued: QueuedAgentPanelOpen | null
   detach: () => void
 } {
-  const queued = queuedAgentPanelOpen
-  queuedAgentPanelOpen = null
-  panelAttached = true
-  notifyQueue()
+  const queued = panelQueue.get().open
+  patchStore(panelQueue, { open: null, attached: true })
   return {
     queued,
     detach: () => {
-      panelAttached = false
-      notifyQueue()
+      patchStore(panelQueue, { attached: false })
     },
   }
 }
@@ -207,9 +194,7 @@ export function attachAgentSessionOpenQueue(): {
 /** 访问被拒时丢弃未兑现的请求，避免之后获准时突然弹出。 */
 export function clearQueuedAgentOpens(): void {
   queuedAgentSessionOpen = null
-  if (queuedAgentPanelOpen === null) return
-  queuedAgentPanelOpen = null
-  notifyQueue()
+  patchStore(panelQueue, { open: null })
 }
 
 export const AGENT_PANEL_CLOSE_EVENT = 'agent-panel-close'

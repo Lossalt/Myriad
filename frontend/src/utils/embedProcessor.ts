@@ -1,5 +1,7 @@
+import type { Song } from './musicPlayer'
 import { currentCopy } from '../i18n/localeCopy'
 import { apiService } from '../services/api'
+import { emitAppEvent } from './appEvents'
 import {
   fetchGithubRepoCard,
   formatGithubCount,
@@ -689,26 +691,19 @@ export async function playNeteaseSong(songId: string): Promise<void> {
       isVip: false,
     }
 
-    window.dispatchEvent(new CustomEvent('open-control-panel'))
-    window.dispatchEvent(
-      new CustomEvent('play-song', {
-        detail: { song },
-      }),
-    )
+    emitAppEvent('open-control-panel')
+    emitAppEvent('play-song', { song })
 
     try {
-      const detailResponse = await fetch(
-        `/api/proxy/music/netease/song/${songId}`,
-      )
-      if (!detailResponse.ok) return
-      const songData = await detailResponse.json()
+      const songData = await apiService
+        .get<any>(`/proxy/music/netease/song/${songId}`)
+        .catch(() => null)
+      if (!songData) return
       const rawCover =
         songData?.album?.picUrl || songData?.al?.picUrl || fallbackCover
       const g = (window as { __musicPlayerState?: Record<string, unknown> })
         .__musicPlayerState
-      const cur = g?.currentSong as
-        | { id?: string; url?: string; [k: string]: unknown }
-        | undefined
+      const cur = g?.currentSong as Partial<Song> | undefined
       if (!cur || cur.id !== songId) return
 
       const nextSong = {
@@ -733,16 +728,8 @@ export async function playNeteaseSong(songId: string): Promise<void> {
       }
       g!.currentSong = nextSong
       // Patch enrichment; a full broadcast would clobber it.
-      window.dispatchEvent(
-        new CustomEvent('music-player-patch-current-song', {
-          detail: { song: nextSong },
-        }),
-      )
-      window.dispatchEvent(
-        new CustomEvent('music-player-state-change', {
-          detail: { currentSong: nextSong },
-        }),
-      )
+      emitAppEvent('music-player-patch-current-song', { song: nextSong })
+      emitAppEvent('music-player-state-change', { currentSong: nextSong })
     } catch (e) {
       console.warn('[embedProcessor] 获取歌曲详情失败:', e)
     }

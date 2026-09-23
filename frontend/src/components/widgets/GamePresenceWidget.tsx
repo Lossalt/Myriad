@@ -623,15 +623,7 @@ const GamePresenceWidget = memo(
           game: next.game,
           fontUrl: next.fontUrl,
         }
-        if (typeof onConfigChange === 'function') {
-          onConfigChange(payload)
-        } else {
-          window.dispatchEvent(
-            new CustomEvent('widget-config-update', {
-              detail: { widgetId: config.id, config: payload },
-            }),
-          )
-        }
+        onConfigChange?.(payload)
       },
       [config.config, config.id, onConfigChange],
     )

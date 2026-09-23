@@ -8,6 +8,7 @@ import type {
 } from './musicPlayer/types'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { emitAppEvent } from '../utils/appEvents'
 import { notifyHttpRateLimit } from '../utils/httpRateLimitToast'
 import {
   classifyMusicLoadError,
@@ -849,15 +850,11 @@ export function useMusicPlayer(): UseMusicPlayerReturn {
         audioDuration: audio.duration || 0,
       })
 
-      window.dispatchEvent(
-        new CustomEvent('music-player-progress', {
-          detail: {
+      emitAppEvent('music-player-progress', {
             currentTime: t,
             audioDuration: audio.duration || 0,
             songId: currentSongRef.current?.id ?? null,
-          },
-        }),
-      )
+          })
 
       if (lyricsRef.current.length > 0) {
         const index = getCurrentLyricIndex(lyricsRef.current, t)

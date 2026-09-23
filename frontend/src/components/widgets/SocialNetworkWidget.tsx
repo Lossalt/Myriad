@@ -38,6 +38,7 @@ import {
 import { armWidgetSettingsHost } from '../../lib/widgetSettingsHost'
 import { apiService } from '../../services/api'
 import { saveDashboardConfig } from '../../services/dashboardConfigApi'
+import { emitAppEvent } from '../../utils/appEvents'
 import {
   getPublicConfigDeduped,
   getUIConfigDeduped,
@@ -349,11 +350,7 @@ async function saveCustomPlatforms(platforms: CustomPlatformData[]) {
 
   try {
     await saveDashboardConfig({ custom_platforms: JSON.stringify(platforms) })
-    window.dispatchEvent(
-      new CustomEvent('custom-platforms-update', {
-        detail: { platforms, persisted: true },
-      }),
-    )
+    emitAppEvent('custom-platforms-update', { platforms, persisted: true })
   } catch (err) {
     // 失败则回滚内存，与服务器一致。
     customPlatformsData = previous
@@ -1407,18 +1404,7 @@ export const SocialNetworkWidget = memo(
     const handleSelectPlatform = useCallback(
       (platformId: string) => {
         setSelectedPlatformId(platformId)
-        if (typeof onConfigChange === 'function') {
-          onConfigChange({ ...config.config, platformId })
-        } else {
-          window.dispatchEvent(
-            new CustomEvent('widget-config-update', {
-              detail: {
-                widgetId: config.id,
-                config: { ...config.config, platformId },
-              },
-            }),
-          )
-        }
+        onConfigChange?.({ ...config.config, platformId })
       },
       [config.id, config.config, onConfigChange],
     )

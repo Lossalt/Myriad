@@ -1,5 +1,6 @@
 import type { HyaliteAPI, HyaliteOptions } from './vendor/hyalite'
 
+import { LENS_VIEWPORT_QUERY } from './lensViewport'
 import { createHyalite } from './vendor/hyalite'
 
 const SURFACES = [
@@ -11,7 +12,7 @@ const CHROME = '.control-bar-trigger, .surface-dialog'
 
 export function mountSurfaceLenses(engine: HyaliteAPI = createHyalite()): () => void {
   const root = document.documentElement
-  const desktop = matchMedia('(min-width: 768px)')
+  const desktop = matchMedia(LENS_VIEWPORT_QUERY)
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const candidates = new Set<HTMLElement>()
   const visible = new Set<HTMLElement>()

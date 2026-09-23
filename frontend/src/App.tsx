@@ -30,7 +30,6 @@ import CustomScrollbar from './components/CustomScrollbar'
 import { DocumentReady } from './components/DocumentReady'
 import { RenderErrorBoundary } from './components/RenderErrorBoundary'
 import RouteLoader from './components/RouteLoader'
-import { AgentGlobalActions } from './contexts/AgentGlobalActions'
 import { AnimationPreferenceProvider } from './contexts/AnimationPreferenceContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { I18nNamespace, I18nProvider, useI18n } from './contexts/I18nContext'
@@ -91,6 +90,10 @@ const PerformanceMonitor = import.meta.env.DEV
   : () => null
 
 const AgentPanel = lazy(() => import('./components/agent-panel/AgentPanel'))
+/** Handlers for agent-issued page actions; no one can issue one before first paint. */
+const AgentGlobalActions = lazy(() =>
+  import('./contexts/AgentGlobalActions').then(m => ({ default: m.AgentGlobalActions })),
+)
 const AgentEngine = lazy(() => import('./components/agent-panel/AgentEngine'))
 const TappDataExchangeConsentHost = lazy(
   () => import('./tapp/components/TappDataExchangeConsentHost'),
@@ -723,7 +726,9 @@ export function App() {
               <NavigationProvider>
                 <PageContentProvider>
                   <ReadingListProvider>
-                    <AgentGlobalActions />
+                    <Suspense fallback={null}>
+                      <AgentGlobalActions />
+                    </Suspense>
                     {/* open_window 全局回退；多窗挂载时 typed handler 覆盖 */}
                     <GlobalAgentWindowHandler />
                     <AgentAccessGate>
