@@ -1386,3 +1386,303 @@ ALTER TABLE metadata_history DROP COLUMN old_data, DROP COLUMN new_data;
     assert_eq!(body["activities"][0]["change_count"], 3);
     f.close().await;
 }
+
+#[tokio::test]
+async fn wallpaper_publication_and_references_commit_together() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let txn = f.db.begin().await.unwrap();
+    let url = bind_and_publish_wallpaper(&txn, &image.content_path, &[])
+        .await
+        .unwrap();
+    assert!(url.starts_with("/media/assets/"));
+    txn.rollback().await.unwrap();
+    let row = assets::find_by_id(&f.db, image.id).await.unwrap().unwrap();
+    assert_eq!(row.exposure.as_deref(), Some("private"));
+    let txn = f.db.begin().await.unwrap();
+    let url = bind_and_publish_wallpaper(&txn, &image.content_path, &[])
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    let filename = url.rsplit('/').next().unwrap();
+    let outcome = resolve_public_asset(&f.db, f.service.store(), image.public_id, filename)
+        .await
+        .unwrap();
+    let ServeOutcome::File(file) = outcome else {
+        panic!("published wallpaper must be readable")
+    };
+    assert_eq!(tokio::fs::read(file.path).await.unwrap(), png());
+    assert!(matches!(
+        f.service.delete(&f.db, image.id).await,
+        Err(MediaError::InUse)
+    ));
+    let txn = f.db.begin().await.unwrap();
+    bind_and_publish_wallpaper(&txn, "", &[]).await.unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(
+        f.service.delete(&f.db, image.id).await.unwrap(),
+        DeleteOutcome::Deleted
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn generated_portrait_and_sticker_urls_serve_real_bytes_after_publication() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    for filename in ["portrait.png", "sticker.png", "note.png"] {
+        let (image, _) = f
+            .service
+            .persist_ready_bytes(
+                &f.db,
+                MediaContext::site(MediaActor::admin(1).unwrap(), MediaSource::Generated),
+                NewMediaBytes {
+                    bytes: png().into(),
+                    claimed_mime: "image/png".into(),
+                    filename: filename.into(),
+                    max_bytes: 1024 * 1024,
+                    derived_from_id: None,
+                    exposure: MediaExposure::Private,
+                },
+            )
+            .await
+            .unwrap();
+        let txn = f.db.begin().await.unwrap();
+        let public = publish_local_url(&txn, &image.catalog_url(), &[])
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        let catalog = crate::services::media_catalog::list_assets(&f.db, &Default::default())
+            .await
+            .unwrap();
+        let item = catalog
+            .items
+            .iter()
+            .find(|item| item.id == image.id)
+            .unwrap();
+        assert_eq!(item.public_path.as_deref(), Some(public.as_str()));
+        let outcome = resolve_public_asset(
+            &f.db,
+            f.service.store(),
+            image.public_id,
+            public.rsplit('/').next().unwrap(),
+        )
+        .await
+        .unwrap();
+        let response = crate::api::media_public::send_media_outcome(
+            Request::builder().uri(&public).body(Body::empty()).unwrap(),
+            outcome,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "image/png");
+        assert_eq!(
+            &to_bytes(response.into_body(), 1024 * 1024).await.unwrap()[..],
+            png()
+        );
+    }
+    f.close().await;
+}
+
+async fn wallpaper_references(f: &Fixture) -> Vec<i32> {
+    f.db.query_all_raw(Statement::from_string(
+        DatabaseBackend::Postgres,
+        "SELECT asset_id FROM media_references WHERE consumer_type = 'site_wallpaper' AND consumer_id = 'site' ORDER BY asset_id",
+    ))
+    .await
+    .unwrap()
+    .iter()
+    .map(|row| row.try_get::<i32>("", "asset_id").unwrap())
+    .collect()
+}
+
+#[tokio::test]
+async fn wallpaper_saved_under_previous_origin_binds_only_local_media() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let current = ["https://new.example".to_string()];
+    let image = f.image().await;
+    let txn = f.db.begin().await.unwrap();
+    let stored = bind_and_publish_wallpaper(
+        &txn,
+        &format!("https://old.example{}", image.content_path),
+        &current,
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+    // The stale origin is dropped and the wallpaper is published and protected.
+    assert!(stored.starts_with("/media/assets/"), "{stored}");
+    assert_eq!(wallpaper_references(&f).await, vec![image.id]);
+    assert!(matches!(
+        f.service.delete(&f.db, image.id).await,
+        Err(MediaError::InUse)
+    ));
+    // Re-saving the public URL under the old origin keeps the same binding.
+    let txn = f.db.begin().await.unwrap();
+    let again = bind_and_publish_wallpaper(&txn, &format!("https://old.example{stored}"), &current)
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(again, stored);
+    assert_eq!(wallpaper_references(&f).await, vec![image.id]);
+    // Media-shaped URLs that are not media of this instance stay external and
+    // must neither fail the save nor bind an unrelated asset.
+    for external in [
+        format!(
+            "https://other.example/media/assets/{}/a.png",
+            Uuid::new_v4()
+        ),
+        "https://other.example/media/federation/9/remote.png".to_string(),
+        "https://other.example/api/media/2147483000/content".to_string(),
+        "https://cdn.example/wallpaper.png".to_string(),
+    ] {
+        let txn = f.db.begin().await.unwrap();
+        let kept = bind_and_publish_wallpaper(&txn, &external, &current)
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert_eq!(kept, external);
+        assert!(wallpaper_references(&f).await.is_empty(), "{external}");
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_upgrade_backfills_existing_wallpaper_reference() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let paths = LegacyPaths {
+        federation_root: f.service.store().root().join("old"),
+        cache_images: f.service.store().root().join("cache"),
+    };
+    // An instance that finished the previous upgrade revision before the
+    // wallpaper binding existed, with a wallpaper saved under its old domain.
+    migration::record_job(
+        &f.db,
+        "upgrade",
+        "platform_media_v2",
+        None,
+        "copied",
+        "verified",
+        "switched",
+        None,
+        Some(
+            &serde_json::to_string(&upgrade::UpgradeProgress {
+                revision: 2,
+                complete: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    let image = f.image().await;
+    let txn = f.db.begin().await.unwrap();
+    let public = publish_local_url(&txn, &image.content_path, &[])
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    f.db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO configurations(key,value,updated_at) VALUES ('ui_wallpaper_url',$1,NOW())",
+        [json!(format!("https://old.example{public}")).into()],
+    ))
+    .await
+    .unwrap();
+    assert!(wallpaper_references(&f).await.is_empty());
+    let progress = drive_upgrade(&f, &paths, chrono::Utc::now().timestamp()).await;
+    assert!(progress.complete, "{:?}", progress.error);
+    assert_eq!(wallpaper_references(&f).await, vec![image.id]);
+    assert!(matches!(
+        f.service.delete(&f.db, image.id).await,
+        Err(MediaError::InUse)
+    ));
+    let cfg =
+        f.db.query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT value FROM configurations WHERE key='ui_wallpaper_url'",
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cfg.try_get::<serde_json::Value>("", "value").unwrap(),
+        json!(public)
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_upgrade_imports_legacy_wallpaper_saved_under_previous_origin() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let paths = LegacyPaths {
+        federation_root: f.service.store().root().join("old"),
+        cache_images: f.service.store().root().join("cache"),
+    };
+    tokio::fs::create_dir_all(paths.federation_root.join("1"))
+        .await
+        .unwrap();
+    tokio::fs::write(paths.federation_root.join("1/wall.png"), png())
+        .await
+        .unwrap();
+    f.db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO configurations(key,value,updated_at) VALUES ('ui_wallpaper_url',$1,NOW())",
+        [json!("https://old.example/media/federation/1/wall.png").into()],
+    ))
+    .await
+    .unwrap();
+    let progress = drive_upgrade(&f, &paths, chrono::Utc::now().timestamp()).await;
+    assert!(
+        progress.complete,
+        "{:?} {:?}",
+        progress.error, progress.error_source
+    );
+    let id = resolve_asset_id(&f.db, "/media/federation/1/wall.png")
+        .await
+        .unwrap()
+        .expect("legacy wallpaper imported");
+    assert_eq!(wallpaper_references(&f).await, vec![id]);
+    let row = assets::find_by_id(&f.db, id).await.unwrap().unwrap();
+    assert_eq!(row.exposure.as_deref(), Some("public"));
+    // A legacy-shaped URL with no file here is someone else's media: untouched.
+    f.db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE configurations SET value = $1 WHERE key = 'ui_wallpaper_url'",
+        [json!("https://other.example/media/federation/2/gone.png").into()],
+    ))
+    .await
+    .unwrap();
+    let mut progress = upgrade::advance(&f.db, f.service.store(), &paths, &[], true)
+        .await
+        .unwrap();
+    if !progress.complete {
+        progress = drive_upgrade(&f, &paths, chrono::Utc::now().timestamp()).await;
+    }
+    assert!(
+        progress.complete,
+        "{:?} {:?}",
+        progress.error, progress.error_source
+    );
+    assert!(wallpaper_references(&f).await.is_empty());
+    assert!(
+        resolve_asset_id(&f.db, "/media/federation/2/gone.png")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    f.close().await;
+}
