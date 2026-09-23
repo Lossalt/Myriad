@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "微动效果",
   "fieldEvocativeParallaxHint": "壁纸根据鼠标移动/设备倾斜产生轻微位移，创造立体空间感",
   "fieldEvocativeDynamicBlur": "动态模糊",
-  "fieldEvocativeDynamicBlurHint": "鼠标靠近屏幕顶部时壁纸变得清晰，移向底部时逐渐模糊",
+  "fieldEvocativeDynamicBlurHint": "鼠标停在空白处时壁纸变清晰，移到卡片等内容上时恢复模糊",
   "fieldEvocativeRipple": "涟漪效果",
   "fieldEvocativeRippleHint": "点击壁纸时产生水波纹扩散效果",
   "fieldEvocativeFps": "动效帧率",

@@ -932,6 +932,8 @@ export function NavigationIsland() {
           icon: IconPhantasi,
           tooltip: t.nav.phantasiReading,
           ariaLabel: t.nav.phantasiReading,
+          // 手帐是 /journal/* 单路由，默认落在 /journal/feeds 等子路径。
+          matchPrefix: true,
           moduleKey: 'phantasi',
         },
         {

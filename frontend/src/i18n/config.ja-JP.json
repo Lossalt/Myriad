@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "パララックス効果",
   "fieldEvocativeParallaxHint": "マウス移動やデバイス傾きに応じて壁紙がわずかに移動し、立体的な空間感を演出",
   "fieldEvocativeDynamicBlur": "ダイナミックぼかし",
-  "fieldEvocativeDynamicBlurHint": "マウスが画面上部に近づくと壁紙がクリアに、下部に移動するにつれてぼやけます",
+  "fieldEvocativeDynamicBlurHint": "マウスが空白部分にあると壁紙がクリアになり、カードなどのコンテンツ上では再びぼやけます",
   "fieldEvocativeRipple": "リップルエフェクト",
   "fieldEvocativeRippleHint": "壁紙をクリックすると水の波紋が広がります",
   "fieldEvocativeFps": "エフェクトフレームレート",

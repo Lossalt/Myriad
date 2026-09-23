@@ -3,8 +3,13 @@ import { effectiveWallpaperBlur } from '../utils/wallpaperState'
 import { batchWrite, isPageVisible, onVisibility } from './animation/core'
 import { createFrameClock } from './animation/frameClock'
 
-const SMOOTH = 0.08
-const SMOOTH_RETURN = 0.04
+// 视差阻尼：大屏上鼠标随手一动整张壁纸就跟着晃，跟随要慢于模糊。
+const PARALLAX_SMOOTH = 0.03
+const PARALLAX_SMOOTH_RETURN = 0.02
+const BLUR_SMOOTH = 0.08
+const BLUR_SMOOTH_RETURN = 0.04
+/** 指针离开内容后延迟清晰，避免划过卡片间缝隙时忽清忽糊。 */
+const UNBLUR_DELAY_MS = 180
 const MAX_DELTA = 100
 const THRESHOLD = 0.05
 
@@ -90,6 +95,59 @@ const STATIC_TF_SUFFIX = ',0)'
 const IDLE_TF = `scale(${PARALLAX_SCALE}) translate3d(0,0,0)`
 
 const UNBLUR_ZONE = 0.4
+
+const CONTENT_TAGS = new Set([
+  'A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL',
+  'IMG', 'SVG', 'CANVAS', 'VIDEO', 'AUDIO', 'IFRAME',
+])
+
+function hasOwnText(el: Element): boolean {
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 指针是否落在壁纸空白处：自身不是可交互/文本/媒体元素，且到 body 为止
+ * 没有任何祖先带底色、背景图或毛玻璃（卡片、岛、弹层都会命中其一）。
+ */
+export function isPointerOverWallpaperBlank(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true
+  if (target === document.body || target === document.documentElement) {
+    return true
+  }
+  if (CONTENT_TAGS.has(target.tagName.toUpperCase()) || hasOwnText(target)) {
+    return false
+  }
+  for (
+    let el: Element | null = target;
+    el && el !== document.body && el !== document.documentElement;
+    el = el.parentElement
+  ) {
+    const tag = el.tagName.toUpperCase()
+    if (tag === 'svg'.toUpperCase() || CONTENT_TAGS.has(tag)) return false
+    const cs = getComputedStyle(el)
+    if (
+      cs.backgroundImage !== 'none' ||
+      (cs.backdropFilter && cs.backdropFilter !== 'none') ||
+      !isTransparentColor(cs.backgroundColor)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function isTransparentColor(color: string): boolean {
+  if (color === 'transparent') return true
+  const m = /rgba?\(([^)]+)\)/.exec(color)
+  if (!m) return false
+  const parts = m[1].split(/[\s,/]+/).filter(Boolean)
+  return parts.length === 4 && Number.parseFloat(parts[3]) === 0
+}
 const BLUR_PREFIX = 'blur('
 const BLUR_SUFFIX = 'px)'
 
@@ -840,14 +898,18 @@ export function useEvocativeWallpaper(
       if (delta !== null) {
         if (delta > MAX_DELTA) delta = MAX_DELTA
 
-        const smoothFactor = s.returning ? SMOOTH_RETURN : SMOOTH
-        const factor = 1 - (1 - smoothFactor) ** (delta / 16)
+        const parallaxSmooth = s.returning
+          ? PARALLAX_SMOOTH_RETURN
+          : PARALLAX_SMOOTH
+        const blurSmooth = s.returning ? BLUR_SMOOTH_RETURN : BLUR_SMOOTH
+        const parallaxFactor = 1 - (1 - parallaxSmooth) ** (delta / 16)
+        const blurFactor = 1 - (1 - blurSmooth) ** (delta / 16)
 
         let needsContinue = false
 
         if (enableParallax && !s.parallaxIdle) {
-          const dx = (s.parallaxTx - s.parallaxCx) * factor
-          const dy = (s.parallaxTy - s.parallaxCy) * factor
+          const dx = (s.parallaxTx - s.parallaxCx) * parallaxFactor
+          const dy = (s.parallaxTy - s.parallaxCy) * parallaxFactor
 
           const remainingX = Math.abs(s.parallaxTx - s.parallaxCx)
           const remainingY = Math.abs(s.parallaxTy - s.parallaxCy)
@@ -893,7 +955,7 @@ export function useEvocativeWallpaper(
               })
             }
           } else {
-            s.blurCurrentBlur += diff * factor
+            s.blurCurrentBlur += diff * blurFactor
             const rounded = ((s.blurCurrentBlur * 10 + 0.5) | 0) / 10
 
             if (rounded !== s.blurLastRendered) {
@@ -961,6 +1023,17 @@ export function useEvocativeWallpaper(
 
     // Input only updates targets; the frame loop coalesces DOM writes. Keep the
     // final event in a burst so a stationary pointer never leaves a stale target.
+    // 空白判定要读 computed style，只在指针下的元素变化时重算。
+    let lastBlankTarget: EventTarget | null = null
+    let lastBlank = false
+    let unblurTimer: ReturnType<typeof setTimeout> | null = null
+    const clearUnblurTimer = () => {
+      if (unblurTimer !== null) {
+        clearTimeout(unblurTimer)
+        unblurTimer = null
+      }
+    }
+
     const onMouseMove = (e: MouseEvent) => {
       if (!s.pageVisible || !interactionReady) return
       if (s.gyroEnabled) return
@@ -972,12 +1045,22 @@ export function useEvocativeWallpaper(
         s.parallaxTy = -(e.clientY / innerHeight - 0.5) * s.parallaxOffsetMult
       }
 
-      if (enableDynamicBlur) {
-        const normalizedY = e.clientY / window.innerHeight
-        if (normalizedY <= unblurZone) {
-          s.blurTargetBlur = s.blurBaseBlur * (normalizedY / unblurZone)
-        } else {
-          s.blurTargetBlur = s.blurBaseBlur
+      if (enableDynamicBlur && e.target !== lastBlankTarget) {
+        lastBlankTarget = e.target
+        const blank = isPointerOverWallpaperBlank(e.target)
+        if (blank !== lastBlank) {
+          lastBlank = blank
+          clearUnblurTimer()
+          if (blank) {
+            unblurTimer = setTimeout(() => {
+              unblurTimer = null
+              if (!s.active) return
+              s.blurTargetBlur = 0
+              wake()
+            }, UNBLUR_DELAY_MS)
+          } else {
+            s.blurTargetBlur = s.blurBaseBlur
+          }
         }
       }
 
@@ -996,6 +1079,9 @@ export function useEvocativeWallpaper(
       }
 
       if (enableDynamicBlur) {
+        clearUnblurTimer()
+        lastBlankTarget = null
+        lastBlank = false
         s.blurTargetBlur = s.blurBaseBlur
       }
 
@@ -1153,6 +1239,7 @@ export function useEvocativeWallpaper(
       if (softRestoreTimer) clearTimeout(softRestoreTimer)
       if (softRestoreRaf1) cancelAnimationFrame(softRestoreRaf1)
       if (softRestoreRaf2) cancelAnimationFrame(softRestoreRaf2)
+      clearUnblurTimer()
 
       unsubscribeVisibility()
 

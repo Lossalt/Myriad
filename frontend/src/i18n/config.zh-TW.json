@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "微動效果",
   "fieldEvocativeParallaxHint": "桌布根據滑鼠移動/裝置傾斜產生輕微位移，創造立體空間感",
   "fieldEvocativeDynamicBlur": "動態模糊",
-  "fieldEvocativeDynamicBlurHint": "滑鼠靠近螢幕頂部時桌布變得清晰，移向底部時逐漸模糊",
+  "fieldEvocativeDynamicBlurHint": "滑鼠停在空白處時桌布變清晰，移到卡片等內容上時恢復模糊",
   "fieldEvocativeRipple": "漣漪效果",
   "fieldEvocativeRippleHint": "點選桌布時產生水波紋擴散效果",
   "fieldEvocativeFps": "動效幀率",

@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "Effet de parallaxe",
   "fieldEvocativeParallaxHint": "Le fond se décale légèrement avec la souris / l'inclinaison pour un relief 3D",
   "fieldEvocativeDynamicBlur": "Flou dynamique",
-  "fieldEvocativeDynamicBlurHint": "Plus net en haut, de plus en plus flou vers le bas",
+  "fieldEvocativeDynamicBlurHint": "Le fond d'écran devient net sur les zones vides et redevient flou sur les cartes et le contenu",
   "fieldEvocativeRipple": "Effet d'ondulation",
   "fieldEvocativeRippleHint": "Un clic sur le fond crée une ondulation",
   "fieldEvocativeFps": "Fréquence des effets",

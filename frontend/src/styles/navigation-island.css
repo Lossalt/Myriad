@@ -282,7 +282,8 @@ html[data-nav-layout='mobile'] .dynamic-island {
     color-mix(in srgb, var(--color-primary) 15%, transparent);
 }
 
-html.dark .nav-item {
+/* :where 压低特异性，否则 (0,2,1) 会盖掉 hover / 激活态的主色。 */
+:where(html.dark) .nav-item {
   color: var(--text-secondary);
 }
 
@@ -306,6 +307,12 @@ html.dark .nav-item:active {
     box-shadow: 0 3px 12px
       color-mix(in srgb, var(--color-primary) 25%, transparent);
   }
+
+  /* 激活项已高亮，不再放大：放大会把 ::after 圆点推出岛边被 overflow 截断。 */
+  [aria-current='page'].nav-item:hover,
+  .nav-item.active-secondary:hover {
+    transform: none;
+  }
 }
 
 .nav-item:focus-visible {
@@ -328,14 +335,16 @@ html.dark [aria-current='page'].nav-item {
     inset 0 1px 0 0 rgb(255 255 255 / 10%);
 }
 
-html.dark [aria-current='page'].nav-item::after {
+html.dark [aria-current='page'].nav-item::after,
+html.dark .nav-item.active-secondary::after {
   box-shadow: 0 0 12px var(--color-primary);
 }
 
-[aria-current='page'].nav-item::after {
+[aria-current='page'].nav-item::after,
+.nav-item.active-secondary::after {
   content: '';
   position: absolute;
-  left: -8px;
+  left: -6px;
   top: 50%;
   bottom: auto;
   transform: translateY(-50%);
@@ -347,7 +356,8 @@ html.dark [aria-current='page'].nav-item::after {
 }
 
 @media (width <= 767px) {
-  [aria-current='page'].nav-item::after {
+  [aria-current='page'].nav-item::after,
+  .nav-item.active-secondary::after {
     left: 50%;
     top: auto;
     bottom: -4px;
@@ -355,15 +365,17 @@ html.dark [aria-current='page'].nav-item::after {
   }
 }
 
-html[data-nav-layout='mobile'] [aria-current='page'].nav-item::after {
+html[data-nav-layout='mobile'] [aria-current='page'].nav-item::after,
+html[data-nav-layout='mobile'] .nav-item.active-secondary::after {
   left: 50%;
   top: auto;
   bottom: -4px;
   transform: translateX(-50%);
 }
 
-html[data-nav-layout='desktop'] [aria-current='page'].nav-item::after {
-  left: -8px;
+html[data-nav-layout='desktop'] [aria-current='page'].nav-item::after,
+html[data-nav-layout='desktop'] .nav-item.active-secondary::after {
+  left: -6px;
   top: 50%;
   bottom: auto;
   transform: translateY(-50%);

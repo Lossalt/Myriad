@@ -46,6 +46,16 @@ interface Props {
 
 const GPU_RECOVERIES = 2
 
+// 布局尺寸不含祖先 transform：入场缩放期间用 getBoundingClientRect 会量到缩小值，
+// 而 transform 结束不触发 ResizeObserver，canvas 就一直缩在左上角。
+function layoutBoxSize(el: HTMLElement): { width: number; height: number } {
+  if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+    return { width: el.offsetWidth, height: el.offsetHeight }
+  }
+  const rect = el.getBoundingClientRect()
+  return { width: rect.width, height: rect.height }
+}
+
 export interface Anime25DCharacterHandle
   extends RigMotionPort, Anime25DWorkbenchPort {}
 
@@ -306,8 +316,8 @@ const Anime25DCharacter = forwardRef<Anime25DCharacterHandle, Props>(
       canvas.addEventListener('pointermove', onPointerMove)
       canvas.addEventListener('pointerleave', onPointerLeave)
       const resize = () => {
-        const rect = wrapper.getBoundingClientRect()
-        player.resize(rect.width, rect.height, window.devicePixelRatio || 1)
+        const { width, height } = layoutBoxSize(wrapper)
+        player.resize(width, height, window.devicePixelRatio || 1)
       }
       const presentLive = (next: boolean) => {
         if (cancelled || readyRef.current === next) return
@@ -400,12 +410,8 @@ const Anime25DCharacter = forwardRef<Anime25DCharacterHandle, Props>(
           else posePreviewRef.current = null
           recoveriesRef.current = 0
           if (wrapper) {
-            const rect = wrapper.getBoundingClientRect()
-            player.resize(
-              rect.width,
-              rect.height,
-              window.devicePixelRatio || 1,
-            )
+            const { width, height } = layoutBoxSize(wrapper)
+            player.resize(width, height, window.devicePixelRatio || 1)
           }
           syncAnimationRef.current()
         })

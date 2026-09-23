@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "Parallax Effect",
   "fieldEvocativeParallaxHint": "Wallpaper shifts subtly with mouse movement / device tilt for 3D depth",
   "fieldEvocativeDynamicBlur": "Dynamic Blur",
-  "fieldEvocativeDynamicBlurHint": "Wallpaper becomes clearer near top, gradually blurs towards bottom",
+  "fieldEvocativeDynamicBlurHint": "Wallpaper sharpens when the pointer rests on empty space and blurs again over cards and content",
   "fieldEvocativeRipple": "Ripple Effect",
   "fieldEvocativeRippleHint": "Click on wallpaper to create water ripple distortion",
   "fieldEvocativeFps": "Effect Frame Rate",

@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "Parallaxeneffekt",
   "fieldEvocativeParallaxHint": "Hintergrund verschiebt sich leicht mit Maus / Geräteneigigung für 3D-Tiefe",
   "fieldEvocativeDynamicBlur": "Dynamische Unschärfe",
-  "fieldEvocativeDynamicBlurHint": "Oben schärfer, nach unten allmählich unschärfer",
+  "fieldEvocativeDynamicBlurHint": "Über freien Flächen wird das Hintergrundbild scharf, über Karten und Inhalten wieder unscharf",
   "fieldEvocativeRipple": "Welleneffekt",
   "fieldEvocativeRippleHint": "Klick auf den Hintergrund erzeugt Wasserwellen",
   "fieldEvocativeFps": "Effekt-Bildrate",

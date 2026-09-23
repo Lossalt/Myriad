@@ -794,7 +794,7 @@
   "fieldEvocativeParallax": "시차 효과",
   "fieldEvocativeParallaxHint": "마우스 이동 / 기기 기울기에 맞춰 배경이 살짝 움직여 입체감이 납니다",
   "fieldEvocativeDynamicBlur": "동적 흐림",
-  "fieldEvocativeDynamicBlurHint": "위쪽은 선명하고, 아래로 갈수록 흐려집니다",
+  "fieldEvocativeDynamicBlurHint": "빈 공간에 마우스를 두면 배경화면이 선명해지고, 카드 등 콘텐츠 위에서는 다시 흐려집니다",
   "fieldEvocativeRipple": "물결 효과",
   "fieldEvocativeRippleHint": "배경을 클릭하면 물결 왜곡이 퍼집니다",
   "fieldEvocativeFps": "효과 프레임레이트",
