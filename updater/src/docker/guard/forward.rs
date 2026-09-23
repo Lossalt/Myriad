@@ -150,7 +150,12 @@ pub(crate) async fn handle(
 }
 
 async fn bound_container_log_response(resp: Response) -> Response {
-    let (parts, body) = resp.into_parts();
+    let (mut parts, body) = resp.into_parts();
+    // The body is re-framed from a buffer, so the daemon's framing headers no longer
+    // describe it. Docker streams logs chunked; kept, hyper drops the response and
+    // the client sees the connection close before any byte.
+    parts.headers.remove(header::TRANSFER_ENCODING);
+    parts.headers.remove(header::CONTENT_LENGTH);
     match tokio::time::timeout(
         DOCKER_API_TIMEOUT,
         to_bytes(body, MAX_CONTAINER_LOG_BODY),
@@ -334,6 +339,38 @@ pub(crate) async fn forward(socket: &Path, mut req: Request<Body>) -> Result<Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chunked_daemon_log_response_reaches_the_client() {
+        use std::future::IntoFuture;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // Real daemons answer logs with `Transfer-Encoding: chunked`.
+        let app = axum::Router::new().fallback(|| async {
+            let mut response = Response::new(Body::from("docker log frame"));
+            response.headers_mut().insert(
+                header::TRANSFER_ENCODING,
+                header::HeaderValue::from_static("chunked"),
+            );
+            bound_container_log_response(response).await
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(axum::serve(listener, app).into_future());
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(b"GET /containers/id/logs HTTP/1.1\r\nHost: guard\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut raw = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.read_to_end(&mut raw))
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = String::from_utf8_lossy(&raw);
+        assert!(raw.starts_with("HTTP/1.1 200 OK"), "{raw}");
+        assert!(raw.contains("content-length: 16"), "{raw}");
+        assert!(raw.ends_with("docker log frame"), "{raw}");
+    }
 
     #[tokio::test]
     async fn container_log_response_is_bounded() {
