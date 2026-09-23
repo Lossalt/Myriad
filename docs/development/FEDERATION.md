@@ -106,18 +106,40 @@ to several actor inboxes when it does not use `sharedInbox`; processing Alice's
 copy must not suppress Bob's. Shared-inbox delivery uses its own scope and the
 existing per-user/activity uniqueness constraints keep fan-out idempotent.
 
-### Temporarily unavailable handlers
+### Inbound Move
 
-The durable receipt boundary currently returns retryable `503` for two handlers
-whose effects cannot yet be committed atomically:
+Verification fetches the old and new actor documents over remote HTTP, so it
+runs as a preflight after signature verification and before the receipt is
+claimed: `actor` = signer = `object`, a distinct `target`, the old document's
+`movedTo` = target and the new document's `alsoKnownAs` containing the old id.
+The new actor is resolved through the actor cache in the same preflight. Only
+the follow rewrite (row locks + savepoint merge), the Move activity record and
+the receipt completion then run in one DB transaction; any failure rolls all
+of it back. Unreachable documents are a retryable `503` with no receipt; link
+mismatches are a permanent `400`.
 
-| Handler | Why it is disabled | Required recovery design |
-| --- | --- | --- |
-| inbound `Move` | Verification fetches old and new actor documents over remote HTTP. Running those fetches inside the receipt transaction would hold locks across unbounded I/O; running the follow rewrite outside it can leave a crash-partial migration. | Perform the HTTP fetch and `movedTo` / `alsoKnownAs` validation as a bounded preflight, bind the verified old/new actor ids to the signed request, then claim the receipt and perform only the follow rewrite, activity log, and receipt completion in one DB transaction. |
-| `myriad:FileChunk` | Chunk handling writes the filesystem, which cannot roll back with PostgreSQL. Returning success before both sides are durable can lose a chunk permanently. | Stage content-addressed bytes durably and verify their digest before the DB transaction; atomically commit chunk metadata plus a finalize outbox and the receipt; an idempotent worker then promotes the staged file and recovers after crashes. A DB-backed chunk store is also valid if it commits with the receipt. |
+### Inbound FileChunk
 
-Do not replace either `503` with best-effort success. Re-enable a handler only
-when its preflight/transaction/outbox contract has crash-recovery tests.
+A same-version peer's `myriad:FileChunk` runs on the receipt transaction. The
+per-transfer advisory lock serializes it with every other writer of that
+transfer; the chunk is written at the offset owned by `chunks_completed`
+(a half-written tail is truncated and rewritten, a complete earlier attempt is
+byte-compared), the file and any new directory entries are synced, and only
+then does the progress update commit together with the receipt. A rolled-back
+receipt leaves the synced bytes in place for the retry to verify; the database
+never records progress ahead of durable file data. The file I/O first takes a
+second PostgreSQL advisory lock on its own pooled connection and runs in a
+detached task that releases it only after the I/O finishes, so a cancelled
+request (whose transaction, and session lock, is dropped) cannot let a retry
+on any replica sharing the storage write the same `.part` concurrently. Live-UI
+progress is broadcast only after the receipt commits.
+
+Missing transfer metadata or an out-of-order chunk is a retryable `503`; a
+wrong sender, a closed transfer, a malformed or mis-sized chunk (the encoded
+length is checked before decoding) and bytes that conflict with stored data are
+permanent `4xx`. A chunk already committed under another activity id is
+accepted without effect only if its bytes equal the stored ones; otherwise it
+is a permanent `409`.
 
 ## Keys: ensure vs rotate
 

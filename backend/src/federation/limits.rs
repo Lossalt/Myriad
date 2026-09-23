@@ -561,6 +561,21 @@ const _: () = assert!(
     "TRANSFER_CHUNK_BODY_LIMIT cannot hold a base64-encoded TRANSFER_CHUNK_SIZE"
 );
 
+/// 入站 `myriad:FileChunk` 的 base64 chunkData 要能通过 inbox 字符串预算，整个
+/// Activity 信封也要装进 inbox 请求体上限。
+const _: () = assert!(
+    INBOX_JSON_MAX_STRING_BYTES >= (TRANSFER_CHUNK_SIZE as usize).div_ceil(3) * 4
+        && INBOX_BODY_LIMIT >= (TRANSFER_CHUNK_SIZE as usize).div_ceil(3) * 4 + 64 * 1024,
+    "an inbound FileChunk activity must fit the inbox string and body budgets"
+);
+const _: () = assert!(
+    crate::services::memory_profile::SAVER_INBOX_BODY_LIMIT
+        >= (TRANSFER_CHUNK_SIZE as usize).div_ceil(3) * 4 + 64 * 1024
+        && crate::services::memory_profile::SAVER_INBOX_INFLIGHT_RAW_BUDGET
+            >= crate::services::memory_profile::SAVER_INBOX_BODY_LIMIT,
+    "the memory-saver inbox must still fit one full FileChunk activity"
+);
+
 /// 控制类端点不该能缓冲和消息端点一样多的数据。
 const _: () = assert!(
     SMALL_CONTROL_BODY_LIMIT < MESSAGE_PAYLOAD_LIMIT / 8,

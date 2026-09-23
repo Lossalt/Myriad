@@ -36,19 +36,6 @@ impl LimitQuery {
     }
 }
 
-pub(crate) fn require_user_id(claims: &crate::middleware::auth::Claims) -> Result<i32, Response> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "error": "A durable user account is required",
-                "code": "invalid_subject",
-            })),
-        )
-            .into_response()
-    })
-}
-
 fn federation_user_error(context: &'static str, error: impl std::fmt::Display) -> String {
     let detail = error.to_string();
     tracing::error!(error = %detail, context, "federation request failed");
@@ -178,7 +165,11 @@ pub async fn admin_federation_domain_move(
 
 /// GET /api/federation/identity — 获取当前登录用户的联邦地址
 /// 路由已挂 `auth_middleware`，claims 由 `AuthedClaims` 直接取出。
+///
+/// Identity lookup also initialises signing keys for the named account, so only
+/// a durable user may call it: a guest / `0` subject is rejected at the boundary.
 pub(crate) async fn federation_identity(
+    extract::DurableUserId(_): extract::DurableUserId,
     extract::Db(db): extract::Db,
     extract::AuthedClaims(claims): extract::AuthedClaims,
 ) -> Response {
@@ -194,14 +185,11 @@ pub(crate) async fn federation_identity(
 /// 让空 body / 畸形 JSON 落到「缺少 confirm」这条带操作指引的 400；
 /// `Json` 提取器会先被 axum 拒成通用错误，看不到 "{\"confirm\": true}"。
 pub(crate) async fn federation_keys_rotate(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     body_bytes: axum::body::Bytes,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(json!({}));
     if !federation::actor::rotation_confirm_accepted(&body) {
         return (
@@ -224,14 +212,11 @@ pub(crate) async fn federation_keys_rotate(
 /// 路由已挂 auth_middleware；claims / body / db 走提取器。
 /// body 上限由路由的 `live_authenticated_body_limit`（默认 `AUTHENTICATED_BODY_LIMIT` 24 MiB）决定。
 pub(crate) async fn federation_follow(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::follow::FollowRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::follow::follow_remote(user_id, &claims.username, &db, &payload.target).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -242,14 +227,11 @@ pub(crate) async fn federation_follow(
 /// 路由已挂 auth_middleware；claims / body / db 走提取器。
 /// body 上限由路由的 `live_authenticated_body_limit`（默认 `AUTHENTICATED_BODY_LIMIT` 24 MiB）决定。
 pub(crate) async fn federation_unfollow(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::follow::FollowRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::follow::unfollow_remote(user_id, &claims.username, &db, &payload.target).await
     {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
@@ -260,13 +242,9 @@ pub(crate) async fn federation_unfollow(
 /// GET /api/federation/following — 获取我关注的远程用户列表
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_following_list(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match get_follow_list(&db, user_id, "outgoing").await {
         Ok(list) => (StatusCode::OK, Json(list)).into_response(),
         Err(e) => federation_store_response("list following", e),
@@ -276,13 +254,9 @@ pub(crate) async fn federation_following_list(
 /// GET /api/federation/followers — 获取关注我的远程用户列表
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_followers_list(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match get_follow_list(&db, user_id, "incoming").await {
         Ok(list) => (StatusCode::OK, Json(list)).into_response(),
         Err(e) => federation_store_response("list followers", e),
@@ -292,13 +266,9 @@ pub(crate) async fn federation_followers_list(
 /// GET /api/federation/timeline — 获取联邦时间线
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_timeline(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match get_federation_timeline(&db, user_id).await {
         Ok(timeline) => (StatusCode::OK, Json(timeline)).into_response(),
         Err(e) => federation_store_response("load timeline", e),
@@ -311,14 +281,11 @@ pub(crate) async fn federation_timeline(
 /// 路由已挂 auth_middleware；claims / body / db 走提取器。
 /// body 上限由路由的 `live_authenticated_body_limit`（默认 `AUTHENTICATED_BODY_LIMIT` 24 MiB）决定。
 pub(crate) async fn federation_publish(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::content::PublishRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::content::publish_content(user_id, &claims.username, &db, &payload).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -327,14 +294,11 @@ pub(crate) async fn federation_publish(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_like(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::ObjectIdRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::like_object(user_id, &claims.username, &db, &payload.object_id)
         .await
     {
@@ -345,14 +309,11 @@ pub(crate) async fn federation_like(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_unlike(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::ObjectIdRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::unlike_object(
         user_id,
         &claims.username,
@@ -368,14 +329,10 @@ pub(crate) async fn federation_unlike(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_bookmark(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::ObjectIdRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::bookmark_object(user_id, &db, &payload.object_id).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -384,14 +341,10 @@ pub(crate) async fn federation_bookmark(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_unbookmark(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::ObjectIdRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::unbookmark_object(user_id, &db, &payload.object_id).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -400,13 +353,9 @@ pub(crate) async fn federation_unbookmark(
 
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_bookmarks_list(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::list_bookmarks(user_id, &db).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -415,14 +364,11 @@ pub(crate) async fn federation_bookmarks_list(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_announce(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::AnnounceRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     let content = payload.content.as_deref().unwrap_or("");
     match federation::interactions::announce_object(
         user_id,
@@ -440,14 +386,11 @@ pub(crate) async fn federation_announce(
 
 /// 路由已挂 auth_middleware；claims / body / db 全部走提取器。
 pub(crate) async fn federation_unannounce(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::interactions::ObjectIdRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::unannounce_object(
         user_id,
         &claims.username,
@@ -464,14 +407,10 @@ pub(crate) async fn federation_unannounce(
 /// GET /api/federation/objects?id= — resolve a public object for quote click-through.
 /// Does not require following the author (local DB + optional remote public fetch).
 pub(crate) async fn federation_get_object(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Query(q): axum::extract::Query<federation::interactions::GetObjectQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::interactions::get_object(user_id, &db, &q.id).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -481,14 +420,11 @@ pub(crate) async fn federation_get_object(
 /// POST /api/federation/notes — 创建 freeform Note（文本 + 附件）
 /// 路由已挂 auth_middleware；body 上限由 `live_authenticated_body_limit`（默认 24 MiB）决定。
 pub(crate) async fn federation_create_note(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::content::CreateNoteRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::content::create_note(user_id, &claims.username, &db, &payload).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -498,14 +434,10 @@ pub(crate) async fn federation_create_note(
 /// 路由已挂 auth_middleware；`Multipart` 是 axum 自带的提取器，
 /// 提取失败（非 multipart/form-data）由它自己返回 400。
 pub(crate) async fn federation_media_upload(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
 
     let mut file_bytes: Option<axum::body::Bytes> = None;
     let mut filename = "upload.bin".to_string();
@@ -631,6 +563,7 @@ async fn persist_federation_upload(
 
 /// 路由已挂 auth_middleware；body 上限由 `live_authenticated_body_limit`（默认 24 MiB）决定。
 pub(crate) async fn federation_unpublish(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<serde_json::Value>,
@@ -649,10 +582,6 @@ pub(crate) async fn federation_unpublish(
         )
             .into_response();
     }
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::content::unpublish_content(
         user_id,
         &claims.username,
@@ -683,13 +612,9 @@ pub(crate) async fn federation_unpublish(
 /// GET /api/federation/published — 获取已发布内容列表
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_published_list(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::content::list_published(user_id, &db).await {
         Ok(items) => (
             StatusCode::OK,
@@ -704,14 +629,11 @@ pub(crate) async fn federation_published_list(
 
 /// 路由已挂 auth_middleware；body 上限由 `live_authenticated_body_limit`（默认 24 MiB）决定。
 pub(crate) async fn federation_create_channel(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::channel::CreateChannelRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::create_channel(user_id, &claims.username, &db, &payload).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -721,13 +643,10 @@ pub(crate) async fn federation_create_channel(
 /// Channel 列表
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_list_channels(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::list_channels(user_id, &claims.username, &db).await {
         Ok(channels) => (
             StatusCode::OK,
@@ -741,14 +660,10 @@ pub(crate) async fn federation_list_channels(
 /// Channel 详情
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_get_channel(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::get_channel(user_id, &channel_id, &db).await {
         Ok(detail) => (StatusCode::OK, Json(serde_json::to_value(detail).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -758,14 +673,11 @@ pub(crate) async fn federation_get_channel(
 /// 关闭 Channel
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_close_channel(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::close_channel(user_id, &claims.username, &channel_id, &db).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -775,14 +687,10 @@ pub(crate) async fn federation_close_channel(
 /// 删除已关闭的 Channel（本地硬删除）
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_delete_channel(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::delete_channel(user_id, &channel_id, &db).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -792,14 +700,11 @@ pub(crate) async fn federation_delete_channel(
 /// 接受 Channel
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_accept_channel(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::accept_channel(user_id, &claims.username, &channel_id, &db).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -809,14 +714,11 @@ pub(crate) async fn federation_accept_channel(
 /// 发起 Channel E2E 密钥交换
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_e2e_key_exchange(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::initiate_e2e_key_exchange(
         user_id,
         &claims.username,
@@ -832,6 +734,7 @@ pub(crate) async fn federation_e2e_key_exchange(
 
 /// 路由已声明 `{channel_id}`；body 上限由 `live_authenticated_body_limit`（默认 24 MiB）决定。
 pub(crate) async fn federation_send_message(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
@@ -852,10 +755,6 @@ pub(crate) async fn federation_send_message(
         }
     };
 
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::send_message(user_id, &claims.username, &channel_id, &db, &parsed)
         .await
     {
@@ -866,15 +765,11 @@ pub(crate) async fn federation_send_message(
 
 /// 路由已声明 `{channel_id}`；分页参数走 `Query<ListQuery>`。
 pub(crate) async fn federation_get_messages(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::channel::get_messages(user_id, &channel_id, &db, q.before(), q.limit()).await
     {
         Ok(messages) => (
@@ -891,14 +786,11 @@ pub(crate) async fn federation_get_messages(
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 /// 不加这层会退回到 AUTHENTICATED_BODY_LIMIT。
 pub(crate) async fn federation_create_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     Json(parsed): Json<federation::room::CreateRoomRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::create_room(user_id, &claims.username, &db, &parsed).await {
         Ok(detail) => (StatusCode::OK, Json(json!(detail))).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -907,13 +799,10 @@ pub(crate) async fn federation_create_room(
 
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_list_rooms(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::list_rooms(user_id, &claims.username, &db).await {
         Ok(rooms) => (
             StatusCode::OK,
@@ -927,14 +816,11 @@ pub(crate) async fn federation_list_rooms(
 /// 路由已声明该路径参数；claims / path / db 全部走提取器，
 /// 不再手工 strip_prefix 重解析 URI。
 pub(crate) async fn federation_get_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::get_room(user_id, &claims.username, &room_id, &db).await {
         Ok(detail) => (StatusCode::OK, Json(json!(detail))).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -944,15 +830,12 @@ pub(crate) async fn federation_get_room(
 /// 路由已声明该路径参数并挂了 auth_middleware；
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 pub(crate) async fn federation_update_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
     Json(parsed): Json<federation::room::UpdateRoomRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::update_room(user_id, &claims.username, &room_id, &db, &parsed).await {
         Ok(detail) => (StatusCode::OK, Json(json!(detail))).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -962,14 +845,11 @@ pub(crate) async fn federation_update_room(
 /// 路由已声明该路径参数；claims / path / db 全部走提取器，
 /// 不再手工 strip_prefix 重解析 URI。
 pub(crate) async fn federation_delete_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::delete_room(user_id, &claims.username, &room_id, &db).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -978,14 +858,11 @@ pub(crate) async fn federation_delete_room(
 
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_get_room_members(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::get_members(user_id, &claims.username, &room_id, &db).await {
         Ok(members) => (
             StatusCode::OK,
@@ -999,15 +876,12 @@ pub(crate) async fn federation_get_room_members(
 /// 路由已声明该路径参数并挂了 auth_middleware；
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 pub(crate) async fn federation_invite_room_member(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
     Json(parsed): Json<federation::room::InviteMemberRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::invite_member(user_id, &claims.username, &room_id, &db, &parsed).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1017,14 +891,11 @@ pub(crate) async fn federation_invite_room_member(
 /// 路由声明的是 `{room_id}/members/{actor}`。
 /// `Path<(String, String)>` 会对每段做百分号解码；actor 是完整 URL，必然带编码。
 pub(crate) async fn federation_remove_room_member(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path((room_id, target_actor)): axum::extract::Path<(String, String)>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::remove_member(user_id, &claims.username, &room_id, &target_actor, &db)
         .await
     {
@@ -1035,14 +906,11 @@ pub(crate) async fn federation_remove_room_member(
 
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_leave_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::leave_room(user_id, &claims.username, &room_id, &db).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1052,14 +920,11 @@ pub(crate) async fn federation_leave_room(
 /// POST /api/federation/rooms/{room_id}/accept — accept pending room invite
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_accept_room_invite(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::accept_room_invite(user_id, &claims.username, &room_id, &db).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1069,14 +934,11 @@ pub(crate) async fn federation_accept_room_invite(
 /// POST /api/federation/rooms/{room_id}/reject — reject pending room invite
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_reject_room_invite(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::reject_room_invite(user_id, &claims.username, &room_id, &db).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1086,6 +948,7 @@ pub(crate) async fn federation_reject_room_invite(
 /// 路由已声明 `{room_id}`。
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 pub(crate) async fn federation_transfer_room_ownership(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
@@ -1098,10 +961,6 @@ pub(crate) async fn federation_transfer_room_ownership(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::transfer_room_ownership(
         user_id,
         &claims.username,
@@ -1119,14 +978,11 @@ pub(crate) async fn federation_transfer_room_ownership(
 /// 发起 Room E2E 密钥发布
 /// 路由已声明该路径参数；claims / path / db 走提取器，不再手工解析 URI。
 pub(crate) async fn federation_room_e2e_key_exchange(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::initiate_e2e_key_exchange(user_id, &claims.username, &room_id, &db)
         .await
     {
@@ -1137,15 +993,12 @@ pub(crate) async fn federation_room_e2e_key_exchange(
 
 /// PUT /api/federation/rooms/{room_id}/members/{actor}/role — owner sets admin|member
 pub(crate) async fn federation_set_room_member_role(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path((room_id, actor)): axum::extract::Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     let role = body
         .get("role")
         .and_then(|v| v.as_str())
@@ -1164,15 +1017,12 @@ pub(crate) async fn federation_set_room_member_role(
 
 /// POST /api/federation/rooms/{room_id}/stickers — share sticker into group pack
 pub(crate) async fn federation_add_room_sticker(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
     Json(req): Json<federation::room::AddRoomStickerRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::add_room_sticker(user_id, &claims.username, &room_id, req, &db).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1181,14 +1031,11 @@ pub(crate) async fn federation_add_room_sticker(
 
 /// DELETE /api/federation/rooms/{room_id}/stickers/{sticker_id}
 pub(crate) async fn federation_remove_room_sticker(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path((room_id, sticker_id)): axum::extract::Path<(String, String)>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::remove_room_sticker(
         user_id,
         &claims.username,
@@ -1208,6 +1055,7 @@ pub(crate) async fn federation_remove_room_sticker(
 /// 用 `Result<Json<T>, JsonRejection>` 而不是裸 `Json<T>`：超限时保住
 /// 413 + 分块传输指引，而不是 axum 的纯文本拒绝。
 pub(crate) async fn federation_send_room_message(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
@@ -1233,10 +1081,6 @@ pub(crate) async fn federation_send_room_message(
         }
     };
 
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::send_room_message(user_id, &claims.username, &room_id, &db, &parsed)
         .await
     {
@@ -1247,15 +1091,12 @@ pub(crate) async fn federation_send_room_message(
 
 /// 路由已声明 `{room_id}`；分页参数走 `Query<ListQuery>`。
 pub(crate) async fn federation_get_room_messages(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::get_room_messages(
         user_id,
         &claims.username,
@@ -1279,15 +1120,12 @@ pub(crate) async fn federation_get_room_messages(
 /// `Path<(String, String)>` 对每段做百分号解码。
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 pub(crate) async fn federation_pin_room_message(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path((room_id, message_id)): axum::extract::Path<(String, String)>,
     Json(parsed): Json<federation::room::PinRoomMessageRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::pin_room_message(
         user_id,
         &claims.username,
@@ -1308,14 +1146,11 @@ pub(crate) async fn federation_pin_room_message(
 /// 管理员校验由 `AdminClaims` 承担。这些 ring 端点的路由只有 router 级
 /// `auth_middleware`（普通登录）；写进签名后，路由被挪动或重挂中间件也带不走它。
 pub(crate) async fn federation_create_ring(
-    extract::AdminClaims(claims): extract::AdminClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
+    extract::AdminClaims(_): extract::AdminClaims,
     extract::Db(db): extract::Db,
     Json(create_req): Json<federation::ring::CreateRingRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::ring::create_ring(user_id, &db, &create_req).await {
         Ok(ring) => (StatusCode::CREATED, Json(json!(ring))).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1346,14 +1181,11 @@ pub(crate) async fn federation_get_ring(
 
 /// 见 [`federation_create_ring`]：管理员校验由 `AdminClaims` 承担。
 pub(crate) async fn federation_leave_ring(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(ring_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::ring::leave_ring(&ring_id, user_id, &claims.username, &db).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1377,15 +1209,12 @@ pub(crate) async fn federation_get_ring_peers(
 
 /// 见 [`federation_create_ring`]：管理员校验由 `AdminClaims` 承担。
 pub(crate) async fn federation_add_ring_peer(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(ring_id): axum::extract::Path<String>,
     Json(add_req): Json<federation::ring::AddPeerRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::ring::add_peer(&ring_id, user_id, &claims.username, &db, &add_req).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1396,14 +1225,11 @@ pub(crate) async fn federation_add_ring_peer(
 ///
 /// `Path<(String, String)>` 会对每段做百分号解码；peer 是完整 Actor URL，必然带编码。
 pub(crate) async fn federation_remove_ring_peer(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path((ring_id, peer_url)): axum::extract::Path<(String, String)>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::ring::remove_peer(&ring_id, &peer_url, user_id, &claims.username, &db).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1412,14 +1238,11 @@ pub(crate) async fn federation_remove_ring_peer(
 
 /// 见 [`federation_create_ring`]：管理员校验由 `AdminClaims` 承担。
 pub(crate) async fn federation_trigger_ring_sync(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(ring_id): axum::extract::Path<String>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::ring::trigger_sync(&ring_id, user_id, &claims.username, &db).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
@@ -1431,13 +1254,9 @@ pub(crate) async fn federation_trigger_ring_sync(
 /// GET /api/federation/delivery/stats — user delivery queue counters
 /// 路由已挂 auth_middleware；claims 由 AuthedClaims 提取。
 pub(crate) async fn federation_delivery_stats(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::delivery_stats_for_user(&db, user_id).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => federation_store_response("load delivery stats", e),
@@ -1447,14 +1266,10 @@ pub(crate) async fn federation_delivery_stats(
 /// POST /api/federation/delivery/{id}/retry — requeue a dead/stuck item
 /// 路径参数走 `Path<i32>`。
 pub(crate) async fn federation_retry_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(queue_id): axum::extract::Path<i32>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::retry_delivery_item(&db, user_id, queue_id).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, v)) => status_json_to_http((status, Json(v))).into_response(),
@@ -1464,14 +1279,10 @@ pub(crate) async fn federation_retry_delivery(
 /// POST /api/federation/delivery/{id}/cancel — cancel pending/delivering item
 /// 路径参数走 `Path<i32>`。
 pub(crate) async fn federation_cancel_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(queue_id): axum::extract::Path<i32>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::cancel_delivery_item(&db, user_id, queue_id).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, v)) => status_json_to_http((status, Json(v))).into_response(),
@@ -1480,14 +1291,10 @@ pub(crate) async fn federation_cancel_delivery(
 
 /// 查询参数走 `Query<LimitQuery>`。
 pub(crate) async fn federation_retry_all_dead_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::retry_all_dead_for_user(&db, user_id, q.or(50)).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, v)) => status_json_to_http((status, Json(v))).into_response(),
@@ -1496,14 +1303,10 @@ pub(crate) async fn federation_retry_all_dead_delivery(
 
 /// 查询参数走 `Query<LimitQuery>`。
 pub(crate) async fn federation_cancel_all_pending_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::cancel_all_pending_for_user(&db, user_id, q.or(100)).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err((status, v)) => status_json_to_http((status, Json(v))).into_response(),
@@ -1513,14 +1316,10 @@ pub(crate) async fn federation_cancel_all_pending_delivery(
 /// DELETE /api/federation/delivery/{id} — purge a dead queue row (user-owned dismiss)
 /// 路径参数走 `Path<i32>`。
 pub(crate) async fn federation_dismiss_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Path(queue_id): axum::extract::Path<i32>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     {
         match federation::delivery::dismiss_delivery_item(&db, user_id, queue_id).await {
             Ok(v) => (StatusCode::OK, Json(v)).into_response(),
@@ -1531,14 +1330,10 @@ pub(crate) async fn federation_dismiss_delivery(
 
 /// 路由已挂 auth_middleware；`Query<PurgeDeadQuery>` 认 `1|true|yes|on`。
 pub(crate) async fn federation_purge_dead_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Query(q): axum::extract::Query<PurgeDeadQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::purge_dead_for_user(
         &db,
         user_id,
@@ -1562,16 +1357,13 @@ pub(crate) async fn federation_purge_dead_delivery(
 ///
 /// 畸形 JSON 返回 400（`optional_json_distinguishes_absent_from_malformed`）。
 pub(crate) async fn federation_join_room(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(room_id): axum::extract::Path<String>,
     body: Option<Json<federation::room::JoinRoomRequest>>,
 ) -> Response {
     let join_req = body.map(|Json(v)| v).unwrap_or_default();
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::room::join_room(user_id, &claims.username, &room_id, &db, Some(&join_req))
         .await
     {
@@ -1594,14 +1386,10 @@ pub async fn federation_get_public_room(
 
 /// 查询参数走 `Query<LimitQuery>`。
 pub(crate) async fn federation_list_delivery(
-    extract::AuthedClaims(claims): extract::AuthedClaims,
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::Db(db): extract::Db,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::delivery::list_delivery_for_user_filtered(
         &db,
         user_id,
@@ -1808,15 +1596,12 @@ pub(crate) async fn federation_toggle_instance_block(
 /// 路由已声明该路径参数并挂了 auth_middleware；
 /// body 上限由路由的 `live_small_control_body_limit`（`SMALL_CONTROL_BODY_LIMIT` 256 KiB）。
 pub(crate) async fn federation_initiate_transfer(
+    extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
     axum::extract::Path(channel_id): axum::extract::Path<String>,
     Json(transfer_req): Json<federation::file_transfer::InitTransferRequest>,
 ) -> Response {
-    let user_id = match require_user_id(&claims) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
     match federation::file_transfer::initiate_transfer(
         user_id,
         &claims.username,
@@ -2043,26 +1828,28 @@ pub(crate) async fn get_federation_timeline(
                 .map(|s| s.to_string())
         })
         .collect();
-    if let Ok(stats_map) =
-        federation::interactions::interaction_stats_for_objects(db, user_id, &object_ids).await
-    {
-        for item in &mut items {
-            if let Some(oid) = item
-                .get("object_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-            {
-                if let Some(st) = stats_map.get(&oid) {
-                    if let Some(obj) = item.as_object_mut() {
-                        obj.insert("liked_by_me".into(), json!(st.liked_by_me));
-                        obj.insert("bookmarked_by_me".into(), json!(st.bookmarked_by_me));
-                        obj.insert("announced_by_me".into(), json!(st.announced_by_me));
-                        obj.insert("like_count".into(), json!(st.like_count));
-                        obj.insert("bookmark_count".into(), json!(st.bookmark_count));
-                        obj.insert("announce_count".into(), json!(st.announce_count));
-                        obj.insert("reply_count".into(), json!(st.reply_count));
-                        obj.insert("is_bookmarked".into(), json!(st.bookmarked_by_me));
-                    }
+    // `is_bookmarked` is derived from the authoritative interaction rows; a stats
+    // failure fails the timeline rather than returning unknown bookmark state.
+    let stats_map =
+        federation::interactions::interaction_stats_for_objects(db, user_id, &object_ids)
+            .await
+            .map_err(|error| federation_user_error("load timeline", error))?;
+    for item in &mut items {
+        if let Some(oid) = item
+            .get("object_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+        {
+            if let Some(st) = stats_map.get(&oid) {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("liked_by_me".into(), json!(st.liked_by_me));
+                    obj.insert("bookmarked_by_me".into(), json!(st.bookmarked_by_me));
+                    obj.insert("announced_by_me".into(), json!(st.announced_by_me));
+                    obj.insert("like_count".into(), json!(st.like_count));
+                    obj.insert("bookmark_count".into(), json!(st.bookmark_count));
+                    obj.insert("announce_count".into(), json!(st.announce_count));
+                    obj.insert("reply_count".into(), json!(st.reply_count));
+                    obj.insert("is_bookmarked".into(), json!(st.bookmarked_by_me));
                 }
             }
         }
@@ -2097,10 +1884,9 @@ mod tests {
     }
 
     #[test]
-    fn federation_handlers_reject_non_positive_subject() {
+    fn federation_handlers_take_boundary_subject() {
         let src = include_str!("social.rs");
         let production = src.split("#[cfg(test)]").next().expect("production");
-        assert!(production.contains("fn require_user_id"));
         for handler in [
             "federation_leave_ring",
             "federation_add_ring_peer",
@@ -2112,12 +1898,48 @@ mod tests {
                 .nth(1)
                 .and_then(|rest| rest.split("pub(crate) async fn").next())
                 .unwrap_or("");
-            assert!(body.contains("require_user_id"), "{handler}");
+            assert!(body.contains("extract::DurableUserId(user_id)"), "{handler}");
         }
-        assert!(!production.contains("claims.sub.parse().unwrap_or(0)"));
-        let guest = crate::middleware::auth::mint_session_claims(0, "guest", false, false, 0);
-        assert!(super::require_user_id(&guest).is_err());
-        let user = crate::middleware::auth::mint_session_claims(7, "alice", false, false, 0);
-        assert_eq!(super::require_user_id(&user).unwrap(), 7);
+        let identity = production
+            .split("pub(crate) async fn federation_identity(")
+            .nth(1)
+            .and_then(|rest| rest.split(") -> Response").next())
+            .expect("federation_identity");
+        assert!(identity.contains("extract::DurableUserId"), "guests must not reach identity");
+        for file in [production, include_str!("rooms_and_router.rs")] {
+            let production = file.split("#[cfg(test)]").next().expect("production");
+            assert!(!production.contains("claims.sub"));
+            assert!(!production.contains("positive_user_id"));
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_user_extractor_rejects_guest_zero_and_missing_subject() {
+        use crate::extract::DurableUserId;
+        use crate::middleware::auth::{Claims, mint_session_claims};
+        use axum::extract::FromRequestParts;
+        use axum::http::StatusCode;
+
+        async fn extract(claims: Option<Claims>) -> Result<i32, StatusCode> {
+            let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+            if let Some(claims) = claims {
+                parts.extensions.insert(claims);
+            }
+            DurableUserId::from_request_parts(&mut parts, &())
+                .await
+                .map(|DurableUserId(id)| id)
+                .map_err(|(status, _)| status)
+        }
+        let minted = |id| Some(mint_session_claims(id, "u", false, false, 0));
+
+        assert_eq!(extract(minted(7)).await, Ok(7));
+        assert_eq!(extract(minted(0)).await, Err(StatusCode::FORBIDDEN));
+        assert_eq!(extract(minted(-42)).await, Err(StatusCode::FORBIDDEN));
+        // Claims that never passed the auth boundary carry no typed subject,
+        // even with a valid-looking `sub`: never re-parsed, fail closed.
+        let mut unbound = mint_session_claims(7, "u", false, false, 0);
+        unbound.subject = None;
+        assert_eq!(extract(Some(unbound)).await, Err(StatusCode::UNAUTHORIZED));
+        assert_eq!(extract(None).await, Err(StatusCode::UNAUTHORIZED));
     }
 }

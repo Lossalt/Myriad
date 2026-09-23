@@ -40,6 +40,25 @@ pub struct Claims {
     /// Session epoch (`users.token_version`). Claim omitted → serde default 0.
     #[serde(default)]
     pub tv: i64,
+    /// Subject parsed once from `sub` at the auth boundary; never on the wire.
+    ///
+    /// Set only by this module (authentication, revalidation, minting and the
+    /// signed guest session). Claims that did not pass that boundary carry
+    /// `None`, and every consumer of the typed id fails closed on it.
+    #[serde(skip)]
+    pub subject: Option<AuthSubject>,
+}
+
+impl Claims {
+    /// Subject resolved at the auth boundary, if these claims passed it.
+    pub fn subject(&self) -> Option<AuthSubject> {
+        self.subject
+    }
+
+    /// Durable user id (`sub > 0`) resolved at the auth boundary.
+    pub fn durable_user_id(&self) -> Option<i32> {
+        self.subject.and_then(AuthSubject::durable_user_id)
+    }
 }
 
 /// Current durable subject on routes where credentials are optional.
@@ -49,6 +68,47 @@ pub struct Claims {
 /// unless it passes the same current-state resolver as required auth.
 #[derive(Debug, Clone)]
 pub struct OptionalClaims(pub Option<Claims>);
+
+/// Subject id parsed exactly once from a verified JWT `sub` at the auth boundary.
+///
+/// Carried inside [`Claims`] (one request auth context), so handlers read this
+/// typed id instead of re-parsing `claims.sub`. Positive ids are durable users,
+/// negative ids are server-minted guests (optional-auth routes only), `0` is
+/// neither. The private field keeps it constructible only by this module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthSubject(i32);
+
+impl AuthSubject {
+    /// Raw subject id; negative for signed guest sessions.
+    pub fn id(self) -> i32 {
+        self.0
+    }
+
+    /// The durable user id, or `None` for guests and the `0` subject.
+    pub fn durable_user_id(self) -> Option<i32> {
+        (self.0 > 0).then_some(self.0)
+    }
+
+    /// Test fixtures building `Claims` by hand: what the auth boundary would
+    /// have recorded for this `sub`.
+    #[cfg(test)]
+    pub(crate) fn from_test_sub(sub: &str) -> Option<Self> {
+        sub.parse().ok().map(Self)
+    }
+}
+
+/// The one place a verified JWT `sub` is parsed; records the result on the
+/// claims. Non-numeric or overflowing subjects are an invalid session, never a
+/// fallback id.
+fn parse_subject(claims: &mut Claims) -> Result<AuthSubject, Box<Response>> {
+    let subject = claims
+        .sub
+        .parse::<i32>()
+        .map(AuthSubject)
+        .map_err(|_| unauthorized_session_response())?;
+    claims.subject = Some(subject);
+    Ok(subject)
+}
 
 /// Build claims for a durable user session (login / register / password reissue).
 pub fn mint_session_claims(
@@ -67,6 +127,7 @@ pub fn mint_session_claims(
         exp: now + JWT_TTL_DAYS * 24 * 60 * 60,
         iat: now,
         tv: token_version,
+        subject: Some(AuthSubject(user_id)),
     }
 }
 
@@ -368,7 +429,7 @@ pub async fn auth_middleware(
     match authenticate_request(headers, &db).await {
         Ok(claims) => {
             record_user_presence(&claims, db);
-            // Token is valid, inject claims into request extensions
+            // Token is valid; the claims carry the typed subject parsed above.
             let mut req = req;
             req.extensions_mut().insert(claims);
             next.run(req).await
@@ -507,10 +568,10 @@ fn presence_write_due(user_id: i32) -> bool {
 /// 节流更新 users.last_seen_at / online_seconds（异步、尽力而为）。
 /// 游客（负数 ID）不记录。DB 由 middleware `State` 注入。
 pub fn record_user_presence(claims: &Claims, db: DatabaseConnection) {
-    let Ok(user_id) = claims.sub.parse::<i32>() else {
+    let Some(user_id) = claims.durable_user_id() else {
         return;
     };
-    if user_id <= 0 || !presence_write_due(user_id) {
+    if !presence_write_due(user_id) {
         return;
     }
     tokio::spawn(async move {
@@ -616,16 +677,16 @@ pub async fn ensure_current_admin_on(
         return Err(admin_forbidden());
     }
 
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "error": "Unauthorized",
-                    "message": "Invalid user ID in authorization token."
-                })),
-            )
-        })?;
+    // Typed id from the auth boundary; claims that never passed it fail closed.
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "Unauthorized",
+                "message": "Invalid user ID in authorization token."
+            })),
+        )
+    })?;
 
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -755,16 +816,13 @@ pub fn session_epoch_matches(claim_tv: i64, db_version: Option<i64>) -> bool {
 /// Guests (`sub` ≤ 0) skip the DB check — they are not durable sessions.
 /// Missing durable users fail closed as revoked sessions.
 async fn validated_auth_snapshot(
-    claims: &Claims,
+    subject: AuthSubject,
+    claim_tv: i64,
     db: &DatabaseConnection,
 ) -> Result<Option<AuthSnapshot>, Box<Response>> {
-    let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| unauthorized_session_response())?;
-    if user_id <= 0 {
+    let Some(user_id) = subject.durable_user_id() else {
         return Ok(None);
-    }
+    };
 
     let snapshot = load_auth_snapshot(db, user_id).await.map_err(|e| {
         tracing::error!("Failed to load token_version for user {}: {}", user_id, e);
@@ -789,10 +847,10 @@ async fn validated_auth_snapshot(
         return Err(unauthorized_session_response());
     };
 
-    if !session_epoch_matches(claims.tv, Some(snapshot.token_version)) {
+    if !session_epoch_matches(claim_tv, Some(snapshot.token_version)) {
         tracing::debug!(
             user_id,
-            claim_tv = claims.tv,
+            claim_tv,
             db_version = snapshot.token_version,
             "JWT session epoch mismatch — treating token as revoked"
         );
@@ -831,12 +889,17 @@ fn unauthorized_session_response() -> Box<Response> {
 ///
 /// Prefer this over [`verify_jwt_token`] for any path that must fail closed
 /// after logout / password change / account deletion.
+///
+/// Token verification, one strict `sub` parse recorded on the returned claims
+/// ([`Claims::subject`]), then session epoch / current roles checked against
+/// that same id.
 pub async fn authenticate_request(
     headers: &HeaderMap,
     db: &DatabaseConnection,
 ) -> Result<Claims, Box<Response>> {
     let mut claims = verify_jwt_token(headers)?;
-    if let Some(snapshot) = validated_auth_snapshot(&claims, db).await? {
+    let subject = parse_subject(&mut claims)?;
+    if let Some(snapshot) = validated_auth_snapshot(subject, claims.tv, db).await? {
         // This keeps ordinary authorization decisions bounded by the cache TTL
         // even when a role-change NOTIFY is missed.
         claims = apply_current_roles(claims, snapshot);
@@ -850,15 +913,18 @@ pub(crate) async fn revalidate_bound_claims(
     claims: &Claims,
     db: &DatabaseConnection,
 ) -> Result<Claims, Box<Response>> {
-    if claims.exp <= chrono::Utc::now().timestamp()
-        || crate::services::tapp_ownership::positive_user_id(&claims.sub).is_none()
-    {
+    if claims.exp <= chrono::Utc::now().timestamp() {
         return Err(unauthorized_session_response());
     }
-    let snapshot = validated_auth_snapshot(claims, db)
+    let mut claims = claims.clone();
+    let subject = parse_subject(&mut claims)?;
+    if subject.durable_user_id().is_none() {
+        return Err(unauthorized_session_response());
+    }
+    let snapshot = validated_auth_snapshot(subject, claims.tv, db)
         .await?
         .ok_or_else(unauthorized_session_response)?;
-    Ok(apply_current_roles(claims.clone(), snapshot))
+    Ok(apply_current_roles(claims, snapshot))
 }
 
 /// Resolve a current subject when authentication is optional.
@@ -1054,6 +1120,7 @@ pub async fn optional_auth_middleware(
                 exp: chrono::Utc::now().timestamp() + GUEST_SESSION_MAX_AGE,
                 iat: chrono::Utc::now().timestamp(),
                 tv: 0,
+                subject: Some(AuthSubject(guest_id)),
             }
         }
         Err(error_response) => {
@@ -1195,7 +1262,8 @@ mod tests {
             .split("pub async fn ensure_current_admin_on")
             .nth(1)
             .expect("ensure_current_admin_on");
-        assert!(body.contains("positive_user_id"));
+        assert!(body.contains("claims.durable_user_id()"));
+        assert!(!body.contains("claims.sub"));
     }
 
     use super::{
@@ -2016,6 +2084,7 @@ mod tests {
             exp: 0,
             iat: 0,
             tv: 0,
+            subject: crate::middleware::auth::AuthSubject::from_test_sub("7"),
         };
         let request = |verified: bool| {
             let mut request = axum::http::Request::builder().body(()).unwrap();

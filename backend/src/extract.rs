@@ -92,6 +92,41 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthedClaims {
     }
 }
 
+/// 认证边界已解析的持久用户 ID（`sub > 0`）。
+///
+/// 直接读取认证中间件注入的 `Claims` 上已解析的 typed subject
+/// （[`Claims::subject`](crate::middleware::auth::Claims::subject)），不再解析
+/// `claims.sub`，也不 clone Claims。未挂认证中间件时 401；游客（负数）与 `0`
+/// 主体 403，在 handler 与任何业务写之前拒绝。
+#[derive(Debug, Clone, Copy)]
+pub struct DurableUserId(pub i32);
+
+impl<S: Send + Sync> FromRequestParts<S> for DurableUserId {
+    type Rejection = (StatusCode, Json<Value>);
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let subject = parts
+            .extensions
+            .get::<Claims>()
+            .and_then(Claims::subject)
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(AppError::public_json("Not authenticated")),
+                )
+            })?;
+        subject.durable_user_id().map(DurableUserId).ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "A durable user account is required",
+                    "code": "invalid_subject",
+                })),
+            )
+        })
+    }
+}
+
 /// 可选认证路由上的访问者：`claims` 为 `None` 即游客；`is_admin` 只来自本请求的
 /// 当前管理员核验标记，不看 JWT 里的 `is_admin`。
 ///
@@ -237,6 +272,7 @@ mod tests {
             exp: 0,
             iat: 0,
             tv: 0,
+            subject: crate::middleware::auth::AuthSubject::from_test_sub(sub),
         }
     }
 
