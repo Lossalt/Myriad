@@ -86,9 +86,9 @@ PERSONA_DATABASE_URL=postgres://myriad_persona:PERSONA_PASSWORD@db:5432/myriad?s
 FEDERATION_DATABASE_URL=postgres://myriad_federation:FEDERATION_PASSWORD@db:5432/myriad?sslmode=prefer
 
 # 其余与默认部署相同（版本号请换成当前 release）
-MYRIAD_TAG=v0.5.5
-PROXY_TAG=v0.5.5
-UPDATER_TAG=v0.5.5
+MYRIAD_TAG=v0.5.6
+PROXY_TAG=v0.5.6
+UPDATER_TAG=v0.5.6
 # 普通重建由 UPDATER_TAG 选镜像；下列实际摘要记录由 Guard 维护，不覆盖 TAG：
 # UPDATER_IMAGE_REF=docker.io/somekawahitomi/myriad-updater@sha256:...
 # DOCKER_GUARD_IMAGE=docker.io/somekawahitomi/myriad-updater@sha256:...
