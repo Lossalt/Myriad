@@ -191,6 +191,10 @@ pub enum Phase {
     SwapTag,
     StartingNew,
     HealthProbing,
+    /// Updaters up to v0.5.3 recorded `swapping_proxy` between health probing and
+    /// finalize: after the update committed, in the same post-swap window. Job
+    /// files persist indefinitely and every admission scans them.
+    #[serde(alias = "swapping_proxy")]
     Finalize,
     RollbackInProgress,
     StopNew,
@@ -328,6 +332,28 @@ fn default_schema() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v053_update_job_with_swapping_proxy_parses_as_finalize() {
+        let job: Job =
+            serde_json::from_str(include_str!("testdata/job-v0.5.3-update.json")).unwrap();
+        let phases: Vec<_> = job.steps.iter().map(|step| step.phase).collect();
+        assert_eq!(
+            phases,
+            [
+                Phase::Preflight,
+                Phase::MaintenanceOn,
+                Phase::Stopping,
+                Phase::Snapshotting,
+                Phase::SwapTag,
+                Phase::StartingNew,
+                Phase::HealthProbing,
+                Phase::Finalize,
+                Phase::Finalize,
+            ]
+        );
+        assert!(job.steps[7].phase.is_post_swap());
+    }
 
     #[test]
     fn v053_snapshot_index_survives_removal_of_sample_hash() {
