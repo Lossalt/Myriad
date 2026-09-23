@@ -658,6 +658,10 @@ DROP INDEX idx_metadata_history_user_date;
 DROP INDEX idx_media_assets_created_id;
 CREATE INDEX idx_phantasi_items_published ON phantasi_items (source_id, published_at);
 CREATE INDEX idx_metadata_history_user ON metadata_history (user_id);
+CREATE INDEX idx_users_github_id ON users (github_id);
+ALTER TABLE phantasi_sources DROP COLUMN url_key, DROP COLUMN site_url_key;
+INSERT INTO phantasi_sources (user_id, name, url, site_url)
+VALUES (2147483647, 'url-key-upgrade-test', 'https://Blog.EXAMPLE/rss/#top', 'https://Blog.EXAMPLE/');
 INSERT INTO tapps (tapp_id, user_id, name, version, manifest, file_path, code_path, approved_permissions, granted_permissions)
 VALUES ('projection-upgrade-test', 2147483647, 'Test', '1', '{}', '', '', '["report:read"]', '["obsolete"]');
 "#).await.unwrap();
@@ -733,6 +737,24 @@ AND (table_name, column_name) IN (('tapps', 'granted_permissions'), ('platform_r
             .unwrap()
             .contains("published_at DESC NULLS LAST, id DESC")
     );
+    let github_indexes = db.query_all_raw(Statement::from_string(DatabaseBackend::Postgres,
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'users' AND indexdef LIKE '%(github_id)%'"))
+        .await.unwrap();
+    assert_eq!(github_indexes.len(), 1, "only the UNIQUE constraint index may cover users.github_id");
+    assert!(
+        github_indexes[0]
+            .try_get::<String>("", "indexdef")
+            .unwrap()
+            .starts_with("CREATE UNIQUE INDEX")
+    );
+    let keys = db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres,
+        "SELECT url_key, site_url_key FROM phantasi_sources WHERE name = 'url-key-upgrade-test'"))
+        .await.unwrap().unwrap();
+    assert_eq!(keys.try_get::<String>("", "url_key").unwrap(), "https://blog.example/rss");
+    assert_eq!(keys.try_get::<String>("", "site_url_key").unwrap(), "https://blog.example");
+    db.execute_unprepared("DELETE FROM phantasi_sources WHERE name = 'url-key-upgrade-test'")
+        .await
+        .unwrap();
     db.execute_unprepared("DELETE FROM tapps WHERE tapp_id = 'projection-upgrade-test'")
         .await
         .unwrap();
