@@ -39,6 +39,11 @@ impl DockerClient {
         Ok(Self { inner: docker })
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_raw(inner: Docker) -> Self {
+        Self { inner }
+    }
+
     pub fn raw(&self) -> &Docker {
         &self.inner
     }

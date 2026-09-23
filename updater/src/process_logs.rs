@@ -306,16 +306,52 @@ fn empty_export() -> ProcessLogExport {
     }
 }
 
+/// Tails tried in order when the guard rejects a log window as larger than its
+/// response bound. Recent lines matter most, so a shorter window beats losing
+/// the whole source to a burst of oversized lines.
+const SOURCE_TAIL_STEPS: [u64; 3] = [MAX_CONTAINER_LOG_TAIL, 2_000, 400];
+
+enum ReadError {
+    TooLarge,
+    Failed(String),
+}
+
 async fn collect_source(
     docker: Arc<DockerClient>,
     source: ContainerSource,
 ) -> Result<ProcessLogSource, String> {
-    let tail = MAX_SCANNED_LINES_PER_SOURCE.to_string();
+    for (step, tail) in SOURCE_TAIL_STEPS.into_iter().enumerate() {
+        match read_source(&docker, &source, tail).await {
+            Ok(mut collected) => {
+                if step > 0 {
+                    collected.truncated = true;
+                    collected.complete = false;
+                }
+                return Ok(collected);
+            }
+            Err(ReadError::TooLarge) if step + 1 < SOURCE_TAIL_STEPS.len() => continue,
+            Err(ReadError::TooLarge) => {
+                return Err(format!(
+                    "read logs: the last {tail} lines exceed {MAX_SOURCE_RESPONSE_BYTES} bytes"
+                ));
+            }
+            Err(ReadError::Failed(error)) => return Err(error),
+        }
+    }
+    unreachable!("the last tail step returns")
+}
+
+async fn read_source(
+    docker: &DockerClient,
+    source: &ContainerSource,
+    tail: u64,
+) -> Result<ProcessLogSource, ReadError> {
+    let tail_lines = tail.to_string();
     let options = LogsOptionsBuilder::default()
         .stdout(true)
         .stderr(true)
         .timestamps(true)
-        .tail(&tail)
+        .tail(&tail_lines)
         .build();
     let mut logs = docker.raw().logs(&source.id, Some(options));
     let mut entries = VecDeque::new();
@@ -324,7 +360,12 @@ async fn collect_source(
     let mut input_truncated = false;
 
     while let Some(output) = logs.next().await {
-        let output = output.map_err(|error| format!("read logs: {error}"))?;
+        let output = output.map_err(|error| match error {
+            bollard::errors::Error::DockerResponseServerError {
+                status_code: 413, ..
+            } => ReadError::TooLarge,
+            error => ReadError::Failed(format!("read logs: {error}")),
+        })?;
         let (stream, bytes) = match output {
             LogOutput::StdOut { message } => (LogStream::Stdout, message),
             LogOutput::StdErr { message } => (LogStream::Stderr, message),
@@ -364,12 +405,12 @@ async fn collect_source(
         }
     }
 
-    let scan_limited = scanned_lines >= MAX_SCANNED_LINES_PER_SOURCE;
+    let scan_limited = scanned_lines >= tail as usize;
     let entry_limited = matched_lines > entries.len();
     Ok(ProcessLogSource {
-        service: source.service,
-        container: source.container,
-        state: source.state,
+        service: source.service.clone(),
+        container: source.container.clone(),
+        state: source.state.clone(),
         entries: entries.into(),
         scanned_lines,
         matched_lines,
@@ -459,6 +500,73 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A daemon behind the guard: windows over `max_tail` lines exceed the log bound.
+    async fn log_daemon(max_tail: u64) -> Arc<DockerClient> {
+        use axum::response::IntoResponse;
+        use std::future::IntoFuture;
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| async move {
+            let tail = uri
+                .query()
+                .unwrap_or_default()
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("tail="))
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            if tail > max_tail {
+                return (
+                    axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                    axum::Json(serde_json::json!({"message": "Docker log response exceeds 4 MiB"})),
+                )
+                    .into_response();
+            }
+            let mut body = Vec::new();
+            for line in 0..tail {
+                let payload = format!("2026-09-24T00:00:00Z WARN line {line}\n");
+                body.extend_from_slice(&[1, 0, 0, 0]);
+                body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+                body.extend_from_slice(payload.as_bytes());
+            }
+            body.into_response()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(axum::serve(listener, app).into_future());
+        let docker =
+            bollard::Docker::connect_with_http(&address, 5, bollard::API_DEFAULT_VERSION).unwrap();
+        Arc::new(DockerClient::from_raw(docker))
+    }
+
+    fn backend_source() -> ContainerSource {
+        ContainerSource {
+            id: "backend-id".into(),
+            service: "backend".into(),
+            container: "myriad-backend".into(),
+            state: Some("running".into()),
+            running: true,
+            created: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_log_window_falls_back_to_recent_lines() {
+        let source = collect_source(log_daemon(2_000).await, backend_source())
+            .await
+            .unwrap();
+        assert_eq!(source.scanned_lines, 2_000);
+        assert_eq!(source.entries.len(), MAX_ENTRIES_PER_SOURCE);
+        assert_eq!(source.entries.last().unwrap().message, "WARN line 1999");
+        assert!(source.truncated);
+        assert!(!source.complete);
+    }
+
+    #[tokio::test]
+    async fn a_window_oversized_at_every_step_reports_the_bound() {
+        let error = collect_source(log_daemon(0).await, backend_source())
+            .await
+            .unwrap_err();
+        assert!(error.contains("the last 400 lines exceed"), "{error}");
+    }
 
     #[test]
     fn classifies_explicit_levels_without_promoting_info_messages() {
