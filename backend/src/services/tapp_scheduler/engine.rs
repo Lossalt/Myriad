@@ -506,7 +506,7 @@ impl TappSchedulerEngine {
                     ("user".to_string(), Some(vec![task.user_id]))
                 }
                 TaskScope::Tapp => {
-                    // target_users=None；入队时 `can_receive_frontend_task` 过滤
+                    // target_users=None；入队时 `frontend_recipients` 按受众谓词过滤
                     ("tapp".to_string(), None)
                 }
                 TaskScope::TappPerUser => {
@@ -514,7 +514,7 @@ impl TappSchedulerEngine {
                     ("tapp-per-user".to_string(), Some(vec![task.user_id]))
                 }
                 TaskScope::Global => {
-                    // target_users=None；入队时 can_receive_frontend_task 过滤
+                    // target_users=None；入队时 `frontend_recipients` 按受众谓词过滤
                     ("global".to_string(), None)
                 }
             };
@@ -616,36 +616,15 @@ impl TappSchedulerEngine {
         task: &tapp_scheduled_tasks::Model,
         message: &FrontendTaskMessage,
     ) -> Result<usize, String> {
-        let active_connections =
-            shared_registry::list_subject_endpoints(db, SCHEDULER_PRESENCE_NAMESPACE)
-                .await
-                .map_err(|error| scheduler_store_failed("list connections", error))?;
+        let recipients = Self::frontend_recipients(db, task, message.target_users.as_deref())
+            .await?;
         let mut deliveries = 0usize;
         let mut first_error = None;
-        let mut audience = HashMap::<i32, bool>::new();
-        for connection in active_connections {
-            let user_id = connection.subject_id;
-            if message
-                .target_users
-                .as_ref()
-                .is_some_and(|users| !users.contains(&user_id))
-            {
-                continue;
-            }
-            let allowed = if let Some(&allowed) = audience.get(&user_id) {
-                allowed
-            } else {
-                let allowed = Self::can_receive_frontend_task(db, user_id, task).await?;
-                audience.insert(user_id, allowed);
-                allowed
-            };
-            if !allowed {
-                continue;
-            }
+        for record_id in recipients {
             match shared_registry::enqueue(
                 db,
                 SCHEDULER_MAILBOX_CHANNEL,
-                &scheduler_mailbox_recipient(&connection.record_id),
+                &scheduler_mailbox_recipient(&record_id),
                 message,
                 Utc::now().timestamp() + SCHEDULER_MESSAGE_TTL_SECONDS,
             )
@@ -669,6 +648,85 @@ impl TappSchedulerEngine {
         } else {
             Ok(0)
         }
+    }
+
+    /// 一次查询选出本次投递的 live 连接 record_id。
+    ///
+    /// 受众谓词与 [`Self::can_receive_frontend_task`] 逐字一致，只是以连接的
+    /// subject_id 为参数下推到 SQL；`target_users` 是额外的 AND 限制，
+    /// `Some([])` 表示零收件人而非广播。
+    async fn frontend_recipients(
+        db: &DatabaseConnection,
+        task: &tapp_scheduled_tasks::Model,
+        target_users: Option<&[i32]>,
+    ) -> Result<Vec<String>, String> {
+        #[derive(FromQueryResult)]
+        struct RecipientRow {
+            record_id: String,
+        }
+
+        if target_users.is_some_and(<[i32]>::is_empty) {
+            return Ok(Vec::new());
+        }
+        let mut values: Vec<sea_orm::Value> = vec![SCHEDULER_PRESENCE_NAMESPACE.into()];
+        let audience = match task.scope {
+            TaskScope::User | TaskScope::TappPerUser => {
+                values.push(task.user_id.into());
+                "r.subject_id = $2"
+            }
+            TaskScope::Global => {
+                "EXISTS (SELECT 1 FROM users WHERE id = r.subject_id AND is_admin = true)"
+            }
+            TaskScope::Tapp => {
+                values.push(task.tapp_id.clone().into());
+                r#"EXISTS (
+    SELECT 1
+    FROM tapps
+    WHERE tapp_id = $2
+      AND (
+          user_id = r.subject_id
+          OR user_id = (
+              SELECT id FROM users
+              WHERE is_admin = true
+              ORDER BY id
+              LIMIT 1
+          )
+          OR EXISTS (
+              SELECT 1 FROM users
+              WHERE id = r.subject_id AND is_admin = true
+          )
+      )
+)"#
+            }
+        };
+        let target_filter = match target_users {
+            Some(users) => {
+                values.push(users.to_vec().into());
+                format!("AND r.subject_id = ANY(${})", values.len())
+            }
+            None => String::new(),
+        };
+        let sql = format!(
+            r#"
+SELECT r.record_id
+FROM tapp_runtime_registry r
+WHERE r.namespace = $1
+  AND r.subject_id IS NOT NULL
+  AND r.expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
+  AND {audience}
+  {target_filter}
+ORDER BY r.updated_at, r.record_id
+"#
+        );
+        RecipientRow::find_by_statement(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            sql,
+            values,
+        ))
+        .all(db)
+        .await
+        .map(|rows| rows.into_iter().map(|row| row.record_id).collect())
+        .map_err(|error| scheduler_store_failed("list frontend recipients", error))
     }
 
     async fn can_receive_frontend_task(
@@ -1268,15 +1326,16 @@ SELECT EXISTS (
         let input_value = context.get(input).unwrap_or(Self::json_null());
         let extracted = if let Some(path) = extract {
             let parts: Vec<&str> = path.split('.').collect();
-            Self::lookup_json_path(input_value, &parts).clone()
+            Self::lookup_json_path(input_value, &parts)
         } else {
-            input_value.clone()
+            input_value
         };
 
+        // 模板分支只借用选中的子树；仅纯返回分支在出口处复制一次。
         if let Some(tpl) = template {
-            serde_json::Value::String(Self::resolve_template_with_input(tpl, context, &extracted))
+            serde_json::Value::String(Self::resolve_template_with_input(tpl, context, extracted))
         } else {
-            extracted
+            extracted.clone()
         }
     }
 
@@ -2113,5 +2172,247 @@ mod frontend_finalizer_tests {
             .execute_unprepared(&format!("DROP SCHEMA {schema_name} CASCADE"))
             .await
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+
+    #[test]
+    fn transform_keeps_template_and_passthrough_semantics() {
+        let mut context = HashMap::new();
+        context.insert(
+            "resp".to_string(),
+            json!({"data": {"items": [1, 2], "title": "hi", "count": 3}}),
+        );
+
+        let passthrough =
+            TappSchedulerEngine::action_transform(&context, "resp", Some("data.items"), None);
+        assert_eq!(passthrough, json!([1, 2]));
+
+        let templated = TappSchedulerEngine::action_transform(
+            &context,
+            "resp",
+            Some("data"),
+            Some("{{_input.title}}:{{_input.count}}"),
+        );
+        assert_eq!(templated, json!("hi:3"));
+
+        let missing =
+            TappSchedulerEngine::action_transform(&context, "absent", Some("data.items"), None);
+        assert_eq!(missing, serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod frontend_recipient_db_tests {
+    use super::*;
+
+    /// Connect to `MYRIAD_RUNTIME_ISOLATION_TEST_DB` inside a fresh UUID schema.
+    async fn isolated_db(
+        prefix: &str,
+    ) -> (
+        sea_orm::DatabaseConnection,
+        sea_orm::DatabaseConnection,
+        String,
+    ) {
+        use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+        let url = std::env::var("MYRIAD_RUNTIME_ISOLATION_TEST_DB").unwrap();
+        let admin = Database::connect(&url).await.unwrap();
+        let schema_name = format!("{prefix}_{}", uuid::Uuid::new_v4().simple());
+        admin
+            .execute_unprepared(&format!("CREATE SCHEMA {schema_name}"))
+            .await
+            .unwrap();
+        let mut options = ConnectOptions::new(url);
+        options.max_connections(2).map_sqlx_postgres_opts({
+            let schema_name = schema_name.clone();
+            move |options| options.options([("search_path", schema_name.as_str())])
+        });
+        let db = Database::connect(options).await.unwrap();
+        db.execute_unprepared(
+            "CREATE TABLE tapp_runtime_registry (namespace VARCHAR(64) NOT NULL, \
+             record_id VARCHAR(160) NOT NULL, subject_id INTEGER, owner_id INTEGER, \
+             tapp_id VARCHAR(255), runtime_id VARCHAR(160), payload JSONB NOT NULL, \
+             expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+             PRIMARY KEY (namespace, record_id)); \
+             CREATE TABLE tapp_runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
+             channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, \
+             expires_at BIGINT NOT NULL); \
+             CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN); \
+             CREATE TABLE tapps (id SERIAL PRIMARY KEY, tapp_id VARCHAR(255) NOT NULL, \
+             user_id INTEGER NOT NULL)",
+        )
+        .await
+        .unwrap();
+        (admin, db, schema_name)
+    }
+
+    async fn drop_schema(admin: &sea_orm::DatabaseConnection, schema_name: &str) {
+        use sea_orm::ConnectionTrait;
+        admin
+            .execute_unprepared(&format!("DROP SCHEMA {schema_name} CASCADE"))
+            .await
+            .unwrap();
+    }
+
+    fn task(scope: TaskScope, tapp_id: &str, user_id: i32) -> tapp_scheduled_tasks::Model {
+        let now = Utc::now().fixed_offset();
+        tapp_scheduled_tasks::Model {
+            id: 1,
+            task_id: "task".into(),
+            tapp_id: tapp_id.into(),
+            user_id,
+            name: "Task".into(),
+            schedule_type: ScheduleType::Interval,
+            schedule_config: json!({}),
+            payload: None,
+            execution_target: ExecutionTarget::Frontend,
+            backend_actions: None,
+            enabled: true,
+            missed_policy: MissedPolicy::Skip,
+            scope,
+            retry_config: None,
+            next_run_at: None,
+            last_run_at: None,
+            last_run_result: None,
+            stats: json!({}),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    async fn recipients(
+        db: &DatabaseConnection,
+        task: &tapp_scheduled_tasks::Model,
+        target_users: Option<&[i32]>,
+    ) -> Vec<String> {
+        let mut ids = TappSchedulerEngine::frontend_recipients(db, task, target_users)
+            .await
+            .unwrap();
+        ids.sort();
+        ids
+    }
+
+    /// The SQL fan-out predicate replaced per-subject `can_receive_frontend_task`
+    /// calls, so it is the delivery authorization boundary: check it against
+    /// explicit expectations and against the per-subject predicate itself.
+    #[tokio::test]
+    #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
+    async fn fan_out_sql_matches_scope_audience_and_targets() {
+        let (admin, db, schema_name) = isolated_db("fanout").await;
+        // 1 = first admin (site owner), 4 = later admin, 2/3 = ordinary users.
+        db.execute_unprepared(
+            "INSERT INTO users (id, is_admin) VALUES (1, true), (2, false), (3, NULL), (4, true);
+             INSERT INTO tapps (tapp_id, user_id) VALUES
+                 ('shared.app', 1), ('private.app', 2);",
+        )
+        .await
+        .unwrap();
+        let live = Utc::now().timestamp() + 600;
+        let expired = Utc::now().timestamp() - 1;
+        for (record_id, subject_id, namespace, expires_at) in [
+            ("c1", Some(1), SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c2a", Some(2), SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c2b", Some(2), SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c3", Some(3), SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c4", Some(4), SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c2-expired", Some(2), SCHEDULER_PRESENCE_NAMESPACE, expired),
+            ("c-anonymous", None, SCHEDULER_PRESENCE_NAMESPACE, live),
+            ("c2-other-ns", Some(2), "event_presence", live),
+        ] {
+            db.execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "INSERT INTO tapp_runtime_registry (namespace, record_id, subject_id, payload, expires_at)
+                 VALUES ($1, $2, $3, '{}'::jsonb, $4)",
+                [
+                    namespace.into(),
+                    record_id.into(),
+                    subject_id.into(),
+                    expires_at.into(),
+                ],
+            ))
+            .await
+            .unwrap();
+        }
+        let ids = |values: &[&str]| values.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+
+        let user_task = task(TaskScope::User, "private.app", 2);
+        assert_eq!(
+            recipients(&db, &user_task, None).await,
+            ids(&["c2a", "c2b"])
+        );
+        assert_eq!(
+            recipients(&db, &user_task, Some(&[2])).await,
+            ids(&["c2a", "c2b"])
+        );
+        assert!(recipients(&db, &user_task, Some(&[3])).await.is_empty());
+        assert!(recipients(&db, &user_task, Some(&[])).await.is_empty());
+
+        let per_user = task(TaskScope::TappPerUser, "shared.app", 3);
+        assert_eq!(recipients(&db, &per_user, Some(&[3])).await, ids(&["c3"]));
+
+        let global = task(TaskScope::Global, "shared.app", 1);
+        assert_eq!(recipients(&db, &global, None).await, ids(&["c1", "c4"]));
+        assert_eq!(recipients(&db, &global, Some(&[2, 4])).await, ids(&["c4"]));
+
+        // Installed by the first admin: every live subject may receive it.
+        let shared = task(TaskScope::Tapp, "shared.app", 1);
+        assert_eq!(
+            recipients(&db, &shared, None).await,
+            ids(&["c1", "c2a", "c2b", "c3", "c4"])
+        );
+        assert_eq!(
+            recipients(&db, &shared, Some(&[3, 4])).await,
+            ids(&["c3", "c4"])
+        );
+        assert!(recipients(&db, &shared, Some(&[])).await.is_empty());
+
+        // Private install: its owner and current admins only.
+        let private = task(TaskScope::Tapp, "private.app", 2);
+        assert_eq!(
+            recipients(&db, &private, None).await,
+            ids(&["c1", "c2a", "c2b", "c4"])
+        );
+        let missing = task(TaskScope::Tapp, "missing.app", 2);
+        assert!(recipients(&db, &missing, None).await.is_empty());
+
+        // Same audience as the per-subject predicate still used for receipts.
+        let connections = [("c1", 1), ("c2a", 2), ("c2b", 2), ("c3", 3), ("c4", 4)];
+        for task in [&user_task, &per_user, &global, &shared, &private, &missing] {
+            let mut expected = Vec::new();
+            for (record_id, subject_id) in connections {
+                if TappSchedulerEngine::can_receive_frontend_task(&db, subject_id, task)
+                    .await
+                    .unwrap()
+                {
+                    expected.push(record_id.to_string());
+                }
+            }
+            expected.sort();
+            assert_eq!(
+                recipients(&db, task, None).await,
+                expected,
+                "{:?}",
+                task.scope
+            );
+        }
+
+        drop_schema(&admin, &schema_name).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
+    async fn fan_out_reports_database_failure_instead_of_broadcasting() {
+        let (admin, db, schema_name) = isolated_db("fanout_err").await;
+        db.execute_unprepared("DROP TABLE users").await.unwrap();
+        let global = task(TaskScope::Global, "shared.app", 1);
+        assert!(
+            TappSchedulerEngine::frontend_recipients(&db, &global, None)
+                .await
+                .is_err()
+        );
+        drop_schema(&admin, &schema_name).await;
     }
 }
