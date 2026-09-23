@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 /**
@@ -19,6 +19,26 @@ const distDir = resolve(frontendRoot, 'dist')
 const baselinePath = resolve(here, 'home-budget.baseline.json')
 
 const SLACK = 0.15
+// A new first-paint file costs a request before the home screen can render.
+const FILE_SLACK = 2
+
+/**
+ * Chunks that load on demand. Each was measured out of first paint; a static
+ * import that drags one back fails the budget.
+ */
+export const LAZY_ONLY_CHUNKS = [
+  'Config',
+  'motion-vendor',
+  'motion-dom',
+  'surfaceLenses',
+  'NotificationPanelList',
+  'AgentGlobalActions',
+]
+
+// Rolldown names chunks `<name>-<hash>.<ext>`; the hash may itself contain '-'.
+function isChunk(file, name) {
+  return new RegExp(`^${name.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[\\w-]+\\.(?:js|css)$`).test(basename(file))
+}
 
 function findIndexHtml(root = distDir) {
   const candidates = [
@@ -108,16 +128,20 @@ export async function measureHomeBudget(root = distDir) {
     .toArray()
     .join('\n')
 
+  const lazyOnlyChunks = LAZY_ONLY_CHUNKS.filter(name =>
+    Iterator.from(firstPaint).some(file => isChunk(file, name)),
+  )
+
   return {
     jsGzipBytes: js,
     cssGzipBytes: css,
     totalGzipBytes: js + css,
+    firstPaintFiles: firstPaint.size,
+    lazyOnlyChunks,
     files: ranked,
     loadsAgora: /agora-rtc-sdk-ng|agora-rtm/.test(blob),
     // Filename, not a lazy-import string left inside App.
-    loadsConfigRoute: Iterator.from(firstPaint).some((file) =>
-      /(?:^|\/)Config-[^/]+\.js$/.test(file),
-    ),
+    loadsConfigRoute: lazyOnlyChunks.includes('Config'),
   }
 }
 
@@ -160,6 +184,7 @@ async function main() {
           jsGzipBytes: measured.jsGzipBytes,
           cssGzipBytes: measured.cssGzipBytes,
           totalGzipBytes: measured.totalGzipBytes,
+          firstPaintFiles: measured.firstPaintFiles,
         },
         null,
         2,
@@ -173,6 +198,8 @@ async function main() {
         jsGzipBytes: measured.jsGzipBytes,
         cssGzipBytes: measured.cssGzipBytes,
         totalGzipBytes: measured.totalGzipBytes,
+        firstPaintFiles: measured.firstPaintFiles,
+        lazyOnlyChunks: measured.lazyOnlyChunks,
         voiceGzipBytes: voice.totalGzipBytes,
         loadsAgora: measured.loadsAgora,
         loadsConfigRoute: measured.loadsConfigRoute,
@@ -195,14 +222,19 @@ async function main() {
         `CSS gzip ${measured.cssGzipBytes} exceeds baseline ${baseline.cssGzipBytes} +15%`,
       )
     }
+    if (baseline.firstPaintFiles && measured.firstPaintFiles > baseline.firstPaintFiles + FILE_SLACK) {
+      failures.push(
+        `first-paint files ${measured.firstPaintFiles} exceed baseline ${baseline.firstPaintFiles} +${FILE_SLACK}`,
+      )
+    }
     if (voice.totalGzipBytes > 1_000_000) {
       failures.push(`Voice SDK gzip ${voice.totalGzipBytes} exceeds 1000000 bytes`)
     }
     if (measured.loadsAgora) {
       failures.push('first-paint JS contains Agora SDK')
     }
-    if (measured.loadsConfigRoute) {
-      failures.push('first-paint JS contains the Config route')
+    for (const name of measured.lazyOnlyChunks) {
+      failures.push(`first-paint graph statically imports the on-demand ${name} chunk`)
     }
     if (failures.length > 0) {
       console.error(failures.join('\n'))

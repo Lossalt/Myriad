@@ -1,5 +1,6 @@
 {
-  "jsGzipBytes": 286142,
-  "cssGzipBytes": 54981,
-  "totalGzipBytes": 341123
+  "jsGzipBytes": 268017,
+  "cssGzipBytes": 58980,
+  "totalGzipBytes": 326997,
+  "firstPaintFiles": 13
 }

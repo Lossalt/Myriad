@@ -105,3 +105,22 @@ describe('speculative route loading', () => {
     cancel()
   })
 })
+
+describe('lazyWithPreload rendering', () => {
+  it('renders an already loaded module in the same pass instead of a fallback', async () => {
+    const { createElement, Suspense } = await import('react')
+    const { renderToString } = await import('react-dom/server')
+    const render = (component: Parameters<typeof createElement>[0]) =>
+      renderToString(createElement(Suspense, { fallback: 'fallback' }, createElement(component)))
+
+    const cold = lazyWithPreload(async () => ({ default: () => 'content' }))
+    assert.match(render(cold), /fallback/)
+
+    // A fallback commit would be revealed through React's ~300ms throttle.
+    const warm = lazyWithPreload(async () => ({ default: () => 'content' }))
+    await warm.preload()
+    const html = render(warm)
+    assert.match(html, /content/)
+    assert.doesNotMatch(html, /fallback/)
+  })
+})

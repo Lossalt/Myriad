@@ -120,7 +120,12 @@ converges when it is touched rather than in dedicated migrations.
   route needs. Panels, dialogs and capability engines (notification list, Agent
   global actions, liquid-glass lenses) load on demand or at idle, and are gated
   by the condition that makes them useful — a viewport, an open intent — rather
-  than by a timer alone. `pnpm test:home-budget` guards the home page.
+  than by a timer alone. `pnpm test:home-budget` (run in CI after the production
+  build) guards the home page: first-paint gzip bytes and file count against
+  `scripts/home-budget.baseline.json`, and the on-demand chunks listed in
+  `LAZY_ONLY_CHUNKS` must never enter the first-paint graph. Moving a module out
+  of first paint adds it there; improving the budget rewrites the baseline with
+  `node scripts/home-budget.mjs --write`.
   Dashboard cards enter one by one once their own module has loaded and their
   content has committed (`WidgetType.preload`), so no card waits for the slowest
   one; a widget whose content arrives later should expose that through `preload`

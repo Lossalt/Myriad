@@ -214,6 +214,45 @@ Object.assign(window, {
         </I18nProvider>,
       )
     },
+    // A card whose content module is still loading; the test releases it.
+    mountHeldEntrance: async () => {
+      const [{ WidgetGridItem }, { lazyWithPreload }, { I18nProvider }] = await Promise.all([
+        import('../../../src/components/WidgetGridItem'),
+        import('../../../src/utils/codeSplitting'),
+        import('../../../src/contexts/I18nContext'),
+        ensureMotionReady(),
+      ])
+      const gate = Promise.withResolvers<void>()
+      Object.assign(window, { releaseHeldEntrance: gate.resolve })
+      const Content = lazyWithPreload(async () => {
+        await gate.promise
+        return { default: () => <p data-held-content>Ready</p> }
+      })
+      coordinator.startPageTransition('held-audit')
+      coordinator.completePageTransition('held-audit')
+      localStorage.setItem('animation-preference', 'standard')
+      const container = document.createElement('div')
+      container.style.cssText = 'width:900px;height:400px;position:relative'
+      document.body.append(container)
+      createRoot(container).render(
+        <I18nProvider>
+          <AnimationPreferenceProvider>
+            <WidgetGridItem
+              widget={{ id: 'held-audit', type: 'held', size: '2x2', position: { x: 0, y: 0 } }}
+              widgetType={{ id: 'held', name: 'Held', defaultSize: '2x2', component: Content, preload: Content.preload }}
+              isEditMode={false}
+              isHovered={false}
+              index={0}
+              onDragStart={() => {}}
+              onMouseEnter={() => {}}
+              onMouseLeave={() => {}}
+              onRemove={() => {}}
+              onResizeStart={() => {}}
+            />
+          </AnimationPreferenceProvider>
+        </I18nProvider>,
+      )
+    },
     mountWidgetEntrance: async () => {
       await ensureMotionReady()
       coordinator.completePageTransition()

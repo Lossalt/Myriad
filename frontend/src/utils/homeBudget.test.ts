@@ -132,6 +132,23 @@ describe('home first-paint budget', () => {
     assert.equal(measured.loadsConfigRoute, true)
   })
 
+  it('counts first-paint files and flags on-demand chunks pulled in statically', async () => {
+    const { measureHomeBudget } = await import('../../scripts/home-budget.mjs')
+    const root = mkdtempSync(join(tmpdir(), 'home-budget-lazy-only-'))
+    mkdirSync(join(root, 'assets'))
+    writeFileSync(join(root, 'index.html'), '<script type="module" src="/assets/index-Ab1-cd2E.js"></script>')
+    writeFileSync(
+      join(root, 'assets/index-Ab1-cd2E.js'),
+      'import "./surfaceLenses-Xy-12345.js"; import("./NotificationPanelList-Qw123456.js")',
+    )
+    writeFileSync(join(root, 'assets/surfaceLenses-Xy-12345.js'), 'export default 1')
+    writeFileSync(join(root, 'assets/NotificationPanelList-Qw123456.js'), 'export default 2')
+    const measured = await measureHomeBudget(root)
+    assert.equal(measured.firstPaintFiles, 2)
+    // Static import is flagged; the dynamic one stays on demand.
+    assert.deepEqual(measured.lazyOnlyChunks, ['surfaceLenses'])
+  })
+
   it('keeps built first-paint assets inside the gzip baseline when dist exists', async () => {
     const dist = new URL('../../dist/index.html', import.meta.url)
     if (!existsSync(fileURLToPath(dist))) {
@@ -141,9 +158,13 @@ describe('home first-paint budget', () => {
     const measured = await measureHomeBudget()
     const baseline = JSON.parse(
       readFileSync(new URL('../../scripts/home-budget.baseline.json', import.meta.url), 'utf8'),
-    ) as { jsGzipBytes: number; cssGzipBytes: number }
+    ) as { jsGzipBytes: number; cssGzipBytes: number; firstPaintFiles: number }
     assert.equal(measured.loadsAgora, false)
-    assert.equal(measured.loadsConfigRoute, false)
+    assert.deepEqual(measured.lazyOnlyChunks, [])
+    assert.ok(
+      measured.firstPaintFiles <= baseline.firstPaintFiles + 2,
+      `first-paint files ${measured.firstPaintFiles} > baseline ${baseline.firstPaintFiles} +2`,
+    )
     assert.ok(
       measured.files.some((file) => /(?:^|\/)index-[^/]+\.js$/.test(file.file)),
       `SPA module entry missing from first-paint: ${measured.files.map((f) => f.file).join(', ')}`,

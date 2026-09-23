@@ -16,6 +16,7 @@ declare global {
         immediate?: boolean,
       ) => Promise<void>
       mountWidgetEntrance: () => Promise<void>
+      mountHeldEntrance: () => Promise<void>
       coordinator: typeof import('../../src/hooks/animation/coordinator').coordinator
     }
   }
@@ -207,6 +208,37 @@ test('first lazy welcome animates its greeting under the home route presence bou
   })
   expect(samples.some((opacity) => opacity > 0 && opacity < 0.99)).toBe(true)
   expect(samples.at(-1)).toBe(1)
+})
+
+test('a card holds its entrance until its content commits, then enters with it', async ({ page }) => {
+  await page.evaluate(() => window.widgetEntranceFixture.mountHeldEntrance())
+  const card = page.locator('.widget-grid-item')
+  await expect(card).toBeAttached()
+  const pending = await card.evaluate(async (element) => {
+    const samples: number[] = []
+    for (let frame = 0; frame < 30; frame++) {
+      samples.push(Number(getComputedStyle(element).opacity))
+      await new Promise(requestAnimationFrame)
+    }
+    return samples
+  })
+  expect(pending.every(opacity => opacity === 0)).toBe(true)
+  const entering = await card.evaluate(async (element) => {
+    ;(window as unknown as { releaseHeldEntrance: () => void }).releaseHeldEntrance()
+    const samples: { opacity: number, content: boolean }[] = []
+    for (let frame = 0; frame < 90; frame++) {
+      samples.push({
+        opacity: Number(getComputedStyle(element).opacity),
+        content: Boolean(element.querySelector('[data-held-content]')),
+      })
+      await new Promise(requestAnimationFrame)
+    }
+    return samples
+  })
+  // Never an empty card on screen: every visible frame already shows the content.
+  expect(entering.filter(sample => sample.opacity > 0).every(sample => sample.content)).toBe(true)
+  expect(entering.some(sample => sample.opacity > 0 && sample.opacity < 1)).toBe(true)
+  expect(entering.at(-1)).toEqual({ opacity: 1, content: true })
 })
 
 test('enabling motion after a disabled entrance never hides or replays shown contents', async ({
