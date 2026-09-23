@@ -110,3 +110,18 @@ test('configuration failure reports once and applies the default layout', async 
   assert.deepEqual(f.events, ['failure', 'mode:standard', 'title:Dashboard', 'apply'])
   stop()
 })
+
+test('preload learns the parsed mode, and a failed read preloads the standard fallback', async () => {
+  const seen: string[] = []
+  const f = fixture()
+  const dispose = startHomeDashboardLoad({ ...f.options, preload: (_layouts, mode) => { seen.push(mode); return Promise.resolve() } })
+  f.read.resolve({ dashboard_layout_mode: 'free' })
+  await flush()
+  dispose()
+  const g = fixture()
+  const stop = startHomeDashboardLoad({ ...g.options, preload: (_layouts, mode) => { seen.push(mode); return Promise.resolve() } })
+  g.read.reject(new Error('network'))
+  await flush()
+  stop()
+  assert.deepEqual(seen, ['free', 'standard'])
+})

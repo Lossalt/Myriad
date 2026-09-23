@@ -21,7 +21,7 @@ import {
   isExlight,
   useAnimationLevel,
 } from '../hooks/useAnimationLevel'
-import { useWidgetEntrance } from '../hooks/useWidgetEntrance'
+import { useWidgetContentHold, useWidgetEntrance } from '../hooks/useWidgetEntrance'
 import {
   HOME_STANDARD_COLS,
   HOME_STANDARD_ROWS,
@@ -168,9 +168,14 @@ export const WidgetGridItem = React.memo(
 
     const animationsEnabled = !isExlight(anim)
     const skipEntrance = shouldSkipWidgetEntrance(isEditMode)
+    const { hold, onPresentable } = useWidgetContentHold(
+      widgetType.preload,
+      animationsEnabled && !skipEntrance,
+    )
     const { phase: entrancePhase, canAnimate, onComplete } = useWidgetEntrance(
       index,
       !animationsEnabled || skipEntrance,
+      hold,
     )
 
     const dim = widgetSizeSpan(widget.size)
@@ -444,6 +449,7 @@ export const WidgetGridItem = React.memo(
                   isEditMode={isEditMode}
                   isPreview={isPreview}
                   onConfigChange={onConfigChange}
+                  onPresentable={onPresentable}
                 />
               </MotionEntranceHost>
             </RenderErrorBoundary>

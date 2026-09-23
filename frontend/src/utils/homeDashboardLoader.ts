@@ -8,7 +8,7 @@ import {
 
 interface DashboardLoadOptions {
   read: () => Promise<Record<string, unknown>>
-  preload: (layouts: HomeDashboardLayouts) => Promise<unknown>
+  preload: (layouts: HomeDashboardLayouts, mode: HomeLayoutMode) => Promise<unknown>
   fallback: () => HomeDashboardLayouts
   generation: { current: number }
   mode: (mode: HomeLayoutMode) => void
@@ -25,14 +25,14 @@ export function startHomeDashboardLoad(options: DashboardLoadOptions): () => voi
   let active = true
   let timer: ReturnType<typeof setTimeout> | undefined
   let release: (() => void) | undefined
-  const apply = async (layouts: HomeDashboardLayouts) => {
+  const apply = async (layouts: HomeDashboardLayouts, mode: HomeLayoutMode) => {
     if (!active) return
     const generation = ++options.generation.current
     try {
       await new Promise<void>((resolve, reject) => {
         release = resolve
         timer = setTimeout(resolve, options.timeoutMs ?? 3000)
-        Promise.try(() => options.preload(layouts)).then(() => resolve(), reject)
+        Promise.try(() => options.preload(layouts, mode)).then(() => resolve(), reject)
       })
     } finally {
       clearTimeout(timer)
@@ -50,7 +50,8 @@ export function startHomeDashboardLoad(options: DashboardLoadOptions): () => voi
     try {
       const data = await options.read()
       if (!active) return
-      options.mode(parseHomeLayoutMode(data.dashboard_layout_mode))
+      const mode = parseHomeLayoutMode(data.dashboard_layout_mode)
+      options.mode(mode)
       options.title(typeof data.dashboard_title === 'string' && data.dashboard_title ? data.dashboard_title : 'Dashboard')
       let layouts = options.fallback()
       if (data.dashboard_layout) {
@@ -62,13 +63,13 @@ export function startHomeDashboardLoad(options: DashboardLoadOptions): () => voi
           await report(error)
         }
       }
-      await apply(layouts)
+      await apply(layouts, mode)
     } catch (error) {
       await report(error)
       if (!active) return
       options.mode('standard')
       options.title('Dashboard')
-      await apply(options.fallback())
+      await apply(options.fallback(), 'standard')
     }
   }
   // Report presentation/preload failures without leaving a detached rejection.

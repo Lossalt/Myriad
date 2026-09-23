@@ -6,9 +6,11 @@ export function lazyWithPreload<T extends ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
 ) {
   let pending: Promise<{ default: T }> | undefined
+  let loaded: { default: T } | undefined
   const preload = () => {
     pending ??= Promise.resolve()
       .then(factory)
+      .then((module) => (loaded = module))
       .catch((error) => {
         // Speculative failures must not poison a later navigation attempt.
         pending = undefined
@@ -16,7 +18,16 @@ export function lazyWithPreload<T extends ComponentType<any>>(
       })
     return pending
   }
-  return Object.assign(lazy(preload), { preload })
+  // React.lazy settles a synchronous thenable in the same render, so a module that
+  // already arrived renders directly instead of committing a fallback first (whose
+  // reveal React throttles by up to 300ms).
+  const component = lazy(() => {
+    const ready = loaded
+    return ready
+      ? ({ then: (resolve: (value: { default: T }) => void) => resolve(ready) } as unknown as Promise<{ default: T }>)
+      : preload()
+  })
+  return Object.assign(component, { preload })
 }
 
 function canPrefetch() {
@@ -99,8 +110,8 @@ export const routeComponents = {
 }
 
 /** Public landing routes only; guarded pages would fetch code the guard may reject. */
-const LANDING_ROUTES: readonly (readonly [RegExp, keyof typeof routeComponents])[] = [
-  [/^\/$/, 'home'],
+const LANDING_ROUTES: readonly (readonly [RegExp, keyof typeof routeComponents, (() => Promise<unknown>)?])[] = [
+  [/^\/$/, 'home', () => import('../views/homeWidgetPreload').then(m => m.warmHomeWidgets())],
   [/^\/journal(?:\/|$)/, 'phantasi'],
   [/^\/library\/?$/, 'library'],
   [/^\/tapp\/?$/, 'tapp'],
@@ -112,8 +123,11 @@ const LANDING_ROUTES: readonly (readonly [RegExp, keyof typeof routeComponents])
  * which waits for the entry to evaluate and the shell locale to arrive.
  */
 export function preloadLandingRoute(pathname: string): void {
-  const route = LANDING_ROUTES.find(([pattern]) => pattern.test(pathname))?.[1]
-  if (route) routeComponents[route].preload().catch(() => {})
+  const landing = LANDING_ROUTES.find(([pattern]) => pattern.test(pathname))
+  if (!landing) return
+  const [, route, warmContent] = landing
+  routeComponents[route].preload().catch(() => {})
+  warmContent?.().catch(() => {})
 }
 
 export const CRITICAL_PRELOAD_ROUTES = ['library', 'tapp', 'tappStore'] as const

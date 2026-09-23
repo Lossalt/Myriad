@@ -113,6 +113,19 @@ export function effectiveHomeLayoutMode(
   return isDesktop ? mode : 'standard'
 }
 
+/** The tiles Home renders for a mode and viewport band; preloading waits for exactly these. */
+export function homeWidgetsForView(
+  layouts: HomeDashboardLayouts,
+  mode: HomeLayoutMode,
+  isDesktop: boolean,
+): WidgetConfig[] {
+  if (mode === 'free' && !isDesktop) {
+    const source = layouts.free.length > 0 ? layouts.free : layouts.standard
+    return source.filter(isHomeWidgetItem)
+  }
+  return layouts[effectiveHomeLayoutMode(mode, isDesktop)]
+}
+
 export function cloneHomeWidgets(widgets: WidgetConfig[]): WidgetConfig[] {
   return widgets.map((widget) => ({
     ...widget,

@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 import type { TranslationKeys } from '../../i18n'
 import type { WidgetComponentProps, WidgetSize, WidgetType } from '../widgetGridTypes'
-import { lazy } from 'react'
+import { lazyWithPreload } from '../../utils/codeSplitting'
 import {
   preloadReportCardsForTypes,
   ReportCardHost,
@@ -12,15 +12,7 @@ function lazyWidget<K extends string>(
   factory: () => Promise<Record<K, ComponentType<WidgetComponentProps>>>,
   name: K,
 ) {
-  let shared: Promise<{ default: ComponentType<WidgetComponentProps> }> | null =
-    null
-  const load = () => {
-    shared ||= factory().then((m) => ({ default: m[name] }))
-    return shared
-  }
-  const component = lazy(load)
-  ;(component as unknown as { preload: () => Promise<unknown> }).preload = load
-  return component
+  return lazyWithPreload(() => factory().then((m) => ({ default: m[name] })))
 }
 
 const PhantasiFeaturedWidget = lazyWidget(
@@ -320,6 +312,7 @@ export function getBuiltinWidgets(
       name: widgetsI18n[WIDGET_NAME_KEY[id]],
       defaultSize: base.defaultSize,
       component: base.component,
+      preload: () => preloadBuiltinWidgets([id]),
       supportedSizes: Iterator.from(base.supportedSizes).toArray(),
       componentLongPress:
         COMPONENT_LONG_PRESS_WIDGETS.has(base.component) || undefined,

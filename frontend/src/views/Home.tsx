@@ -63,8 +63,8 @@ import {
   createHomeStickerItem,
   effectiveHomeLayoutMode,
   homeLayoutsHaveTiles,
+  homeWidgetsForView,
   isHomeStickerItem,
-  isHomeWidgetItem,
   layoutsAfterWidgetRegistry,
   peekStoredHomeLayoutMode,
   persistHomeLayoutMode,
@@ -83,6 +83,7 @@ import {
   showWarning,
 } from '../utils/toastManager'
 import { widgetSizeSpan } from '../utils/widgetSizeScale'
+import { preloadHomeWidgets } from './homeWidgetPreload'
 import './Home.css'
 
 const HomeStickerDialog = lazy(() =>
@@ -216,14 +217,10 @@ export default function Home() {
     isDesktopBand,
   )
   const isFreeLayout = effectiveMode === 'free'
-  const widgets = useMemo(() => {
-    if (resolvedLayoutMode === 'free' && !isDesktopBand) {
-      const source =
-        layouts.free.length > 0 ? layouts.free : layouts.standard
-      return source.filter(isHomeWidgetItem)
-    }
-    return layouts[effectiveMode]
-  }, [resolvedLayoutMode, isDesktopBand, layouts, effectiveMode])
+  const widgets = useMemo(
+    () => homeWidgetsForView(layouts, resolvedLayoutMode, isDesktopBand),
+    [resolvedLayoutMode, isDesktopBand, layouts],
+  )
   const heroTitle = dashboardTitle.trim() || userInfo?.name || ''
   const [stickerDraft, setStickerDraft] = useState<{
     size: WidgetSize
@@ -277,10 +274,11 @@ export default function Home() {
 
   useEffect(() => startHomeDashboardLoad({
     read: getUIConfigDeduped,
-    preload: next => Promise.all([
-      preloadBuiltinWidgets([...next.standard, ...next.free].map(widget => widget.type)),
-      ensureMotionReady(),
-    ]),
+    // Cards hold their own entrances, so the grid waits only for motion.
+    preload: (next, mode) => {
+      void preloadHomeWidgets(next, mode)
+      return ensureMotionReady()
+    },
     fallback: () => ({ standard: DEFAULT_WIDGETS, free: cloneHomeWidgets(DEFAULT_WIDGETS) }),
     generation: layoutApplyGenerationRef,
     mode: mode => {

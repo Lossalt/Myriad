@@ -35,6 +35,8 @@ export interface WidgetType {
   name: string
   defaultSize: WidgetSize
   component: ComponentType<WidgetComponentProps>
+  /** Resolves once the component can show real content; the grid holds its entrance until then. */
+  preload?: () => Promise<unknown>
   supportedSizes?: WidgetSize[]
   settings?: TappSettingItem[]
   /** The component owns its long-press settings UI; the grid only arbitrates drag. */

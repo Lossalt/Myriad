@@ -1,6 +1,12 @@
 import type { WidgetConfig, WidgetType } from './widgetGridTypes'
 import React, { Suspense, useCallback, useLayoutEffect, useRef } from 'react'
 
+/** Commits only with its Suspense siblings, so it marks content that is actually on screen. */
+function Presented({ onCommit }: { onCommit: () => void }) {
+  useLayoutEffect(() => { onCommit() }, [onCommit])
+  return null
+}
+
 const WidgetGridItemContent = React.memo(
   ({
     widget,
@@ -8,12 +14,14 @@ const WidgetGridItemContent = React.memo(
     isEditMode,
     isPreview,
     onConfigChange,
+    onPresentable,
   }: {
     widget: WidgetConfig
     widgetType: WidgetType
     isEditMode: boolean
     isPreview?: boolean
     onConfigChange?: (newConfig: any) => void
+    onPresentable: () => void
   }) => {
     const WidgetComponent = widgetType.component
     return (
@@ -24,6 +32,7 @@ const WidgetGridItemContent = React.memo(
           isPreview={isPreview}
           onConfigChange={onConfigChange}
         />
+        <Presented onCommit={onPresentable} />
       </Suspense>
     )
   },
@@ -39,14 +48,25 @@ const WidgetGridItemContent = React.memo(
 )
 
 /** Keep callback ownership current without repainting content on every grid move. */
-export function WidgetGridItemBody(props: React.ComponentProps<typeof WidgetGridItemContent>) {
+export function WidgetGridItemBody({
+  onPresentable,
+  ...props
+}: Omit<React.ComponentProps<typeof WidgetGridItemContent>, 'onPresentable'> & {
+  onPresentable?: () => void
+}) {
   const callback = useRef(props.onConfigChange)
-  useLayoutEffect(() => { callback.current = props.onConfigChange }, [props.onConfigChange])
+  const presented = useRef(onPresentable)
+  useLayoutEffect(() => {
+    callback.current = props.onConfigChange
+    presented.current = onPresentable
+  }, [props.onConfigChange, onPresentable])
   const forwardConfigChange = useCallback((value: unknown) => callback.current?.(value), [])
+  const forwardPresentable = useCallback(() => presented.current?.(), [])
   return (
     <WidgetGridItemContent
       {...props}
       onConfigChange={props.onConfigChange ? forwardConfigChange : undefined}
+      onPresentable={forwardPresentable}
     />
   )
 }

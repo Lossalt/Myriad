@@ -121,6 +121,10 @@ converges when it is touched rather than in dedicated migrations.
   global actions, liquid-glass lenses) load on demand or at idle, and are gated
   by the condition that makes them useful — a viewport, an open intent — rather
   than by a timer alone. `pnpm test:home-budget` guards the home page.
+  Dashboard cards enter one by one once their own module has loaded and their
+  content has committed (`WidgetType.preload`), so no card waits for the slowest
+  one; a widget whose content arrives later should expose that through `preload`
+  or Suspense rather than rendering an empty frame.
 - **Motion.** Components use `motionShim` / `AnimatePresenceShim`
   (`src/lib/motionShim.tsx`), which render static markup until `motion` loads.
   The shim changes element type when `motion` arrives, which remounts its

@@ -8,6 +8,8 @@ interface UseStaggerAnimationOptions {
   baseDelay?: number
   waitForPage?: boolean
   enabled?: boolean
+  /** Defer scheduling until content can be shown; a late release keeps the original slot time. */
+  hold?: boolean
   priority?: AnimationPriority
 }
 
@@ -20,6 +22,7 @@ export function useStaggerAnimation({
   baseDelay,
   waitForPage = true,
   enabled = true,
+  hold = false,
   priority = AnimationPriority.ELEMENT,
 }: UseStaggerAnimationOptions) {
   const pageRevision = useSyncExternalStore(
@@ -33,6 +36,8 @@ export function useStaggerAnimation({
   const [canAnimate, setCanAnimate] = useState(!enabled)
   const admitted = useRef(!enabled)
   const unsubscribe = useRef<(() => void) | null>(null)
+  const [mountedAt] = useState(() => performance.now())
+  const held = useRef(false)
   const coordinatedDelay = coordinator.getStaggerDelay(index, baseDelay)
 
   const cancel = useCallback(() => {
@@ -53,15 +58,23 @@ export function useStaggerAnimation({
     // Reordering and preference changes only affect entrances still waiting.
     // Running cards keep both their visible pose and their concurrency slot.
     if (admitted.current) return
+    if (hold) {
+      held.current = true
+      return
+    }
     cancel()
-    coordinator.schedule({ id, priority, delay: coordinatedDelay })
+    // Time spent held counts toward the stagger slot: never earlier, never later than needed.
+    const delay = held.current
+      ? Math.max(0, coordinatedDelay - (performance.now() - mountedAt))
+      : coordinatedDelay
+    coordinator.schedule({ id, priority, delay })
     unsubscribe.current = coordinator.subscribe(id, (state) => {
       if (state !== AnimationState.READY || admitted.current) return
       admitted.current = true
       coordinator.markRunning(id)
       setCanAnimate(true)
     })
-  }, [cancel, coordinatedDelay, enabled, id, pageRevision, priority, waitForPage])
+  }, [cancel, coordinatedDelay, enabled, hold, id, mountedAt, pageRevision, priority, waitForPage])
 
   useEffect(() => cancel, [cancel])
 

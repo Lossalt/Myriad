@@ -1,3 +1,4 @@
+import type { WidgetConfig } from '../components/widgetGridTypes'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
@@ -24,6 +25,7 @@ import {
   homePagePadXRem,
   homeStagePadPx,
   homeWidgetCellCount,
+  homeWidgetsForView,
   homeWidgetsOccupiedCells,
   isHomeStickerItem,
   layoutsAfterWidgetRegistry,
@@ -442,5 +444,21 @@ describe('home shell CSS contract', () => {
       home,
       /pointer-events-none z-0 transition-opacity duration-300 hidden md:block/,
     )
+  })
+})
+
+describe('homeWidgetsForView', () => {
+  const tile = (id: string, kind?: string) => ({ id, type: id, size: '2x2', position: { x: 0, y: 0 }, ...(kind ? { kind } : {}) }) as unknown as WidgetConfig
+  const layouts = { standard: [tile('s')], free: [tile('f'), tile('sticker', 'sticker')] }
+
+  it('shows only the active layout, so preloading never waits on the hidden one', () => {
+    assert.deepEqual(homeWidgetsForView(layouts, 'standard', true).map(w => w.id), ['s'])
+    assert.deepEqual(homeWidgetsForView(layouts, 'free', true).map(w => w.id), ['f', 'sticker'])
+  })
+
+  it('narrow free mode shows free widgets without stickers, falling back to standard', () => {
+    assert.deepEqual(homeWidgetsForView(layouts, 'free', false).map(w => w.id), ['f'])
+    assert.deepEqual(homeWidgetsForView({ ...layouts, free: [] }, 'free', false).map(w => w.id), ['s'])
+    assert.deepEqual(homeWidgetsForView(layouts, 'standard', false).map(w => w.id), ['s'])
   })
 })
