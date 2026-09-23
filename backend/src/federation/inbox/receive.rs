@@ -29,7 +29,7 @@ use super::mfp::{ensure_allowed_mfp_type, handle_mfp_activity};
 use super::receipt::{
     ReceiptClaim, ReceiptKey, ReceiptOutcome, claim_receipt, finish_receipt, receipt_key,
 };
-use super::signature::{verify_preparse_gate, verify_request_signature};
+use super::signature::{promote_verified_actor, verify_preparse_gate, verify_request_signature};
 
 /// A receipt conflict is a protocol error, not a replay success.  Returning
 /// 409 makes a peer/operator aware that one activity id was reused for
@@ -116,6 +116,26 @@ async fn preflight_room_join_member(
         )
     })?;
     Ok(())
+}
+
+/// Actor that verified the signature, with its real `federation_remote_actors`
+/// id, for preflight branches that write it as a foreign key.
+///
+/// Promotion only fails when persisting an already-verified actor fails (a
+/// local DB fault): retryable 503, never a permanent 4xx rejection and never an
+/// id of 0. The cause is logged by `promote_verified_actor`, not returned.
+fn require_verified_actor(
+    verified_actor: &Result<RemoteActorInfo, String>,
+) -> Result<&RemoteActorInfo, (StatusCode, Json<serde_json::Value>)> {
+    verified_actor.as_ref().map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": "Remote actor temporarily unavailable",
+                "retry": true
+            })),
+        )
+    })
 }
 
 /// 4xx handler results are deterministic peer/state failures and can be
@@ -219,7 +239,7 @@ pub async fn post_inbox(
     let (body, _inflight) = buffer_inbox_body(request).await?;
 
     // 先做只依赖 header/原始字节的检查，再解析 body（inbox 上限见 federation::limits::INBOX_BODY_LIMIT）
-    verify_preparse_gate(&headers, &body)?;
+    let signature = verify_preparse_gate(&headers, &body)?;
 
     // Do not queue already-buffered remote bodies behind admitted deliveries,
     // and reject pathological JSON before allocating a complete Value tree.
@@ -257,7 +277,10 @@ pub async fn post_inbox(
 
     // 验证 HTTP Signature（actor fetch is ephemeral until verified）
     let request_path = format!("/users/{}/inbox", username);
-    verify_request_signature(&db, &headers, &body, &actor_url_str, &request_path).await?;
+    let verified =
+        verify_request_signature(&db, &headers, &signature, &actor_url_str, &request_path).await?;
+    // Same actor facts that verified the signature; no second fetch below.
+    let verified_actor = promote_verified_actor(&db, &actor_url_str, verified).await;
 
     let activity_id = activity["id"].as_str().unwrap_or("");
 
@@ -281,13 +304,7 @@ pub async fn post_inbox(
     // opening the receipt transaction so a failed/unknown actor cannot leave
     // a claimed receipt or partial handler effects behind.
     let follow_remote = if activity_type == "Follow" {
-        Some(fetch_remote_actor(&db, &actor_url_str).await.map_err(|e| {
-            tracing::warn!(actor = %actor_url_str, error = %e, "Failed to resolve Follow actor");
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Cannot resolve remote actor")),
-            )
-        })?)
+        Some(require_verified_actor(&verified_actor)?)
     } else {
         None
     };
@@ -295,13 +312,7 @@ pub async fn post_inbox(
         activity_type.as_str(),
         "Create" | "Update" | "Delete" | "Announce" | "Like"
     ) {
-        Some(fetch_remote_actor(&db, &actor_url_str).await.map_err(|e| {
-            tracing::warn!(actor = %actor_url_str, error = %e, "Failed to resolve content actor");
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Cannot resolve remote actor")),
-            )
-        })?)
+        Some(require_verified_actor(&verified_actor)?)
     } else {
         None
     };
@@ -342,8 +353,8 @@ pub async fn post_inbox(
         &actor_url_str,
         &activity_type,
         &activity,
-        follow_remote.as_ref(),
-        content_remote.as_ref(),
+        follow_remote,
+        content_remote,
         DeliveryMode::QueueOnly,
     )
     .await;
@@ -437,7 +448,7 @@ pub async fn post_shared_inbox(
     let (body, _inflight) = buffer_inbox_body(request).await?;
 
     // 先做只依赖 header/原始字节的检查，再解析 body（inbox 上限见 federation::limits::INBOX_BODY_LIMIT）
-    verify_preparse_gate(&headers, &body)?;
+    let signature = verify_preparse_gate(&headers, &body)?;
 
     // Held through verification and dispatch while the complete JSON tree is
     // alive; see FEDERATION.md "Public inbox resource boundary".
@@ -470,7 +481,10 @@ pub async fn post_shared_inbox(
     }
 
     // 验证签名（actor fetch is ephemeral until verified）
-    verify_request_signature(&db, &headers, &body, &actor_url_str, "/inbox").await?;
+    let verified =
+        verify_request_signature(&db, &headers, &signature, &actor_url_str, "/inbox").await?;
+    // Same actor facts that verified the signature; no second fetch below.
+    let verified_actor = promote_verified_actor(&db, &actor_url_str, verified).await;
 
     let activity_id = activity["id"].as_str().unwrap_or("");
 
@@ -502,13 +516,7 @@ pub async fn post_shared_inbox(
     let public_remote_id = if matches!(activity_type.as_str(), "Create" | "Announce")
         && crate::federation::audience::may_distribute_to_followers(&activity, &actor_url_str)
     {
-        let remote = fetch_remote_actor(&db, &actor_url_str).await.map_err(|e| {
-            tracing::warn!("Failed to fetch remote actor {}: {}", actor_url_str, e);
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Unknown actor")),
-            )
-        })?;
+        let remote = require_verified_actor(&verified_actor)?;
         if activity_type == "Create" {
             crate::federation::audience::verify_object_ownership(
                 &actor_url_str,
@@ -527,24 +535,12 @@ pub async fn post_shared_inbox(
         None
     };
     let follow_remote = if activity_type == "Follow" {
-        Some(fetch_remote_actor(&db, &actor_url_str).await.map_err(|e| {
-            tracing::warn!(actor = %actor_url_str, error = %e, "Failed to resolve Follow actor");
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Cannot resolve remote actor")),
-            )
-        })?)
+        Some(require_verified_actor(&verified_actor)?)
     } else {
         None
     };
     let content_remote = if matches!(activity_type.as_str(), "Delete" | "Update" | "Like") {
-        Some(fetch_remote_actor(&db, &actor_url_str).await.map_err(|e| {
-            tracing::warn!(actor = %actor_url_str, error = %e, "Failed to resolve content actor");
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Cannot resolve remote actor")),
-            )
-        })?)
+        Some(require_verified_actor(&verified_actor)?)
     } else {
         None
     };
@@ -577,8 +573,8 @@ pub async fn post_shared_inbox(
         &actor_url_str,
         &activity,
         public_remote_id,
-        follow_remote.as_ref(),
-        content_remote.as_ref(),
+        follow_remote,
+        content_remote,
     )
     .await;
     match result {
@@ -822,6 +818,31 @@ pub(crate) async fn get_local_user(
 mod tests {
     use super::*;
     use axum::http::StatusCode;
+
+    #[test]
+    fn verified_actor_promotion_failure_is_retryable_and_opaque() {
+        let failed: Result<RemoteActorInfo, String> =
+            Err("duplicate key value violates unique constraint \"secret_idx\"".into());
+        let (status, body) = require_verified_actor(&failed).unwrap_err();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!receipt_result_is_permanent(status), "must not be durably rejected");
+        assert_eq!(body.0["retry"], true);
+        assert!(!body.0.to_string().contains("secret_idx"), "no internal detail");
+
+        let ok: Result<RemoteActorInfo, String> = Ok(RemoteActorInfo {
+            id: 42,
+            actor_url: "https://a.example/users/alice".into(),
+            username: Some("alice".into()),
+            domain: "a.example".into(),
+            display_name: None,
+            avatar_url: None,
+            inbox_url: "https://a.example/users/alice/inbox".into(),
+            public_key_pem: None,
+            public_key_id: None,
+            mfp_version: None,
+        });
+        assert_eq!(require_verified_actor(&ok).unwrap().id, 42);
+    }
 
     #[test]
     fn room_join_preflight_targets_the_joining_member() {

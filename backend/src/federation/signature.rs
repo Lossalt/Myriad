@@ -160,7 +160,28 @@ pub fn parse_signature_header(header: &str) -> Result<ParsedSignature> {
 /// * `method` - HTTP 方法
 /// * `path` - 请求路径
 /// * `headers` - HTTP 请求头（用于重建签名字符串）
+///
+/// 生产路径（inbox）经 pre-parse 闸门后调用 [`verify_signature_covered`]；
+/// 此完整版本只供测试直接验签使用。
+#[cfg(test)]
 pub fn verify_signature(
+    public_key_pem: &str,
+    parsed: &ParsedSignature,
+    method: &str,
+    path: &str,
+    headers: &std::collections::HashMap<String, String>,
+) -> Result<bool> {
+    require_covered_headers(parsed, false)?;
+    verify_signature_covered(public_key_pem, parsed, method, path, headers)
+}
+
+/// [`verify_signature`] without the covered-header check.
+///
+/// Only for callers that already ran [`require_covered_headers`] on this same
+/// `parsed` (the inbox pre-parse gate runs it with `body_present` set, which is
+/// at least as strict). Algorithm check and cryptographic verification are
+/// unchanged.
+pub fn verify_signature_covered(
     public_key_pem: &str,
     parsed: &ParsedSignature,
     method: &str,
@@ -170,7 +191,6 @@ pub fn verify_signature(
     if !parsed.algorithm.eq_ignore_ascii_case(SIGNATURE_ALGORITHM) {
         anyhow::bail!("Unsupported signature algorithm: {}", parsed.algorithm);
     }
-    require_covered_headers(parsed, false)?;
 
     // 重建签名字符串
     let mut signing_parts: Vec<String> = Vec::new();

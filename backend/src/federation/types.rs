@@ -568,6 +568,42 @@ pub fn local_username_from_actor_url(base_url: &str, candidate: &str) -> Option<
     Some(rest.to_string())
 }
 
+/// 入站 `to` 候选中按原顺序第一个存在的本地用户 `(id, username)`。
+///
+/// 只有 [`local_username_from_actor_url`] 认得出的本实例 Actor URL 才进入查询；
+/// 没有本地候选时不查库。所有候选一次查询（`unnest … WITH ORDINALITY` 保序），
+/// 查询/解码错误原样返回，不当作「该候选不存在」。
+pub(crate) async fn first_local_recipient<'a>(
+    db: &impl sea_orm::ConnectionTrait,
+    base_url: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<(i32, String)>, sea_orm::DbErr> {
+    use sea_orm::{DatabaseBackend, Statement};
+
+    let usernames: Vec<String> = candidates
+        .into_iter()
+        .filter_map(|url| local_username_from_actor_url(base_url, url))
+        .collect();
+    if usernames.is_empty() {
+        return Ok(None);
+    }
+    let Some(row) = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"SELECT u.id, u.username
+               FROM unnest($1::text[]) WITH ORDINALITY AS w(username, ord)
+               JOIN users u ON u.username = w.username
+               ORDER BY w.ord
+               LIMIT 1"#,
+            [usernames.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((row.try_get("", "id")?, row.try_get("", "username")?)))
+}
+
 /// 构造 Key ID
 pub fn key_id(base_url: &str, username: &str) -> String {
     format!("{}/users/{}#main-key", base_join(base_url), username)
@@ -1533,5 +1569,78 @@ mod tests {
         assert!(is_unique_violation(&dup));
         let other = sea_orm::DbErr::Custom("connection reset".into());
         assert!(!is_unique_violation(&other));
+    }
+
+    /// One ordered query: first *existing* local user wins, remote / malformed
+    /// candidates are skipped, no local candidate means no query, DB errors surface.
+    #[tokio::test]
+    async fn first_local_recipient_against_real_schema() {
+        use sea_orm::ConnectionTrait;
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = "https://local.test";
+        db.execute_unprepared("INSERT INTO users (username) VALUES ('alice'), ('bob')")
+            .await
+            .unwrap();
+        let id_of = |name: &'static str| async move {
+            db.query_one_raw(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DatabaseBackend::Postgres,
+                "SELECT id FROM users WHERE username = $1",
+                [name.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i32>("", "id")
+            .unwrap()
+        };
+        let (alice, bob) = (id_of("alice").await, id_of("bob").await);
+
+        let to = [
+            "https://www.w3.org/ns/activitystreams#Public",
+            "https://remote.example/users/bob",
+            "https://local.test/users/ghost",
+            "https://local.test/users/bob",
+            "https://local.test/users/alice",
+        ];
+        assert_eq!(
+            first_local_recipient(db, base, to).await.unwrap(),
+            Some((bob, "bob".to_string()))
+        );
+        assert_eq!(
+            first_local_recipient(db, base, ["https://local.test/users/alice/"])
+                .await
+                .unwrap(),
+            Some((alice, "alice".to_string()))
+        );
+        assert_eq!(
+            first_local_recipient(db, base, ["https://local.test/users/ghost"])
+                .await
+                .unwrap(),
+            None
+        );
+
+        db.execute_unprepared("ALTER TABLE users RENAME TO users_gone")
+            .await
+            .unwrap();
+        assert_eq!(
+            first_local_recipient(db, base, ["https://remote.example/users/x"])
+                .await
+                .unwrap(),
+            None,
+            "no local candidate → no query"
+        );
+        assert!(
+            first_local_recipient(db, base, ["https://local.test/users/alice"])
+                .await
+                .is_err(),
+            "DB error must not read as 'recipient missing'"
+        );
+        db.execute_unprepared("ALTER TABLE users_gone RENAME TO users")
+            .await
+            .unwrap();
+        fixture.close().await;
     }
 }
