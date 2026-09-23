@@ -45,7 +45,6 @@ export default defineConfig(({ command }) => ({
     // reloadOnOutdatedOptimizeDepPlugin turns that 504 into a full reload.
     noDiscovery: true,
     include: [
-      'axios',
       'isomorphic-dompurify',
       'jszip',
       'prismjs',
@@ -176,9 +175,6 @@ export default defineConfig(({ command }) => ({
                     }
                     if (id.includes('node_modules/react-icons')) {
                       return 'icons-base'
-                    }
-                    if (id.includes('node_modules/axios')) {
-                      return 'axios'
                     }
                   },
                 },

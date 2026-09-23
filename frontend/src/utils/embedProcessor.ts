@@ -1,4 +1,5 @@
 import { currentCopy } from '../i18n/localeCopy'
+import { apiService } from '../services/api'
 import {
   fetchGithubRepoCard,
   formatGithubCount,
@@ -418,13 +419,9 @@ async function loadNeteaseMusicData(container: HTMLElement): Promise<void> {
       card.setAttribute('data-loaded', 'loading')
 
       try {
-        const response = await fetch(`/api/proxy/music/netease/song/${songId}`)
-        if (!response.ok) {
-          card.setAttribute('data-loaded', 'true')
-          return
-        }
-
-        const songData = await response.json()
+        const songData = await apiService
+          .get<any>(`/proxy/music/netease/song/${songId}`)
+          .catch(() => null)
         if (!songData || !songData.name) {
           card.setAttribute('data-loaded', 'true')
           return
@@ -518,20 +515,16 @@ async function loadSteamGameData(container: HTMLElement): Promise<void> {
         let gameData = getCached<any>(cacheKey)
 
         if (!gameData) {
-          const response = await fetch(
-            `/api/steam/game/${appId}?lang=${encodeURIComponent(steamLang)}`,
-            {
-              headers: {
-                'Accept-Language': steamLang,
-              },
-            },
-          )
-          if (!response.ok) {
+          const result = await apiService
+            .get<{ success?: boolean, data?: unknown }>(`/steam/game/${appId}`, {
+              params: { lang: steamLang },
+              headers: { 'Accept-Language': steamLang },
+            })
+            .catch(() => null)
+          if (!result) {
             card.setAttribute('data-loaded', 'true')
             return
           }
-
-          const result = await response.json()
           if (result.success && result.data) {
             gameData = result.data
             setCache(cacheKey, gameData)
