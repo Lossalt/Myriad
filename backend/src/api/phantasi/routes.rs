@@ -190,16 +190,17 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
             crate::middleware::auth::optional_current_admin_auth_middleware,
         ));
 
-    // 不读凭据的路由（RSS、静态图标、图片缓存）和自带 auth_middleware 的 WebSocket
+    // 不读凭据的路由（RSS、静态图标、图片缓存）和自带必需认证的 WebSocket
     // 不挂可选认证：过期 cookie 不能让订阅器或图片请求 401。
     Router::<crate::state::AppState>::new()
         .merge(api)
         .route("/notes.xml", get(super::notes_rss::notes_rss))
+        // 协同编辑仅管理员：admin_middleware 一次完成验签与当前管理员核验
         .route(
             "/notes/docs/{id}/ws",
             get(note_docs::note_doc_websocket).route_layer(from_fn_with_state(
                 app_state.clone(),
-                crate::middleware::auth::auth_middleware,
+                crate::middleware::auth::admin_middleware,
             )),
         )
         // WebSocket（通知）
@@ -314,6 +315,139 @@ mod tests {
                     body["code"],
                     crate::services::tapp_host_attribution::error_codes::UNAUTHENTICATED,
                     "{path} must be rejected by host attribution"
+                );
+            }
+        });
+    }
+
+    /// Production wiring of the auth layers, built from the real
+    /// `create_phantasi_routes` / `create_phantasiai_routes`:
+    /// - admin-only routes answer a credential-less request with the same 401
+    ///   as `auth_middleware` (strict optional auth + `AdminClaims`,
+    ///   `admin_middleware` on phantasiai writes and the note-doc WebSocket);
+    /// - JSON API routes reject a presented invalid credential in the auth layer;
+    /// - excluded routes (RSS, icons, image cache) never reach an auth layer.
+    ///
+    /// The store is a lazy pool pointed at a closed local port: every query
+    /// fails fast with a connection error instead of panicking, so the excluded
+    /// handlers reach their own deterministic "not found" answer.
+    #[test]
+    fn production_router_applies_the_intended_auth_layer_per_route() {
+        use axum::{
+            body::Body,
+            http::{Method, Request, StatusCode, header},
+        };
+        use tower::ServiceExt;
+
+        async fn call(
+            app: &axum::Router,
+            method: Method,
+            path: &str,
+            bearer: Option<&str>,
+        ) -> (StatusCode, serde_json::Value) {
+            let mut request = Request::builder().method(method).uri(path);
+            if let Some(token) = bearer {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+            )
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let mut options = sea_orm::ConnectOptions::new("postgres://myriad@127.0.0.1:1/myriad");
+            options
+                .connect_lazy(true)
+                .acquire_timeout(std::time::Duration::from_millis(500))
+                .sqlx_logging(false);
+            let db = sea_orm::Database::connect(options)
+                .await
+                .expect("lazy pool never dials at construction");
+            let state = crate::state::AppState::new(
+                db,
+                crate::config::AppConfig::default(),
+                crate::config::DynamicConfig::default(),
+            );
+            let app = axum::Router::new()
+                .nest(
+                    "/api/phantasi",
+                    super::create_phantasi_routes(state.clone()),
+                )
+                .nest(
+                    "/api/phantasiai",
+                    crate::api::phantasiai::create_phantasiai_routes(state.clone()),
+                )
+                .with_state(state);
+            let missing = crate::middleware::auth::missing_credential().1.0;
+
+            for (method, path) in [
+                // strict optional auth + AdminClaims
+                (Method::POST, "/api/phantasi/sources"),
+                (Method::GET, "/api/phantasi/notes/docs"),
+                (Method::POST, "/api/phantasi/rsshub/health-check-all"),
+                // admin_middleware
+                (Method::POST, "/api/phantasiai/notes/edit"),
+                (
+                    Method::POST,
+                    "/api/phantasiai/items/1/annotations/regenerate",
+                ),
+                (Method::POST, "/api/phantasiai/items/1/podcast/regenerate"),
+                (Method::POST, "/api/phantasiai/sources/1/style-tags"),
+                (Method::GET, "/api/phantasi/notes/docs/1/ws"),
+                // auth_middleware
+                (Method::GET, "/api/phantasi/ws"),
+            ] {
+                let (status, body) = call(&app, method, path, None).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+                assert_eq!(body, missing, "{path} must answer like auth_middleware");
+            }
+
+            // A presented invalid credential is stopped by the auth layer: 401
+            // "Invalid token", or 500 when this test process has no JWT_SECRET.
+            // Admin writes must not be downgraded to anonymous by lenient auth.
+            let auth_layer_errors = ["Invalid token", "Server configuration error"];
+            for (method, path) in [
+                (Method::GET, "/api/phantasi/items"),
+                (Method::GET, "/api/phantasi/stats"),
+                (Method::GET, "/api/phantasi/notes/docs"),
+                (Method::POST, "/api/phantasiai/notes/edit"),
+                (Method::POST, "/api/phantasiai/sources/1/style-tags"),
+            ] {
+                let (_, body) = call(&app, method, path, Some("not-a-jwt")).await;
+                assert!(
+                    auth_layer_errors.contains(&body["error"].as_str().unwrap_or_default()),
+                    "{path} must reject an invalid credential in the auth layer: {body}"
+                );
+            }
+
+            // Excluded routes ignore credentials entirely: an invalid bearer still
+            // reaches the handler, which answers its own 404 (notes RSS not public
+            // when its settings cannot be read, missing icon, unresolvable cache
+            // alias). Any auth layer would answer 401 / 500 first.
+            for path in [
+                "/api/phantasi/notes.xml",
+                "/api/phantasi/icons/missing.png",
+                "/api/phantasi/image-cache/a/b.png",
+            ] {
+                let (status, body) = call(&app, Method::GET, path, Some("not-a-jwt")).await;
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{path} must reach its handler without an auth layer: {body}"
                 );
             }
         });
