@@ -7,6 +7,7 @@ import { defineConfig } from 'vite'
 import { backendDevProxyPlugin } from './scripts/vite/backendDevProxy.mjs'
 import { BACKEND_TARGET } from './scripts/vite/constants.mjs'
 import { documentPlugin } from './scripts/vite/documentPlugin.ts'
+import { precompressPlugin } from './scripts/vite/precompress.mjs'
 import { reloadOnOutdatedOptimizeDepPlugin } from './scripts/vite/reloadOnOutdatedOptimizeDep.mjs'
 import { siteBrandingStampPlugin } from './scripts/vite/siteBrandingStampPlugin.mjs'
 import { spaFallbackPlugin } from './scripts/vite/spaFallback.mjs'
@@ -100,6 +101,7 @@ export default defineConfig(({ command }) => ({
     backendDevProxyPlugin(),
     spaFallbackPlugin(),
     stripDevSourcemapsPlugin(),
+    precompressPlugin(),
   ],
   resolve: {
     alias: {
@@ -131,6 +133,16 @@ export default defineConfig(({ command }) => ({
                     id.includes('node_modules/react-router') ||
                     id.includes('node_modules/@remix-run') ||
                     id.includes('jsx-runtime'),
+                },
+                {
+                  // Everything the entry statically needs, as one request.
+                  // Left to automatic chunking, modules the shell shares with
+                  // lazy routes became ~60 sub-KB chunks, all modulepreloaded;
+                  // on the HTTP/1.1 proxy path they queue six at a time and
+                  // held the entry's first execution back by over a second.
+                  name: 'app-shell',
+                  tags: ['$initial'],
+                  priority: 50,
                 },
                 {
                   name: (id) => {

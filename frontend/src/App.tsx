@@ -1,10 +1,13 @@
 import type { ShellNamespace } from './i18n'
 import type { ModuleVisibilityKey } from './utils/moduleVisibility'
-import {
-  AnimatePresenceShim as AnimatePresence,
-  motionShim as motion,
-} from '@lib/motionShim'
-import React, { lazy, Suspense, useEffect, useRef } from 'react'
+import { useLazyMotion } from '@lib/lazyMotion'
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from 'react'
 import {
   BrowserRouter,
   Navigate,
@@ -13,7 +16,15 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
-import { AgentSessionHost } from './components/agent-panel/AgentSessionHost'
+import {
+  clearQueuedAgentOpens,
+  isAgentPanelAttached,
+  subscribeAgentOpenQueue,
+} from './components/agent-panel/agentPanelEvents'
+import {
+  AgentOpenIntentCapture,
+  AgentSessionHost,
+} from './components/agent-panel/AgentSessionHost'
 import { BackgroundTappHost, RouteWarmup } from './components/ApplicationStartup'
 import CustomScrollbar from './components/CustomScrollbar'
 import { DocumentReady } from './components/DocumentReady'
@@ -35,13 +46,19 @@ import { isExlight, useAnimationLevel } from './hooks/useAnimationLevel'
 import { AppLayout } from './layouts/AppLayout'
 import { recordNavigation } from './router/navigationHistory'
 import { resolvePageRouteAnimation } from './tapp/routing/tappRouteMeta'
+import {
+  getDataExchangeConsentSnapshot,
+  subscribeDataExchangeConsent,
+} from './tapp/runtime/DataExchangeConsent'
 
 import { TAPP_LIST_PATH, tappRunPath } from './tapp/utils/tappPaths'
+import { routeComponents } from './utils/codeSplitting'
 import {
   canAccessModuleVisibility,
   canUseAgent,
   useModuleVisibilityPreferences,
 } from './utils/moduleVisibility'
+import { isDocumentReady } from './utils/pageLoader'
 import { usePermissionConfig } from './utils/permissionConfig'
 import './styles/fonts.css'
 import './styles/theme.css'
@@ -52,23 +69,22 @@ import './styles/utility.css'
 import './styles/overrides.css'
 import './styles/performance.css'
 
-const Home = lazy(() => import('./views/Home.tsx'))
-const Library = lazy(() => import('./views/Library.tsx'))
-const Phantasi = lazy(() => import('./views/Phantasi.tsx'))
-const Reports = lazy(() => import('./views/Reports.tsx'))
-const Config = lazy(() => import('./views/Config.tsx'))
-const AgentSettings = lazy(() => import('./views/AgentSettings.tsx'))
-const Login = lazy(() => import('./views/Login.tsx'))
-const Register = lazy(() => import('./views/Register.tsx'))
-const Setup = lazy(() => import('./views/Setup.tsx'))
-
-const TappList = lazy(() => import('./tapp/pages/TappListPage.tsx'))
-const TappRun = lazy(() => import('./tapp/pages/TappRunPage.tsx'))
-const TappDetail = lazy(() => import('./tapp/pages/TappDetailPage.tsx'))
-const TappStore = lazy(() => import('./tapp/pages/TappStorePage.tsx'))
-const TappPlayground = lazy(
-  () => import('./tapp/pages/TappPlaygroundPage.tsx'),
-)
+const {
+  home: Home,
+  library: Library,
+  phantasi: Phantasi,
+  reports: Reports,
+  config: Config,
+  agentSettings: AgentSettings,
+  login: Login,
+  register: Register,
+  setup: Setup,
+  tapp: TappList,
+  tappRun: TappRun,
+  tappDetail: TappDetail,
+  tappStore: TappStore,
+  tappPlayground: TappPlayground,
+} = routeComponents
 
 const PerformanceMonitor = import.meta.env.DEV
   ? lazy(() => import('./components/PerformanceMonitor'))
@@ -79,6 +95,21 @@ const AgentEngine = lazy(() => import('./components/agent-panel/AgentEngine'))
 const TappDataExchangeConsentHost = lazy(
   () => import('./tapp/components/TappDataExchangeConsentHost'),
 )
+
+/** 弹窗 chunk 只在真有同意请求时下载；首屏访客不为它付费。 */
+function TappDataExchangeConsentGate() {
+  const { current } = useSyncExternalStore(
+    subscribeDataExchangeConsent,
+    getDataExchangeConsentSnapshot,
+    getDataExchangeConsentSnapshot,
+  )
+  if (!current) return null
+  return (
+    <Suspense fallback={null}>
+      <TappDataExchangeConsentHost />
+    </Suspense>
+  )
+}
 
 /** 复用 AuthContext，避免路由切换再打 /api/auth/me。 */
 function RequireAuth({
@@ -244,24 +275,29 @@ function AgentAccessGate({ children }: { children: React.ReactNode }) {
   const { preferences, isLoading } = useModuleVisibilityPreferences()
   const { elevatedAiChat, loaded: permLoaded } = usePermissionConfig()
 
-  if (!hasChecked || isLoading || !permLoaded) {
-    return null
-  }
+  const pending = !hasChecked || isLoading || !permLoaded
+  const allowed =
+    !pending &&
+    canUseAgent(preferences, { isAuthenticated, isAdmin }, elevatedAiChat)
 
-  if (
-    !canUseAgent(
-      preferences,
-      {
-        isAuthenticated,
-        isAdmin,
-      },
-      elevatedAiChat,
-    )
-  ) {
-    return null
-  }
+  const panelAttached = useSyncExternalStore(
+    subscribeAgentOpenQueue,
+    isAgentPanelAttached,
+    isAgentPanelAttached,
+  )
 
-  return children
+  useEffect(() => {
+    if (!pending && !allowed) clearQueuedAgentOpens()
+  }, [pending, allowed])
+
+  // 面板 attach 前（判定、语言包、chunk）的长按/打开请求先排队；
+  // capture 固定在第一个槽位，判定完成时不会重挂而打断进行中的长按。
+  return (
+    <>
+      {!panelAttached && (pending || allowed) ? <AgentOpenIntentCapture /> : null}
+      {allowed ? children : null}
+    </>
+  )
 }
 
 /** fallback null：PageLoader 与页面数据态已覆盖等待，不要再加路由级 spinner。 */
@@ -325,6 +361,29 @@ function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Motion 按需加载。它到达时若当前路由已提交，原地把 div 换成 motion.div 会让
+ * 整棵路由子树卸载重挂（慢网首访时首页会先以 variants.initial 隐形、再被重建）。
+ * 因此已提交的路由保持静态终态，下一次路由切换才接入 motion。
+ */
+function useRouteMotion(animationKey: string) {
+  const { motion, AnimatePresence } = useLazyMotion(true)
+  const ready = motion && AnimatePresence ? { motion, AnimatePresence } : null
+  const pin = useRef<{ key: string, isStatic: boolean } | null>(null)
+  const firstKey = useRef(animationKey)
+  if (pin.current?.key !== animationKey) {
+    pin.current = { key: animationKey, isStatic: !ready }
+  } else if (pin.current.isStatic && ready && !isDocumentReady()) {
+    // 路由内容尚未提交（Suspense / 守卫仍为空），此时换类型没有代价。
+    pin.current = { key: animationKey, isStatic: false }
+  }
+  return {
+    fm: pin.current.isStatic ? null : ready,
+    // 首路由沿用 initial={false}；静态首路由之后才挂上的 AnimatePresence 要放行进场。
+    presenceInitial: animationKey !== firstKey.current,
+  }
+}
+
 /** 策略来自 resolvePageRouteAnimation。 */
 function AnimatedPage({
   children,
@@ -341,6 +400,7 @@ function AnimatedPage({
   const isDetail = variant === 'detail'
   const animationConfig = useAnimationLevel()
   const animationsEnabled = !isExlight(animationConfig)
+  const { fm, presenceInitial } = useRouteMotion(animationKey)
 
   // 离开 fixed 的那一帧仍用 sync，避免 run→list/detail 先白屏再进场
   const wasFixedRef = useRef(isFixed)
@@ -366,8 +426,18 @@ function AnimatedPage({
       } as const)
     : ({ width: '100%', position: 'relative' as const } as const)
 
+  if (!fm) {
+    // 与 initial={false} 下 motion 的首帧一致：直接处于 enter 终态。
+    return (
+      <div key={animationKey} style={wrapperStyle}>
+        {children}
+      </div>
+    )
+  }
+
+  const { AnimatePresence, motion } = fm
   return (
-    <AnimatePresence mode={presenceMode} initial={false}>
+    <AnimatePresence mode={presenceMode} initial={presenceInitial}>
       <motion.div
         key={animationKey}
         variants={animationsEnabled ? variants : undefined}
@@ -671,9 +741,7 @@ export function App() {
                     <CustomScrollbar />
                     <BackgroundTappHost />
                     <RouteWarmup />
-                    <Suspense fallback={null}>
-                      <TappDataExchangeConsentHost />
-                    </Suspense>
+                    <TappDataExchangeConsentGate />
                     <AppLayout>
                       <RouteErrorBoundary>
                         <AppRoutes />
