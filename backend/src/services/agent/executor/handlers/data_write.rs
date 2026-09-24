@@ -552,44 +552,7 @@ async fn execute_phantasi_mark(
         .and_then(|v| v.as_str())
         .ok_or("Missing action")?;
 
-    let now = Utc::now();
     let user_id = ctx.user_id;
-
-    // 验证文章存在
-    let (source_id, title) = phantasi_items::Entity::find_by_id(item_id)
-        .select_only()
-        .columns([
-            phantasi_items::Column::SourceId,
-            phantasi_items::Column::Title,
-        ])
-        .into_tuple::<(i32, String)>()
-        .one(ctx.db)
-        .await
-        .map_err(|error| write_store_failed("find article", error))?
-        .ok_or("Article not found")?;
-
-    // 共享订阅库：按可见源标状态，不按创建者
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await;
-    let source = phantasi_sources::Entity::find_by_id(source_id)
-        .one(ctx.db)
-        .await
-        .map_err(|error| write_store_failed("find phantasi source", error))?
-        .ok_or("This article cannot be changed")?;
-    if source.admin_only && !is_admin {
-        return Err("This article cannot be changed".to_string());
-    }
-    if matches!(action, "star" | "unstar" | "later") && !is_admin {
-        return Err("Forbidden".to_string());
-    }
-
-    // 查找或创建用户状态
-    let existing = phantasi_user_states::Entity::find()
-        .filter(phantasi_user_states::Column::UserId.eq(user_id))
-        .filter(phantasi_user_states::Column::ItemId.eq(item_id))
-        .one(ctx.db)
-        .await
-        .map_err(|error| write_store_failed("find reading state", error))?;
-
     let (is_read, is_starred) = match action {
         "read" => (Some(true), None),
         "unread" => (Some(false), None),
@@ -598,60 +561,22 @@ async fn execute_phantasi_mark(
         "later" => (Some(false), Some(true)),
         _ => return Err(format!("Unknown mark action: {}", action)),
     };
-
-    let was_starred = existing.as_ref().map(|e| e.is_starred).unwrap_or(false);
-
-    if let Some(state) = existing {
-        let mut active: phantasi_user_states::ActiveModel = state.into();
-        if let Some(read) = is_read {
-            active.is_read = Set(read);
-            if read {
-                active.read_at = Set(Some(now.into()));
-            }
-        }
-        if let Some(starred) = is_starred {
-            active.is_starred = Set(starred);
-            if starred {
-                active.starred_at = Set(Some(now.into()));
-            }
-        }
-        active.updated_at = Set(now.into());
-        active
-            .update(ctx.db)
-            .await
-            .map_err(|error| write_store_failed("update reading state", error))?;
-    } else {
-        let new_state = phantasi_user_states::ActiveModel {
-            user_id: Set(user_id),
-            item_id: Set(item_id),
-            is_read: Set(is_read.unwrap_or(false)),
-            is_starred: Set(is_starred.unwrap_or(false)),
-            read_at: Set(if is_read == Some(true) {
-                Some(now.into())
-            } else {
-                None
-            }),
-            starred_at: Set(if is_starred == Some(true) {
-                Some(now.into())
-            } else {
-                None
-            }),
-            updated_at: Set(now.into()),
-            ..Default::default()
-        };
-        new_state
-            .insert(ctx.db)
-            .await
-            .map_err(|error| write_store_failed("create reading state", error))?;
+    // 共享订阅库：按可见源标状态，不按创建者；星标只属于站长身份。
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await;
+    if is_starred.is_some() && !is_admin {
+        return Err("Forbidden".to_string());
     }
-
-    if is_starred == Some(true) && !was_starred {
-        crate::services::agent::merope::spawn_ingest(
-            user_id,
-            "phantasi.starred",
-            format!("Starred \"{}\"", title),
-        );
-    }
+    use crate::services::phantasi_reading::{MarkStateError, mark_item_state};
+    let title = match mark_item_state(ctx.db, user_id, is_admin, item_id, is_read, is_starred).await
+    {
+        Ok(marked) => marked.title,
+        Err(MarkStateError::NotVisible) => {
+            return Err("This article cannot be changed".to_string());
+        }
+        Err(MarkStateError::Database(step, error)) => {
+            return Err(write_store_failed(step, error));
+        }
+    };
 
     let status = match action {
         "read" => "Read",
@@ -840,9 +765,10 @@ mod phantasi_mark_visibility_tests {
             .unwrap_or(body.len());
         let mark = &body[..end];
         assert!(mark.contains("user_is_current_admin"));
-        assert!(mark.contains("source.admin_only"));
+        // Source visibility (admin_only) is enforced by the shared writer.
+        assert!(mark.contains("mark_item_state(ctx.db, user_id, is_admin,"));
         assert!(
-            mark.contains("\"star\" | \"unstar\" | \"later\"") && mark.contains("!is_admin"),
+            mark.contains("is_starred.is_some() && !is_admin"),
             "star writes are admin-only host identity"
         );
         assert!(
