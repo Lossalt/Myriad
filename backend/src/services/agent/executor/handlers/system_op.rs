@@ -51,7 +51,7 @@ pub async fn execute(
         "cache.status" => execute_cache_status(params).await,
         "cache.clear" => execute_cache_clear(params).await,
         "rsshub.healthcheck" => execute_rsshub_healthcheck(params, ctx).await,
-        "image.cache" => execute_image_cache(params).await,
+        "image.cache" => execute_image_cache(params, ctx).await,
         "export.data" => execute_export_data(params).await,
         "task.submit" => execute_task_submit(params).await,
         "phantasi.schedule" => execute_phantasi_schedule(params).await,
@@ -676,9 +676,40 @@ async fn execute_rsshub_healthcheck(
 
 // 图片缓存
 
-async fn execute_image_cache(params: &HashMap<String, Value>) -> Result<Value, String> {
+/// The result is meant to be cited (notes, persona, messages). Image-cache
+/// paths are no longer registered media and would fail those saves with
+/// MEDIA_NOT_READY, so promote the download to a public asset.
+async fn persist_cached_image(url: &str, ctx: &HandlerContext<'_>) -> Result<String, String> {
+    let cache = ImageCacheService::new();
+    let cached = cache.cache_image(url).await?;
+    let (bytes, mime) = cache.read_local_public_url(&cached).await?;
+    let file = cached.rsplit('/').next().unwrap_or(&cached).to_string();
+    let (asset, _) =
+        crate::services::media::MediaService::from_data_paths(crate::services::data_paths::paths())
+            .persist_ready_bytes(
+                ctx.db,
+                crate::services::media::task_media_context(ctx.user_id, ctx.user_id)
+                    .with_producer_key(format!("image-cache:{file}")),
+                crate::services::media::NewMediaBytes {
+                    bytes: bytes.into(),
+                    claimed_mime: mime,
+                    filename: file,
+                    max_bytes: crate::services::memory_profile::note_image_limit(),
+                    derived_from_id: None,
+                    exposure: crate::services::media::MediaExposure::Public,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    Ok(asset.catalog_url())
+}
+
+async fn execute_image_cache(
+    params: &HashMap<String, Value>,
+    ctx: &HandlerContext<'_>,
+) -> Result<Value, String> {
     if let Some(url) = first_string_param(params, &["url"]) {
-        let local_path = ImageCacheService::new().cache_image(&url).await?;
+        let local_path = persist_cached_image(&url, ctx).await?;
         return Ok(json!({
             "localPath": local_path,
             "cached": true,

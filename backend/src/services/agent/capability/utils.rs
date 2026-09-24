@@ -439,7 +439,7 @@ pub fn get_capability_usage_hint(capability_id: &str) -> &'static str {
         }
         "export.data" => "Export platform data.",
         "image.cache" => {
-            "With url, download into image-cache. Without url, action=status or action=clear."
+            "With url, download and store as a citable media asset (localPath). Without url, action=status or action=clear."
         }
         "proxy.image" => "Fetch an external image through the image proxy.",
 
