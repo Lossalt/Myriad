@@ -15,6 +15,9 @@ use sha2::Sha256;
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::services::permission_service::UserRole;
+// Anonymous guest quota scopes (IP / unresolved) share the rate limiter's
+// fingerprint, so one client address maps to one key in both.
+use crate::services::tapp_rate_limit::anonymous_subject_fingerprint;
 
 #[derive(Debug, Clone, Copy)]
 struct AiQuotaLimits {
@@ -173,17 +176,6 @@ fn ledger_error(message: impl Into<String>) -> AiQuotaError {
     AiQuotaError::Ledger {
         message: message.into(),
     }
-}
-
-/// HMAC fingerprint for anonymous guest quota scopes (IP / unresolved).
-fn anonymous_subject_fingerprint(value: &str) -> String {
-    let secret = crate::middleware::auth::session_secret()
-        .unwrap_or_else(|| "myriad-development-anonymous-quota-v1".to_string());
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-        .expect("HMAC accepts arbitrary key lengths");
-    mac.update(b"myriad-tapp-anonymous-quota-v1\0");
-    mac.update(value.as_bytes());
-    hex::encode(mac.finalize().into_bytes())
 }
 
 async fn limits_for_role(role: UserRole) -> AiQuotaLimits {
