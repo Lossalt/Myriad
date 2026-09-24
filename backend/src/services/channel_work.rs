@@ -337,11 +337,7 @@ async fn continue_text(
                 let _ = sink.send_text(&reply).await;
                 return;
             }
-            PendingDecision::Resume {
-                kind,
-                answer,
-                confirmed,
-            } => {
+            PendingDecision::Resume { kind, answer, .. } => {
                 let taken = take_pending_if_id(db, platform, session_key, &pending.prompt.id).await;
                 if taken.is_none() {
                     let _ = sink.send_text(PENDING_STALE_REPLY).await;
@@ -355,7 +351,6 @@ async fn continue_text(
                     user_id,
                     kind,
                     answer,
-                    confirmed,
                     sink,
                     input,
                     pending,
@@ -493,12 +488,6 @@ async fn cancel_session_tasks(db: &DatabaseConnection, user_id: i32, session_id:
         return;
     }
     let agent = Agent::new(db.clone()).await;
-    if let Err(error) = agent
-        .revoke_session_confirmations(user_id, session_id)
-        .await
-    {
-        warn!(%error, "channel confirmation revocation failed");
-    }
     for task in agent.get_user_tasks(user_id).await {
         if !is_cancellable_task_status(&task.status) {
             continue;
@@ -586,7 +575,6 @@ async fn resume_pending(
     user_id: i32,
     kind: PendingKind,
     answer: String,
-    confirmed: Option<bool>,
     sink: ChannelSink,
     latest_input: &str,
     parked: StoredPending,
@@ -619,15 +607,11 @@ async fn resume_pending(
             .await
             .map_err(|error| error.0.to_json())
         }
-        PendingKind::Confirm { confirmation_id } => crate::api::agent::start_confirm_run(
-            db.clone(),
-            claims,
-            confirmation_id,
-            confirmed.unwrap_or(false),
-            None,
-        )
-        .await
-        .map_err(|error| error.0.to_json()),
+        // Recipe-level confirmations are gone; only prompts stored before
+        // that change can still carry this kind.
+        PendingKind::Confirm { .. } => Err(myriad_error::AppError::public_json(
+            "This confirmation is no longer available. Please send the request again.",
+        )),
         PendingKind::Answer {
             task_id,
             question_id,

@@ -838,14 +838,6 @@ mod tests {
             .and_then(|rest| rest.split("#[cfg(test)]").next())
             .expect("restore_waiting_runs_after_boot");
         assert!(!boot.contains("persist_task_async"));
-        let confirmation =
-            include_str!("../../services/agent/confirmation_and_tasks/confirmation.rs");
-        let wait = confirmation
-            .split("store.store(user_id, task_state.clone())")
-            .nth(1)
-            .and_then(|rest| rest.split("if let Some(tx) = progress_tx").next())
-            .expect("confirmation store");
-        assert!(!wait.contains("persist_task_async"));
         let store = include_str!("../../services/agent/executor/task_store.rs");
         let store_fn = store
             .split("pub fn store(&mut self, user_id: i32, task: TaskState)")

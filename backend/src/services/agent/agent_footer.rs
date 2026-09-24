@@ -898,18 +898,6 @@ mod tests {
         assert!(get_user_permissions(&db, 910_401).await.is_empty());
     }
 
-    fn pending(cap: &str, risk: RiskLevel) -> PendingConfirmation {
-        PendingConfirmation {
-            step_id: "s1".to_string(),
-            capability_id: cap.to_string(),
-            capability_name: cap.to_string(),
-            description: String::new(),
-            risk_level: risk,
-            confirmation_message: String::new(),
-            impact: Vec::new(),
-        }
-    }
-
     #[test]
     fn only_continuations_skip_the_cooldown_gate() {
         // Confirm / resume arrive as fast as a human can click. Reserving them
@@ -933,46 +921,6 @@ mod tests {
         );
         assert_eq!(session_id_from_lane_key("user:42"), None);
         assert_eq!(session_id_from_lane_key("user:42:session:"), None);
-    }
-
-    #[test]
-    fn test_system_gate_normal_user_needs_confirmation() {
-        let steps = vec![pending("cache.clear", RiskLevel::High)];
-        assert!(
-            Agent::system_sensitive_gate(1, &steps).is_none(),
-            "普通用户应走正常确认流程"
-        );
-    }
-
-    #[test]
-    fn test_system_gate_auto_confirms_low_and_medium_but_not_self_spreading() {
-        for (id, risk) in [
-            ("storage.set", RiskLevel::Low),
-            ("http.fetch", RiskLevel::Medium),
-        ] {
-            let steps = vec![pending(id, risk)];
-            match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-                Some(Ok(())) => {}
-                other => panic!(
-                    "系统任务应自动确认 {id}，got {:?}",
-                    other.map(|r| r.is_ok())
-                ),
-            }
-        }
-        let steps = vec![pending("heartbeat.create", RiskLevel::Medium)];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Err(resp)) => {
-                assert!(
-                    resp.message.contains("heartbeat.create"),
-                    "{}",
-                    resp.message
-                );
-            }
-            other => panic!(
-                "heartbeat.create 应被拒绝，got {:?}",
-                other.map(|r| r.is_ok())
-            ),
-        }
     }
 
     /// 非管理员开着「网络请求」也拿不到 MCP。
@@ -1015,31 +963,6 @@ mod tests {
             &mcp_only,
             TappPermission::NetworkFetch
         ));
-    }
-
-    #[test]
-    fn test_system_gate_blocks_high() {
-        let steps = vec![pending("cache.clear", RiskLevel::High)];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Err(resp)) => {
-                assert!(resp.message.contains("cache.clear"), "{}", resp.message);
-            }
-            other => panic!("High 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
-        }
-    }
-
-    #[test]
-    fn test_system_gate_blocks_critical() {
-        let steps = vec![
-            pending("storage.set", RiskLevel::Low),
-            pending("system.shutdown", RiskLevel::Critical),
-        ];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Err(resp)) => {
-                assert!(resp.message.contains("system.shutdown"), "{}", resp.message);
-            }
-            other => panic!("Critical 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
-        }
     }
 
     #[test]

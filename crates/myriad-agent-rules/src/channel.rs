@@ -574,6 +574,9 @@ pub enum PendingKind {
     Clarify {
         original_input: String,
     },
+    /// Legacy recipe-level confirmation. The backend no longer creates it;
+    /// it survives only so prompts stored before that change still decode,
+    /// and resuming one answers that it is no longer available.
     Confirm {
         confirmation_id: String,
     },

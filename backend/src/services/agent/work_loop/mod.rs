@@ -21,6 +21,7 @@ use super::{Agent, capability, executor, types::*};
 use crate::services::agent::capability::CapabilityRef;
 use crate::services::analyzer::tool_calling::{ToolCall, ToolDefinition, ToolMessage};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 pub(crate) use state::is_work_recipe;
 use state::*;
 pub(crate) use store::{expire_question, recover};
@@ -42,6 +43,71 @@ impl Agent {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Work task record for a request. Work steps are appended as tools run.
+    pub(crate) fn build_recipe_from_steps(
+        steps: Vec<RecipeStep>,
+        name: String,
+        request: &UserRequest,
+    ) -> Recipe {
+        let estimated_duration_ms: u64 = steps.iter().map(|s| s.timeout_ms.unwrap_or(15000)).sum();
+
+        let page_context = request
+            .context
+            .as_ref()
+            .and_then(|c| c.custom_data.as_ref())
+            .and_then(|d| d.get("pageContent").cloned());
+
+        let conversation_context = request
+            .context
+            .as_ref()
+            .and_then(|c| c.conversation_history.clone());
+
+        let lane_key = request.context.as_ref().and_then(|c| c.lane_key.clone());
+        let autonomy_permission_cap = request
+            .context
+            .as_ref()
+            .and_then(|c| c.autonomy_permission_cap.clone());
+
+        let mut metadata = HashMap::new();
+        if let Some(route) = request
+            .context
+            .as_ref()
+            .and_then(|c| c.current_route.clone())
+            .filter(|route| !route.is_empty())
+        {
+            metadata.insert("current_route".to_string(), json!(route));
+        }
+        if let Some(custom) = request
+            .context
+            .as_ref()
+            .and_then(|c| c.custom_data.as_ref())
+        {
+            if let Some(music) = custom.get("musicStatus").cloned() {
+                metadata.insert("music_status".to_string(), music);
+            }
+            if let Some(windows) = custom.get("windowState").cloned() {
+                metadata.insert("window_state".to_string(), windows);
+            }
+        }
+
+        Recipe {
+            id: format!("recipe_{}", uuid::Uuid::new_v4()),
+            name,
+            original_request: request.raw_input.clone(),
+            execution_type: ExecutionType::Instant,
+            steps,
+            expected_output: OutputFormat::Json,
+            estimated_duration_ms,
+            created_at: chrono::Utc::now(),
+            metadata,
+            page_context,
+            conversation_context,
+            lane_key,
+            autonomy_permission_cap,
+            engine: AgentEngine::WorkLoop,
+        }
     }
 
     pub(crate) async fn start_work_loop(
@@ -84,12 +150,11 @@ impl Agent {
     }
 
     async fn new_work_checkpoint(&self, request: &UserRequest) -> Checkpoint {
-        let mut recipe = Self::build_recipe_from_steps(
+        let recipe = Self::build_recipe_from_steps(
             vec![],
             request.raw_input.chars().take(120).collect(),
             request,
         );
-        recipe.engine = AgentEngine::WorkLoop;
         let mut task = TaskState::new(&recipe);
         task.status = TaskStatus::Running;
         task.lane_id = recipe.lane_key.clone();

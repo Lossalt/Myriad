@@ -432,10 +432,7 @@ pub async fn execute_preset(
         };
 
         // 预设的每一步都经 work_tool：授予权限、确认与检查点和普通办事一致。
-        match agent
-            .start_preset_work_loop(request, preset_id, Some(tx.clone()))
-            .await
-        {
+        match agent.execute_preset(request, preset_id, tx.clone()).await {
             Ok(response) => {
                 let api_response: ApiResponse = response.into();
                 let task_id = api_response
