@@ -584,7 +584,8 @@
     "Invalid 3D model": "TRIPO_ERROR",
     "Failed to store 3D model": "TRIPO_ERROR",
     "Tripo task polling timed out": "TRIPO_ERROR",
-    "Tripo API request failed": "TRIPO_ERROR"
+    "Tripo API request failed": "TRIPO_ERROR",
+    "This confirmation is no longer available. Please send the request again.": "agent_confirm_missing"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",
