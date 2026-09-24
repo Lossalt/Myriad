@@ -11,13 +11,8 @@ use crate::services::content_databases::{AnimeDatabase, ArtistDatabase, GameData
 use super::helpers::*;
 
 impl SmartFilter {
-    /// 处理所有平台数据并分别保存到各平台缓存文件
-    /// 优化：分平台保存，减少不必要的克隆，添加数据量限制
+    /// 处理所有平台数据并分别保存到各平台缓存文件（逐平台走 [`filter_input`]）。
     pub fn process_and_save_all(all_data: &Value) -> Result<(), Box<dyn std::error::Error>> {
-        // 数据量限制常量
-        const MAX_VIDEOS_FOR_FILTER: usize = 200;
-        const MAX_SONGS_FOR_FILTER: usize = 3000;
-
         let cache_dir = data_paths::platforms_cache_dir();
         fs::create_dir_all(cache_dir)?;
 
@@ -27,14 +22,7 @@ impl SmartFilter {
             let Some(raw) = all_data.get(id.slug()) else {
                 continue;
             };
-            // 部分平台先适配抓取形态 → 过滤输入形态；其余原样过滤
-            let adapted = match id {
-                PlatformId::Bilibili => Some(bilibili_filter_input(raw, MAX_VIDEOS_FOR_FILTER)),
-                PlatformId::Steam => Some(steam_filter_input(raw)),
-                PlatformId::Netease => Some(netease_filter_input(raw, MAX_SONGS_FOR_FILTER)),
-                _ => None,
-            };
-            match SmartFilter::filter(id.slug(), adapted.as_ref().unwrap_or(raw)) {
+            match SmartFilter::filter(id.slug(), &filter_input(id.slug(), raw)) {
                 Ok(result) => {
                     Self::save_platform_cache_atomic(id.slug(), &result)?;
                     processed_count += 1;
@@ -1138,100 +1126,70 @@ impl SmartFilter {
     }
 }
 
-/// Bilibili 抓取形态 → 过滤输入：user / user_info（旧缓存）→ user_info，favorites → videos（限量），bangumi 直传。
-fn bilibili_filter_input(bilibili_data: &Value, max_videos: usize) -> Value {
-    let mut process_data = serde_json::Map::new();
+/// 过滤前的 B站视频上限（收藏夹展开后）。全量与单平台过滤同用这一份。
+pub(crate) const MAX_VIDEOS_FOR_FILTER: usize = 200;
+/// 过滤前的网易云歌曲上限。
+pub(crate) const MAX_SONGS_FOR_FILTER: usize = 3000;
 
-    // 适配: user / user_info（旧缓存）-> user_info
-    if let Some(user) = bilibili_data
-        .get("user")
-        .or_else(|| bilibili_data.get("user_info"))
-    {
-        process_data.insert("user_info".to_string(), user.clone());
-    }
-
-    // 适配数据结构: favorites -> videos (提取所有视频，添加数量限制)
-    if let Some(favorites) = bilibili_data.get("favorites").and_then(|v| v.as_array()) {
-        let mut all_videos = Vec::new();
-        'outer: for fav in favorites {
-            if let Some(vids) = fav.get("videos").and_then(|v| v.as_array()) {
-                for v in vids {
-                    if all_videos.len() >= max_videos {
-                        tracing::debug!("🚀 Limiting videos to {} for filter", max_videos);
-                        break 'outer;
-                    }
-                    all_videos.push(v.clone());
-                }
+/// 抓取形态 → 过滤输入（全量与单平台过滤的唯一入口）。原数据全部保留，
+/// 只补上过滤器读的形态并在补的时候限量：
+/// - bilibili：user / user_info（旧缓存）→ user_info；favorites 展开为 videos（限量）
+/// - steam：user → user_info；games → owned_games / recently_played
+/// - netease：liked_songs → playlists[0].tracks + songs（限量）
+///
+/// 其余平台原样过滤。
+pub(crate) fn filter_input(platform: &str, data: &Value) -> Value {
+    let mut processed = data.clone();
+    let Some(obj) = processed.as_object_mut() else {
+        return processed;
+    };
+    match PlatformId::from_slug(platform) {
+        Some(PlatformId::Bilibili) => {
+            if let Some(user) = data.get("user").or_else(|| data.get("user_info")) {
+                obj.insert("user_info".to_string(), user.clone());
+            }
+            if let Some(favorites) = data.get("favorites").and_then(|v| v.as_array()) {
+                let videos: Vec<Value> = favorites
+                    .iter()
+                    .filter_map(|fav| fav.get("videos").and_then(|v| v.as_array()))
+                    .flatten()
+                    .take(MAX_VIDEOS_FOR_FILTER)
+                    .cloned()
+                    .collect();
+                obj.insert("videos".to_string(), Value::Array(videos));
             }
         }
-        process_data.insert("videos".to_string(), Value::Array(all_videos));
-    }
-
-    // 直接传递 bangumi
-    if let Some(bangumi) = bilibili_data.get("bangumi") {
-        process_data.insert("bangumi".to_string(), bangumi.clone());
-    }
-
-    Value::Object(process_data)
-}
-
-/// Steam 抓取形态 → 过滤输入：user → user_info，games → owned_games / recently_played。
-fn steam_filter_input(steam_data: &Value) -> Value {
-    let mut process_data = serde_json::Map::new();
-
-    // 适配数据结构: user -> user_info
-    if let Some(user) = steam_data.get("user") {
-        process_data.insert("user_info".to_string(), user.clone());
-    }
-
-    // 适配数据结构: games -> owned_games.games
-    if let Some(games) = steam_data.get("games") {
-        process_data.insert(
-            "owned_games".to_string(),
-            serde_json::json!({ "games": games }),
-        );
-        process_data.insert(
-            "recently_played".to_string(),
-            serde_json::json!({ "games": games }),
-        );
-    }
-
-    Value::Object(process_data)
-}
-
-/// 网易云抓取形态 → 过滤输入：liked_songs → playlists[0].tracks + songs（限量），profile 直传。
-fn netease_filter_input(netease_data: &Value, max_songs: usize) -> Value {
-    let mut process_data = serde_json::Map::new();
-
-    // 适配数据结构: liked_songs -> playlists[0].tracks（添加数量限制）
-    if let Some(liked_songs) = netease_data.get("liked_songs") {
-        // 限制歌曲数量避免内存问题
-        let limited_songs = if let Some(songs_array) = liked_songs.as_array() {
-            if songs_array.len() > max_songs {
-                tracing::debug!(
-                    "🚀 Limiting songs from {} to {} for filter",
-                    songs_array.len(),
-                    max_songs
-                );
-                Value::Array(songs_array.iter().take(max_songs).cloned().collect())
-            } else {
-                liked_songs.clone()
+        Some(PlatformId::Steam) => {
+            if let Some(user) = data.get("user") {
+                obj.insert("user_info".to_string(), user.clone());
             }
-        } else {
-            liked_songs.clone()
-        };
-
-        process_data.insert(
-            "playlists".to_string(),
-            serde_json::json!([{ "tracks": limited_songs }]),
-        );
-        process_data.insert("songs".to_string(), limited_songs);
+            if let Some(games) = data.get("games") {
+                obj.insert(
+                    "owned_games".to_string(),
+                    serde_json::json!({ "games": games }),
+                );
+                obj.insert(
+                    "recently_played".to_string(),
+                    serde_json::json!({ "games": games }),
+                );
+            }
+        }
+        Some(PlatformId::Netease) => {
+            if let Some(liked_songs) = data.get("liked_songs") {
+                let songs = match liked_songs.as_array() {
+                    Some(songs) if songs.len() > MAX_SONGS_FOR_FILTER => {
+                        Value::Array(songs.iter().take(MAX_SONGS_FOR_FILTER).cloned().collect())
+                    }
+                    _ => liked_songs.clone(),
+                };
+                obj.insert(
+                    "playlists".to_string(),
+                    serde_json::json!([{ "tracks": songs }]),
+                );
+                obj.insert("songs".to_string(), songs);
+            }
+        }
+        _ => {}
     }
-
-    // 传递 profile
-    if let Some(profile) = netease_data.get("profile") {
-        process_data.insert("profile".to_string(), profile.clone());
-    }
-
-    Value::Object(process_data)
+    processed
 }

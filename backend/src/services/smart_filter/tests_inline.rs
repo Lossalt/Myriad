@@ -494,3 +494,72 @@ fn load_youtube_filtered_cache_from_disk_if_present() {
     assert_eq!(back.platform, "youtube");
     assert!(matches!(back.content_analysis, ContentAnalysis::YouTube(_)));
 }
+
+/// Full and single-platform filtering share one adapter, so the caps hold on both.
+#[test]
+fn filter_input_caps_videos_and_songs() {
+    use process::{MAX_SONGS_FOR_FILTER, MAX_VIDEOS_FOR_FILTER, filter_input};
+    let videos: Vec<Value> = (0..150)
+        .map(|i| serde_json::json!({ "title": format!("v{i}"), "bvid": format!("BV{i}") }))
+        .collect();
+    let bilibili = serde_json::json!({
+        "user": { "name": "me", "mid": 1 },
+        "favorites": [{ "videos": videos }, { "videos": videos }],
+    });
+    let input = filter_input("bilibili", &bilibili);
+    assert_eq!(
+        input["videos"].as_array().map(Vec::len),
+        Some(MAX_VIDEOS_FOR_FILTER)
+    );
+    assert_eq!(input["user_info"]["name"], "me");
+    let filtered = SmartFilter::filter("bilibili", &input).expect("bilibili filter");
+    match filtered.content_analysis {
+        ContentAnalysis::Bilibili(ref a) => {
+            assert_eq!(a.recent_videos.len(), MAX_VIDEOS_FOR_FILTER)
+        }
+        other => panic!("expected Bilibili analysis, got {other:?}"),
+    }
+
+    let songs: Vec<Value> = (0..MAX_SONGS_FOR_FILTER + 10)
+        .map(|i| serde_json::json!({ "name": format!("s{i}") }))
+        .collect();
+    let netease = serde_json::json!({
+        "profile": { "nickname": "me" },
+        "liked_songs": songs,
+    });
+    let input = filter_input("netease", &netease);
+    assert_eq!(
+        input["songs"].as_array().map(Vec::len),
+        Some(MAX_SONGS_FOR_FILTER)
+    );
+    assert_eq!(
+        input["playlists"][0]["tracks"].as_array().map(Vec::len),
+        Some(MAX_SONGS_FOR_FILTER)
+    );
+    assert_eq!(input["profile"]["nickname"], "me");
+
+    let steam = serde_json::json!({ "user": { "personaname": "me" }, "games": [{ "appid": 1 }] });
+    let input = filter_input("steam", &steam);
+    assert_eq!(input["user_info"]["personaname"], "me");
+    assert_eq!(input["owned_games"]["games"][0]["appid"], 1);
+    assert_eq!(input["recently_played"]["games"][0]["appid"], 1);
+
+    let github = serde_json::json!({ "user": { "login": "me" } });
+    assert_eq!(filter_input("github", &github), github);
+}
+
+/// Neither save path may bypass the shared adapter.
+#[test]
+fn both_filter_save_paths_use_filter_input() {
+    let single = include_str!("cache_tokens.rs")
+        .split("pub fn process_and_save_single")
+        .nth(1)
+        .expect("process_and_save_single");
+    assert!(single.contains("filter_input(platform, platform_data)"));
+    let all = include_str!("process.rs")
+        .split("pub fn process_and_save_all")
+        .nth(1)
+        .and_then(|rest| rest.split("fn save_platform_cache_atomic").next())
+        .expect("process_and_save_all");
+    assert!(all.contains("filter_input(id.slug(), raw)"));
+}
