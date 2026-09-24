@@ -6,7 +6,7 @@ use crate::services::agent::SYSTEM_USER_ID;
 
 use chrono::{DateTime, Utc};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use std::collections::HashMap;
 

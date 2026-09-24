@@ -1,7 +1,7 @@
 // Work confirmation.
 
 use chrono::{Duration, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use super::super::agent_footer::*;

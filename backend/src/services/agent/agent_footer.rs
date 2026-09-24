@@ -1,7 +1,7 @@
 use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use super::agent_header::*;

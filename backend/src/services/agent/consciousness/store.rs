@@ -536,10 +536,12 @@ mod ledger_db_tests {
         assert_eq!(blocked.len(), 4);
         assert!(blocked.iter().all(|row| row.id.starts_with("blocked-")));
         for row in &blocked {
-            assert!(store
-                .defer_autonomy_skip(&row.id, row.user_id)
-                .await
-                .unwrap());
+            assert!(
+                store
+                    .defer_autonomy_skip(&row.id, row.user_id)
+                    .await
+                    .unwrap()
+            );
             let kept = store.find(&row.id, row.user_id).await.unwrap();
             assert_eq!(
                 (kept.status, kept.accept_source),
@@ -641,10 +643,12 @@ mod ledger_db_tests {
             .reattach_work(&first.id, user_id, "ses_empty".into(), "run_empty".into())
             .await
             .expect("attach");
-        assert!(store
-            .reclaim_running_to_accepted(&first.id, user_id)
-            .await
-            .expect("reclaim"));
+        assert!(
+            store
+                .reclaim_running_to_accepted(&first.id, user_id)
+                .await
+                .expect("reclaim")
+        );
         let reclaimed = store.find(&first.id, user_id).await.expect("reload");
         assert_eq!(reclaimed.status, IntentStatus::Accepted);
         assert_eq!(reclaimed.accept_source, AcceptSource::Autonomy);

@@ -2,16 +2,16 @@
 
 use super::*;
 use crate::services::agent::consciousness::{
-    autonomy_claim_decision, build_autonomy_work_request, AcceptSource, AutonomyClaim,
-    AutonomyGrantStore, IntentRecord, IntentStatus, IntentStore,
+    AcceptSource, AutonomyClaim, AutonomyGrantStore, IntentRecord, IntentStatus, IntentStore,
+    autonomy_claim_decision, build_autonomy_work_request,
 };
 use crate::services::agent::queue::LaneQueue;
 use crate::services::agent::run_hub::create_run;
 use crate::services::agent::{
-    Agent, AgentProgressEvent, AgentResponse, AgentResponseType, TaskStatus, LANE_QUEUE,
-    SYSTEM_USER_ID,
+    Agent, AgentProgressEvent, AgentResponse, AgentResponseType, LANE_QUEUE, SYSTEM_USER_ID,
+    TaskStatus,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub async fn tick_autonomy_work(db: DatabaseConnection) {
     let store = IntentStore::new(db.clone());
@@ -685,10 +685,12 @@ mod tests {
         assert_eq!(meta["pendingQuestion"]["confirmationId"], "c1");
         assert_eq!(meta["pendingQuestion"]["questionType"], "confirmation");
         assert_eq!(meta["taskId"], "confirmation:c1");
-        assert!(meta["pendingQuestion"]["context"]
-            .as_str()
-            .unwrap()
-            .contains("mail.send"));
+        assert!(
+            meta["pendingQuestion"]["context"]
+                .as_str()
+                .unwrap()
+                .contains("mail.send")
+        );
         let parked = park_confirmation_run(&response, "confirmation:c1");
         assert_eq!(parked["task"]["status"], "waiting_for_input");
         assert_eq!(parked["streamTerminal"], false);

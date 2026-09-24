@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, RwLock};
 
 use super::types_index::*;
@@ -1670,9 +1670,10 @@ mod tests {
             .expect("user 1 shard")
             .search("订阅源", 9);
         assert_eq!(pool.len(), 5, "the whole shard is 5 entries");
-        assert!(pool
-            .iter()
-            .all(|(id, _)| entries.get(id).is_some_and(|e| e.user_id == Some(1))));
+        assert!(
+            pool.iter()
+                .all(|(id, _)| entries.get(id).is_some_and(|e| e.user_id == Some(1)))
+        );
     }
 
     #[tokio::test]
@@ -1801,10 +1802,12 @@ mod tests {
                 .insert(legacy.id.clone(), legacy);
         }
 
-        assert!(memory
-            .recall_with_params(recall("订阅记录", 1, 10))
-            .await
-            .is_empty());
+        assert!(
+            memory
+                .recall_with_params(recall("订阅记录", 1, 10))
+                .await
+                .is_empty()
+        );
         assert!(
             memory
                 .recall_with_params(recall("订阅记录", 0, 10))

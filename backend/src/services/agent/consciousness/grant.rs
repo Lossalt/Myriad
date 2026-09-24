@@ -391,22 +391,30 @@ mod tests {
             "scheduler:write".to_string(),
         ];
         let prepared = prepare_personal_grant(7, &[], &admin_current).unwrap();
-        assert!(!prepared
-            .allowed_permissions
-            .iter()
-            .any(|permission| permission == "system:admin"));
-        assert!(!prepared
-            .allowed_permissions
-            .iter()
-            .any(|permission| permission == "phantasi:admin"));
-        assert!(prepared
-            .allowed_permissions
-            .iter()
-            .any(|permission| permission == "http:fetch"));
-        assert!(prepared
-            .allowed_permissions
-            .iter()
-            .any(|permission| permission == "scheduler:write"));
+        assert!(
+            !prepared
+                .allowed_permissions
+                .iter()
+                .any(|permission| permission == "system:admin")
+        );
+        assert!(
+            !prepared
+                .allowed_permissions
+                .iter()
+                .any(|permission| permission == "phantasi:admin")
+        );
+        assert!(
+            prepared
+                .allowed_permissions
+                .iter()
+                .any(|permission| permission == "http:fetch")
+        );
+        assert!(
+            prepared
+                .allowed_permissions
+                .iter()
+                .any(|permission| permission == "scheduler:write")
+        );
 
         let explicit = prepare_personal_grant(7, &["system:admin".into()], &admin_current).unwrap();
         assert_eq!(
@@ -470,9 +478,11 @@ mod tests {
             effective_granted_permissions(&granted, Some(&cap)),
             vec!["calendar:read".to_string()]
         );
-        assert!(!effective_granted_permissions(&granted, Some(&cap))
-            .iter()
-            .any(|p| p == "mail:send"));
+        assert!(
+            !effective_granted_permissions(&granted, Some(&cap))
+                .iter()
+                .any(|p| p == "mail:send")
+        );
         assert_eq!(effective_granted_permissions(&granted, None), granted);
         assert!(required_permissions_within_cap(
             &["calendar:read".into()],
