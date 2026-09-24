@@ -456,9 +456,21 @@ pub(crate) async fn start_process_run(
             .begin()
             .await
             .map_err(|_| agent_turn_error("Could not save media references".into()))?;
-        crate::services::media::bind_channel_message(&txn, &run_id_for_meta, payload, &[])
-            .await
-            .map_err(|error| HttpError(error.into()))?;
+        let actor = if claims.is_admin {
+            crate::services::media::MediaActor::admin(user_id)
+        } else {
+            crate::services::media::MediaActor::user(user_id)
+        }
+        .ok();
+        crate::services::media::bind_channel_message(
+            &txn,
+            &run_id_for_meta,
+            payload,
+            &[],
+            actor.as_ref(),
+        )
+        .await
+        .map_err(|error| HttpError(error.into()))?;
         txn.commit()
             .await
             .map_err(|_| agent_turn_error("Could not save media references".into()))?;

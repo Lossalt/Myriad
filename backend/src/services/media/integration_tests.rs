@@ -2240,3 +2240,48 @@ async fn postgres_note_history_skips_dead_media_the_author_removed() {
     assert_eq!(refs, 1, "live media in history stays protected");
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_message_payload_binds_only_the_senders_media() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let upload = |owner: i32| {
+        f.service.create_from_bytes(
+            &f.db,
+            MediaContext::user(MediaActor::user(owner).unwrap(), MediaSource::Channel).unwrap(),
+            NewMediaBytes {
+                bytes: png().into(),
+                claimed_mime: "image/png".into(),
+                filename: "inbound.png".into(),
+                max_bytes: 1024 * 1024,
+                derived_from_id: None,
+                exposure: MediaExposure::Private,
+            },
+        )
+    };
+    let own = upload(1).await.unwrap();
+    let foreign = upload(2).await.unwrap();
+    let payload = json!({ "attachments": [
+        { "url": own.content_path },
+        { "url": foreign.content_path },
+    ]});
+    let sender = MediaActor::user(1).unwrap();
+    cite::bind_channel_message(&f.db, "run_a", &payload, &[], Some(&sender))
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
+    assert_eq!(
+        references::active_count(&f.db, foreign.id).await.unwrap(),
+        0,
+        "a message must not pin another user's media"
+    );
+    cite::bind_channel_message(&f.db, "run_guest", &payload, &[], None)
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
+    f.close().await;
+}

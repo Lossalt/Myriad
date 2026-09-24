@@ -462,16 +462,31 @@ pub async fn bind_ai_task(
     bind_consumer(txn, "ai_task", task_id, &refs).await
 }
 
+/// `payload` is client input: any string in it may name an asset. Only assets
+/// the sender may manage are bound, so a message cannot pin someone else's
+/// media against deletion; a sender without an actor (guest) binds nothing.
 pub async fn bind_channel_message(
     txn: &impl ConnectionTrait,
     consumer_id: &str,
     payload: &Value,
     origins: &[String],
+    actor: Option<&MediaActor>,
 ) -> Result<(), MediaError> {
     let mut urls = Vec::new();
     collect_strings(payload, &mut urls);
     let refs = references_from_urls(txn, origins, &urls, |i| format!("inbound:{i}"), false).await?;
-    bind_consumer(txn, "channel_message", consumer_id, &refs).await
+    let mut owned = Vec::with_capacity(refs.len());
+    if let Some(actor) = actor {
+        for item in refs {
+            let Some(row) = assets::find_by_id(txn, item.asset_id).await? else {
+                continue;
+            };
+            if can_manage(actor, &assets::to_domain(row, 0)?) {
+                owned.push(item);
+            }
+        }
+    }
+    bind_consumer(txn, "channel_message", consumer_id, &owned).await
 }
 
 pub async fn clear_note_doc(
