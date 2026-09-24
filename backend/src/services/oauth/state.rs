@@ -183,7 +183,7 @@ pub fn oauth_pkce_clear_cookie_value(is_production: bool) -> String {
 /// PKCE verifier from the request `Cookie` header, if present.
 pub fn oauth_pkce_from_cookie(cookie_header: Option<&str>) -> Option<String> {
     let header = cookie_header?;
-    cookie_value_from_header(header, OAUTH_PKCE_COOKIE)
+    crate::middleware::auth::cookie_from_header(header, OAUTH_PKCE_COOKIE)
         .filter(|value| {
             (43..=128).contains(&value.len())
                 && value
@@ -191,22 +191,6 @@ pub fn oauth_pkce_from_cookie(cookie_header: Option<&str>) -> Option<String> {
                     .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
         })
         .map(str::to_string)
-}
-
-/// Read a single cookie value from a raw `Cookie` header string.
-pub fn cookie_value_from_header<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookie_header.split(';') {
-        let part = part.trim();
-        if let Some((n, v)) = part.split_once('=') {
-            if n.trim() == name {
-                let v = v.trim();
-                if !v.is_empty() && v != "deleted" {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    None
 }
 
 /// True when the request `Cookie` header carries `oauth_tx` equal to `expected`
@@ -218,7 +202,7 @@ pub fn oauth_tx_cookie_matches(cookie_header: Option<&str>, expected: &str) -> b
     let Some(header) = cookie_header else {
         return false;
     };
-    let Some(got) = cookie_value_from_header(header, OAUTH_TX_COOKIE) else {
+    let Some(got) = crate::middleware::auth::cookie_from_header(header, OAUTH_TX_COOKIE) else {
         return false;
     };
     let a = got.as_bytes();
@@ -1112,7 +1096,7 @@ mod tests {
 
         let header = "auth_token=jwt; oauth_tx=deadbeef; other=1";
         assert_eq!(
-            cookie_value_from_header(header, OAUTH_TX_COOKIE),
+            crate::middleware::auth::cookie_from_header(header, OAUTH_TX_COOKIE),
             Some("deadbeef")
         );
         assert!(oauth_tx_cookie_matches(Some(header), "deadbeef"));

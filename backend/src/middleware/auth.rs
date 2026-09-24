@@ -154,7 +154,7 @@ pub fn encode_session_token(claims: &Claims) -> Result<String, String> {
 /// `auth_token=…` Set-Cookie value for a newly issued session.
 pub fn auth_cookie_value(token: &str, is_production: bool) -> String {
     format!(
-        "auth_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={AUTH_COOKIE_MAX_AGE_SECS}{}",
+        "{AUTH_TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={AUTH_COOKIE_MAX_AGE_SECS}{}",
         if is_production { "; Secure" } else { "" }
     )
 }
@@ -164,7 +164,7 @@ pub fn auth_cookie_value(token: &str, is_production: bool) -> String {
 /// server; frontend JavaScript cannot delete it.
 pub fn clear_auth_cookie_value(is_production: bool) -> String {
     format!(
-        "auth_token=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{}",
+        "{AUTH_TOKEN_COOKIE}={COOKIE_TOMBSTONE}; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{}",
         if is_production { "; Secure" } else { "" }
     )
 }
@@ -456,7 +456,7 @@ pub async fn optional_current_auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    let credential_source = auth_credential_source(req.headers());
+    let credential_source = credential_source(req.headers());
     match authenticate_optional_request(req.headers(), &db).await {
         Ok(claims) => {
             if let Some(claims) = claims.as_ref() {
@@ -514,7 +514,7 @@ async fn optional_admin_auth(
     next: Next,
     invalid: InvalidCredential,
 ) -> Response {
-    let credential_source = auth_credential_source(req.headers());
+    let credential_source = credential_source(req.headers());
     let claims = match authenticate_optional_request(req.headers(), &db).await {
         Ok(claims) => claims,
         Err(error_response)
@@ -968,7 +968,7 @@ pub async fn authenticate_optional_request(
     headers: &HeaderMap,
     db: &DatabaseConnection,
 ) -> Result<Option<Claims>, Box<Response>> {
-    if extract_auth_token(headers).is_none() {
+    if SessionCredential::from_headers(headers).is_none() {
         return Ok(None);
     }
     authenticate_request(headers, db).await.map(Some)
@@ -1024,18 +1024,6 @@ pub(crate) fn admin_forbidden() -> (StatusCode, Json<serde_json::Value>) {
 
 const GUEST_SESSION_COOKIE: &str = "myriad_guest_session";
 const GUEST_SESSION_MAX_AGE: i64 = 30 * 24 * 60 * 60;
-
-fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let (cookie_name, value) = cookie.trim().split_once('=')?;
-                (cookie_name == name).then_some(value)
-            })
-        })
-}
 
 fn guest_signature(secret: &[u8], session_id: &str) -> Option<Vec<u8>> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).ok()?;
@@ -1112,7 +1100,7 @@ pub async fn optional_auth_middleware(
     next: Next,
 ) -> Response {
     let headers = req.headers();
-    let credential_source = auth_credential_source(headers);
+    let credential_source = credential_source(headers);
     let mut set_guest_cookie = None;
     // Missing credentials become a signed guest. Presented credentials must
     // pass the full current-state path and never downgrade to guest.
@@ -1134,7 +1122,7 @@ pub async fn optional_auth_middleware(
                         .into_response();
                 }
             };
-            let session_id = cookie_value(headers, GUEST_SESSION_COOKIE)
+            let session_id = request_cookie(headers, GUEST_SESSION_COOKIE)
                 .and_then(|token| verify_guest_session(secret.as_bytes(), token))
                 .unwrap_or_else(|| {
                     let session_id = Uuid::new_v4().simple().to_string();
@@ -1176,15 +1164,25 @@ pub async fn optional_auth_middleware(
     response
 }
 
-/// Verify JWT token from Authorization header or Cookie
-/// Verify JWT for handlers that need claims outside the middleware pipeline.
+/// Verify the session credential of a request, signature and expiry only.
+///
+/// No revocation check: use [`authenticate_request`] for anything that acts
+/// on the session.
 pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
-    let token = extract_auth_token(headers).ok_or_else(|| {
+    let credential = SessionCredential::from_headers(headers).ok_or_else(|| {
         tracing::debug!("Missing or invalid Authorization header/cookie");
         Box::new(missing_credential().into_response())
     })?;
+    verify_signed(credential.token)
+}
 
-    // Get JWT secret
+/// Verify a session JWT's signature and expiry; the one place a session token
+/// is decoded.
+///
+/// Signature-only: the returned claims carry no [`AuthSubject`] and say
+/// nothing about revocation. [`authenticate_request`] adds the subject parse
+/// and the session-epoch check on top of this.
+pub(crate) fn verify_signed(token: &str) -> Result<Claims, Box<Response>> {
     let jwt_secret = session_secret().ok_or_else(|| {
         tracing::error!("JWT_SECRET not configured");
         Box::new(
@@ -1199,7 +1197,6 @@ pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
         )
     })?;
 
-    // Decode and verify token
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
@@ -1235,44 +1232,100 @@ pub(crate) fn missing_credential() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Browser session cookie holding the session JWT.
+pub const AUTH_TOKEN_COOKIE: &str = "auth_token";
+
+/// Value a clearing `Set-Cookie` writes; never a live credential.
+const COOKIE_TOMBSTONE: &str = "deleted";
+
+/// Where a request's session credential came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthCredentialSource {
+pub enum CredentialSource {
+    /// `Authorization: Bearer <jwt>`.
     Authorization,
+    /// The `auth_token` cookie.
     Cookie,
 }
 
-fn auth_cookie_token(headers: &HeaderMap) -> Option<&str> {
-    cookie_value(headers, "auth_token")
+/// The session credential a request presents, selected by the one priority
+/// rule every session consumer shares (authentication, CSRF, `/api/auth/me`).
+///
+/// **Priority: `Authorization: Bearer` first, then the `auth_token` cookie.**
+/// A header that starts with `Bearer ` selects the header even when its token
+/// is empty or invalid; it never falls back to the cookie, so one request is
+/// one identity. Other `Authorization` schemes are not session credentials.
+///
+/// Why Bearer wins: browsers attach cookies to cross-site requests, but a
+/// cross-site page cannot set `Authorization` (the CORS allowlist rejects the
+/// preflight). A request carrying a Bearer token was composed by a client that
+/// holds that token, and acting as that token never borrows the ambient
+/// cookie. CSRF therefore guards exactly the requests whose selected
+/// credential is the cookie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCredential<'a> {
+    pub source: CredentialSource,
+    pub token: &'a str,
 }
 
-fn auth_credential_source(headers: &HeaderMap) -> Option<AuthCredentialSource> {
-    if headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some()
-    {
-        Some(AuthCredentialSource::Authorization)
-    } else {
-        auth_cookie_token(headers).map(|_| AuthCredentialSource::Cookie)
-    }
-}
-
-fn extract_auth_token(headers: &HeaderMap) -> Option<&str> {
-    match auth_credential_source(headers)? {
-        AuthCredentialSource::Authorization => headers
+impl<'a> SessionCredential<'a> {
+    pub fn from_headers(headers: &'a HeaderMap) -> Option<Self> {
+        if let Some(token) = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer ")),
-        AuthCredentialSource::Cookie => auth_cookie_token(headers),
+            .and_then(|value| value.strip_prefix("Bearer "))
+        {
+            return Some(Self {
+                source: CredentialSource::Authorization,
+                token,
+            });
+        }
+        request_cookie(headers, AUTH_TOKEN_COOKIE).map(|token| Self {
+            source: CredentialSource::Cookie,
+            token,
+        })
     }
+}
+
+/// Value of cookie `name` across every `Cookie` header of a request (HTTP/2
+/// may split them). See [`cookie_from_header`] for the parsing rules.
+pub fn request_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookies| first_cookie_pair(cookies, name))
+        .and_then(live_cookie_value)
+}
+
+/// Value of cookie `name` in one raw `Cookie` header; the one cookie parser.
+///
+/// The first pair with that name decides (browsers send the most specific
+/// path first). Name and value are trimmed. An empty value or the clearing
+/// tombstone (`deleted`) is no cookie at all.
+pub fn cookie_from_header<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
+    first_cookie_pair(cookie_header, name).and_then(live_cookie_value)
+}
+
+fn first_cookie_pair<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
+    cookies.split(';').find_map(|cookie| {
+        let (cookie_name, value) = cookie.split_once('=')?;
+        (cookie_name.trim() == name).then_some(value.trim())
+    })
+}
+
+fn live_cookie_value(value: &str) -> Option<&str> {
+    (!value.is_empty() && value != COOKIE_TOMBSTONE).then_some(value)
+}
+
+fn credential_source(headers: &HeaderMap) -> Option<CredentialSource> {
+    SessionCredential::from_headers(headers).map(|credential| credential.source)
 }
 
 async fn clear_invalid_cookie_response(
     mut response: Response,
-    credential_source: Option<AuthCredentialSource>,
+    credential_source: Option<CredentialSource>,
 ) -> Response {
-    if credential_source != Some(AuthCredentialSource::Cookie)
+    if credential_source != Some(CredentialSource::Cookie)
         || response.status() != StatusCode::UNAUTHORIZED
     {
         return response;
@@ -2219,5 +2272,71 @@ mod tests {
             .expect("current_admin_status");
         assert!(status.contains("ensure_current_admin_on("));
         assert!(status.contains("Err((StatusCode::FORBIDDEN, _)) => Ok(false)"));
+    }
+
+    fn headers_with(pairs: &[(header::HeaderName, &'static str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(name.clone(), HeaderValue::from_static(value));
+        }
+        headers
+    }
+
+    /// One request, one identity: a `Bearer` header wins over the cookie and
+    /// never falls back to it, even when its token is empty.
+    #[test]
+    fn session_credential_prefers_bearer_and_never_falls_back() {
+        use super::{CredentialSource, SessionCredential};
+
+        let both = headers_with(&[
+            (header::AUTHORIZATION, "Bearer bearer.jwt.sig"),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&both).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Authorization);
+        assert_eq!(selected.token, "bearer.jwt.sig");
+
+        let empty_bearer = headers_with(&[
+            (header::AUTHORIZATION, "Bearer "),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&empty_bearer).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Authorization);
+        assert_eq!(selected.token, "");
+
+        // Other schemes are not session credentials.
+        let basic = headers_with(&[
+            (header::AUTHORIZATION, "Basic dXNlcjpwYXNz"),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&basic).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Cookie);
+        assert_eq!(selected.token, "cookie.jwt.sig");
+
+        assert!(SessionCredential::from_headers(&HeaderMap::new()).is_none());
+        let tombstone = headers_with(&[(header::COOKIE, "auth_token=deleted")]);
+        assert!(SessionCredential::from_headers(&tombstone).is_none());
+    }
+
+    #[test]
+    fn cookie_parser_first_pair_decides_and_tombstone_is_absent() {
+        use super::{cookie_from_header, request_cookie};
+
+        assert_eq!(
+            cookie_from_header("a=1; auth_token = x.y.z ; b=2", "auth_token"),
+            Some("x.y.z")
+        );
+        // The first pair decides, even when it is a tombstone or empty.
+        assert_eq!(cookie_from_header("t=deleted; t=live", "t"), None);
+        assert_eq!(cookie_from_header("t=; t=live", "t"), None);
+        assert_eq!(cookie_from_header("t=first; t=second", "t"), Some("first"));
+        // Names match exactly, not by prefix.
+        assert_eq!(cookie_from_header("auth_token_x=1", "auth_token"), None);
+        assert_eq!(cookie_from_header("", "t"), None);
+
+        // HTTP/2 may split cookies over several headers.
+        let split = headers_with(&[(header::COOKIE, "a=1"), (header::COOKIE, "t=live")]);
+        assert_eq!(request_cookie(&split, "t"), Some("live"));
+        assert_eq!(request_cookie(&split, "a"), Some("1"));
     }
 }
