@@ -301,19 +301,25 @@ impl NotificationPreferences {
         }
     }
 
-    pub fn allows(&self, event_key: &str) -> bool {
+    /// `fallback_source` 是按通知类型推出的来源。事件键未登记（或缺失）时，
+    /// 只能按它判定：未登记的键没有独立开关可查，但绝不能绕过来源开关。
+    pub fn allows(&self, event_key: Option<&str>, fallback_source: &str) -> bool {
         if !self.enabled {
             return false;
         }
-        let Some(definition) = EVENT_DEFINITIONS
-            .iter()
-            .find(|definition| definition.key == event_key)
-        else {
-            // 新增事件在目录和设置 UI 更新前保持可见，避免重要告警被静默丢弃。
-            return true;
+        let Some(definition) = event_key.and_then(|event_key| {
+            EVENT_DEFINITIONS
+                .iter()
+                .find(|definition| definition.key == event_key)
+        }) else {
+            return self.source_allows(fallback_source);
         };
-        self.sources.get(definition.source).copied().unwrap_or(true)
-            && self.events.get(event_key).copied().unwrap_or(true)
+        self.source_allows(definition.source)
+            && self.events.get(definition.key).copied().unwrap_or(true)
+    }
+
+    fn source_allows(&self, source: &str) -> bool {
+        self.sources.get(source).copied().unwrap_or(true)
     }
 }
 
@@ -428,10 +434,10 @@ mod tests {
                 .iter()
                 .any(|definition| definition.key == "platform.sync.failed")
         );
-        assert!(preferences.allows("platform.sync.failed"));
+        assert!(preferences.allows(Some("platform.sync.failed"), "system"));
         let mut off = preferences.clone();
         off.events.insert("platform.sync.failed".to_string(), false);
-        assert!(!off.allows("platform.sync.failed"));
+        assert!(!off.allows(Some("platform.sync.failed"), "system"));
         assert!(preferences.locations["agent"].toast);
         assert!(!preferences.locations.contains_key("removed"));
     }
@@ -440,13 +446,26 @@ mod tests {
     fn source_and_event_switches_are_both_enforced() {
         let mut preferences = NotificationPreferences::default();
         preferences.sources.insert("phantasi".to_string(), false);
-        assert!(!preferences.allows("phantasi.source_error"));
+        assert!(!preferences.allows(Some("phantasi.source_error"), "phantasi"));
         preferences.sources.insert("phantasi".to_string(), true);
         preferences
             .events
             .insert("phantasi.source_error".to_string(), false);
-        assert!(!preferences.allows("phantasi.source_error"));
-        assert!(preferences.allows("future.critical_event"));
+        assert!(!preferences.allows(Some("phantasi.source_error"), "phantasi"));
+        assert!(preferences.allows(Some("future.critical_event"), "system"));
+    }
+
+    #[test]
+    fn unregistered_event_key_still_honours_its_source_switch() {
+        let mut preferences = NotificationPreferences::default();
+        preferences.sources.insert("federation".to_string(), false);
+        assert!(!preferences.allows(Some("federation.not_in_catalog"), "federation"));
+        assert!(!preferences.allows(None, "federation"));
+        assert!(preferences.allows(Some("federation.not_in_catalog"), "system"));
+
+        preferences.sources.insert("federation".to_string(), true);
+        preferences.enabled = false;
+        assert!(!preferences.allows(Some("federation.not_in_catalog"), "federation"));
     }
 
     #[test]
@@ -487,7 +506,7 @@ mod tests {
 
         let defaults = load(Some(&db), user_id).await.unwrap();
         assert!(defaults.enabled);
-        assert!(defaults.allows("phantasi.source_error"));
+        assert!(defaults.allows(Some("phantasi.source_error"), "phantasi"));
 
         let mut changed = defaults;
         changed.sources.insert("phantasi".to_string(), false);
@@ -500,7 +519,7 @@ mod tests {
         assert!(!restored.sources["phantasi"]);
         assert!(!restored.delivery.browser);
         assert!(!restored.locations["phantasi"].panel);
-        assert!(!restored.allows("phantasi.source_error"));
+        assert!(!restored.allows(Some("phantasi.source_error"), "phantasi"));
 
         db.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,

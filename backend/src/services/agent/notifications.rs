@@ -310,17 +310,11 @@ impl NotificationManager {
                 return false;
             }
         };
-        if let Some(event_key) = notification.event_key() {
-            preferences.allows(event_key)
-        } else {
-            // 缺少精细事件键时，仍必须服从总开关和来源开关。
-            preferences.enabled
-                && preferences
-                    .sources
-                    .get(notification.notification_type.source_key())
-                    .copied()
-                    .unwrap_or(true)
-        }
+        // 缺少或未登记精细事件键时，仍必须服从总开关和按类型推出的来源开关。
+        preferences.allows(
+            notification.event_key(),
+            notification.notification_type.source_key(),
+        )
     }
 
     /// 创建带持久化的管理器，并从 DB 恢复最近历史
@@ -1265,6 +1259,30 @@ mod tests {
                 "legacy",
                 "body",
             ))
+            .await;
+
+        assert!(manager.get_history_for_user(user_id, 10).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unregistered_event_key_cannot_bypass_the_source_switch() {
+        let manager = test_manager();
+        let user_id = 9005;
+        let mut preferences = NotificationPreferences::default();
+        preferences.sources.insert("federation".to_string(), false);
+        notification_preferences::set_cached_for_test(user_id, preferences).await;
+
+        manager
+            .notify(
+                Notification::new(
+                    user_id,
+                    NotificationType::FederationFollow,
+                    NotificationPriority::High,
+                    "unregistered",
+                    "body",
+                )
+                .with_metadata(serde_json::json!({"event_key": "federation.not_in_catalog"})),
+            )
             .await;
 
         assert!(manager.get_history_for_user(user_id, 10).await.is_empty());
