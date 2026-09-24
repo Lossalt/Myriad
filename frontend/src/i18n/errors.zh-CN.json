@@ -618,6 +618,8 @@
     "tapp_runtime_grant_mismatch": "这个应用会话属于别的账号，请重新打开应用。",
     "tapp_settings_load_failed": "应用设置没能加载，请重试。",
     "tapp_storage_too_large": "应用一次要保存的数据太多了。",
-    "tapp_visibility_invalid": "可见范围只能选「所有人」或「仅管理员」。"
+    "tapp_visibility_invalid": "可见范围只能选「所有人」或「仅管理员」。",
+    "no_fields_to_update": "没有需要保存的修改。",
+    "empty_batch": "没有可发送的内容。"
   }
 }

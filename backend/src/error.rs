@@ -430,35 +430,17 @@ mod tests {
         out
     }
 
-    /// Clients localize errors by code. A new public label must come with a
-    /// code in `shared/error_codes.json`; labels from before this rule are
-    /// listed in `shared/error_labels_uncoded.txt`, which may only shrink.
+    /// Clients localize errors by code: every public label must come with a
+    /// code in `shared/error_codes.json`.
     #[test]
     fn every_public_error_label_has_a_code() {
-        let uncoded: std::collections::BTreeSet<&str> =
-            include_str!("../../shared/error_labels_uncoded.txt")
-                .lines()
-                .filter(|line| !line.is_empty() && !line.starts_with('#'))
-                .collect();
-        let labels = literal_labels();
-        let missing: Vec<_> = labels
-            .iter()
+        let missing: Vec<_> = literal_labels()
+            .into_iter()
             .filter(|label| myriad_error::AppError::inferred_code(label).is_none())
-            .filter(|label| !uncoded.contains(label.as_str()))
             .collect();
         assert!(
             missing.is_empty(),
             "give these labels a code in shared/error_codes.json: {missing:#?}"
-        );
-        let stale: Vec<_> = uncoded
-            .iter()
-            .filter(|label| {
-                !labels.contains(**label) || myriad_error::AppError::inferred_code(label).is_some()
-            })
-            .collect();
-        assert!(
-            stale.is_empty(),
-            "remove from shared/error_labels_uncoded.txt: {stale:#?}"
         );
     }
 

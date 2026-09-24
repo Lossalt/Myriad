@@ -618,6 +618,8 @@
     "tapp_runtime_grant_mismatch": "이 Tapp 세션은 다른 계정의 것이에요. Tapp을 다시 여세요.",
     "tapp_settings_load_failed": "Tapp 설정을 불러오지 못했어요. 다시 시도하세요.",
     "tapp_storage_too_large": "Tapp이 한 번에 저장하려는 데이터가 너무 커요.",
-    "tapp_visibility_invalid": "공개 범위는 ‘모두’ 또는 ‘관리자만’ 중에서 고르세요."
+    "tapp_visibility_invalid": "공개 범위는 ‘모두’ 또는 ‘관리자만’ 중에서 고르세요.",
+    "no_fields_to_update": "저장할 변경 사항이 없습니다.",
+    "empty_batch": "보낼 내용이 없습니다."
   }
 }

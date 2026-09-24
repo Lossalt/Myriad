@@ -618,6 +618,8 @@
     "tapp_runtime_grant_mismatch": "この Tapp のセッションは別のアカウントのものです。Tapp を開き直してください。",
     "tapp_settings_load_failed": "Tapp の設定を読み込めませんでした。再試行してください。",
     "tapp_storage_too_large": "Tapp が一度に保存しようとしたデータが大きすぎます。",
-    "tapp_visibility_invalid": "公開範囲は「全員」か「管理者のみ」を選んでください。"
+    "tapp_visibility_invalid": "公開範囲は「全員」か「管理者のみ」を選んでください。",
+    "no_fields_to_update": "保存する変更がありません。",
+    "empty_batch": "送信する内容がありません。"
   }
 }

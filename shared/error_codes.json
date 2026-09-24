@@ -392,7 +392,9 @@
     "Notion source requires extra_config with token": "phantasi_notion_token_required",
     "This note is edited through its document; reopen it": "phantasi_note_has_document",
     "Invalid Idempotency-Key": "idempotency_key_invalid",
-    "Idempotency-Key was already used for a different request": "idempotency_key_reused"
+    "Idempotency-Key was already used for a different request": "idempotency_key_reused",
+    "No fields to update": "no_fields_to_update",
+    "empty": "empty_batch"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",

@@ -618,6 +618,8 @@
     "tapp_runtime_grant_mismatch": "Cette session de Tapp appartient à un autre compte. Rouvrez le Tapp.",
     "tapp_settings_load_failed": "Impossible de charger les paramètres de ce Tapp. Réessayez.",
     "tapp_storage_too_large": "Ce Tapp a tenté d’enregistrer trop de données à la fois.",
-    "tapp_visibility_invalid": "Choisissez qui peut voir ce Tapp : tout le monde ou les admins seulement."
+    "tapp_visibility_invalid": "Choisissez qui peut voir ce Tapp : tout le monde ou les admins seulement.",
+    "no_fields_to_update": "Aucune modification à enregistrer.",
+    "empty_batch": "Il n’y avait rien à envoyer."
   }
 }

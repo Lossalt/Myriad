@@ -618,6 +618,8 @@
     "tapp_runtime_grant_mismatch": "這個應用工作階段屬於別的帳號，請重新開啟應用。",
     "tapp_settings_load_failed": "應用設定沒能載入，請重試。",
     "tapp_storage_too_large": "應用一次要儲存的資料太多了。",
-    "tapp_visibility_invalid": "可見範圍只能選「所有人」或「僅管理員」。"
+    "tapp_visibility_invalid": "可見範圍只能選「所有人」或「僅管理員」。",
+    "no_fields_to_update": "沒有需要儲存的修改。",
+    "empty_batch": "沒有可傳送的內容。"
   }
 }
