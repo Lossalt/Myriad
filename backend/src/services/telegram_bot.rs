@@ -138,6 +138,7 @@ pub(crate) async fn run_worker() {
 
 async fn run_loop() {
     let mut last_permanent: Option<CredentialFingerprint> = None;
+    let mut reconnect_attempts: u32 = 0;
     loop {
         let fingerprint = {
             let config = GLOBAL_DYNAMIC_CONFIG.read().await;
@@ -179,17 +180,25 @@ async fn run_loop() {
         match result {
             Ok(()) => {
                 last_permanent = None;
+                reconnect_attempts = 0;
                 publish_status(TelegramBotPhase::Offline, &fingerprint).await;
             }
             Err(ConnectFailureKind::Permanent) => {
                 warn!("Telegram bot stopped: credentials rejected");
                 last_permanent = Some(fingerprint.clone());
+                reconnect_attempts = 0;
                 publish_status(TelegramBotPhase::Rejected, &fingerprint).await;
             }
             Err(_) => {
-                warn!("Telegram bot transient failure; will reconnect");
+                reconnect_attempts = reconnect_attempts.saturating_add(1);
+                let delay = crate::services::bot_ingress::reconnect_backoff(reconnect_attempts);
+                warn!(
+                    attempt = reconnect_attempts,
+                    retry_in_secs = delay.as_secs(),
+                    "Telegram bot transient failure; will reconnect"
+                );
                 publish_status(TelegramBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(transient_backoff(1)).await;
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -579,15 +588,6 @@ async fn telegram_request(
         return Err(kind);
     }
     Ok((status, text))
-}
-
-fn transient_backoff(attempt: u32) -> Duration {
-    let secs = if attempt >= 6 {
-        30
-    } else {
-        1u64 << attempt.min(5)
-    };
-    Duration::from_secs(secs.min(30))
 }
 
 fn redact_token(input: &str, token: &str) -> String {

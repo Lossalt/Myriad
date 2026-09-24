@@ -28,6 +28,8 @@ use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::config::DynamicConfig;
 use crate::services::http_client;
 
+/// Deadline for the WebSocket handshake (see `run_session`).
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_secs(2);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const API_BASE: &str = "https://discord.com/api/v10";
@@ -231,6 +233,7 @@ pub(crate) async fn run_worker() {
 async fn run_loop() {
     let mut last_permanent: Option<CredentialFingerprint> = None;
     let mut resume: Option<ResumeState> = None;
+    let mut reconnect_attempts: u32 = 0;
     loop {
         let fingerprint = {
             let config = GLOBAL_DYNAMIC_CONFIG.read().await;
@@ -273,20 +276,29 @@ async fn run_loop() {
         match result {
             Ok(next) => {
                 last_permanent = None;
+                reconnect_attempts = 0;
                 resume = next;
                 publish_status(DiscordBotPhase::Offline, &fingerprint).await;
             }
             Err((ConnectFailureKind::Permanent, _)) => {
                 warn!("Discord bot stopped: credentials rejected");
                 last_permanent = Some(fingerprint.clone());
+                reconnect_attempts = 0;
                 resume = None;
                 publish_status(DiscordBotPhase::Rejected, &fingerprint).await;
             }
             Err((kind, next)) => {
-                warn!(?kind, "Discord bot transient failure; will reconnect");
+                reconnect_attempts = reconnect_attempts.saturating_add(1);
+                let delay = crate::services::bot_ingress::reconnect_backoff(reconnect_attempts);
+                warn!(
+                    ?kind,
+                    attempt = reconnect_attempts,
+                    retry_in_secs = delay.as_secs(),
+                    "Discord bot transient failure; will reconnect"
+                );
                 resume = next;
                 publish_status(DiscordBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(transient_backoff(1)).await;
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -328,15 +340,23 @@ async fn gateway_session(
 
     let (ws, _) = tokio::select! {
         _ = cancel.changed() => return Ok(resume),
-        result = tokio_tungstenite::connect_async_with_config(&connect_url, Some(
+        // connect_async has no deadline of its own; without one a dead path
+        // leaves the worker "connecting" forever (as QQ and Feishu learned).
+        result = tokio::time::timeout(WS_CONNECT_TIMEOUT, tokio_tungstenite::connect_async_with_config(&connect_url, Some(
                 tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
                     .max_message_size(Some(crate::services::bot_ingress::MAX_GATEWAY_MESSAGE_BYTES))
                     .max_frame_size(Some(crate::services::bot_ingress::MAX_GATEWAY_MESSAGE_BYTES)),
-            ), false) => {
-            result.map_err(|err| {
-                log_transport("Discord Gateway connect failed", &err, token);
-                (ConnectFailureKind::Transient, resume.clone())
-            })?
+            ), false)) => {
+            match result {
+                Ok(connected) => connected.map_err(|err| {
+                    log_transport("Discord Gateway connect failed", &err, token);
+                    (ConnectFailureKind::Transient, resume.clone())
+                })?,
+                Err(_) => {
+                    warn!("Discord Gateway connect timed out");
+                    return Err((ConnectFailureKind::Transient, resume.clone()));
+                }
+            }
         }
     };
     let (mut write, mut read) = ws.split();
@@ -919,15 +939,6 @@ async fn discord_request(
         return Err(ConnectFailureKind::Permanent);
     }
     Ok((status, text))
-}
-
-fn transient_backoff(attempt: u32) -> Duration {
-    let secs = if attempt >= 6 {
-        30
-    } else {
-        1u64 << attempt.min(5)
-    };
-    Duration::from_secs(secs.min(30))
 }
 
 fn redact_token(input: &str, token: &str) -> String {

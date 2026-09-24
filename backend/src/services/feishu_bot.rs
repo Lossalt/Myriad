@@ -258,7 +258,7 @@ async fn run_loop() {
             }
             Err(_) => {
                 reconnect_attempts = reconnect_attempts.saturating_add(1);
-                let delay = transient_backoff(reconnect_attempts);
+                let delay = crate::services::bot_ingress::reconnect_backoff(reconnect_attempts);
                 warn!(
                     attempt = reconnect_attempts,
                     retry_in_secs = delay.as_secs(),
@@ -377,15 +377,6 @@ async fn feishu_http_client() -> Result<reqwest::Client, ConnectFailureKind> {
         log_transport("Feishu HTTP client build failed", &err);
         ConnectFailureKind::Transient
     })
-}
-
-fn transient_backoff(attempt: u32) -> Duration {
-    let secs = if attempt >= 6 {
-        30
-    } else {
-        1u64 << attempt.min(5)
-    };
-    Duration::from_secs(secs.min(30))
 }
 
 fn log_transport(context: &str, err: &impl std::fmt::Display) {
