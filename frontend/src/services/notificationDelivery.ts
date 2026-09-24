@@ -1,36 +1,26 @@
 import type { ToastType } from '../components/Toast'
 import type { AppNotification } from './notificationApi'
 import type {
-  NotificationEventKey,
   NotificationPreferences,
   NotificationSourceKey,
 } from './notificationPreferencesApi'
-import { NOTIFICATION_EVENT_KEYS } from './notificationPreferencesApi'
+import {
+  NOTIFICATION_EVENT_SOURCES,
+  notificationEventKeyOf,
+} from './notificationEvents'
 
 export type NotificationLocation = 'panel' | 'toast' | 'island' | 'browser'
 
-const EVENT_KEYS = new Set<string>(NOTIFICATION_EVENT_KEYS)
-
+/**
+ * Same rule as the backend `allows()`: a catalogued key owns its source; an
+ * unknown or missing key falls back to the notification type, never to a
+ * guess from the key's prefix.
+ */
 export function notificationSourceFor(
   notification: AppNotification,
 ): NotificationSourceKey {
-  const eventKey = notification.metadata?.event_key
-  if (typeof eventKey === 'string') {
-    const source = eventKey.split('.')[0]
-    if (source === 'skill') return 'agent'
-    if (
-      source === 'agent' ||
-      source === 'heartbeat' ||
-      source === 'mcp' ||
-      source === 'phantasi' ||
-      source === 'tapp' ||
-      source === 'updater' ||
-      source === 'federation' ||
-      source === 'system'
-    ) {
-      return source
-    }
-  }
+  const eventKey = notificationEventKeyOf(notification.metadata)
+  if (eventKey) return NOTIFICATION_EVENT_SOURCES[eventKey]
   if (notification.notification_type.startsWith('task_')) return 'agent'
   if (notification.notification_type === 'agent_clarification') return 'agent'
   if (notification.notification_type === 'heartbeat_result') return 'heartbeat'
@@ -54,14 +44,8 @@ export function shouldDeliverNotification(
   const source = notificationSourceFor(notification)
   if (!preferences.sources[source]) return false
 
-  const eventKey = notification.metadata?.event_key
-  if (
-    typeof eventKey === 'string' &&
-    EVENT_KEYS.has(eventKey) &&
-    !preferences.events[eventKey as NotificationEventKey]
-  ) {
-    return false
-  }
+  const eventKey = notificationEventKeyOf(notification.metadata)
+  if (eventKey && !preferences.events[eventKey]) return false
 
   if (!preferences.locations[source]?.[location]) return false
   if (location === 'panel') return true

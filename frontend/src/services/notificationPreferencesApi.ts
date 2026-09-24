@@ -1,59 +1,15 @@
+import type { NotificationEventKey, NotificationSourceKey } from './notificationEvents'
 import { currentCopy } from '../i18n/localeCopy'
 import { formatUserFacingError } from '../utils/formatUserFacingError'
 import apiService from './api'
+import {
+  NOTIFICATION_EVENT_KEYS,
+  NOTIFICATION_EVENT_SOURCES,
+  NOTIFICATION_SOURCE_KEYS,
+} from './notificationEvents'
 
-export const NOTIFICATION_SOURCE_KEYS = [
-  'agent',
-  'heartbeat',
-  'mcp',
-  'phantasi',
-  'tapp',
-  'updater',
-  'federation',
-  'system',
-] as const
-
-export type NotificationSourceKey = (typeof NOTIFICATION_SOURCE_KEYS)[number]
-
-export const NOTIFICATION_EVENT_KEYS = [
-  'agent.task_progress',
-  'agent.task_completed',
-  'agent.task_failed',
-  'agent.task_cancelled',
-  'agent.clarification',
-  'agent.merope.platform_activity',
-  'heartbeat.succeeded',
-  'heartbeat.failed',
-  'heartbeat.seo_review',
-  'mcp.connected',
-  'mcp.disconnected',
-  'phantasi.new_items',
-  'phantasi.source_error',
-  'platform.sync.failed',
-  'tapp.message',
-  'tapp.warning',
-  'tapp.error',
-  'updater.submitted',
-  'updater.running',
-  'updater.succeeded',
-  'updater.failed',
-  'updater.needs_manual',
-  'updater.unknown',
-  'federation.channel_message',
-  'federation.room_message',
-  'federation.new_follower',
-  'federation.follow_accepted',
-  'federation.channel_invite',
-  'federation.room_invite',
-  'federation.channel_accepted',
-  'federation.room_invite_accepted',
-  'system.info',
-  'skill.pruned',
-  'skill.improved',
-  'skill.changed',
-] as const
-
-export type NotificationEventKey = (typeof NOTIFICATION_EVENT_KEYS)[number]
+export { NOTIFICATION_EVENT_KEYS, NOTIFICATION_SOURCE_KEYS }
+export type { NotificationEventKey, NotificationSourceKey }
 
 export interface NotificationDeliveryPreferences {
   island: boolean
@@ -115,7 +71,7 @@ export const DEFAULT_NOTIFICATION_CATALOG = {
   sources: Iterator.from(NOTIFICATION_SOURCE_KEYS).toArray(),
   events: NOTIFICATION_EVENT_KEYS.map((key) => ({
     key,
-    source: key.split('.')[0] as NotificationSourceKey,
+    source: NOTIFICATION_EVENT_SOURCES[key],
   })),
 }
 

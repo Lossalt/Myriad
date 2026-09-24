@@ -1,6 +1,10 @@
 import type { AppNotification } from '../services/notificationApi'
 import { currentCopy, formatCurrent } from '../i18n/localeCopy'
 import {
+  NotificationEvent,
+  notificationEventKeyOf,
+} from '../services/notificationEvents'
+import {
   isInternalDump,
   isUselessErrorText,
 } from './uselessErrorText'
@@ -59,10 +63,7 @@ function metaString(
 
 export function notificationFacingTitle(notification: AppNotification): string {
   const t = currentCopy().errors
-  const eventKey =
-    typeof notification.metadata?.event_key === 'string'
-      ? notification.metadata.event_key
-      : ''
+  const eventKey = notificationEventKeyOf(notification.metadata)
   const name =
     metaString(notification, 'source_name') ||
     metaString(notification, 'platform') ||
@@ -70,9 +71,9 @@ export function notificationFacingTitle(notification: AppNotification): string {
     metaString(notification, 'tapp_id')
 
   switch (eventKey) {
-    case 'phantasi.source_error':
+    case NotificationEvent.phantasiSourceError:
       return fill(t.noticePhantasiSourceFailed, { name: name || 'RSS' })
-    case 'phantasi.new_items':
+    case NotificationEvent.phantasiNewItems:
       return fill(t.noticePhantasiNewItems, {
         name:
           name ||
@@ -83,10 +84,10 @@ export function notificationFacingTitle(notification: AppNotification): string {
             ? notification.metadata.new_count
             : 0,
       })
-    case 'heartbeat.seo_review':
+    case NotificationEvent.heartbeatSeoReview:
       return t.noticeSeoReview
-    case 'heartbeat.succeeded':
-    case 'heartbeat.failed':
+    case NotificationEvent.heartbeatSucceeded:
+    case NotificationEvent.heartbeatFailed:
       return fill(t.noticeHeartbeatTask, {
         name:
           metaString(notification, 'task_name') ||
@@ -96,61 +97,61 @@ export function notificationFacingTitle(notification: AppNotification): string {
             .trim() ||
           'task',
       })
-    case 'platform.sync.failed':
+    case NotificationEvent.platformSyncFailed:
       return fill(t.noticePlatformSyncFailed, { name: name || 'Steam' })
-    case 'mcp.disconnected':
+    case NotificationEvent.mcpDisconnected:
       return fill(t.noticeMcpFailed, { name: name || 'MCP' })
-    case 'mcp.connected':
+    case NotificationEvent.mcpConnected:
       return fill(t.noticeMcpConnected, { name: name || 'MCP' })
-    case 'agent.task_failed':
+    case NotificationEvent.agentTaskFailed:
       return t.noticeAgentTaskFailed
-    case 'agent.task_completed':
+    case NotificationEvent.agentTaskCompleted:
       return t.noticeAgentTaskCompleted
-    case 'agent.task_cancelled':
+    case NotificationEvent.agentTaskCancelled:
       return t.agentTaskCancelled
-    case 'agent.clarification':
+    case NotificationEvent.agentClarification:
       return t.noticeAgentTaskWaiting
-    case 'agent.task_progress':
+    case NotificationEvent.agentTaskProgress:
       return t.noticeAgentTaskRunning
-    case 'updater.succeeded':
+    case NotificationEvent.updaterSucceeded:
       return t.noticeUpdaterSucceeded
-    case 'updater.failed':
+    case NotificationEvent.updaterFailed:
       return t.noticeUpdaterFailed
-    case 'updater.needs_manual':
+    case NotificationEvent.updaterNeedsManual:
       return t.noticeUpdaterNeedsManual
-    case 'updater.running':
+    case NotificationEvent.updaterRunning:
       return t.noticeUpdaterRunning
-    case 'updater.unknown':
+    case NotificationEvent.updaterUnknown:
       return t.noticeUpdaterUnknown
-    case 'updater.submitted':
+    case NotificationEvent.updaterSubmitted:
       return t.noticeUpdaterSubmitted
-    case 'federation.domain_revoked':
+    case NotificationEvent.federationDomainRevoked:
       return fill(t.noticeFederationRevoked, {
         name: metaString(notification, 'target_domain') || name || 'remote',
       })
-    case 'federation.new_follower':
+    case NotificationEvent.federationNewFollower:
       return t.noticeNewFollower
-    case 'federation.follow_accepted':
+    case NotificationEvent.federationFollowAccepted:
       return t.noticeFollowAccepted
-    case 'federation.channel_invite':
+    case NotificationEvent.federationChannelInvite:
       return t.noticeChannelInvite
-    case 'federation.room_invite':
+    case NotificationEvent.federationRoomInvite:
       return t.noticeRoomInvite
-    case 'federation.room_invite_accepted':
+    case NotificationEvent.federationRoomInviteAccepted:
       return t.noticeRoomInviteAccepted
-    case 'federation.channel_accepted':
+    case NotificationEvent.federationChannelAccepted:
       return t.noticeChannelAccepted
-    case 'federation.delivery_failed':
+    case NotificationEvent.federationDeliveryFailed:
       return t.noticeDeliveryFailed
-    case 'skill.pruned':
+    case NotificationEvent.skillPruned:
       return fill(t.noticeSkillPruned, {
         name: metaString(notification, 'skill_id') || name,
       })
-    case 'skill.improved':
+    case NotificationEvent.skillImproved:
       return fill(t.noticeSkillImproved, {
         name: metaString(notification, 'skill_id') || name,
       })
-    case 'skill.changed':
+    case NotificationEvent.skillChanged:
       return fill(t.noticeSkillChanged, {
         name: metaString(notification, 'skill_id') || name,
       })
@@ -253,34 +254,31 @@ export function notificationFacingTitle(notification: AppNotification): string {
 
 export function notificationFacingBody(notification: AppNotification): string {
   const t = currentCopy().errors
-  const eventKey =
-    typeof notification.metadata?.event_key === 'string'
-      ? notification.metadata.event_key
-      : ''
+  const eventKey = notificationEventKeyOf(notification.metadata)
   const actor = metaString(notification, 'actor_label')
   const room = metaString(notification, 'room_name')
-  if (eventKey === 'federation.domain_revoked') {
+  if (eventKey === NotificationEvent.federationDomainRevoked) {
     const count = notification.metadata?.cancelled_deliveries
     return fill(t.noticeFederationRevokedBody, {
       name: metaString(notification, 'target_domain') || 'remote',
       count: typeof count === 'number' ? count : Number(count ?? 0),
     })
   }
-  if (eventKey === 'federation.new_follower') {
+  if (eventKey === NotificationEvent.federationNewFollower) {
     return fill(t.noticeNewFollowerBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.follow_accepted') {
+  if (eventKey === NotificationEvent.federationFollowAccepted) {
     return fill(t.noticeFollowAcceptedBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.channel_invite') {
+  if (eventKey === NotificationEvent.federationChannelInvite) {
     return fill(t.noticeChannelInviteBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.room_invite') {
+  if (eventKey === NotificationEvent.federationRoomInvite) {
     return room
       ? fill(t.noticeRoomInviteNamedBody, { name: actor || 'someone', room })
       : fill(t.noticeRoomInviteBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.room_invite_accepted') {
+  if (eventKey === NotificationEvent.federationRoomInviteAccepted) {
     return room
       ? fill(t.noticeRoomInviteAcceptedNamedBody, {
           name: actor || 'someone',
@@ -288,27 +286,27 @@ export function notificationFacingBody(notification: AppNotification): string {
         })
       : fill(t.noticeRoomInviteAcceptedBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.channel_accepted') {
+  if (eventKey === NotificationEvent.federationChannelAccepted) {
     return fill(t.noticeChannelAcceptedBody, { name: actor || 'someone' })
   }
-  if (eventKey === 'federation.delivery_failed') {
+  if (eventKey === NotificationEvent.federationDeliveryFailed) {
     return fill(t.noticeDeliveryFailedBody, {
       name: metaString(notification, 'target_domain') || 'remote',
     })
   }
-  if (eventKey === 'heartbeat.seo_review') {
+  if (eventKey === NotificationEvent.heartbeatSeoReview) {
     return notification.body
   }
-  if (eventKey === 'skill.improved') {
+  if (eventKey === NotificationEvent.skillImproved) {
     return t.noticeSkillImprovedBody
   }
-  if (eventKey === 'skill.pruned') {
+  if (eventKey === NotificationEvent.skillPruned) {
     return fill(t.noticeSkillPrunedBody, {
       name: metaString(notification, 'skill_id') || 'skill',
     })
   }
   if (
-    eventKey === 'phantasi.new_items' &&
+    eventKey === NotificationEvent.phantasiNewItems &&
     (!notification.body ||
       /^发现 \d+ 篇新内容$/.test(notification.body) ||
       /^\d+ new items found$/i.test(notification.body))
