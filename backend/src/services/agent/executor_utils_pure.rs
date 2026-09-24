@@ -273,17 +273,16 @@ mod step_timeout_tests {
     /// 执行层。
     #[test]
     fn prompts_that_yield_executable_plans_frame_untrusted_input() {
-        for (label, source, expected) in [(
+        let (label, source, expected) = (
             "UI / 页面动作计划",
             include_str!("executor/handlers/ui_control.rs"),
             2,
-        )] {
-            assert_eq!(
-                source.matches("untrusted_block(").count(),
-                expected,
-                "{label} 的第三方输入没有全部带边界"
-            );
-        }
+        );
+        assert_eq!(
+            source.matches("untrusted_block(").count(),
+            expected,
+            "{label} 的第三方输入没有全部带边界"
+        );
     }
 
     /// 产物只是文字、但输入同样来自公网的那一档。
