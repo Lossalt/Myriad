@@ -1101,6 +1101,24 @@ struct IntakeCtx {
     country: Option<CountryInfo>,
 }
 
+/// `true` when the write landed; a failure is logged, never surfaced.
+///
+/// Intake is best-effort for the client on purpose. The browser flush treats
+/// any 5xx as "retry the whole batch" (`frontend/src/utils/siteAnalytics.ts`),
+/// and views / event counts are not idempotent, so failing the request over
+/// one side counter would double-count every item that did land. Each write is
+/// atomic on its own (see the SQL above), so a logged failure loses exactly
+/// that one increment and never leaves a seen row without its count.
+fn intake_write_ok<T>(write: &'static str, result: Result<T, sea_orm::DbErr>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(write, %error, "analytics intake write failed");
+            false
+        }
+    }
+}
+
 async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
     let mut accepted = 0usize;
     for item in items.iter().take(MAX_BATCH_ITEMS) {
@@ -1110,19 +1128,25 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                 let Some(path) = item.path.as_deref().and_then(normalize_path) else {
                     continue;
                 };
-                let _ = record_site_unique(&ctx.db, ctx.day, &ctx.visitor).await;
+                intake_write_ok(
+                    "site_unique",
+                    record_site_unique(&ctx.db, ctx.day, &ctx.visitor).await,
+                );
                 let dup = is_duplicate_view(&ctx.visitor, &path).await;
-                if bump_pageview(&ctx.db, ctx.day, &path, &ctx.visitor, !dup)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "pageview",
+                    bump_pageview(&ctx.db, ctx.day, &path, &ctx.visitor, !dup).await,
+                ) {
                     accepted += 1;
                     if let Some(ref country) = ctx.country {
-                        let _ = bump_country(&ctx.db, ctx.day, country, &ctx.visitor, !dup).await;
+                        intake_write_ok(
+                            "country",
+                            bump_country(&ctx.db, ctx.day, country, &ctx.visitor, !dup).await,
+                        );
                     }
                 }
                 if let Some(host) = item.referrer.as_deref().and_then(normalize_referrer_host) {
-                    let _ = bump_referrer(&ctx.db, ctx.day, &host).await;
+                    intake_write_ok("referrer", bump_referrer(&ctx.db, ctx.day, &host).await);
                 }
             }
             "engagement" => {
@@ -1130,10 +1154,10 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                     continue;
                 };
                 let ms = item.ms.unwrap_or(0);
-                if bump_engagement(&ctx.db, ctx.day, &path, &ctx.visitor, ms)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "engagement",
+                    bump_engagement(&ctx.db, ctx.day, &path, &ctx.visitor, ms).await,
+                ) {
                     accepted += 1;
                 }
             }
@@ -1151,10 +1175,10 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                     .as_deref()
                     .map(normalize_target)
                     .unwrap_or_default();
-                if bump_event(&ctx.db, ctx.day, &name, &path, &target, &ctx.visitor)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "event",
+                    bump_event(&ctx.db, ctx.day, &name, &path, &target, &ctx.visitor).await,
+                ) {
                     accepted += 1;
                 }
             }

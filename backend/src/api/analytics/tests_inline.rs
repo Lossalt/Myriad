@@ -677,3 +677,16 @@ async fn concurrent_duplicate_visits_count_once() {
     drop(db);
     isolated.drop().await;
 }
+
+#[test]
+fn intake_items_log_every_write_failure() {
+    let src = include_str!("intake_helpers.rs");
+    let body = src
+        .split("async fn process_items")
+        .nth(1)
+        .and_then(|rest| rest.split("async fn parse_json_body").next())
+        .expect("process_items");
+    assert!(!body.contains("let _ ="), "a write error is silently dropped");
+    assert!(!body.contains(".is_ok()"), "a write error is silently dropped");
+    assert_eq!(body.matches("intake_write_ok(").count(), 6);
+}
