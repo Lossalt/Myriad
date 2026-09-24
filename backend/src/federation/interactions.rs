@@ -406,7 +406,8 @@ pub async fn like_object(
     )
     .await
     .map_err(db_err)?;
-    deliver_like_or_announce(db, user_id, act_db_id, &like_json, &object_id).await?;
+    // Like 只投原作者，不进粉丝的首页。
+    deliver_to_object_author(db, act_db_id, &like_json, &object_id).await;
 
     let st = stats_for_one(db, user_id, &object_id).await?;
     Ok(InteractionResponse {
@@ -486,9 +487,8 @@ pub async fn unlike_object(
         )
         .await
         .map_err(db_err)?;
-        content::fan_out_to_followers(db, user_id, act_db_id, &undo_json)
-            .await
-            .map_err(db_err)?;
+        // 与 Like 对称：只投原作者。粉丝从没收到过这个 Like，给他们发
+        // Undo(Like) 只是空转（远端按 remote_actor_id 删不到任何行）。
         deliver_to_object_author(db, act_db_id, &undo_json, &object_id).await;
     }
 
@@ -1281,25 +1281,6 @@ pub async fn unannounce_object(
 }
 
 // Delivery helpers
-
-async fn deliver_like_or_announce(
-    db: &DatabaseConnection,
-    user_id: i32,
-    activity_db_id: i32,
-    activity_json: &serde_json::Value,
-    object_id: &str,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let act_type = activity_json["type"].as_str().unwrap_or("");
-    // Like: deliver to object author only (do not fan-out to followers' home feeds).
-    // Announce: fan-out to followers + author (repost should appear on followers' timelines).
-    if act_type == "Announce" {
-        content::fan_out_to_followers(db, user_id, activity_db_id, activity_json)
-            .await
-            .map_err(db_err)?;
-    }
-    deliver_to_object_author(db, activity_db_id, activity_json, object_id).await;
-    Ok(())
-}
 
 /// Best-effort: deliver activity to the object's attributedTo inbox.
 async fn deliver_to_object_author(
