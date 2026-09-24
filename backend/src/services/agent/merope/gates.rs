@@ -39,7 +39,7 @@ const VALUABLE: &[&str] = &[
 ];
 
 pub fn is_valuable_event(event_key: &str) -> bool {
-    VALUABLE.contains(&event_key) || event_key.contains("platform") && event_key.contains("error")
+    VALUABLE.contains(&event_key)
 }
 
 pub fn is_task_outcome(event_key: &str) -> bool {
@@ -224,6 +224,8 @@ mod tests {
     #[test]
     fn platform_sync_failure_is_valuable() {
         assert!(is_valuable_event("platform.sync.failed"));
+        // Exact keys only: no substring guess may widen who interrupts the user.
+        assert!(!is_valuable_event("platform.sync.error"));
         let decision = decide_ingest("platform.sync.failed", &IngestSight::default());
         assert!(decision.notify);
     }
