@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::{Mutex, RwLock};
 
 use super::types_index::*;
@@ -71,17 +71,12 @@ impl AgentMemory {
 
     /// 该用户召回时要查的分片 key。
     ///
-    /// 系统用户（`user_id == 0`）在 [`entry_visible_to`] 里能看到全部条目，
-    /// 所以它查所有分片；普通用户只查自己那片。
+    /// 只查 `Some(user_id)`。用户 0 不跨分片；遗留 `None` 分片不进任何人的候选池。
     fn visible_shards(
         user_id: i32,
-        indexes: &HashMap<Option<i32>, TfIdfIndex>,
+        _indexes: &HashMap<Option<i32>, TfIdfIndex>,
     ) -> Vec<Option<i32>> {
-        if user_id == 0 {
-            indexes.keys().copied().collect()
-        } else {
-            vec![Some(user_id)]
-        }
+        vec![Some(user_id)]
     }
 
     // 写入
@@ -832,7 +827,7 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
         true
     }
 
-    /// 更新指定 ID 的记忆内容（`entry_visible_to`：所有者或系统用户）
+    /// 更新指定 ID 的记忆内容（`entry_visible_to`：仅条目所有者）
     ///
     /// 锁顺序：index 先，entries 后（与其他所有路径一致，避免死锁）
     pub async fn update_memory(&self, memory_id: &str, new_content: &str, user_id: i32) -> bool {
@@ -886,15 +881,16 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             return Vec::new();
         }
 
+        // 未指定调用者时不做隔离扫描。默认值曾经是「查全部分片」，这里改成空结果。
+        let Some(uid) = params.user_id else {
+            return Vec::new();
+        };
+
         // TF-IDF 搜索 — 只在调用者可见的分片里取候选，`limit * 3` 余量留给层级和类型过滤。
         // 读锁：IDF 已由写入方在写锁内重建。
         let tfidf_results = {
             let indexes = self.indexes.read().await;
-            let shards = match params.user_id {
-                Some(uid) => Self::visible_shards(uid, &indexes),
-                // user_id 为 None 时扫全部分片；过滤阶段也不做用户隔离
-                None => indexes.keys().copied().collect(),
-            };
+            let shards = Self::visible_shards(uid, &indexes);
             let mut merged: Vec<(String, f32)> = shards
                 .iter()
                 .filter_map(|shard| indexes.get(shard))
@@ -920,11 +916,8 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             .filter_map(|(id, sim_score)| {
                 let entry = entries.get(&id)?;
 
-                // 用户隔离
-                if let Some(uid) = params.user_id {
-                    if !entry_visible_to(entry, uid) {
-                        return None;
-                    }
+                if !entry_visible_to(entry, uid) {
+                    return None;
                 }
 
                 // 层级过滤
@@ -1579,9 +1572,16 @@ mod tests {
         };
         assert!(entry_visible_to(&a, 1));
         assert!(!entry_visible_to(&a, 2));
-        assert!(entry_visible_to(&a, 0)); // system sees all
-        assert!(!entry_visible_to(&legacy, 1)); // orphan legacy not visible to users
-        assert!(entry_visible_to(&legacy, 0));
+        assert!(!entry_visible_to(&a, 0)); // user 0 is not a cross-user reader
+        assert!(!entry_visible_to(&legacy, 1));
+        assert!(!entry_visible_to(&legacy, 0)); // legacy rows are not recallable yet
+        let own = MemoryEntry {
+            user_id: Some(0),
+            content: "system-owned".into(),
+            ..a.clone()
+        };
+        assert!(entry_visible_to(&own, 0));
+        assert!(!entry_visible_to(&own, 1));
     }
 
     // 用户分片
@@ -1670,10 +1670,9 @@ mod tests {
             .expect("user 1 shard")
             .search("订阅源", 9);
         assert_eq!(pool.len(), 5, "the whole shard is 5 entries");
-        assert!(
-            pool.iter()
-                .all(|(id, _)| entries.get(id).is_some_and(|e| e.user_id == Some(1)))
-        );
+        assert!(pool
+            .iter()
+            .all(|(id, _)| entries.get(id).is_some_and(|e| e.user_id == Some(1))));
     }
 
     #[tokio::test]
@@ -1692,7 +1691,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_system_user_still_recalls_across_every_shard() {
+    async fn the_system_user_recalls_only_its_own_entries() {
         let (memory, _dir) = scratch_memory().await;
         memory
             .remember("用户一的订阅偏好", MemoryType::Preference, 1)
@@ -1700,12 +1699,39 @@ mod tests {
         memory
             .remember("用户二的订阅偏好", MemoryType::Preference, 2)
             .await;
+        memory
+            .remember("心跳自己的订阅偏好", MemoryType::Preference, 0)
+            .await;
 
         let hits = memory.recall_with_params(recall("订阅偏好", 0, 10)).await;
-        assert_eq!(
-            hits.len(),
-            2,
-            "system sees every entry, per entry_visible_to"
+        assert_eq!(hits.len(), 1, "user 0 must not read other users' memory");
+        assert!(hits.iter().all(|entry| entry.user_id == Some(0)));
+        assert_eq!(hits[0].content, "心跳自己的订阅偏好");
+
+        let as_user = memory.recall_with_params(recall("订阅偏好", 1, 10)).await;
+        assert!(as_user.iter().all(|entry| entry.user_id == Some(1)));
+        assert!(!as_user.iter().any(|entry| entry.user_id == Some(0)));
+    }
+
+    #[tokio::test]
+    async fn recall_without_a_user_id_returns_nothing() {
+        let (memory, _dir) = scratch_memory().await;
+        memory
+            .remember("用户一的秘密偏好", MemoryType::Preference, 1)
+            .await;
+        memory
+            .remember("心跳自己的秘密偏好", MemoryType::Preference, 0)
+            .await;
+
+        let unspecified = RecallQuery {
+            query: "秘密偏好".into(),
+            limit: 10,
+            ..Default::default()
+        };
+        assert!(unspecified.user_id.is_none());
+        assert!(
+            memory.recall_with_params(unspecified).await.is_empty(),
+            "a missing caller must not scan every shard"
         );
     }
 
@@ -1775,18 +1801,16 @@ mod tests {
                 .insert(legacy.id.clone(), legacy);
         }
 
+        assert!(memory
+            .recall_with_params(recall("订阅记录", 1, 10))
+            .await
+            .is_empty());
         assert!(
-            memory
-                .recall_with_params(recall("订阅记录", 1, 10))
-                .await
-                .is_empty()
-        );
-        assert_eq!(
             memory
                 .recall_with_params(recall("订阅记录", 0, 10))
                 .await
-                .len(),
-            1
+                .is_empty(),
+            "legacy rows stay unrecalled until the phase-3 migration"
         );
     }
 

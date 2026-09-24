@@ -19,7 +19,7 @@ pub(crate) const MERGE_SIMILARITY_THRESHOLD: f32 = 0.70;
 pub struct MemoryEntry {
     /// 唯一 ID（写入路径 hash `{user_id}:{content}`；memory.md 导入只 hash 内容）
     pub id: String,
-    /// 所属用户（None = memory.md 遗留导入，仅系统 user_id=0 可见；新写入为 Some(user_id)）
+    /// 所属用户（None = memory.md 遗留导入，任何人都不可召回，留到阶段 3 迁移；新写入为 Some(user_id)）
     #[serde(default)]
     pub user_id: Option<i32>,
     /// 记忆类型
@@ -49,11 +49,10 @@ pub struct MemoryEntry {
     pub related_capabilities: Vec<String>,
 }
 
-/// 条目是否对用户可见（严格：仅自己的；系统 user_id=0 可见全部）
+/// 条目是否对调用者可见。只看 `entry.user_id == Some(caller)`。
+///
+/// 用户 0 没有跨用户特权。`user_id: None` 的遗留条目对谁都不可见。
 pub(crate) fn entry_visible_to(entry: &MemoryEntry, user_id: i32) -> bool {
-    if user_id == 0 {
-        return true;
-    }
     entry.user_id == Some(user_id)
 }
 
@@ -366,7 +365,7 @@ pub struct RecallQuery {
     pub tier_filter: Option<Vec<MemoryTier>>,
     /// 仅搜索指定类型（None = 全部）
     pub type_filter: Option<Vec<MemoryType>>,
-    /// 仅召回该用户的记忆（None 则扫全部分片且不做用户隔离）
+    /// 仅召回该用户的记忆。`None` 表示未指定调用者，召回为空，不扫全库。
     pub user_id: Option<i32>,
     /// TF-IDF 余弦相似度权重
     pub similarity_weight: f32,
@@ -412,7 +411,7 @@ pub struct AgentMemory {
     /// 按 `MemoryEntry::user_id` 分片；召回/去重在该分片内进行，IDF 也不跨用户。
     ///
     /// key 用 `Option<i32>`：遗留 markdown 导入的条目 `user_id` 为 `None`，它们
-    /// 对普通用户不可见，单独成片后就不再干扰任何人的词权重。
+    /// 对任何人都不可召回，单独成片后也不再干扰任何人的词权重。
     pub(crate) indexes: RwLock<HashMap<Option<i32>, TfIdfIndex>>,
     /// 有低优先级变更（访问计数等）尚未落盘，由后台维护任务批量 flush
     pub(crate) dirty: std::sync::atomic::AtomicBool,
