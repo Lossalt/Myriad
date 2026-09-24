@@ -114,10 +114,10 @@ pub async fn run() -> anyhow::Result<()> {
         })
         .await
     });
-    let delivery_db = db.clone();
-    let mut delivery = tokio::spawn(async move {
-        super::delivery::run_delivery_worker(delivery_db).await;
-    });
+    // Delivery runs on the process job runner. A closed gate ends the process
+    // through `wait_until_gate_closes` below; a panicking round is contained by
+    // the runner and the next round claims again.
+    let _delivery = super::delivery::spawn_delivery_worker(db.clone());
     let mut refresh = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(15));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -146,30 +146,28 @@ pub async fn run() -> anyhow::Result<()> {
     let result = tokio::select! {
         signal = termination_signal() => signal,
         () = wait_until_gate_closes() => exit_for_closed_gate(),
-        result = &mut delivery => match result {
-            Ok(()) if crate::services::federation_gate::should_exit_process() => {
-                exit_for_closed_gate()
-            }
-            Ok(()) => Err(anyhow::anyhow!("federation delivery loop stopped unexpectedly")),
-            Err(error) => Err(error.into()),
-        },
         result = &mut http => Err(anyhow::anyhow!("federation health server stopped: {result:?}")),
         result = &mut refresh => Err(anyhow::anyhow!("federation config refresh stopped: {result:?}")),
     };
     let _ = shutdown.send(true);
-    // Cancel the local delivery future; its lease heartbeat drops with it.
-    // An interrupted row remains recoverable under the existing lease protocol.
-    delivery.abort();
     refresh.abort();
-    if !http.is_finished() {
-        if tokio::time::timeout(Duration::from_secs(5), &mut http)
-            .await
-            .is_err()
+    // HTTP and the job runner drain side by side so the two deadlines do not
+    // add up past the container's stop grace. A delivery round still running
+    // at the job deadline is aborted; its lease heartbeat drops with it and the
+    // row stays recoverable under the existing lease protocol.
+    let http_drain = async {
+        if !http.is_finished()
+            && tokio::time::timeout(Duration::from_secs(5), &mut http)
+                .await
+                .is_err()
         {
             http.abort();
         }
-    }
-    crate::services::jobs::shutdown(crate::services::jobs::SHUTDOWN_DRAIN).await;
+    };
+    tokio::join!(
+        http_drain,
+        crate::services::jobs::shutdown(crate::services::jobs::SHUTDOWN_DRAIN)
+    );
     result
 }
 
