@@ -45,10 +45,12 @@ fn test_smart_filter_integration() {
 
     let data = Value::Object(all_data);
 
-    // 使用 process_and_save_all，它会分平台保存
-    match SmartFilter::process_and_save_all(&data) {
-        Ok(_) => println!("Successfully processed and saved all platform data"),
-        Err(e) => println!("Failed to process platform data: {}", e),
+    // 与抓取落盘同一条路：逐平台 process_and_save_single
+    for (platform, raw) in data.as_object().into_iter().flatten() {
+        match SmartFilter::process_and_save_single(platform, raw) {
+            Ok(_) => println!("Processed and saved {platform}"),
+            Err(e) => println!("Failed to process {platform}: {e}"),
+        }
     }
 
     // 列出分平台过滤文件（println，无 assert）
@@ -495,7 +497,7 @@ fn load_youtube_filtered_cache_from_disk_if_present() {
     assert!(matches!(back.content_analysis, ContentAnalysis::YouTube(_)));
 }
 
-/// Full and single-platform filtering share one adapter, so the caps hold on both.
+/// Every filter save goes through one adapter, so the caps hold for full and single refresh.
 #[test]
 fn filter_input_caps_videos_and_songs() {
     use process::{MAX_SONGS_FOR_FILTER, MAX_VIDEOS_FOR_FILTER, filter_input};
@@ -548,18 +550,13 @@ fn filter_input_caps_videos_and_songs() {
     assert_eq!(filter_input("github", &github), github);
 }
 
-/// Neither save path may bypass the shared adapter.
+/// The only filter save path must not bypass the shared adapter.
 #[test]
-fn both_filter_save_paths_use_filter_input() {
+fn filter_save_path_uses_filter_input() {
     let single = include_str!("cache_tokens.rs")
         .split("pub fn process_and_save_single")
         .nth(1)
         .expect("process_and_save_single");
     assert!(single.contains("filter_input(platform, platform_data)"));
-    let all = include_str!("process.rs")
-        .split("pub fn process_and_save_all")
-        .nth(1)
-        .and_then(|rest| rest.split("fn save_platform_cache_atomic").next())
-        .expect("process_and_save_all");
-    assert!(all.contains("filter_input(id.slug(), raw)"));
+    assert!(!include_str!("process.rs").contains("fn process_and_save_all"));
 }

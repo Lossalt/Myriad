@@ -11,33 +11,6 @@ use crate::services::content_databases::{AnimeDatabase, ArtistDatabase, GameData
 use super::helpers::*;
 
 impl SmartFilter {
-    /// 处理所有平台数据并分别保存到各平台缓存文件（逐平台走 [`filter_input`]）。
-    pub fn process_and_save_all(all_data: &Value) -> Result<(), Box<dyn std::error::Error>> {
-        let cache_dir = data_paths::platforms_cache_dir();
-        fs::create_dir_all(cache_dir)?;
-
-        let mut processed_count = 0;
-
-        for id in PlatformId::ALL {
-            let Some(raw) = all_data.get(id.slug()) else {
-                continue;
-            };
-            match SmartFilter::filter(id.slug(), &filter_input(id.slug(), raw)) {
-                Ok(result) => {
-                    Self::save_platform_cache_atomic(id.slug(), &result)?;
-                    processed_count += 1;
-                }
-                Err(e) => tracing::warn!("{} filter failed: {}", id.display_name(), e),
-            }
-        }
-
-        tracing::info!(
-            "✓ Smart filtered data saved to {} platform files in cache/platforms/",
-            processed_count
-        );
-        Ok(())
-    }
-
     /// 原子性保存平台缓存（使用临时文件+重命名）
     pub(crate) fn save_platform_cache_atomic(
         platform: &str,
