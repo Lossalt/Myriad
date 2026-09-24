@@ -22,8 +22,8 @@ use crate::federation::types::*;
 
 use super::activities::{
     distribute_to_followers, extract_accept_object_id, extract_activity_actor_id, handle_accept,
-    handle_content_activity, handle_follow, handle_reject, handle_undo, handle_verified_move,
-    move_preflight_error, record_room_peer_activity,
+    handle_content_activity, handle_follow, handle_reject, handle_shared_update, handle_undo,
+    handle_verified_move, move_preflight_error, record_room_peer_activity,
 };
 use super::{PostCommit, inbox_err};
 use super::mfp::{ensure_allowed_mfp_type, handle_mfp_activity};
@@ -722,10 +722,16 @@ async fn dispatch_shared_activity<C: ConnectionTrait>(
         return handle_verified_move(db, move_verified, activity).await;
     }
 
+    // Update 改的是已有条目，不依赖解析出某个本地收件人（公开帖的 to / cc
+    // 里没有本地用户，多用户实例上解析不出来）。
+    if activity_type == "Update" {
+        return handle_shared_update(db, actor_url_str, activity, content_remote).await;
+    }
+
     if activity_type.starts_with("myriad:")
         || matches!(
             activity_type,
-            "Follow" | "Accept" | "Undo" | "Delete" | "Update" | "Like"
+            "Follow" | "Accept" | "Undo" | "Delete" | "Like"
         )
     {
         if let Some(uid) = resolve_shared_inbox_local_user(db, activity_type, activity).await {
