@@ -699,6 +699,69 @@ END $$;
     Ok(())
 }
 
+/// 时间线只放帖子：清掉历史上写进去的非帖子行，并把旧的 Update 行并回原帖。
+///
+/// 同实例投递与远端 Update 修好之前，时间线里留下了三类行，现在都不会再产生：
+/// - `Delete` / `Undo` / `Like` 空条目：查询早已不显示，也没有别的读者。
+/// - 改资料的 Update(Person)：对象 id 就是投来它的 Actor 本身。
+/// - 远端编辑按 Update 插的重复行：同一用户已有同一 Actor 投来的该对象的 Create
+///   行时，把最新一条 Update 的内容并进 Create 行，再删掉这些 Update 行。没有
+///   Create 行的 Update 是该对象唯一的副本，保留。
+///
+/// 每条规则只认确定的事实，重复执行无副作用。
+pub(crate) async fn ensure_timeline_posts_only(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(
+        r#"
+DELETE FROM federation_timeline WHERE activity_type IN ('Delete', 'Undo', 'Like');
+
+DELETE FROM federation_timeline t
+USING federation_remote_actors ra
+WHERE t.activity_type = 'Update'
+  AND ra.id = t.remote_actor_id
+  AND t.content_json->>'id' = ra.actor_url;
+
+WITH latest AS (
+    SELECT DISTINCT ON (u.user_id, u.remote_actor_id, u.content_json->>'id')
+           u.user_id, u.remote_actor_id, u.content_json->>'id' AS object_id,
+           u.content_json, u.content_preview, u.object_type
+    FROM federation_timeline u
+    WHERE u.activity_type = 'Update'
+      AND u.remote_actor_id IS NOT NULL
+      AND u.content_json->>'id' IS NOT NULL
+      AND EXISTS (
+          SELECT 1 FROM federation_timeline c
+          WHERE c.user_id = u.user_id
+            AND c.remote_actor_id = u.remote_actor_id
+            AND c.activity_type = 'Create'
+            AND c.content_json->>'id' = u.content_json->>'id')
+    ORDER BY u.user_id, u.remote_actor_id, u.content_json->>'id',
+             u.received_at DESC, u.id DESC
+)
+UPDATE federation_timeline c
+SET content_json = latest.content_json,
+    content_preview = latest.content_preview,
+    object_type = COALESCE(latest.object_type, c.object_type)
+FROM latest
+WHERE c.user_id = latest.user_id
+  AND c.remote_actor_id = latest.remote_actor_id
+  AND c.activity_type = 'Create'
+  AND c.content_json->>'id' = latest.object_id;
+
+DELETE FROM federation_timeline u
+WHERE u.activity_type = 'Update'
+  AND u.remote_actor_id IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM federation_timeline c
+      WHERE c.user_id = u.user_id
+        AND c.remote_actor_id = u.remote_actor_id
+        AND c.activity_type = 'Create'
+        AND c.content_json->>'id' = u.content_json->>'id');
+"#,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Inbox receipt table (authoritative CREATE is `migrations/005`).
 ///
 /// Old DBs that already applied 005 get `CREATE IF NOT EXISTS`. Review DBs that

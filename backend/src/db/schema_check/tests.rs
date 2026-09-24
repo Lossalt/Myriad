@@ -1774,3 +1774,98 @@ async fn federation_fk_heal_runs_against_real_catalog() {
             .expect("federation FK heal must succeed");
     }
 }
+
+/// 历史非帖子行被清掉、旧 Update 行并回原帖；其余行不动，重复执行无副作用。
+#[tokio::test]
+async fn timeline_heal_keeps_only_posts() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    db.execute_unprepared(
+        r#"
+        INSERT INTO users (id, username) VALUES (2, 'bob'), (3, 'carol');
+        INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+            (21, 'https://r.example/users/amy', 'r.example', 'https://r.example/users/amy/inbox'),
+            (22, 'https://r.example/users/eve', 'r.example', 'https://r.example/users/eve/inbox');
+        INSERT INTO federation_timeline
+            (user_id, activity_id, remote_actor_id, activity_type, object_type,
+             content_preview, content_json, received_at) VALUES
+            (2, 'https://r/c1', 21, 'Create', 'Note', 'v1',
+             '{"id": "https://r/n/1", "content": "v1"}', '2026-01-01T00:00:00Z'),
+            (2, 'https://r/u1', 21, 'Update', 'Note', 'v2',
+             '{"id": "https://r/n/1", "content": "v2"}', '2026-01-02T00:00:00Z'),
+            (2, 'https://r/u2', 21, 'Update', 'Note', 'v3',
+             '{"id": "https://r/n/1", "content": "v3"}', '2026-01-03T00:00:00Z'),
+            (3, 'https://r/c1', 21, 'Create', 'Note', 'v1',
+             '{"id": "https://r/n/1", "content": "v1"}', '2026-01-01T00:00:00Z'),
+            (2, 'https://r/u3', 22, 'Update', 'Note', 'forged',
+             '{"id": "https://r/n/1", "content": "forged"}', '2026-01-04T00:00:00Z'),
+            (2, 'https://r/u4', 21, 'Update', 'Note', 'orphan',
+             '{"id": "https://r/n/2", "content": "orphan"}', '2026-01-04T00:00:00Z'),
+            (2, 'https://r/p1', 21, 'Update', 'Person', NULL,
+             '{"id": "https://r.example/users/amy", "type": "Person"}', NOW()),
+            (2, 'https://r/d1', 21, 'Delete', NULL, NULL, '"https://r/n/9"', NOW()),
+            (2, 'https://r/x1', 21, 'Undo', 'Announce', NULL, '{"type": "Announce"}', NOW()),
+            (2, 'https://r/l1', 21, 'Like', NULL, NULL, '"https://r/n/1"', NOW()),
+            (2, 'https://r/a1', 21, 'Announce', 'Note', 'boost',
+             '{"id": "https://r/n/5"}', NOW());
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let rows = || async {
+        let mut rows: Vec<(i32, String, String)> = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT user_id, activity_id, COALESCE(content_preview, '') AS preview \
+                 FROM federation_timeline ORDER BY user_id, activity_id",
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row.try_get("", "user_id").unwrap(),
+                    row.try_get("", "activity_id").unwrap(),
+                    row.try_get("", "preview").unwrap(),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let expected = vec![
+        (2, "https://r/a1".to_string(), "boost".to_string()),
+        // 最新一条 Update 并进 Create 行。
+        (2, "https://r/c1".to_string(), "v3".to_string()),
+        // 另一个 Actor 投来的同 id 行不算这篇的编辑，保留原样。
+        (2, "https://r/u3".to_string(), "forged".to_string()),
+        // 没有 Create 行的 Update 是唯一副本，保留。
+        (2, "https://r/u4".to_string(), "orphan".to_string()),
+        // carol 没有 Update 行，不受影响。
+        (3, "https://r/c1".to_string(), "v1".to_string()),
+    ];
+    for _ in 0..2 {
+        super::ensure_heals::ensure_timeline_posts_only(db)
+            .await
+            .expect("timeline heal must succeed");
+        assert_eq!(rows().await, expected);
+    }
+    let merged: String = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT content_json->>'content' AS c FROM federation_timeline \
+             WHERE user_id = 2 AND activity_id = 'https://r/c1'",
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "c")
+        .unwrap();
+    assert_eq!(merged, "v3");
+
+    fixture.close().await;
+}
