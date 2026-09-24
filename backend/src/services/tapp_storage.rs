@@ -386,7 +386,11 @@ pub async fn write_storage_value(
     key: &str,
     value: Value,
 ) -> Result<(), TappStorageError> {
-    let row = db
+    use sea_orm::TransactionTrait;
+    // One transaction: the upsert's row lock orders concurrent writes of a
+    // key, so the recorded references always match the stored value.
+    let txn = db.begin().await.map_err(|_| TappStorageError::Database)?;
+    let row = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
@@ -413,9 +417,9 @@ RETURNING id
             }
         })?;
     if let Some(id) = row.and_then(|row| row.try_get::<i32>("", "id").ok()) {
-        bind_storage_media(db, id, user_id, &value).await;
+        bind_storage_media(&txn, id, user_id, &value).await;
     }
-    Ok(())
+    txn.commit().await.map_err(|_| TappStorageError::Database)
 }
 
 /// Apps keep generated results (and any media URL) in storage long after the
@@ -423,7 +427,12 @@ RETURNING id
 /// the namespace's user: an app cannot pin someone else's media and guest
 /// namespaces bind nothing. Never fails the write. Deleted rows are pruned by
 /// media maintenance, so the many delete paths need no hook.
-async fn bind_storage_media(db: &DatabaseConnection, row_id: i32, user_id: i32, value: &Value) {
+async fn bind_storage_media(
+    txn: &sea_orm::DatabaseTransaction,
+    row_id: i32,
+    user_id: i32,
+    value: &Value,
+) {
     use crate::services::media::{Authority, Citations, Consumer, MediaActor, Unresolved, bind};
     use sea_orm::TransactionTrait;
     let origins = crate::services::media::upgrade::configured_origins().await;
@@ -433,10 +442,25 @@ async fn bind_storage_media(db: &DatabaseConnection, row_id: i32, user_id: i32, 
     let authority = actor
         .as_ref()
         .map_or(Authority::Anonymous, Authority::Actor);
+    // A savepoint: a binding error is logged and rolled back alone, never
+    // failing the write it describes.
     let result = async {
-        let txn = db.begin().await?;
-        bind(&txn, &consumer, &citations, authority, Unresolved::Skip).await?;
-        txn.commit().await?;
+        let savepoint = txn.begin().await?;
+        match bind(
+            &savepoint,
+            &consumer,
+            &citations,
+            authority,
+            Unresolved::Skip,
+        )
+        .await
+        {
+            Ok(_) => savepoint.commit().await?,
+            Err(error) => {
+                savepoint.rollback().await?;
+                return Err(error);
+            }
+        }
         Ok::<_, crate::services::media::MediaError>(())
     }
     .await;

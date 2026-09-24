@@ -110,8 +110,10 @@ impl Consumer {
         Self::channel_message(format!("agent_messages:{message_id}"))
     }
 
-    /// Media handed to one Agent run. Once the run's messages are stored they
-    /// protect the media themselves, so this expires instead of pinning it.
+    /// Media handed to one Agent run, protected while the run can still read
+    /// it. Afterwards only stored messages that show the media keep it
+    /// referenced (attachments are not part of the stored message), so this
+    /// expires instead of pinning uploads forever.
     pub fn run_input(run_id: &str) -> Self {
         Self {
             expires_at: Some(Utc::now() + chrono::Duration::hours(24)),
@@ -159,6 +161,10 @@ pub enum Authority<'a> {
     /// Request-supplied content from someone without an identity (guest):
     /// nothing is bound.
     Anonymous,
+    /// Content nobody here authored (a subscribed feed). It may name any local
+    /// URL, including someone's private draft by sequential id, so it never
+    /// publishes, never imports, and binds only assets that are already public.
+    External,
 }
 
 /// What to do with a recognized local URL that is not a ready asset.
@@ -316,11 +322,15 @@ pub async fn bind(
             break;
         }
         let mut asset_id = resolve_cited(txn, &citation.path).await?;
-        if asset_id.is_none() && unresolved == Unresolved::Reject {
-            // Authored content citing a cached image (an RSS picture, a
+        if asset_id.is_none()
+            && unresolved == Unresolved::Reject
+            && matches!(authority, Authority::Site)
+        {
+            // Site-authored content citing a cached image (an RSS picture, a
             // proxied download) makes it durable instead of failing the save.
-            // Evictable caches themselves (RSS items) bind with Skip and are
-            // never imported wholesale.
+            // Only the site imports: request-supplied content must not turn
+            // evictable cache into permanent storage. Evictable caches
+            // themselves (RSS items) bind with Skip and are never imported.
             asset_id = import_cached(txn, &citation.path).await?;
         }
         let Some(asset_id) = asset_id else {
@@ -342,6 +352,9 @@ pub async fn bind(
             continue;
         }
         let asset = assets::to_domain(row, 0)?;
+        if matches!(authority, Authority::External) && asset.exposure != MediaExposure::Public {
+            continue;
+        }
         if let Authority::Actor(actor) = authority {
             if !can_manage(actor, &asset) {
                 match consumer.visibility {

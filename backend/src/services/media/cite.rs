@@ -177,7 +177,8 @@ pub async fn clear_rss_source(
 }
 
 /// RSS content is external; only media that already entered the durable
-/// catalog is protected, and nothing is imported here.
+/// catalog as public is protected. Nothing is imported or published here: a
+/// feed can name any local URL, including another user's private draft.
 pub async fn bind_rss_item(
     txn: &impl ConnectionTrait,
     item_id: i32,
@@ -208,7 +209,7 @@ pub async fn bind_rss_item(
         txn,
         &Consumer::rss_item(item_id),
         &citations,
-        Authority::Site,
+        Authority::External,
         Unresolved::Skip,
     )
     .await
@@ -354,8 +355,8 @@ pub async fn bind_ai_task(
 /// Media handed to one Agent run (web or channel). `payload` is client input:
 /// any string in it may name an asset. Only assets the sender may manage are
 /// bound, so a message cannot pin someone else's media against deletion; a
-/// sender without an actor (guest) binds nothing. The reference expires once
-/// the stored conversation messages protect the media themselves.
+/// sender without an actor (guest) binds nothing. The reference expires after
+/// the run; stored messages that show the media protect it from then on.
 pub async fn bind_run_input(
     txn: &impl ConnectionTrait,
     consumer_id: &str,

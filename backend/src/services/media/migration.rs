@@ -93,8 +93,19 @@ pub(super) async fn import_cached_citation(
     if tokio::fs::metadata(&plan.disk).await.is_err() {
         return Ok(None);
     }
+    // The file lands in the store before the caller commits. A stable identity
+    // per cached file means a rolled-back attempt's copy is found and reused by
+    // the retry instead of leaving another orphan behind.
+    let canonical = cache_equivalent_path(path)
+        .filter(|_| path.starts_with("/api/brew/"))
+        .unwrap_or_else(|| path.to_string());
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(canonical.as_bytes());
+    let mut identity = [0u8; 16];
+    identity.copy_from_slice(&digest[..16]);
+    let public_id = uuid::Builder::from_custom_bytes(identity).into_uuid();
     let row = media_assets::ActiveModel {
         kind: Set("upload".into()),
+        public_id: Set(Some(public_id)),
         url: Set(path.to_string()),
         mime: Set(mime.into()),
         name: Set(path.rsplit('/').next().unwrap_or("media").into()),

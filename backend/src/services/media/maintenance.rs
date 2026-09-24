@@ -21,10 +21,7 @@ pub async fn maintain(db: &DatabaseConnection) -> Result<(), MediaError> {
 /// pruned here rather than at every delete site. Expired references are kept
 /// a day for diagnosis. Run inputs bound before they expired on their own are
 /// dropped once the run is long over. Bounded per tick.
-pub async fn prune_references(
-    db: &DatabaseConnection,
-    limit: u64,
-) -> Result<u64, MediaError> {
+pub async fn prune_references(db: &DatabaseConnection, limit: u64) -> Result<u64, MediaError> {
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
     let result = db
         .execute_raw(Statement::from_sql_and_values(
@@ -71,6 +68,8 @@ pub(super) async fn normalize_catalog_urls(
     let rows = media_assets::Entity::find()
         .filter(media_assets::Column::State.eq("ready"))
         .filter(media_assets::Column::Url.starts_with("/api/media/"))
+        // Rows it cannot fix must not occupy every batch and stall the rest.
+        .filter(media_assets::Column::PublicId.is_not_null())
         .order_by_asc(media_assets::Column::Id)
         .limit(limit.clamp(1, 256))
         .all(db)

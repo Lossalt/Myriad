@@ -2407,7 +2407,7 @@ async fn postgres_one_permanent_address_for_private_and_public() {
         .unwrap()
     {
         ServeOutcome::File(served) => assert_eq!(served.cache_control, NO_STORE),
-        other => panic!("owner must read private asset: {other:?}"),
+        other => panic!("an admin reads any private asset: {other:?}"),
     }
     let published = f.service.publish(&f.db, image.id).await.unwrap();
     assert_eq!(published.url, image.url, "publishing never moves the asset");
@@ -2533,5 +2533,92 @@ async fn postgres_references_of_gone_consumers_are_pruned() {
     assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 4);
     assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
     assert_eq!(references::active_count(&f.db, id).await.unwrap(), 2);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_feeds_never_publish_what_they_cite() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let private = f.image().await;
+    let public = f.image().await;
+    f.service.publish(&f.db, public.id).await.unwrap();
+    // A subscribed feed names a private draft by its sequential id.
+    let payload = json!({
+        "content": format!(
+            "<img src=\"{}\"> <img src=\"{}\">",
+            content_path(private.id),
+            public.url
+        )
+    });
+    let txn = f.db.begin().await.unwrap();
+    bind_rss_item(&txn, 9, &payload, &[]).await.unwrap();
+    txn.commit().await.unwrap();
+    let row = assets::find_by_id(&f.db, private.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.exposure.as_deref(),
+        Some("private"),
+        "a feed never publishes"
+    );
+    assert_eq!(
+        references::active_count(&f.db, private.id).await.unwrap(),
+        0
+    );
+    assert_eq!(references::active_count(&f.db, public.id).await.unwrap(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_rolled_back_cache_import_is_reused_by_the_retry() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let paths = LegacyPaths {
+        federation_root: f.service.store().root().join("legacy/federation"),
+        cache_images: f.service.store().root().join("legacy/cache"),
+    };
+    let hash = format!("ab{}", "1".repeat(62));
+    let url = format!("/api/phantasi/image-cache/ab/{hash}.png");
+    let source = paths.cache_images.join("ab").join(format!("{hash}.png"));
+    tokio::fs::create_dir_all(source.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&source, png()).await.unwrap();
+    let identity = |id| {
+        let db = f.db.clone();
+        async move {
+            assets::find_by_id(&db, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .public_id
+        }
+    };
+    let txn = f.db.begin().await.unwrap();
+    let first = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .unwrap();
+    let first_identity = assets::find_by_id(&txn, first)
+        .await
+        .unwrap()
+        .unwrap()
+        .public_id;
+    txn.rollback().await.unwrap();
+    let txn = f.db.begin().await.unwrap();
+    let second = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(
+        identity(second).await,
+        first_identity,
+        "same file, same identity"
+    );
     f.close().await;
 }
