@@ -226,20 +226,10 @@ pub async fn create_admin(
     .map_err(|error| auth_store_app("lock admin setup", error))?;
 
     // Setup-only: reject if any admin already exists (any auth_provider).
-    let admin_exists_result = txn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT EXISTS (
-                SELECT 1 FROM users WHERE is_admin = true OR COALESCE(is_owner, false) = true
-            ) as exists",
-            vec![],
-        ))
+    // Asked inside the locked transaction; an unreadable claim is an error.
+    let admin_exists = crate::services::principal::installation_claimed(&txn)
         .await
         .map_err(|error| auth_store_app("check existing admin", error))?;
-
-    let admin_exists: bool = admin_exists_result
-        .and_then(|row| row.try_get("", "exists").ok())
-        .unwrap_or(false);
 
     if let Err(err) = create_admin_gate(admin_exists) {
         tracing::error!(
@@ -845,7 +835,7 @@ pub async fn register(
             )));
         }
     }
-    match crate::services::site_owner::installation_has_owner(&db).await {
+    match crate::services::principal::installation_claimed(&db).await {
         Ok(true) => {}
         Ok(false) => {
             return Err(HttpError::from((

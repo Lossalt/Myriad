@@ -88,9 +88,9 @@ fn unmatched_api_response(config_mode: bool, req: &Request) -> Response {
 }
 
 async fn installation_claimed(db: &sea_orm::DatabaseConnection) -> anyhow::Result<bool> {
-    crate::services::site_owner::installation_has_owner(db)
+    crate::services::principal::installation_claimed(db)
         .await
-        .map_err(|error| anyhow::anyhow!("{error}"))
+        .map_err(|error| anyhow::anyhow!("Failed to read installation claim: {error}"))
 }
 
 pub(crate) async fn start_unified_server(

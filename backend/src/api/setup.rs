@@ -31,7 +31,10 @@ pub async fn check_setup_status(
 ) -> Result<Json<SetupStatus>, HttpError> {
     tracing::info!("Checking setup status");
 
-    let progress = inspect_setup_progress(&db).await;
+    let progress = inspect_setup_progress(&db).await.map_err(|error| {
+        tracing::error!(%error, "setup status cannot be read");
+        setup_state_unavailable()
+    })?;
 
     let status = SetupStatus {
         is_setup_required: progress.is_setup_required,
@@ -92,18 +95,32 @@ pub(crate) fn setup_progress_from_flags(has_database: bool, has_admin_user: bool
     }
 }
 
-pub(crate) async fn inspect_setup_progress(db: &DatabaseConnection) -> SetupProgress {
-    let has_database = check_database_tables(db).await;
+/// A failed read is `Err`: an unreachable database is not an uninitialized one.
+pub(crate) async fn inspect_setup_progress(
+    db: &DatabaseConnection,
+) -> Result<SetupProgress, sea_orm::DbErr> {
+    let has_database = check_database_tables(db).await?;
     let has_admin_user = if has_database {
-        check_admin_user_exists(db).await
+        crate::services::principal::installation_claimed(db).await?
     } else {
         false
     };
-    setup_progress_from_flags(has_database, has_admin_user)
+    Ok(setup_progress_from_flags(has_database, has_admin_user))
+}
+
+/// 500, not 503: the wizard reads 503 as "tables not initialized".
+fn setup_state_unavailable() -> HttpError {
+    status_json_to_http((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "error": "Setup state cannot be verified",
+            "code": "setup_state_unavailable"
+        })),
+    ))
 }
 
 /// Check if required database tables exist
-async fn check_database_tables(db: &DatabaseConnection) -> bool {
+async fn check_database_tables(db: &DatabaseConnection) -> Result<bool, sea_orm::DbErr> {
     // Check multiple critical tables to ensure migrations completed
     // Using platforms table since it's the first migration (001)
     let result = db
@@ -121,57 +138,21 @@ async fn check_database_tables(db: &DatabaseConnection) -> bool {
         ))
         .await;
 
-    match result {
-        Ok(Some(row)) => {
-            let platforms_exists: bool = row.try_get("", "platforms_exists").unwrap_or(false);
-            let users_exists: bool = row.try_get("", "users_exists").unwrap_or(false);
+    let row = result?.ok_or_else(|| {
+        sea_orm::DbErr::RecordNotFound("database tables check returned no row".to_string())
+    })?;
+    let platforms_exists: bool = row.try_get("", "platforms_exists")?;
+    let users_exists: bool = row.try_get("", "users_exists")?;
 
-            // Both tables should exist for complete setup
-            let exists = platforms_exists && users_exists;
-            tracing::info!(
-                "Database tables check - platforms: {}, users: {}, complete: {}",
-                platforms_exists,
-                users_exists,
-                exists
-            );
-            exists
-        }
-        Ok(None) => {
-            tracing::warn!("No rows returned when checking database tables");
-            false
-        }
-        Err(e) => {
-            tracing::error!("Error checking database tables: {:?}", e);
-            false
-        }
-    }
-}
-
-/// Check if any current administrator exists, regardless of login provider.
-async fn check_admin_user_exists(db: &DatabaseConnection) -> bool {
-    let result = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT EXISTS (SELECT 1 FROM users WHERE is_admin = true LIMIT 1) as admin_exists",
-            vec![],
-        ))
-        .await;
-
-    match result {
-        Ok(Some(row)) => {
-            let exists: bool = row.try_get("", "admin_exists").unwrap_or(false);
-            tracing::info!("Admin user exists: {}", exists);
-            exists
-        }
-        Ok(None) => {
-            tracing::warn!("No rows returned when checking admin user");
-            false
-        }
-        Err(e) => {
-            tracing::error!("Error checking admin user: {:?}", e);
-            false
-        }
-    }
+    // Both tables should exist for complete setup
+    let exists = platforms_exists && users_exists;
+    tracing::info!(
+        "Database tables check - platforms: {}, users: {}, complete: {}",
+        platforms_exists,
+        users_exists,
+        exists
+    );
+    Ok(exists)
 }
 
 /// Optional JSON body so `setup_secret` can travel with header-less clients.
@@ -197,7 +178,14 @@ pub async fn init_database(
         .map_err(HttpError)?;
     // Lock this endpoint once an administrator exists. CONFIG_MODE is not
     // flipped here; a live setup-only process needs schedule_setup_restart.
-    let admin_exists = check_admin_user_exists(&db).await;
+    // An unreadable claim fails closed: never migrate a database whose owner
+    // we cannot rule out.
+    let admin_exists = crate::services::principal::installation_claimed(&db)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "database initialization refused: claim cannot be read");
+            setup_state_unavailable()
+        })?;
 
     if admin_exists {
         tracing::error!(
@@ -214,7 +202,10 @@ pub async fn init_database(
     }
 
     tracing::info!("Running database migrations");
-    let tables_existed = check_database_tables(&db).await;
+    let tables_existed = check_database_tables(&db).await.map_err(|error| {
+        tracing::error!(%error, "database initialization refused: tables cannot be read");
+        setup_state_unavailable()
+    })?;
 
     // Never drop feature tables from an unauthenticated setup endpoint.
     // Migrator::up drops leftover `digital_life_*` tables, keeps only
@@ -277,7 +268,14 @@ pub async fn init_database(
             // A legacy database may already contain users. `ensure_schema` can
             // promote its durable owner during migration, which claims the
             // installation just as surely as create-admin does.
-            let installation_claimed = check_admin_user_exists(&db).await;
+            // Unreadable here means "unknown", not "unclaimed": report it and
+            // leave the window to the next request's fail-closed gate.
+            let installation_claimed = crate::services::principal::installation_claimed(&db)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "claim after database initialization cannot be read");
+                    setup_state_unavailable()
+                })?;
             if installation_claimed {
                 if let Err(error) = crate::api::setup_bootstrap::consume_setup() {
                     tracing::error!(%error, "database initialization claimed installation but setup cleanup failed");
@@ -697,5 +695,61 @@ mod tests {
         let ready = super::setup_progress_from_flags(true, true);
         assert!(!ready.is_setup_required);
         assert!(ready.missing_configs.is_empty());
+    }
+
+    /// The init gate and the post-migration check both stop on an unreadable
+    /// claim; neither may degrade it to "no admin yet".
+    #[test]
+    fn init_database_claim_checks_fail_closed() {
+        let source = include_str!("setup.rs");
+        let init = source
+            .split("pub async fn init_database(")
+            .nth(1)
+            .and_then(|rest| rest.split("/// Database configuration request").next())
+            .unwrap();
+        let gates: Vec<&str> = init
+            .split("principal::installation_claimed(&db)")
+            .skip(1)
+            .collect();
+        assert_eq!(gates.len(), 2);
+        for gate in gates {
+            let head = gate.trim_start();
+            assert!(head.starts_with(".await") && head[6..].trim_start().starts_with(".map_err("));
+        }
+    }
+
+    #[tokio::test]
+    async fn setup_progress_surfaces_unreadable_claims() {
+        use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, Statement};
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut options = ConnectOptions::new(url);
+        options.max_connections(1).min_connections(1);
+        let db = Database::connect(options).await.unwrap();
+        let exec = |sql: &'static str| {
+            let db = db.clone();
+            async move {
+                db.execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+                    .await
+                    .unwrap();
+            }
+        };
+        exec("CREATE TEMP TABLE platforms (id INT)").await;
+        exec("CREATE TEMP TABLE users (id INT, is_admin TEXT, is_owner BOOLEAN)").await;
+        exec("INSERT INTO users VALUES (1, 'yes', false)").await;
+        assert!(super::inspect_setup_progress(&db).await.is_err());
+
+        exec("ALTER TABLE users ALTER COLUMN is_admin TYPE BOOLEAN USING false").await;
+        let progress = super::inspect_setup_progress(&db).await.unwrap();
+        assert!(progress.has_database && !progress.has_admin_user);
+        exec("UPDATE users SET is_admin = true").await;
+        assert!(
+            super::inspect_setup_progress(&db)
+                .await
+                .unwrap()
+                .has_admin_user
+        );
+        db.close().await.unwrap();
     }
 }

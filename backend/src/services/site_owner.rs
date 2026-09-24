@@ -6,16 +6,6 @@
 
 use sea_orm::DatabaseConnection;
 
-/// True when an administrator or durable owner already exists.
-pub async fn installation_has_owner(db: &DatabaseConnection) -> Result<bool, String> {
-    crate::services::principal::installation_claimed(db)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "failed to read installation claim");
-            "Failed to read installation claim".to_string()
-        })
-}
-
 /// Query / decode errors are failures, never "no owner" and never a different identity.
 pub async fn site_owner_user_id(db: &DatabaseConnection) -> Result<i32, String> {
     crate::services::principal::site_owner_id(db)
