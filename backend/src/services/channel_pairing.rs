@@ -27,7 +27,7 @@ pub struct PairingChannel {
 }
 
 impl PairingChannel {
-    const fn of(platform: ChannelPlatform) -> Self {
+    pub(crate) const fn of(platform: ChannelPlatform) -> Self {
         Self {
             provider: platform.provider(),
             code_namespace: platform.pairing_code_ns(),
@@ -760,4 +760,6 @@ mod tests {
 }
 
 mod binding;
+mod entry;
 pub(crate) use binding::{ChannelBinding, credential_scope};
+pub(crate) use entry::{PrivateText, handle_private_text};

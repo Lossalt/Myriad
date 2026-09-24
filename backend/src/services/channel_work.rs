@@ -128,17 +128,27 @@ fn identity(user_id: i32) -> RegistryIdentity<'static> {
     }
 }
 
-async fn claim_inbound(
+/// Claim one inbound message id; `false` means it was already handled (or
+/// the claim could not be recorded, which is treated the same way).
+pub(crate) async fn claim_inbound(
     db: &DatabaseConnection,
     platform: ChannelPlatform,
-    user_id: i32,
+    user_id: Option<i32>,
     inbound_id: &str,
 ) -> bool {
     match shared_registry::put_if_absent(
         db,
         platform.inbound_ns(),
         inbound_id,
-        identity(user_id),
+        user_id.map_or(
+            RegistryIdentity {
+                subject_id: None,
+                owner_id: None,
+                tapp_id: None,
+                runtime_id: None,
+            },
+            identity,
+        ),
         &Value::Bool(true),
         (Utc::now() + ChronoDuration::hours(24)).timestamp(),
     )
@@ -164,9 +174,9 @@ pub async fn handle_text_with_images(
     input: &str,
     images: &[ChannelImageRef],
     session_key: &str,
-    inbound_id: &str,
     transport: ChannelTransport,
 ) {
+    // The private-text entry has already claimed this message id.
     let platform = transport.platform();
     let binding = match ChannelBinding::resolve(db, platform, user_id, sender_id).await {
         Ok(Some(binding)) => binding,
@@ -178,24 +188,14 @@ pub async fn handle_text_with_images(
         binding,
         db: db.clone(),
     };
-    let platform = sink.platform();
     let session_key = session_key.to_string();
     let chat_id = chat_id.to_string();
     let input = input.to_string();
-    let inbound_id = inbound_id.to_string();
     let images = images.to_vec();
     let db = db.clone();
     let lock_key = session_key.clone();
     with_chat_lock(&lock_key, async move {
-        if !sink.authorized().await
-            || !claim_inbound(
-                &db,
-                platform,
-                user_id,
-                &format!("{session_key}:{inbound_id}"),
-            )
-            .await
-        {
+        if !sink.authorized().await {
             return;
         }
         continue_text(&db, user_id, &chat_id, &input, &images, &session_key, sink).await;
@@ -236,7 +236,7 @@ pub async fn handle_callback(
             || !claim_inbound(
                 &db,
                 platform,
-                user_id,
+                Some(user_id),
                 &format!("{session_key}:{inbound_id}"),
             )
             .await

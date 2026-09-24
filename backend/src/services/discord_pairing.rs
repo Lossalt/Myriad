@@ -1,13 +1,14 @@
 //! Discord DM pairing entry: classify inbound text, then shared pairing I/O.
 
 use myriad_agent_rules::channel::{
-    DiscordPrivateComponent, DiscordPrivateText, InboundDecision, PAIRING_REQUIRED_REPLY,
-    PairingBindResult, PairingLookup, ingest_channel_text, pairing_bind_reply_for, session_key,
+    DiscordPrivateComponent, DiscordPrivateText, InboundC2cText, PAIRING_REQUIRED_REPLY,
+    PairingBindResult, PairingLookup, session_key,
 };
 use sea_orm::{DatabaseConnection, DbErr};
-use tracing::{info, warn};
+use tracing::warn;
 
-use crate::services::channel_pairing::{self, DISCORD_DM};
+use crate::services::channel_pairing::{self, DISCORD_DM, PrivateText};
+use crate::services::channel_platform::ChannelPlatform;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
@@ -30,73 +31,56 @@ pub async fn unpair(db: &DatabaseConnection, user_id: i32) -> Result<bool, DbErr
     channel_pairing::unpair(db, DISCORD_DM, user_id).await
 }
 
-pub async fn consume_code(
-    db: &DatabaseConnection,
-    openid: &str,
-    raw_code: &str,
-) -> Result<PairingBindResult, DbErr> {
-    channel_pairing::consume_code(db, DISCORD_DM, openid, raw_code).await
+/// Worker entry for one private text.
+pub async fn handle_inbound(event: DiscordPrivateText, token: &str) {
+    let inbound = event.inbound();
+    channel_pairing::handle_private_text(DiscordText {
+        event,
+        inbound,
+        token,
+    })
+    .await;
 }
 
-/// Worker entry: classify private text, pair, or start Work.
-pub async fn handle_inbound(event: DiscordPrivateText, token: &str) {
-    let Ok(db) = crate::services::tapp_registry::database() else {
-        warn!("Discord pairing skipped: database is not connected");
-        return;
-    };
-    let inbound = event.inbound();
-    let pairing = match lookup_openid(&db, &inbound.user_openid).await {
-        Ok(value) => value,
-        Err(error) => {
-            warn!(error = %error, "Discord pairing lookup failed");
-            return;
-        }
-    };
-    match ingest_channel_text(&inbound, pairing, false, "discord", &event.author_id) {
-        InboundDecision::Duplicate { .. } => {}
-        InboundDecision::PairingRequired { reply, .. } => {
-            send_text(token, &event.channel_id, &reply).await;
-        }
-        InboundDecision::ConsumePairingCode {
-            user_openid, code, ..
-        } => {
-            let result = match consume_code(&db, &user_openid, &code).await {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(error = %error, "Discord pairing consume failed");
-                    PairingBindResult::InvalidOrExpired
-                }
-            };
-            if let PairingBindResult::Bound { user_id } = result {
-                info!(user_id, "Discord DM paired");
-            }
-            send_text(
-                token,
-                &event.channel_id,
-                pairing_bind_reply_for(result, "discord"),
-            )
-            .await;
-        }
-        InboundDecision::StartWork {
+struct DiscordText<'a> {
+    event: DiscordPrivateText,
+    inbound: InboundC2cText,
+    token: &'a str,
+}
+
+impl PrivateText for DiscordText<'_> {
+    const PLATFORM: ChannelPlatform = ChannelPlatform::Discord;
+
+    fn inbound(&self) -> &InboundC2cText {
+        &self.inbound
+    }
+
+    fn session_chat_id(&self) -> String {
+        self.event.author_id.clone()
+    }
+
+    async fn reply(&self, _db: &DatabaseConnection, text: &str) {
+        send_text(self.token, &self.event.channel_id, text).await;
+    }
+
+    async fn start_work(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i32,
+        input: &str,
+        session_key: &str,
+    ) {
+        crate::services::discord_work::start_paired_work_with_images(
+            db,
             user_id,
+            &self.event.author_id,
+            &self.event.channel_id,
             input,
+            &self.event.images,
             session_key,
-            msg_id,
-            ..
-        } => {
-            crate::services::discord_work::start_paired_work_with_images(
-                &db,
-                user_id,
-                &event.author_id,
-                &event.channel_id,
-                &input,
-                &event.images,
-                &session_key,
-                &msg_id,
-                token,
-            )
-            .await;
-        }
+            self.token,
+        )
+        .await;
     }
 }
 
@@ -151,7 +135,7 @@ async fn send_text(token: &str, channel_id: &str, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myriad_agent_rules::channel::InboundC2cText;
+    use myriad_agent_rules::channel::{InboundDecision, ingest_channel_text};
 
     #[test]
     fn unpaired_plain_text_is_not_a_work_request() {

@@ -1,23 +1,17 @@
 //! QQ C2C pairing entry: classify inbound text, then shared pairing I/O.
 
-use myriad_agent_rules::channel::{
-    InboundC2cText, InboundDecision, PAIRING_REQUIRED_REPLY, PairingBindResult, PairingLookup,
-    ingest_c2c_text, pairing_bind_reply,
-};
+use myriad_agent_rules::channel::{InboundC2cText, PairingBindResult, PairingLookup};
 use sea_orm::{DatabaseConnection, DbErr};
-use tracing::{info, warn};
+use tracing::warn;
 
-use crate::services::channel_pairing::{self, QQ};
+use crate::services::channel_pairing::{self, PrivateText, QQ};
+use crate::services::channel_platform::ChannelPlatform;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
 #[cfg(test)]
 pub fn mask_openid(openid: &str) -> String {
     channel_pairing::mask_openid(openid)
-}
-
-pub async fn lookup_openid(db: &DatabaseConnection, openid: &str) -> Result<PairingLookup, DbErr> {
-    channel_pairing::lookup_openid(db, QQ, openid).await
 }
 
 pub async fn status_for_user(
@@ -35,76 +29,56 @@ pub async fn unpair(db: &DatabaseConnection, user_id: i32) -> Result<bool, DbErr
     channel_pairing::unpair(db, QQ, user_id).await
 }
 
-pub async fn consume_code(
-    db: &DatabaseConnection,
-    openid: &str,
-    raw_code: &str,
-) -> Result<PairingBindResult, DbErr> {
-    channel_pairing::consume_code(db, QQ, openid, raw_code).await
+/// Gateway worker entry for one C2C text.
+pub async fn handle_inbound_c2c(event: InboundC2cText, auth_header: &str) {
+    channel_pairing::handle_private_text(QqText { event, auth_header }).await;
 }
 
-/// Gateway worker entry: classify the C2C text, bind pairing codes, or start Work.
-pub async fn handle_inbound_c2c(event: InboundC2cText, auth_header: &str) {
-    let Ok(db) = crate::services::tapp_registry::database() else {
-        warn!("QQ pairing skipped: database is not connected");
-        return;
-    };
-    let pairing = match lookup_openid(&db, &event.user_openid).await {
-        Ok(value) => value,
-        Err(error) => {
-            warn!(error = %error, "QQ pairing lookup failed");
-            return;
-        }
-    };
-    match ingest_c2c_text(&event, pairing, false) {
-        InboundDecision::Duplicate { .. } => {}
-        InboundDecision::PairingRequired { reply, msg_id, .. } => {
-            send_passive_text(&db, auth_header, &event.user_openid, &reply, &msg_id).await;
-        }
-        InboundDecision::ConsumePairingCode {
-            user_openid,
-            code,
-            msg_id,
-        } => {
-            let result = match consume_code(&db, &user_openid, &code).await {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(error = %error, "QQ pairing consume failed");
-                    PairingBindResult::InvalidOrExpired
-                }
-            };
-            if let PairingBindResult::Bound { user_id } = result {
-                info!(user_id, "QQ C2C paired");
-            }
-            send_passive_text(
-                &db,
-                auth_header,
-                &event.user_openid,
-                pairing_bind_reply(result),
-                &msg_id,
-            )
-            .await;
-        }
-        InboundDecision::StartWork {
+struct QqText<'a> {
+    event: InboundC2cText,
+    auth_header: &'a str,
+}
+
+impl PrivateText for QqText<'_> {
+    const PLATFORM: ChannelPlatform = ChannelPlatform::Qq;
+
+    fn inbound(&self) -> &InboundC2cText {
+        &self.event
+    }
+
+    fn session_chat_id(&self) -> String {
+        self.event.user_openid.clone()
+    }
+
+    async fn reply(&self, db: &DatabaseConnection, text: &str) {
+        send_passive_text(
+            db,
+            self.auth_header,
+            &self.event.user_openid,
+            text,
+            &self.event.msg_id,
+        )
+        .await;
+    }
+
+    async fn start_work(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i32,
+        input: &str,
+        session_key: &str,
+    ) {
+        crate::services::qq_work::start_paired_work_with_images(
+            db,
             user_id,
+            &self.event.user_openid,
+            &self.event.user_openid,
             input,
+            &self.event.images,
             session_key,
-            msg_id,
-            ..
-        } => {
-            crate::services::qq_work::start_paired_work_with_images(
-                &db,
-                user_id,
-                &event.user_openid,
-                &event.user_openid,
-                &input,
-                &event.images,
-                &session_key,
-                &msg_id,
-                auth_header,
-            )
-            .await;
-        }
+            &self.event.msg_id,
+        )
+        .await;
     }
 }
 
@@ -132,6 +106,7 @@ async fn send_passive_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use myriad_agent_rules::channel::{InboundDecision, PAIRING_REQUIRED_REPLY, ingest_c2c_text};
 
     #[test]
     fn masks_openid_without_returning_the_full_id() {

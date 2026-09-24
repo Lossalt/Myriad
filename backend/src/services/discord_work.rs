@@ -12,7 +12,6 @@ pub async fn start_paired_work_with_images(
     input: &str,
     images: &[myriad_agent_rules::channel::ChannelImageRef],
     session_key: &str,
-    message_id: &str,
     token: &str,
 ) {
     channel_work::handle_text_with_images(
@@ -23,7 +22,6 @@ pub async fn start_paired_work_with_images(
         input,
         images,
         session_key,
-        message_id,
         ChannelTransport::Discord {
             token: token.to_string(),
             channel_id: channel_id.to_string(),

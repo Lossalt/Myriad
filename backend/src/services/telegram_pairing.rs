@@ -1,13 +1,14 @@
 //! Telegram DM pairing entry: classify inbound text, then shared pairing I/O.
 
 use myriad_agent_rules::channel::{
-    InboundDecision, PAIRING_REQUIRED_REPLY, PairingBindResult, PairingLookup,
-    TelegramPrivateCallback, TelegramPrivateText, ingest_channel_text, pairing_bind_reply_for,
+    InboundC2cText, PAIRING_REQUIRED_REPLY, PairingBindResult, PairingLookup,
+    TelegramPrivateCallback, TelegramPrivateText,
 };
 use sea_orm::{DatabaseConnection, DbErr};
-use tracing::{info, warn};
+use tracing::warn;
 
-use crate::services::channel_pairing::{self, TELEGRAM};
+use crate::services::channel_pairing::{self, PrivateText, TELEGRAM};
+use crate::services::channel_platform::ChannelPlatform;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
@@ -30,69 +31,56 @@ pub async fn unpair(db: &DatabaseConnection, user_id: i32) -> Result<bool, DbErr
     channel_pairing::unpair(db, TELEGRAM, user_id).await
 }
 
-pub async fn consume_code(
-    db: &DatabaseConnection,
-    openid: &str,
-    raw_code: &str,
-) -> Result<PairingBindResult, DbErr> {
-    channel_pairing::consume_code(db, TELEGRAM, openid, raw_code).await
+/// Worker entry for one private text.
+pub async fn handle_inbound(event: TelegramPrivateText, token: &str) {
+    let inbound = event.inbound();
+    channel_pairing::handle_private_text(TelegramText {
+        event,
+        inbound,
+        token,
+    })
+    .await;
 }
 
-/// Worker entry: classify private text, pair, or start Work.
-pub async fn handle_inbound(event: TelegramPrivateText, token: &str) {
-    let Ok(db) = crate::services::tapp_registry::database() else {
-        warn!("Telegram pairing skipped: database is not connected");
-        return;
-    };
-    let inbound = event.inbound();
-    let pairing = match lookup_openid(&db, &inbound.user_openid).await {
-        Ok(value) => value,
-        Err(error) => {
-            warn!(error = %error, "Telegram pairing lookup failed");
-            return;
-        }
-    };
-    let chat_id = event.chat_id_key();
-    match ingest_channel_text(&inbound, pairing, false, "telegram", &chat_id) {
-        InboundDecision::Duplicate { .. } => {}
-        InboundDecision::PairingRequired { reply, .. } => {
-            send_text(token, &chat_id, &reply).await;
-        }
-        InboundDecision::ConsumePairingCode {
-            user_openid, code, ..
-        } => {
-            let result = match consume_code(&db, &user_openid, &code).await {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(error = %error, "Telegram pairing consume failed");
-                    PairingBindResult::InvalidOrExpired
-                }
-            };
-            if let PairingBindResult::Bound { user_id } = result {
-                info!(user_id, "Telegram DM paired");
-            }
-            send_text(token, &chat_id, pairing_bind_reply_for(result, "telegram")).await;
-        }
-        InboundDecision::StartWork {
+struct TelegramText<'a> {
+    event: TelegramPrivateText,
+    inbound: InboundC2cText,
+    token: &'a str,
+}
+
+impl PrivateText for TelegramText<'_> {
+    const PLATFORM: ChannelPlatform = ChannelPlatform::Telegram;
+
+    fn inbound(&self) -> &InboundC2cText {
+        &self.inbound
+    }
+
+    fn session_chat_id(&self) -> String {
+        self.event.chat_id_key()
+    }
+
+    async fn reply(&self, _db: &DatabaseConnection, text: &str) {
+        send_text(self.token, &self.event.chat_id_key(), text).await;
+    }
+
+    async fn start_work(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i32,
+        input: &str,
+        session_key: &str,
+    ) {
+        crate::services::telegram_work::start_paired_work_with_images(
+            db,
             user_id,
+            &self.event.from_id.to_string(),
+            &self.event.chat_id_key(),
             input,
+            &self.event.images,
             session_key,
-            msg_id,
-            ..
-        } => {
-            crate::services::telegram_work::start_paired_work_with_images(
-                &db,
-                user_id,
-                &event.from_id.to_string(),
-                &chat_id,
-                &input,
-                &event.images,
-                &session_key,
-                &msg_id,
-                token,
-            )
-            .await;
-        }
+            self.token,
+        )
+        .await;
     }
 }
 
@@ -140,7 +128,7 @@ async fn send_text(token: &str, chat_id: &str, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myriad_agent_rules::channel::{InboundC2cText, ingest_channel_text};
+    use myriad_agent_rules::channel::{InboundDecision, ingest_channel_text};
 
     #[test]
     fn unpaired_plain_text_is_not_a_work_request() {

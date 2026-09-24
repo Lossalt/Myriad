@@ -36,7 +36,6 @@ pub async fn start_paired_work_with_images(
     images: &[myriad_agent_rules::channel::ChannelImageRef],
     session_key: &str,
     msg_id: &str,
-    _auth_header: &str,
 ) {
     channel_work::handle_text_with_images(
         db,
@@ -46,7 +45,6 @@ pub async fn start_paired_work_with_images(
         input,
         images,
         session_key,
-        msg_id,
         ChannelTransport::Qq {
             db: db.clone(),
             openid: openid.to_string(),

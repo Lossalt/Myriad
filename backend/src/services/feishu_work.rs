@@ -12,7 +12,6 @@ pub async fn start_paired_work_with_images(
     input: &str,
     images: &[myriad_agent_rules::channel::ChannelImageRef],
     session_key: &str,
-    message_id: &str,
 ) {
     channel_work::handle_text_with_images(
         db,
@@ -22,7 +21,6 @@ pub async fn start_paired_work_with_images(
         input,
         images,
         session_key,
-        message_id,
         ChannelTransport::Feishu {
             chat_id: chat_id.to_string(),
         },
