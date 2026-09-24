@@ -898,6 +898,13 @@ pub(crate) async fn ensure_agent_task_engine(db: &DatabaseConnection) -> Result<
     Ok(())
 }
 
+/// Membership-change trigger that lets live room sockets drop removed members.
+pub(crate) async fn ensure_room_membership_notify(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(migration::ROOM_MEMBERSHIP_NOTIFY_SQL)
+        .await?;
+    Ok(())
+}
+
 /// 云端笔记文档。草稿 / 定时不进 `phantasi_items`，发布时才落文章。
 pub(crate) async fn ensure_phantasi_note_docs_table(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(

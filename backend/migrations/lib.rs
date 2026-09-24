@@ -24,6 +24,25 @@ mod phantasi_legacy_rename;
 
 pub use phantasi_legacy_rename::rename_brew_to_phantasi_if_needed;
 
+/// Channel on which every change to a room membership row is announced, so
+/// live room sockets can re-check whether their member still belongs.
+pub const ROOM_MEMBERSHIP_CHANNEL: &str = "myriad_room_membership";
+
+/// Trigger announcing membership changes on [`ROOM_MEMBERSHIP_CHANNEL`].
+/// Shared by migration 005 and the runtime schema heal.
+pub const ROOM_MEMBERSHIP_NOTIFY_SQL: &str = r#"
+CREATE OR REPLACE FUNCTION federation_room_membership_notify() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('myriad_room_membership', OLD.room_id);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS federation_room_membership_notify ON federation_room_members;
+CREATE TRIGGER federation_room_membership_notify
+    AFTER UPDATE OR DELETE ON federation_room_members
+    FOR EACH ROW EXECUTE FUNCTION federation_room_membership_notify();
+"#;
+
 pub const SOURCE_RECENT_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_phantasi_items_source_recent ON phantasi_items (source_id, published_at DESC NULLS LAST, id DESC)";
 
 pub struct Migrator;

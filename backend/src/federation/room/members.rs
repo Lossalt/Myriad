@@ -1518,6 +1518,7 @@ pub async fn remove_member(
         ));
     }
     txn.commit().await.map_err(db_err)?;
+    crate::federation::ws_gateway::signal_membership_changed(room_id);
 
     // 广播系统消息
     let system_msg = json!({
@@ -1822,6 +1823,7 @@ pub async fn leave_room(
         ));
     }
     txn.commit().await.map_err(db_err)?;
+    crate::federation::ws_gateway::signal_membership_changed(room_id);
 
     // 广播
     let system_msg = json!({

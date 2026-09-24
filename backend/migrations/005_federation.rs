@@ -1234,6 +1234,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
             )
             .await?;
 
+        manager
+            .get_connection()
+            .execute_unprepared(crate::ROOM_MEMBERSHIP_NOTIFY_SQL)
+            .await?;
+
         // ==================== 扩展表（与 schema_check ensure_* 同结构）====================
         // 内容过滤 / 策略单例 / domain Move 别名 / 对象互动
         let db = manager.get_connection();
@@ -1359,6 +1364,10 @@ DROP TABLE IF EXISTS federation_content_filters;
             .await?;
         manager
             .drop_table(Table::drop().table(FederationRoomMembers::Table).to_owned())
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared("DROP FUNCTION IF EXISTS federation_room_membership_notify()")
             .await?;
         manager
             .drop_table(Table::drop().table(FederationRooms::Table).to_owned())
