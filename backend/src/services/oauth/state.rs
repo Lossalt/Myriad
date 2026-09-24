@@ -338,10 +338,13 @@ fn unix_now() -> i64 {
 }
 
 fn state_secret() -> Result<Vec<u8>, String> {
+    // A blank value is no secret: it must neither sign nor block the fallback.
     env::var("OAUTH_STATE_SECRET")
-        .or_else(|_| env::var("JWT_SECRET"))
-        .map(|s| s.into_bytes())
-        .map_err(|_| {
+        .ok()
+        .filter(|secret| !secret.trim().is_empty())
+        .or_else(crate::middleware::auth::session_secret)
+        .map(String::into_bytes)
+        .ok_or_else(|| {
             "OAUTH_STATE_SECRET or JWT_SECRET must be set for OAuth state signing".to_string()
         })
 }

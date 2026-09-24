@@ -91,7 +91,7 @@ pub async fn get_current_user(
     };
     let clear_invalid_cookie = selected_auth_uses_cookie(&headers);
 
-    let jwt_secret = env::var("JWT_SECRET").map_err(|_| {
+    let jwt_secret = crate::middleware::auth::session_secret().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "Failed to create session token", "code": "session_failed"})),

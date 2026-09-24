@@ -86,7 +86,7 @@ fn csrf_signing_key(secret: &str) -> Option<[u8; 32]> {
 }
 
 fn configured_csrf_key() -> Option<[u8; 32]> {
-    let secret = env::var("JWT_SECRET").ok()?;
+    let secret = crate::middleware::auth::session_secret()?;
     csrf_signing_key(&secret)
 }
 
@@ -293,9 +293,7 @@ fn extract_session_context(headers: &HeaderMap) -> Option<VerifiedSession> {
 
 fn verified_session_from_jwt(token: &str) -> Option<VerifiedSession> {
     let sig = jwt_signature_segment(token)?;
-    let jwt_secret = env::var("JWT_SECRET")
-        .ok()
-        .filter(|secret| !secret.is_empty())?;
+    let jwt_secret = crate::middleware::auth::session_secret()?;
     let claims = decode::<Claims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),

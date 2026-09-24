@@ -131,9 +131,18 @@ pub fn mint_session_claims(
     }
 }
 
+/// The session signing secret. A missing or blank `JWT_SECRET` means none:
+/// an empty HMAC key would let anyone mint a valid session, so every signer
+/// and verifier reads the secret through here.
+pub fn session_secret() -> Option<String> {
+    env::var("JWT_SECRET")
+        .ok()
+        .filter(|secret| !secret.trim().is_empty())
+}
+
 /// Encode claims with `JWT_SECRET`. Caller must set cookie / Authorization.
 pub fn encode_session_token(claims: &Claims) -> Result<String, String> {
-    let jwt_secret = env::var("JWT_SECRET").map_err(|_| "JWT_SECRET not configured".to_string())?;
+    let jwt_secret = session_secret().ok_or_else(|| "JWT_SECRET not configured".to_string())?;
     jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         claims,
@@ -1090,8 +1099,8 @@ pub async fn optional_auth_middleware(
             claims
         }
         Ok(None) => {
-            let secret = match env::var("JWT_SECRET") {
-                Ok(secret) if !secret.is_empty() => secret,
+            let secret = match session_secret() {
+                Some(secret) => secret,
                 _ => {
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
@@ -1153,7 +1162,7 @@ pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
     })?;
 
     // Get JWT secret
-    let jwt_secret = env::var("JWT_SECRET").map_err(|_| {
+    let jwt_secret = session_secret().ok_or_else(|| {
         tracing::error!("JWT_SECRET not configured");
         Box::new(
             (
@@ -1305,6 +1314,44 @@ mod tests {
             // SAFETY: unit tests only.
             unsafe { std::env::set_var("JWT_SECRET", TEST_JWT_SECRET) };
         }
+    }
+
+    /// Signing and verifying read the secret only through `session_secret`,
+    /// which refuses a blank one. Startup config (`config.rs`, `main.rs`)
+    /// only validates it.
+    #[test]
+    fn session_secret_is_read_in_one_place() {
+        fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, offenders);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs")
+                    || path.ends_with("src/config.rs")
+                    || path.ends_with("src/main.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+                let reads = production.matches("env::var(\"JWT_SECRET\")").count();
+                let allowed = usize::from(path.ends_with("middleware/auth.rs"));
+                if reads > allowed {
+                    offenders.push(path.display().to_string());
+                }
+            }
+        }
+        let mut offenders = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut offenders,
+        );
+        assert!(
+            offenders.is_empty(),
+            "read JWT_SECRET via session_secret(): {offenders:?}"
+        );
     }
 
     #[test]

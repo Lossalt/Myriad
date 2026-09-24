@@ -148,8 +148,8 @@ pub(crate) fn rate_limit_record_id(key: &str) -> String {
 /// One-way client-address fingerprint for anonymous rate-limit keys.
 /// The source address itself is never persisted in the runtime registry.
 pub fn anonymous_subject_fingerprint(value: &str) -> String {
-    let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "myriad-development-anonymous-quota-v1".to_string());
+    let secret = crate::middleware::auth::session_secret()
+        .unwrap_or_else(|| "myriad-development-anonymous-quota-v1".to_string());
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
         .expect("HMAC accepts arbitrary key lengths");
     mac.update(b"myriad-tapp-anonymous-quota-v1\0");

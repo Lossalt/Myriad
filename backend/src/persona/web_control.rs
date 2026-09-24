@@ -120,7 +120,7 @@ pub async fn handle(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Ok(secret) = std::env::var("JWT_SECRET") else {
+    let Some(secret) = crate::middleware::auth::session_secret() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let now = chrono::Utc::now().timestamp();
@@ -232,8 +232,8 @@ pub async fn call(
     if body.len() > MAX_REQUEST {
         return Err("Web capability request is too large".into());
     }
-    let secret =
-        std::env::var("JWT_SECRET").map_err(|_| "Web capability authentication unavailable")?;
+    let secret = crate::middleware::auth::session_secret()
+        .ok_or("Web capability authentication unavailable")?;
     let time = chrono::Utc::now().timestamp().to_string();
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let signed = signature(&secret, &time, &nonce, &body)

@@ -247,7 +247,7 @@ pub(crate) fn try_analytics_salt() -> Result<String, AnalyticsSaltUnavailable> {
     static ERR_PROD: std::sync::Once = std::sync::Once::new();
 
     let env_salt = std::env::var("ANALYTICS_SALT").ok();
-    let jwt_secret = std::env::var("JWT_SECRET").ok();
+    let jwt_secret = crate::middleware::auth::session_secret();
     let production = is_production_environment();
     let result = resolve_analytics_salt(env_salt.as_deref(), production, jwt_secret.as_deref());
 
