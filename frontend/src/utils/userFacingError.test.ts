@@ -9,6 +9,7 @@ import {
   httpStatusMessage,
   isUselessErrorText,
   userFacingError,
+  withoutForeignProse,
 } from './userFacingError.ts'
 
 /** What `AppError` sends for a public label: the label plus its inferred code. */
@@ -1832,6 +1833,15 @@ describe('userFacingError is driven by codes', () => {
       return copy === 'FALLBACK' || copy === unrelated
     })
     assert.deepEqual(bare, [])
+  })
+
+  it('keeps only short English detail next to translated table copy', () => {
+    const prose = 'Local login needs OAuth: user has no linked OAuth identity'
+    assert.equal(withoutForeignProse('请先绑定第三方登录', prose), 'Local login needs OAuth')
+    assert.equal(withoutForeignProse('Link a sign-in method first', prose), prose)
+    const token = 'Unsupported attachment MIME: image/avif'
+    assert.equal(withoutForeignProse('不支持的附件类型', token), token)
+    assert.equal(withoutForeignProse('不支持的附件类型', 'No detail here'), 'No detail here')
   })
 
   it('maps codes through the byCode table', () => {

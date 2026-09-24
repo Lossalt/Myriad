@@ -74,6 +74,18 @@ function classified(label: string, raw: string, hint = ''): string {
   )
 }
 
+/**
+ * The backend's text after `label:` is English. Next to translated copy keep
+ * only short detail (a MIME type, a size, `HTTP 502`); drop English sentences.
+ */
+export function withoutForeignProse(copy: string, raw: string): string {
+  if ([...copy].every((ch) => ch.charCodeAt(0) < 128)) return raw
+  const colon = raw.indexOf(':')
+  if (colon < 0) return raw
+  const words = raw.slice(colon + 1).trim().split(/\s+/).filter(Boolean)
+  return words.length > 2 ? raw.slice(0, colon) : raw
+}
+
 /** Localized, diagnosable copy. New faults need a machine `code`; leftover regex is last-resort. */
 export function userFacingError(reason: unknown, fallback?: string): string {
   const t = currentCopy().errors
@@ -94,7 +106,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   // The code → copy table: a code with an entry needs no branch below.
   const byCode: Readonly<Record<string, string | undefined>> = t.byCode
   const tableCopy = (code && byCode[code]) || (rawCode && byCode[rawCode])
-  if (tableCopy) return classified(tableCopy, raw, hint)
+  if (tableCopy) return classified(tableCopy, withoutForeignProse(tableCopy, raw), hint)
 
   if (code === 'unauthorized') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
