@@ -15,7 +15,7 @@ use std::pin::Pin;
 use super::Executor;
 use super::handlers::HandlerContext;
 use super::is_cancelled;
-use super::run_state::{PausePersist, RunState, StepFlow, record_skill_evolution};
+use super::run_state::{MAX_TOTAL_STEPS, PausePersist, RunState, StepFlow, record_skill_evolution};
 use super::{error_analyzer, frontend_ack, retry};
 
 /// 并行步骤在独立 context 快照上跑完后回传的结果
@@ -43,9 +43,6 @@ struct DagWave<'s> {
     /// 暂挂的用户问题队列：检测到后停止启动新步骤，等 in-flight 自然完成
     pending_questions: Vec<types::UserQuestion>,
 }
-
-/// 流式循环中途取消时写入的错误文案（也用于波次后判定是否已取消）
-const DAG_CANCELLED_ERROR: &str = "The task was cancelled";
 
 impl Executor {
     /// 执行一个并行波次（`ready.len() > 1`）
@@ -77,12 +74,9 @@ impl Executor {
             ready.len()
         );
 
-        self.stream_dag_wave(run, &mut wave).await;
-
-        // 流式 DAG 后处理：暂停等待用户输入
-        // 如果已取消，跳过 WaitingForInput 和重试
-        let dag_cancelled = run.task_state.status == TaskStatus::Failed
-            && run.task_state.error.as_deref() == Some(DAG_CANCELLED_ERROR);
+        // Cancelled mid-wave: skip pausing and retries; the driver loop's
+        // cancellation check records the cancelled state.
+        let dag_cancelled = self.stream_dag_wave(run, &mut wave).await;
         if !dag_cancelled && !wave.pending_questions.is_empty() {
             let question = wave.pending_questions.remove(0);
             // 将剩余问题存入 context，resume 后继续提问
@@ -168,8 +162,8 @@ impl Executor {
         }));
     }
 
-    /// 流式处理：每完成一个步骤，立即检查并启动新就绪步骤
-    async fn stream_dag_wave<'s>(&'s self, run: &mut RunState<'_>, wave: &mut DagWave<'s>) {
+    /// 流式处理：每完成一个步骤，立即检查并启动新就绪步骤。返回是否被用户取消。
+    async fn stream_dag_wave<'s>(&'s self, run: &mut RunState<'_>, wave: &mut DagWave<'s>) -> bool {
         while let Some(done) = wave.in_flight.next().await {
             // 取消检查：在流式循环中也能及时响应取消
             if is_cancelled(&run.task_state.task_id).await {
@@ -177,10 +171,7 @@ impl Executor {
                     task_id = %run.task_state.task_id,
                     "[Executor] DAG streaming cancelled by user"
                 );
-                run.task_state.status = TaskStatus::Failed;
-                run.task_state.error = Some(DAG_CANCELLED_ERROR.to_string());
-                // 中断流式循环，外层循环的取消检查会处理状态保存
-                break;
+                return true;
             }
 
             let par_tier =
@@ -227,6 +218,7 @@ impl Executor {
                 }
             }
         }
+        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -399,6 +391,11 @@ impl Executor {
             for new_step in newly_ready {
                 if wave.spawned.contains(&new_step.id) {
                     continue;
+                }
+                // The run-wide step cap holds inside a wave too; what is left
+                // stays in the DAG and the driver loop stops at the cap.
+                if run.total_executed_steps >= MAX_TOTAL_STEPS {
+                    break;
                 }
                 wave.spawned.insert(new_step.id.clone());
                 self.launch_dag_step(run, wave, &new_step).await;
