@@ -795,7 +795,6 @@
     "Failed to submit refresh": "agent_task_submit_failed",
     "Feed name is required": "agent_feed_name_required",
     "visitor card unavailable": "visitor_stats_unavailable",
-    "Failed to resolve profile text": "profile_text_load_failed",
     "Failed to advance frontend task": "scheduler_failed",
     "Failed to begin claim": "scheduler_failed",
     "Failed to begin frontend completion": "scheduler_failed",
