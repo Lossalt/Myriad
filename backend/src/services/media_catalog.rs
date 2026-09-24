@@ -26,38 +26,6 @@ pub struct MediaAssetView {
     pub references_complete: bool,
 }
 
-/// 目录只收本站上传/生成路径。外链和 `cache_image` 结果不进。
-pub fn canonical_media_url(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(path) = path_from_url(trimmed) {
-        return catalog_path(path);
-    }
-    catalog_path(trimmed)
-}
-
-fn path_from_url(raw: &str) -> Option<&str> {
-    let rest = raw.split_once("://")?.1;
-    let path = rest.find('/').map(|i| &rest[i..])?;
-    Some(path)
-}
-
-fn catalog_path(path: &str) -> Option<String> {
-    if path.starts_with("/media/federation/") || path.starts_with("/api/phantasi/image-cache/") {
-        Some(path.to_string())
-    } else {
-        None
-    }
-}
-
-/// `cache_image` 是外链缓存，不进目录。
-#[cfg(test)]
-pub fn catalogs_cache_image() -> bool {
-    false
-}
-
 #[derive(Debug, Default, Deserialize)]
 pub struct MediaListQuery {
     pub kind: Option<String>,
@@ -294,9 +262,9 @@ async fn delete_unmigrated_asset(
 
 /// Eligibility for [`delete_unmigrated_asset`], locking the catalog row.
 /// References are matched on the canonical catalog path — the same
-/// normalisation as [`canonical_media_url`] (absolute local URLs reduce to
-/// their `/media/federation/…` or `/api/phantasi/image-cache/…` path; anything
-/// else is matched verbatim) — with LIKE metacharacters escaped.
+/// normalisation the legacy catalog registered them under (absolute local URLs
+/// reduce to their `/media/federation/…` or `/api/phantasi/image-cache/…` path;
+/// anything else is matched verbatim) — with LIKE metacharacters escaped.
 const LEGACY_DELETE_ELIGIBILITY_SQL: &str = r#"
             SELECT a.url, a.state IS NULL AS unmigrated,
                    EXISTS (
@@ -356,8 +324,6 @@ fn to_view(row: CatalogAsset, references: Vec<String>) -> MediaAssetView {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_media_url, catalog_path, catalogs_cache_image};
-
     #[test]
     fn cursor_requires_both_parts_and_filters_match_supported_values() {
         use super::MediaListQuery;
@@ -390,25 +356,6 @@ mod tests {
             }
             .valid()
         );
-    }
-
-    #[test]
-    fn canonical_url_keeps_hosted_paths() {
-        assert_eq!(
-            canonical_media_url("https://site.example/media/federation/1/a.jpg"),
-            Some("/media/federation/1/a.jpg".into())
-        );
-        assert_eq!(
-            canonical_media_url("/api/phantasi/image-cache/ab/abcdef.png"),
-            Some("/api/phantasi/image-cache/ab/abcdef.png".into())
-        );
-        assert_eq!(canonical_media_url("https://cdn.example/pic.jpg"), None);
-        assert_eq!(catalog_path("/tmp/x.png"), None);
-    }
-
-    #[test]
-    fn cache_image_stays_out_of_catalog() {
-        assert!(!catalogs_cache_image());
     }
 
     #[test]

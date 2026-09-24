@@ -231,13 +231,6 @@ async fn read_file_field(
 
 #[cfg(test)]
 mod tests {
-    use crate::services::media_catalog::catalogs_cache_image;
-
-    #[test]
-    fn catalog_api_does_not_index_cache_image() {
-        assert!(!catalogs_cache_image());
-    }
-
     #[test]
     fn journal_upload_does_not_call_federation_store() {
         let src = include_str!("media.rs");

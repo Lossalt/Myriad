@@ -40,12 +40,6 @@ impl ChannelPlatform {
         }
     }
 
-    pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|platform| platform.slug() == slug)
-    }
-
     pub fn from_provider(provider: &str) -> Option<Self> {
         let provider = provider.trim().to_ascii_lowercase();
         Self::ALL
@@ -149,17 +143,15 @@ mod tests {
     use super::ChannelPlatform;
 
     #[test]
-    fn slugs_and_providers_round_trip_and_unknown_is_none() {
+    fn providers_round_trip_and_unknown_is_none() {
         for platform in ChannelPlatform::ALL {
-            assert_eq!(ChannelPlatform::from_slug(platform.slug()), Some(platform));
             assert_eq!(
                 ChannelPlatform::from_provider(platform.provider()),
                 Some(platform)
             );
         }
         assert_eq!(ChannelPlatform::from_provider("discord"), None);
-        assert_eq!(ChannelPlatform::from_slug("discord_dm"), None);
-        assert_eq!(ChannelPlatform::from_slug("slack"), None);
+        assert_eq!(ChannelPlatform::from_provider("slack"), None);
     }
 
     #[test]
