@@ -39,6 +39,8 @@ export interface TappDetail {
   status: string
   error_message?: string
   granted_permissions: string[]
+  /** Approved install permissions; returned to admins only. */
+  approved_permissions?: string[]
   needs_reauthorization?: boolean
   installed_at: string
   last_run_at?: string

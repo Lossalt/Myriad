@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import RemoteStoreService from './RemoteStoreService.ts'
 import {
+  exportedApprovals,
   installFromStore,
   storeInstallModules,
   storeWidgetStyles,
@@ -307,5 +308,18 @@ describe('store package payload shaping', () => {
       widgets: [{ ...layered.widgets![0]!, styles: undefined }],
     } as TappManifest
     assert.equal(storeWidgetStyles(noStyles, '.card{}'), undefined)
+  })
+})
+
+describe('exportedApprovals', () => {
+  it('exports approvals, never the role-filtered granted view', () => {
+    assert.deepEqual(exportedApprovals(['storage:read']), ['storage:read'])
+    assert.throws(() => exportedApprovals(undefined), /admin/)
+  })
+
+  it('an install approved for nothing never re-installs approved for everything', () => {
+    const exported = exportedApprovals([])
+    assert.equal(exported.length, 1, 'an empty list would mean approve all declared')
+    assert.ok(!exported[0].includes(':read') && !exported[0].includes(':write'))
   })
 })
