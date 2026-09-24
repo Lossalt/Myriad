@@ -433,6 +433,7 @@ impl Executor {
                                 ai_analyzer: step_analyzer,
                                 user_id,
                                 task_id: Some(executor_task_id),
+                                step_id: Some(step_clone.id.clone()),
                                 execution_context: Some(ctx.clone()),
                                 autonomy_permission_cap: ctx.autonomy_permission_cap.clone(),
                             };
@@ -741,6 +742,7 @@ impl Executor {
                                                     ai_analyzer: new_analyzer,
                                                     user_id,
                                                     task_id: Some(executor_task_id),
+                                                    step_id: Some(new_step_clone.id.clone()),
                                                     execution_context: Some(ctx.clone()),
                                                     autonomy_permission_cap: ctx
                                                         .autonomy_permission_cap

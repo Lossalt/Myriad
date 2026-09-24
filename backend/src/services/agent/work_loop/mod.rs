@@ -693,6 +693,7 @@ impl Agent {
             ai_analyzer: analyzer.as_ref(),
             user_id: state.user_id,
             task_id: Some(state.task.task_id.clone()),
+            step_id: Some(call.id.clone()),
             execution_context: Some(context.clone()),
             autonomy_permission_cap: context.autonomy_permission_cap.clone(),
         };

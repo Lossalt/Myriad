@@ -46,9 +46,29 @@ pub fn task_image_envelope(url: &str, width: u32, height: u32) -> Value {
     })
 }
 
+/// Idempotency key for an agent image step. Keyed per step: one task can
+/// generate several images, and a task-wide key would hand later steps the
+/// first image (or a staging conflict when steps run concurrently).
+pub fn agent_image_producer_key(task_id: Option<&str>, step_id: Option<&str>) -> String {
+    match (task_id, step_id) {
+        (Some(task), Some(step)) => format!("agent:{task}:{step}:image"),
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_image_producer_key_is_per_step() {
+        assert_ne!(
+            agent_image_producer_key(Some("t"), Some("s1")),
+            agent_image_producer_key(Some("t"), Some("s2"))
+        );
+        assert_eq!(agent_image_producer_key(Some("t"), None), "");
+        assert_eq!(agent_image_producer_key(None, Some("s1")), "");
+    }
 
     #[test]
     fn parse_image_dim_accepts_number_and_string() {

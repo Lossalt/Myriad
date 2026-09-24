@@ -108,6 +108,7 @@ impl Executor {
                     .get("_task_id")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                step_id: Some(step.id.clone()),
                 execution_context: Some(context.clone()),
                 autonomy_permission_cap: context.autonomy_permission_cap.clone(),
             };

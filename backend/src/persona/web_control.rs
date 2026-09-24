@@ -198,6 +198,7 @@ async fn execute(db: &sea_orm::DatabaseConnection, call: Call) -> Result<Value, 
         ai_analyzer: None,
         user_id: call.user_id,
         task_id: None,
+        step_id: None,
         execution_context: None,
         autonomy_permission_cap: call.autonomy_permission_cap,
     };
