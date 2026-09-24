@@ -842,23 +842,30 @@ pub(crate) async fn note_doc_websocket(
     let allowed = crate::middleware::ws_origin::allowed_origins_from_global_config().await;
     crate::middleware::ws_origin::assert_ws_origin_for_cookie_session(&headers, &allowed)?;
     let user_id = admin_user_id(&admin)?;
+    let session_epoch = admin.0.tv;
     let username = admin.0.username;
-    let (owner_id, item_id) = find_doc_owner(&db, id).await?;
+    let (owner_id, _) = find_doc_owner(&db, id).await?;
     Ok(ws.on_upgrade(move |socket| {
-        handle_note_doc_socket(socket, db, id, user_id, owner_id, item_id, username)
+        handle_note_doc_socket(socket, db, id, user_id, session_epoch, owner_id, username)
     }))
 }
+
+/// How often a collaborator's session and admin role are re-checked. Drafts
+/// stop flowing to a demoted or signed-out admin within this interval.
+const NOTE_COLLAB_RECHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
 async fn handle_note_doc_socket(
     mut socket: WebSocket,
     db: DatabaseConnection,
     doc_id: i32,
     user_id: i32,
+    session_epoch: i64,
     owner_id: i32,
-    item_id: Option<i32>,
     username: String,
 ) {
     let mut credited = false;
+    let mut recheck = tokio::time::interval(NOTE_COLLAB_RECHECK);
+    recheck.tick().await;
     let hub = note_collab_hub();
     let mut rx = hub.subscribe(doc_id);
     let peer_id = uuid::Uuid::new_v4().to_string();
@@ -881,6 +888,16 @@ async fn handle_note_doc_socket(
     );
     loop {
         tokio::select! {
+            _ = recheck.tick() => {
+                let still_admin = matches!(
+                    crate::middleware::auth::live_session_roles(&db, user_id, session_epoch).await,
+                    Ok(Some(roles)) if roles.is_admin
+                );
+                if !still_admin {
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
+            }
             event = rx.recv() => {
                 let Ok(event) = event else {
                     // Never keep a collaborative client silently on a missed revision.
@@ -929,6 +946,12 @@ async fn handle_note_doc_socket(
                                 .await
                                 .is_ok()
                             {
+                                // The note may have been first published while
+                                // this socket was open: read its item now.
+                                let item_id = find_doc_owner(&db, doc_id)
+                                    .await
+                                    .ok()
+                                    .and_then(|(_, item_id)| item_id);
                                 let _ = sync_published_author_line(&db, item_id, doc_id).await;
                             }
                         }
