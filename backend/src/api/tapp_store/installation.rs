@@ -253,6 +253,45 @@ pub(super) async fn install_tapp(
     Ok(result)
 }
 
+/// Install a package an Agent generated through the same core as a direct
+/// install: install gate and permit, store policy, full manifest validation,
+/// conflict check, canonical installation owner and staged activation.
+/// A second install path would skip all of that and write the live directory.
+pub(crate) async fn install_generated(
+    db: &DatabaseConnection,
+    user_id: i32,
+    manifest: TappManifest,
+    modules: std::collections::HashMap<String, String>,
+) -> Result<(), HttpError> {
+    ensure_tapp_install_allowed(db, user_id).await?;
+    let is_current_admin = crate::services::agent::user_is_current_admin(db, user_id).await;
+    let role = if is_current_admin {
+        UserRole::Admin
+    } else {
+        UserRole::User
+    };
+    let package = PreparedTappPackage::from_resources(
+        manifest,
+        PreparedTappResources {
+            modules,
+            ..Default::default()
+        },
+    );
+    install_prepared_package(
+        db,
+        &crate::GLOBAL_DYNAMIC_CONFIG,
+        user_id,
+        role,
+        is_current_admin,
+        package,
+        None,
+        false,
+        None,
+    )
+    .await
+    .map(|_| ())
+}
+
 /// 409 body for an existing install. Carries the metadata the overwrite prompt
 /// needs (both versions plus which declared permissions are new) — no secrets.
 fn install_conflict_error(manifest: &TappManifest, existing: &tapps::Model) -> HttpError {
