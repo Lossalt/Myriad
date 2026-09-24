@@ -17,20 +17,16 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::extract::AuthedClaims;
+use crate::middleware::auth::Claims;
 use crate::services::updater_client::{UpdaterClient, UpdaterClientError};
 use myriad_error::AppError;
 
-fn authenticated_user_id(headers: &HeaderMap) -> Option<i32> {
-    crate::middleware::auth::verify_jwt_token(headers)
-        .ok()
-        .and_then(|claims| crate::services::tapp_ownership::positive_user_id(&claims.sub))
-}
-
 /// Build `admin:<id>:<username>` for updater audit (`X-Update-Actor`).
-/// Only derived from verified JWT on the backend; never trusted from the browser as a substitute for UPDATE_TOKEN.
-fn actor_from_headers(headers: &HeaderMap) -> Option<String> {
-    let claims = crate::middleware::auth::verify_jwt_token(headers).ok()?;
-    let id = crate::services::tapp_ownership::positive_user_id(&claims.sub)?;
+/// Only derived from the claims `admin_middleware` authenticated; never trusted
+/// from the browser as a substitute for UPDATE_TOKEN.
+fn actor_from_claims(claims: &Claims) -> Option<String> {
+    let id = claims.durable_user_id()?;
     let user = claims
         .username
         .chars()
@@ -45,8 +41,8 @@ fn actor_from_headers(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Backend-side audit line (independent of updater audit.log).
-fn log_admin_actor(action: &str, headers: &HeaderMap) {
-    match actor_from_headers(headers) {
+fn log_admin_actor(action: &str, claims: &Claims) {
+    match actor_from_claims(claims) {
         Some(actor) => tracing::info!(%actor, %action, "admin updater action"),
         None => tracing::info!(%action, actor = "unknown", "admin updater action"),
     }
@@ -55,13 +51,13 @@ fn log_admin_actor(action: &str, headers: &HeaderMap) {
 async fn track_updater_job(
     updater: UpdaterClient,
     response: &Value,
-    headers: &HeaderMap,
+    user_id: Option<i32>,
     kind: &'static str,
 ) {
     let Some(job_id) = response.get("job_id").and_then(Value::as_str) else {
         return;
     };
-    let Some(user_id) = authenticated_user_id(headers) else {
+    let Some(user_id) = user_id else {
         return;
     };
     if let Some(manager) = crate::services::agent::notifications::get_notification_manager() {
@@ -283,7 +279,10 @@ pub async fn snapshots() -> Response {
     }
 }
 
-pub async fn delete_snapshot(headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub async fn delete_snapshot(
+    AuthedClaims(claims): AuthedClaims,
+    Path(id): Path<String>,
+) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
@@ -298,8 +297,8 @@ pub async fn delete_snapshot(headers: HeaderMap, Path(id): Path<String>) -> Resp
         )
             .into_response();
     }
-    log_admin_actor("snapshot_delete", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("snapshot_delete", &claims);
+    let actor = actor_from_claims(&claims);
     match c
         .delete_json(&format!("/snapshots/{id}"), actor.as_deref())
         .await
@@ -460,7 +459,11 @@ fn update_requests_risk(body: &UpdateBody) -> bool {
         || body.allow_irreversible == Some(true)
 }
 
-pub async fn trigger_update(headers: HeaderMap, Json(body): Json<UpdateBody>) -> Response {
+pub async fn trigger_update(
+    AuthedClaims(claims): AuthedClaims,
+    headers: HeaderMap,
+    Json(body): Json<UpdateBody>,
+) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
@@ -491,12 +494,12 @@ pub async fn trigger_update(headers: HeaderMap, Json(body): Json<UpdateBody>) ->
         )
             .into_response();
     }
-    log_admin_actor("update", &headers);
+    log_admin_actor("update", &claims);
     let idem = headers
         .get("Idempotency-Key")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let actor = actor_from_headers(&headers);
+    let actor = actor_from_claims(&claims);
     let mut payload = json!({
         "allow_skip_versions": body.allow_skip_versions,
         "allow_downgrade": body.allow_downgrade,
@@ -526,7 +529,7 @@ pub async fn trigger_update(headers: HeaderMap, Json(body): Json<UpdateBody>) ->
         .await
     {
         Ok(v) => {
-            track_updater_job(c.clone(), &v, &headers, "update").await;
+            track_updater_job(c.clone(), &v, claims.durable_user_id(), "update").await;
             Json(v).into_response()
         }
         Err(e) => err_to_response(e),
@@ -615,20 +618,23 @@ pub struct RollbackBody {
     pub snapshot_id: String,
 }
 
-pub async fn rollback(headers: HeaderMap, Json(body): Json<RollbackBody>) -> Response {
+pub async fn rollback(
+    AuthedClaims(claims): AuthedClaims,
+    Json(body): Json<RollbackBody>,
+) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    log_admin_actor("rollback", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("rollback", &claims);
+    let actor = actor_from_claims(&claims);
     let payload = json!({ "snapshot_id": body.snapshot_id });
     match c
         .post_json_with_actor("/rollback", Some(&payload), None, actor.as_deref())
         .await
     {
         Ok(v) => {
-            track_updater_job(c.clone(), &v, &headers, "rollback").await;
+            track_updater_job(c.clone(), &v, claims.durable_user_id(), "rollback").await;
             Json(v).into_response()
         }
         Err(e) => err_to_response(e),
@@ -678,13 +684,13 @@ fn no_store_json(value: impl serde::Serialize) -> Response {
     response
 }
 
-pub async fn exit_maintenance(headers: HeaderMap) -> Response {
+pub async fn exit_maintenance(AuthedClaims(claims): AuthedClaims) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    log_admin_actor("rescue/exit-maintenance", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("rescue/exit-maintenance", &claims);
+    let actor = actor_from_claims(&claims);
     match c
         .post_json_with_actor::<Value>("/rescue/exit-maintenance", None, None, actor.as_deref())
         .await
@@ -694,13 +700,13 @@ pub async fn exit_maintenance(headers: HeaderMap) -> Response {
     }
 }
 
-pub async fn forget_current(headers: HeaderMap) -> Response {
+pub async fn forget_current(AuthedClaims(claims): AuthedClaims) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    log_admin_actor("rescue/forget-current", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("rescue/forget-current", &claims);
+    let actor = actor_from_claims(&claims);
     match c
         .post_json_with_actor::<Value>("/rescue/forget-current", None, None, actor.as_deref())
         .await
@@ -711,19 +717,19 @@ pub async fn forget_current(headers: HeaderMap) -> Response {
 }
 
 /// One-click recovery: roll back to the snapshot on the stuck needs_manual job.
-pub async fn rescue_continue(headers: HeaderMap) -> Response {
+pub async fn rescue_continue(AuthedClaims(claims): AuthedClaims) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    log_admin_actor("rescue/continue", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("rescue/continue", &claims);
+    let actor = actor_from_claims(&claims);
     match c
         .post_json_with_actor::<Value>("/rescue/continue", None, None, actor.as_deref())
         .await
     {
         Ok(v) => {
-            track_updater_job(c.clone(), &v, &headers, "rollback").await;
+            track_updater_job(c.clone(), &v, claims.durable_user_id(), "rollback").await;
             Json(v).into_response()
         }
         Err(e) => err_to_response(e),
@@ -731,13 +737,13 @@ pub async fn rescue_continue(headers: HeaderMap) -> Response {
 }
 
 /// Proxy to updater `/admin/self-update` (`WorkerCmd::SelfUpdate`). Guard performs TCB replacement.
-pub async fn self_update(headers: HeaderMap) -> Response {
+pub async fn self_update(AuthedClaims(claims): AuthedClaims) -> Response {
     let c = match require_mutate() {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    log_admin_actor("self-update", &headers);
-    let actor = actor_from_headers(&headers);
+    log_admin_actor("self-update", &claims);
+    let actor = actor_from_claims(&claims);
     match c
         .post_json_with_actor::<Value>("/admin/self-update", None, None, actor.as_deref())
         .await

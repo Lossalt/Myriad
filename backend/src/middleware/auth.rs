@@ -919,9 +919,6 @@ fn unauthorized_session_response() -> Box<Response> {
 
 /// Cryptographic JWT verify **plus** server-side session epoch check.
 ///
-/// Prefer this over [`verify_jwt_token`] for any path that must fail closed
-/// after logout / password change / account deletion.
-///
 /// Token verification, one strict `sub` parse recorded on the returned claims
 /// ([`Claims::subject`]), then session epoch / current roles checked against
 /// that same id.
@@ -929,7 +926,7 @@ pub async fn authenticate_request(
     headers: &HeaderMap,
     db: &DatabaseConnection,
 ) -> Result<Claims, Box<Response>> {
-    let mut claims = verify_jwt_token(headers)?;
+    let mut claims = verify_request_signature(headers)?;
     let subject = parse_subject(&mut claims)?;
     if let Some(snapshot) = validated_auth_snapshot(subject, claims.tv, db).await? {
         // This keeps ordinary authorization decisions bounded by the cache TTL
@@ -1164,11 +1161,14 @@ pub async fn optional_auth_middleware(
     response
 }
 
-/// Verify the session credential of a request, signature and expiry only.
+/// Verify the selected session credential of a request, signature and expiry
+/// only.
 ///
-/// No revocation check: use [`authenticate_request`] for anything that acts
-/// on the session.
-pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
+/// No revocation check and no typed subject: the first half of
+/// [`authenticate_request`], visible to the CSRF layer's tests only so they
+/// can prove both layers pick the same credential. Handlers use the
+/// authenticated claims instead.
+pub(super) fn verify_request_signature(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
     let credential = SessionCredential::from_headers(headers).ok_or_else(|| {
         tracing::debug!("Missing or invalid Authorization header/cookie");
         Box::new(missing_credential().into_response())
@@ -1357,7 +1357,7 @@ mod tests {
         auth_cache_put_if_generation, authenticate_optional_request, claim_auth_load_slot,
         encode_session_token, guest_id, invalidate_auth_cache_local, mint_session_claims,
         optional_current_auth_middleware, revalidate_bound_claims, session_epoch_matches,
-        sign_guest_session, verify_guest_session, verify_jwt_token,
+        sign_guest_session, verify_guest_session, verify_request_signature,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
     use sea_orm::DatabaseConnection;
@@ -1430,6 +1430,58 @@ mod tests {
         );
     }
 
+    /// Production source of every backend file except `middleware/auth.rs`,
+    /// with test modules cut off and all whitespace removed so a pattern
+    /// cannot hide behind a line break.
+    pub(crate) fn non_auth_production_sources() -> Vec<(String, String)> {
+        fn visit(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs")
+                    || path.ends_with("middleware/auth.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source
+                    .split("#[cfg(test)]\nmod ")
+                    .next()
+                    .unwrap_or_default();
+                let compact: String = production.chars().filter(|c| !c.is_whitespace()).collect();
+                out.push((path.display().to_string(), compact));
+            }
+        }
+        let mut out = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut out,
+        );
+        out
+    }
+
+    /// Session JWTs are decoded only by `verify_signed`; every other consumer
+    /// takes the claims the auth boundary produced.
+    #[test]
+    fn session_tokens_are_decoded_in_one_place() {
+        let offenders: Vec<String> = non_auth_production_sources()
+            .into_iter()
+            .filter(|(_, source)| {
+                source.contains("decode::<Claims>")
+                    || source.contains("decode::<crate::middleware::auth::Claims>")
+                    || source.contains("decode::<auth::Claims>")
+            })
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "decode session JWTs via middleware::auth: {offenders:?}"
+        );
+    }
+
     #[test]
     fn ensure_jwt_secret_treats_empty_like_missing() {
         // Empty string must be handled like missing — never mint with a zero-length key.
@@ -1460,7 +1512,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).expect("header"),
         );
-        let verified = verify_jwt_token(&headers).expect("verify_jwt_token");
+        let verified = verify_request_signature(&headers).expect("verify_request_signature");
         assert_eq!(verified.sub, "42");
         assert_eq!(verified.username, "roundtrip-user");
         assert!(verified.is_admin);
@@ -1475,7 +1527,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_str(&format!("auth_token={token}")).expect("cookie"),
         );
-        let from_cookie = verify_jwt_token(&cookie_headers).expect("cookie verify");
+        let from_cookie = verify_request_signature(&cookie_headers).expect("cookie verify");
         assert_eq!(from_cookie.sub, verified.sub);
         assert_eq!(from_cookie.tv, verified.tv);
     }
@@ -1495,7 +1547,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {bad}")).expect("header"),
         );
-        assert!(verify_jwt_token(&headers).is_err());
+        assert!(verify_request_signature(&headers).is_err());
     }
 
     #[test]

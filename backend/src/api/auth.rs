@@ -15,54 +15,14 @@ use std::env;
 
 // Re-export `Claims`.
 pub use crate::middleware::auth::Claims;
-use crate::middleware::auth::clear_auth_cookie_value;
+use crate::middleware::auth::{
+    CredentialSource, SessionCredential, authenticate_optional_request, clear_auth_cookie_value,
+};
 
 /// Guest body for the session probe. HTTP 200 — never 401 — so browsers do not
 /// paint Network red for expected unauthenticated state.
 pub fn unauthenticated_me_body() -> Value {
     json!({ "authenticated": false })
-}
-
-/// Extract JWT from `Authorization: Bearer` or `auth_token` cookie.
-fn extract_auth_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .or_else(|| {
-            headers
-                .get(header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|cookies| {
-                    cookies.split(';').find_map(|cookie| {
-                        let (name, value) = cookie.trim().split_once('=')?;
-                        if name == "auth_token" {
-                            Some(value)
-                        } else {
-                            None
-                        }
-                    })
-                })
-        })
-}
-
-fn selected_auth_uses_cookie(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_none()
-        && headers
-            .get(header::COOKIE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|cookies| {
-                cookies.split(';').any(|cookie| {
-                    cookie
-                        .trim()
-                        .split_once('=')
-                        .is_some_and(|(name, _)| name == "auth_token")
-                })
-            })
 }
 
 async fn unauthenticated_me_response(clear_cookie: bool) -> Response {
@@ -86,44 +46,33 @@ pub async fn get_current_user(
     crate::extract::Db(db): crate::extract::Db,
     headers: HeaderMap,
 ) -> Result<Response, HttpError> {
-    let Some(token) = extract_auth_token(&headers) else {
-        return Ok(unauthenticated_me_response(false).await);
-    };
-    let clear_invalid_cookie = selected_auth_uses_cookie(&headers);
-
-    let jwt_secret = crate::middleware::auth::session_secret().ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to create session token", "code": "session_failed"})),
-        )
-    })?;
-
-    let token_data = match jsonwebtoken::decode::<Claims>(
-        token,
-        &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &jsonwebtoken::Validation::default(),
-    ) {
-        Ok(data) => data,
-        Err(_) => {
-            // Expired/forged cookie — expected guest for this probe, not 401 noise.
+    // Same credential selection, verification, session epoch and auth cache
+    // as every protected route; only the failure shape differs.
+    let clear_invalid_cookie = matches!(
+        SessionCredential::from_headers(&headers),
+        Some(credential) if credential.source == CredentialSource::Cookie
+    );
+    let claims = match authenticate_optional_request(&headers, &db).await {
+        Ok(Some(claims)) => claims,
+        Ok(None) => return Ok(unauthenticated_me_response(false).await),
+        Err(response) if response.status() == StatusCode::UNAUTHORIZED => {
+            // Expired/forged/revoked session — expected guest for this probe, not 401 noise.
             return Ok(unauthenticated_me_response(clear_invalid_cookie).await);
         }
+        Err(response) => return Ok(*response),
     };
 
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&token_data.claims.sub)
-    else {
+    // Signed guest sessions are not accounts.
+    let Some(user_id) = claims.durable_user_id() else {
         return Ok(unauthenticated_me_response(clear_invalid_cookie).await);
     };
 
     use sea_orm::Value as SeaValue;
 
     // 头像阶梯是 services::avatar 的共享片段（与 /api/tapp/context/user 同一份）
-    // Include token_version so revoked sessions (logout / password change) probe
-    // as unauthenticated without painting Network red (still HTTP 200).
     let user_sql = format!(
         r#"SELECT u.id, u.username, u.auth_provider, u.is_admin,
                   COALESCE(u.is_owner, false) AS is_owner,
-                  COALESCE(u.token_version, 0) AS token_version,
                   {avatar} AS avatar_url,
                   u.github_id, u.linked_github_id, u.bio, u.display_name,
                   u.password_hash IS NOT NULL AS has_password,
@@ -156,17 +105,6 @@ pub async fn get_current_user(
         // Token valid but user gone — still a session-probe miss, not auth gate.
         return Ok(unauthenticated_me_response(clear_invalid_cookie).await);
     };
-
-    let db_tv: i64 = user_row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| user_row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
-    if !crate::middleware::auth::session_epoch_matches(token_data.claims.tv, Some(db_tv)) {
-        // Revoked session — soft probe miss (not 401).
-        return Ok(unauthenticated_me_response(clear_invalid_cookie).await);
-    }
 
     // identities 列表（用 user_identities 表）
     let identity_rows = db
@@ -343,42 +281,46 @@ pub async fn logout(
     crate::extract::Db(db): crate::extract::Db,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    // Always clear the cookie; only the matching epoch may revoke sessions.
+    // Always clear the cookie; only the current session may revoke itself.
     // The UPDATE checks tv atomically so a stale logout cannot kill a new login.
-    match crate::middleware::auth::verify_jwt_token(&headers) {
-        Ok(claims) => {
-            if let Ok(user_id) = claims.sub.parse::<i32>() {
-                if user_id > 0 {
-                    match crate::middleware::auth::bump_token_version(&db, user_id, claims.tv).await
-                    {
-                        Ok(Some(new_tv)) => {
-                            tracing::info!(
-                                user_id,
-                                token_version = new_tv,
-                                "🚪 User logout — session epoch bumped"
-                            );
-                        }
-                        Ok(None) => {
-                            tracing::debug!(
-                                user_id,
-                                "🚪 Stale or missing session — cookie clear only"
-                            );
-                        }
-                        Err(e) => {
-                            // Cookie still cleared; epoch bump is best-effort so
-                            // logout never 500s on a transient DB blip.
-                            tracing::warn!(
-                                user_id,
-                                error = %e,
-                                "🚪 Logout: failed to bump token_version (cookie still cleared)"
-                            );
-                        }
+    match authenticate_optional_request(&headers, &db).await {
+        Ok(Some(claims)) => {
+            if let Some(user_id) = claims.durable_user_id() {
+                match crate::middleware::auth::bump_token_version(&db, user_id, claims.tv).await {
+                    Ok(Some(new_tv)) => {
+                        tracing::info!(
+                            user_id,
+                            token_version = new_tv,
+                            "🚪 User logout — session epoch bumped"
+                        );
+                    }
+                    Ok(None) => {
+                        tracing::debug!(user_id, "🚪 Stale or missing session — cookie clear only");
+                    }
+                    Err(e) => {
+                        // Cookie still cleared; epoch bump is best-effort so
+                        // logout never 500s on a transient DB blip.
+                        tracing::warn!(
+                            user_id,
+                            error = %e,
+                            "🚪 Logout: failed to bump token_version (cookie still cleared)"
+                        );
                     }
                 }
             }
         }
-        _ => {
-            tracing::info!("🚪 User logout - clearing auth cookie (no/invalid token)");
+        Ok(None) => {
+            tracing::info!("🚪 User logout - clearing auth cookie (no token)");
+        }
+        Err(response) if response.status() == StatusCode::UNAUTHORIZED => {
+            tracing::info!("🚪 User logout - clearing auth cookie (invalid or revoked token)");
+        }
+        Err(response) => {
+            // Cookie still cleared, same as a failed epoch bump.
+            tracing::warn!(
+                status = %response.status(),
+                "🚪 Logout: session could not be verified (cookie still cleared)"
+            );
         }
     }
 
@@ -397,14 +339,26 @@ mod auth_me_probe_tests {
     use super::*;
     use axum::http::HeaderValue;
 
+    /// `/me` resolves the session through the shared auth boundary, never
+    /// its own credential parse, JWT decode or epoch compare.
     #[test]
-    fn current_user_probe_rejects_non_positive_subject() {
+    fn current_user_probe_uses_the_shared_auth_boundary() {
         let src = include_str!("auth.rs");
         let probe = src
-            .split("let Some(user_id)")
+            .split("pub async fn get_current_user(")
             .nth(1)
-            .expect("positive_user_id probe");
-        assert!(probe.contains("positive_user_id"));
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("get_current_user");
+        assert!(probe.contains("authenticate_optional_request(&headers, &db)"));
+        assert!(probe.contains("claims.durable_user_id()"));
+        for forbidden in [
+            "jsonwebtoken",
+            "session_epoch_matches",
+            "token_version",
+            ".sub",
+        ] {
+            assert!(!probe.contains(forbidden), "/me must not use {forbidden}");
+        }
     }
 
     #[test]
@@ -439,25 +393,6 @@ mod auth_me_probe_tests {
         assert!(cookie.starts_with("auth_token=deleted;"));
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("Max-Age=0"));
-    }
-
-    #[test]
-    fn extract_auth_token_from_bearer_and_cookie() {
-        let mut headers = HeaderMap::new();
-        assert!(extract_auth_token(&headers).is_none());
-
-        headers.insert(
-            "Authorization",
-            HeaderValue::from_static("Bearer abc.def.ghi"),
-        );
-        assert_eq!(extract_auth_token(&headers), Some("abc.def.ghi"));
-
-        let mut cookie_only = HeaderMap::new();
-        cookie_only.insert(
-            header::COOKIE,
-            HeaderValue::from_static("other=1; auth_token=cookie.jwt.sig; x=y"),
-        );
-        assert_eq!(extract_auth_token(&cookie_only), Some("cookie.jwt.sig"));
     }
 
     #[test]
