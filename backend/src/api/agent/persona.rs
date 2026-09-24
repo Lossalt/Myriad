@@ -386,7 +386,7 @@ pub async fn put_persona(
         .map_err(|error| persona_store_http("update persona portrait", error))?;
     let portrait_url = match saved.portrait_asset_id.as_deref() {
         Some(url) => Some(
-            crate::services::media::publish_local_url(
+            crate::services::media::normalize_local_url(
                 &transaction,
                 url,
                 &crate::services::media::upgrade::configured_origins().await,
@@ -398,7 +398,7 @@ pub async fn put_persona(
     };
     let avatar_url = match saved.avatar_asset_id.as_deref() {
         Some(url) => Some(
-            crate::services::media::publish_local_url(
+            crate::services::media::normalize_local_url(
                 &transaction,
                 url,
                 &crate::services::media::upgrade::configured_origins().await,

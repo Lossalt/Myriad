@@ -1,3 +1,4 @@
+use super::references::{NewReference, replace_for_consumer};
 use super::*;
 use crate::models::entities::media_references;
 use sea_orm::{
@@ -102,6 +103,22 @@ async fn postgres_reference_counts_and_existence_keep_expiry_and_public_boundari
     };
     let image = f.image().await;
     let now = chrono::Utc::now();
+    let public_ref = [NewReference {
+        asset_id: image.id,
+        slot: "public".into(),
+        requires_public: true,
+        expires_at: None,
+    }];
+    let txn = f.db.begin().await.unwrap();
+    assert_eq!(
+        replace_for_consumer(&txn, "ai_task", "task", &public_ref)
+            .await
+            .unwrap_err(),
+        MediaError::invalid("Public reference to a private asset"),
+        "a public reference must never point at a private asset"
+    );
+    txn.rollback().await.unwrap();
+    f.service.publish(&f.db, image.id).await.unwrap();
     let input = [
         NewReference {
             asset_id: image.id,

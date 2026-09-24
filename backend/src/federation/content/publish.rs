@@ -152,43 +152,37 @@ pub async fn publish_content(
 
     let attachment_urls = ap_attachment_urls(&ap_object);
     let origins = vec![base_url.trim_end_matches('/').to_string()];
-    let mut asset_ids = Vec::new();
-    for url in &attachment_urls {
-        let Some(path) = crate::services::media::cite_local_path(url, &origins) else {
-            continue;
-        };
-        if let Some(id) = crate::services::media::resolve_asset_id(&txn, &path)
-            .await
-            .map_err(media_ref_err)?
-        {
-            asset_ids.push(id);
-        }
-    }
-    // Attachment ids come from the request; never publish another user's draft.
+    // Attachment URLs come from the request: publish and bind only media the
+    // author may manage; another user's draft reads as an invalid attachment.
     let actor = if is_admin {
         crate::services::media::MediaActor::admin(user_id)
     } else {
         crate::services::media::MediaActor::user(user_id)
     }
     .map_err(media_ref_err)?;
-    crate::services::media::ensure_publishable(&txn, &actor, &asset_ids)
-        .await
-        .map_err(|error| match error {
-            crate::services::media::MediaError::Missing => (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid attachment URL")),
-            ),
-            other => media_ref_err(other),
-        })?;
-    let published_paths = crate::services::media::publish_asset_ids(&txn, &asset_ids)
-        .await
-        .map_err(media_ref_err)?;
+    let bound = crate::services::media::bind(
+        &txn,
+        &crate::services::media::Consumer::federation_activity(activity_id.clone()),
+        &crate::services::media::Citations::urls(&origins, &attachment_urls, |index| {
+            format!("attachment:{index}")
+        }),
+        crate::services::media::Authority::Actor(&actor),
+        crate::services::media::Unresolved::Reject,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::services::media::MediaError::Missing => (
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid attachment URL")),
+        ),
+        other => media_ref_err(other),
+    })?;
     let mut activity_json = activity_json;
     rewrite_activity_attachment_urls(
         &mut activity_json,
         base_url.trim_end_matches('/'),
         &origins,
-        &published_paths,
+        bound.urls(),
         &txn,
     )
     .await
@@ -212,18 +206,6 @@ pub async fn publish_content(
         &activity_json,
     )
     .await?;
-    let refs = crate::services::media::references_from_urls(
-        &txn,
-        &origins,
-        &attachment_urls,
-        |index| format!("attachment:{index}"),
-        true,
-    )
-    .await
-    .map_err(media_ref_err)?;
-    crate::services::media::bind_consumer(&txn, "federation_activity", &activity_id, &refs)
-        .await
-        .map_err(media_ref_err)?;
     txn.commit().await.map_err(db_err)?;
 
     // Direct 走 ExplicitRecipientsOnly —— 没有收件人就一个 inbox 都不投。
@@ -717,7 +699,7 @@ mod tests {
         assert!(publish.contains("is_unique_violation"));
         assert!(publish.contains("Content already published"));
         assert!(publish.contains("txn.commit()"));
-        assert!(publish.contains("bind_consumer"));
+        assert!(publish.contains("services::media::bind("));
         assert!(publish.contains("federation_activity"));
         assert!(publish.contains("delivery_enqueue_failed"));
         assert!(

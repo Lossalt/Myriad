@@ -7,6 +7,7 @@
 
 mod access;
 mod assets;
+mod binding;
 mod cite;
 mod error;
 #[cfg(test)]
@@ -29,13 +30,12 @@ mod urls;
 mod validate;
 
 pub use access::{can_manage, can_read};
+pub use binding::{Authority, Bound, Citation, Citations, Consumer, Unresolved, Visibility, bind};
 pub use cite::{
     bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_site_image,
-    bind_and_publish_wallpaper, bind_channel_message, bind_consumer, bind_note_draft,
-    bind_note_published, bind_persona, bind_rss_item, bind_stickers, clear_note_doc,
-    clear_rss_source, ensure_publishable, extract_registered_paths, publish_asset_ids,
-    publish_cited_media, publish_local_url, references_from_fields, references_from_urls,
-    resolve_asset_id,
+    bind_and_publish_wallpaper, bind_channel_message, bind_note_draft, bind_note_published,
+    bind_persona, bind_rss_item, clear_note_doc, clear_rss_source, extract_registered_paths,
+    normalize_cited_media, normalize_local_url, resolve_asset_id,
 };
 pub(crate) use cite::{
     bind_restored_dashboard_layout, bind_restored_site_image, bind_restored_wallpaper,
@@ -48,7 +48,7 @@ pub use migration::{
     MigrationBatch, MigrationJobInput, MigrationStats, migrate_catalog_batch, upsert_job,
 };
 pub use recovery::{RecoverPlan, plan_recovery};
-pub use references::{NewReference, active_count, parse_consumer_type, replace_for_consumer};
+pub use references::{active_count, parse_consumer_type};
 pub use scan::catalog_labels_for_assets;
 pub use serve::{
     FileServe, NO_STORE, ServeOutcome, resolve_alias_or_legacy, resolve_authenticated_content,
@@ -395,6 +395,7 @@ fn txn_error(err: sea_orm::TransactionError<MediaError>) -> MediaError {
 
 #[cfg(test)]
 mod tests {
+    use super::references::{NewReference, replace_for_consumer};
     use super::*;
 
     #[test]

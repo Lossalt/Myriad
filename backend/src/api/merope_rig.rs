@@ -1384,7 +1384,7 @@ pub async fn upload_portrait(
     // 一个事务。读路径的 manifest_matches_master 也拦得住，但那是每次请求重读
     // 一遍旧包再丢掉，而 `/active` 是公开路由，首页挂件每次加载都会走到。
     let transaction = db.begin().await.map_err(internal_error)?;
-    let public_url = match crate::services::media::publish_local_url(
+    let public_url = match crate::services::media::normalize_local_url(
         &transaction,
         &stored.url,
         &crate::services::media::upgrade::configured_origins().await,
@@ -1721,7 +1721,7 @@ pub async fn generate_portrait(
             return Err(internal_error(error));
         }
     };
-    let public_url = match crate::services::media::publish_local_url(
+    let public_url = match crate::services::media::normalize_local_url(
         &transaction,
         &url,
         &crate::services::media::upgrade::configured_origins().await,
@@ -2001,7 +2001,7 @@ pub async fn generate_sticker_avatar(
     });
     let commit = async {
         let transaction = db.begin().await.map_err(internal_error)?;
-        let public_url = crate::services::media::publish_local_url(
+        let public_url = crate::services::media::normalize_local_url(
             &transaction,
             &url,
             &crate::services::media::upgrade::configured_origins().await,

@@ -148,7 +148,7 @@ async fn postgres_html_publish_and_stickers_protect_assets() {
     };
     let image = f.image().await;
     let txn = f.db.begin().await.unwrap();
-    let (_, body) = publish_cited_media(
+    let (_, body) = normalize_cited_media(
         &txn,
         &[],
         None,
@@ -318,10 +318,10 @@ async fn postgres_persona_url_rewrite_preserves_generation_and_public_avatar() {
         "INSERT INTO agent_persona(id,name,personality,portrait_asset_id,avatar_asset_id,avatar_generation,updated_at) VALUES ('site','Test','Test',$1,$2,'{\"fingerprint\":\"keep\"}',NOW())",
         [portrait.content_path.clone().into(), avatar.content_path.clone().into()])).await.unwrap();
     let txn = f.db.begin().await.unwrap();
-    let portrait_url = publish_local_url(&txn, &portrait.content_path, &[])
+    let portrait_url = normalize_local_url(&txn, &portrait.content_path, &[])
         .await
         .unwrap();
-    let avatar_url = publish_local_url(&txn, &avatar.content_path, &[])
+    let avatar_url = normalize_local_url(&txn, &avatar.content_path, &[])
         .await
         .unwrap();
     let persona = merope::get_persona_on(&txn).await.unwrap().unwrap();
@@ -1454,11 +1454,8 @@ async fn generated_portrait_and_sticker_urls_serve_real_bytes_after_publication(
             )
             .await
             .unwrap();
-        let txn = f.db.begin().await.unwrap();
-        let public = publish_local_url(&txn, &image.catalog_url(), &[])
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
+        let public = f.service.publish(&f.db, image.id).await.unwrap().url;
+        assert_eq!(public, image.catalog_url(), "publishing keeps the address");
         let catalog = crate::services::media_catalog::list_assets(&f.db, &Default::default())
             .await
             .unwrap();
@@ -1589,7 +1586,7 @@ async fn postgres_upgrade_backfills_existing_wallpaper_reference() {
     .unwrap();
     let image = f.image().await;
     let txn = f.db.begin().await.unwrap();
-    let public = publish_local_url(&txn, &image.content_path, &[])
+    let public = normalize_local_url(&txn, &image.content_path, &[])
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -2186,24 +2183,41 @@ async fn postgres_publishing_ids_requires_managing_private_assets() {
         )
         .await
         .unwrap();
+    // Request-supplied citations on a public consumer: another user's draft
+    // reads as missing; the owner or an admin publishes it by citing it.
+    let citations = Citations::urls(&[], &[foreign.url.clone()], |i| format!("a:{i}"));
+    let cite_as = |actor: MediaActor| {
+        let citations = citations.clone();
+        let db = f.db.clone();
+        async move {
+            bind(
+                &db,
+                &Consumer::federation_activity("act"),
+                &citations,
+                Authority::Actor(&actor),
+                Unresolved::Reject,
+            )
+            .await
+        }
+    };
     let user = MediaActor::user(1).unwrap();
     assert_eq!(
-        cite::ensure_publishable(&f.db, &user, &[foreign.id])
-            .await
-            .unwrap_err(),
+        cite_as(user.clone()).await.unwrap_err(),
         MediaError::Missing
     );
-    let owner = MediaActor::user(2).unwrap();
-    cite::ensure_publishable(&f.db, &owner, &[foreign.id])
+    let row = assets::find_by_id(&f.db, foreign.id)
         .await
+        .unwrap()
         .unwrap();
-    cite::ensure_publishable(&f.db, &MediaActor::admin(1).unwrap(), &[foreign.id])
+    assert_eq!(row.exposure.as_deref(), Some("private"));
+    cite_as(MediaActor::user(2).unwrap()).await.unwrap();
+    let row = assets::find_by_id(&f.db, foreign.id)
         .await
+        .unwrap()
         .unwrap();
-    f.service.publish(&f.db, foreign.id).await.unwrap();
-    cite::ensure_publishable(&f.db, &user, &[foreign.id])
-        .await
-        .unwrap();
+    assert_eq!(row.exposure.as_deref(), Some("public"));
+    // Already public: citing it needs no further right.
+    cite_as(user).await.unwrap();
     f.close().await;
 }
 

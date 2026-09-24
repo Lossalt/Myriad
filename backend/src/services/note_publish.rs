@@ -147,7 +147,7 @@ async fn write_published_item<C: ConnectionTrait>(
     published_at_ms: Option<i64>,
     author: Option<String>,
 ) -> Result<PublishedNote, HttpError> {
-    let (rewritten_cover, rewritten_body) = crate::services::media::publish_cited_media(
+    let (rewritten_cover, rewritten_body) = crate::services::media::normalize_cited_media(
         db,
         &crate::services::media::upgrade::configured_origins().await,
         image.as_deref(),
