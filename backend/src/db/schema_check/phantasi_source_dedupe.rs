@@ -550,13 +550,13 @@ mod tests {
         );
         db.execute_unprepared(&insert_sources).await.unwrap();
         db.execute_unprepared(
-            r#"INSERT INTO phantasi_items (id, source_id, guid, title, link) VALUES
-               (201, 102, 'g1', 'b1', 'https://dup.example/1'),
-               (202, 102, 'g2', 'b2', 'https://dup.example/2'),
-               (204, 102, 'g4', 'b4', 'https://dup.example/4'),
-               (301, 103, 'g1', 'c1', 'https://dup.example/1'),
-               (303, 103, 'g3', 'c3', 'https://dup.example/3'),
-               (304, 103, 'g4', 'c4', 'https://dup.example/4');
+            r#"INSERT INTO phantasi_items (id, source_id, guid, title, link, published_at) VALUES
+               (201, 102, 'g1', 'b1', 'https://dup.example/1', NOW()),
+               (202, 102, 'g2', 'b2', 'https://dup.example/2', NOW()),
+               (204, 102, 'g4', 'b4', 'https://dup.example/4', NOW()),
+               (301, 103, 'g1', 'c1', 'https://dup.example/1', NOW()),
+               (303, 103, 'g3', 'c3', 'https://dup.example/3', NOW()),
+               (304, 103, 'g4', 'c4', 'https://dup.example/4', NOW());
              UPDATE phantasi_items SET topic = 'AI' WHERE id = 301;
              INSERT INTO phantasi_user_states (user_id, item_id, is_read, is_starred, read_progress, notes)
              VALUES (1, 201, true, false, 0.2, 'from b'),
