@@ -13,9 +13,9 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../../../contexts/I18nContext'
-import { useMediaSource } from '../../../hooks/useMediaSource'
 import { ApiError } from '../../../services/api'
 import {
+  mediaAssetSrc,
   previewMediaEdit,
   saveMediaEdit,
 } from '../../../services/mediaApi'
@@ -26,6 +26,7 @@ import {
   SettingTitleTag,
   SwitchItem,
 } from '../../settings'
+import { displayImageUrl } from '../notes/noteImageUrl'
 import {
   resizedDimensions,
   resizeMediaImage,
@@ -149,10 +150,7 @@ export function MediaEditorDialog({
   const [zoom, setZoom] = useState(1)
   const video = item.mime.startsWith('video/')
   const editable = ['image/png', 'image/jpeg', 'image/webp'].includes(item.mime)
-  const catalogSrc = item.exposure === 'public' && item.public_path
-    ? item.public_path
-    : item.content_path || item.url
-  const src = useMediaSource(catalogSrc)
+  const src = displayImageUrl(mediaAssetSrc(item))
   useEffect(() => {
     alive.current = true
     const opener = document.activeElement

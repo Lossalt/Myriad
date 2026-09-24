@@ -5,7 +5,7 @@ import { afterEach, it, mock } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { displayImageUrl } from '../components/phantasi/notes/noteImageUrl'
 import { apiService } from './api'
-import { draftMediaSrc, fetchMediaObjectUrl, isPrivateMediaPath, listMedia, saveMediaEdit, uploadMedia } from './mediaApi'
+import { listMedia, mediaAssetSrc, saveMediaEdit, uploadMedia } from './mediaApi'
 
 const asset = {
   id: 7, kind: 'upload' as const, url: '/media/federation/1/photo.png',
@@ -54,27 +54,11 @@ it('upload retains the response asset and sends file contents in multipart', asy
   assert.deepEqual(await uploadMedia(file), asset)
 })
 
-it('drafts prefer the authenticated content path until publication', () => {
-  assert.equal(
-    draftMediaSrc({
-      ...asset,
-      exposure: 'private',
-      content_path: '/api/media/7/content',
-      public_path: null,
-    }),
-    '/api/media/7/content',
-  )
-  assert.equal(
-    draftMediaSrc({
-      ...asset,
-      exposure: 'public',
-      content_path: '/api/media/7/content',
-      public_path: '/media/assets/11111111-1111-1111-1111-111111111111/photo.png',
-    }),
-    '/media/assets/11111111-1111-1111-1111-111111111111/photo.png',
-  )
-  assert.equal(isPrivateMediaPath('/api/media/7/content'), true)
-  assert.equal(isPrivateMediaPath('/media/assets/11111111-1111-1111-1111-111111111111/photo.png'), false)
+it('an asset is shown at its one permanent address whatever its exposure', () => {
+  const url = '/media/assets/11111111-1111-1111-1111-111111111111/photo.png'
+  for (const exposure of ['private', 'public']) {
+    assert.equal(mediaAssetSrc({ ...asset, url, exposure, content_path: '/api/media/7/content' }), url)
+  }
 })
 
 it('journal editor uploads through mediaApi, not federationApi', () => {
@@ -84,28 +68,6 @@ it('journal editor uploads through mediaApi, not federationApi', () => {
   )
   assert.match(src, /uploadMedia\(file\)/)
   assert.doesNotMatch(src, /federationApi/)
-})
-
-it('private previews retain authentication with query strings, fragments, and absolute URLs', () => {
-  for (const src of ['/api/media/7/content?v=2', '/api/media/7/content#preview', 'https://api.example/api/media/7/content?v=2', '//api.example/api/media/7/content']) {
-    assert.equal(isPrivateMediaPath(src), true)
-  }
-  for (const src of ['/api/media/7/content/other', '/media/assets/photo.png', 'data:image/png;base64,AA==']) {
-    assert.equal(isPrivateMediaPath(src), false)
-  }
-})
-
-it('a body that completes after cancellation cannot allocate an orphaned preview URL', async () => {
-  const controller = new AbortController()
-  let finish!: (value: Blob) => void
-  const body = new Promise<Blob>((resolve) => { finish = resolve })
-  mock.method(globalThis, 'fetch', async () => ({ ok: true, blob: () => body }))
-  const create = mock.method(URL, 'createObjectURL', () => 'blob:unexpected')
-  const result = fetchMediaObjectUrl('/api/media/7/content', controller.signal)
-  controller.abort()
-  finish(new Blob(['image']))
-  await assert.rejects(result, { name: 'AbortError' })
-  assert.equal(create.mock.callCount(), 0)
 })
 
 it('serializes filters and the full timestamp cursor without changing its precision', async () => {
@@ -119,12 +81,4 @@ it('serializes filters and the full timestamp cursor without changing its precis
     kind: 'generated', format: 'png', query: '100% sky',
     before_created_at: cursor.created_at, before_id: '42', limit: '10',
   })
-})
-
-it('private preview fetch stays on the current site when a stored URL has an old origin', async () => {
-  const fetch = mock.method(globalThis, 'fetch', async () => new Response(new Blob(['image'])))
-  const url = await fetchMediaObjectUrl('https://old.example/api/media/7/content?v=2')
-  assert.equal(fetch.mock.calls[0].arguments[0], '/api/media/7/content?v=2')
-  assert.equal(fetch.mock.calls[0].arguments[1]?.credentials, 'include')
-  URL.revokeObjectURL(url)
 })
