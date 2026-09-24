@@ -51,12 +51,12 @@ use super::intake_helpers::{
     ANALYTICS_BACKUP_FORMAT, ANALYTICS_BACKUP_VERSION, DAILY_RETENTION_DAYS, ENGAGE_MARKER,
     MAX_IMPORT_COUNTRY_DAILY, MAX_IMPORT_COUNTRY_VISITOR, MAX_IMPORT_EVENT_DAILY,
     MAX_IMPORT_EVENT_VISITOR, MAX_IMPORT_PAGE_DAILY, MAX_IMPORT_REFERRER_DAILY,
-    MAX_IMPORT_VISITOR_SEEN, MAX_SUMMARY_DAYS, SITE_PATH, SUMMARY_CACHE, SUMMARY_CACHE_TTL,
-    SummaryQuery, VISITOR_CARD_CACHE, VISITOR_RETENTION_DAYS, analytics_collection_enabled,
-    analytics_today, analytics_tz_label, compare_range_kind, count_distinct_site,
-    invalidate_summary_cache, metric_delta, normalize_country_code, normalize_country_name,
-    normalize_event_name, normalize_path, normalize_referrer_host, normalize_target,
-    read_visitor_ordinal, resolve_visitor_hash, sum_all_time_page_views,
+    MAX_IMPORT_VISITOR_SEEN, MAX_SUMMARY_DAYS, SITE_PATH, SUMMARY_CACHES, SummaryQuery,
+    VISITOR_RETENTION_DAYS, analytics_collection_enabled, analytics_today, analytics_tz_label,
+    compare_range_kind, count_distinct_site, invalidate_summary_cache, metric_delta,
+    normalize_country_code, normalize_country_name, normalize_event_name, normalize_path,
+    normalize_referrer_host, normalize_target, read_visitor_ordinal, resolve_visitor_hash,
+    sum_all_time_page_views,
 };
 
 /// GET /api/analytics/summary?days=7  or  ?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -80,28 +80,24 @@ pub(crate) async fn build_analytics_summary(
     let cache_key = format!("{}..{}", from.format("%Y-%m-%d"), to_day.format("%Y-%m-%d"));
 
     // Short TTL cache — admin UI refresh shouldn't re-scan every open.
-    {
-        let cache = SUMMARY_CACHE.lock().await;
-        if let Some((at, body)) = cache.get(&cache_key) {
-            if at.elapsed() < SUMMARY_CACHE_TTL {
-                return (StatusCode::OK, Json(body.clone()));
-            }
+    let generation = {
+        let caches = SUMMARY_CACHES.lock().await;
+        if let Some(body) = caches.summary(&cache_key) {
+            return (StatusCode::OK, Json(body));
         }
-    }
+        caches.generation()
+    };
 
     let body = match summary_body(db, from, to_day, days).await {
         Ok(body) => body,
         Err(error) => return analytics_db_error(error),
     };
 
-    {
-        let mut cache = SUMMARY_CACHE.lock().await;
-        cache.insert(cache_key, (Instant::now(), body.clone()));
-        // Keep map small (only a few day windows are ever queried)
-        if cache.len() > 12 {
-            cache.retain(|_, (at, _)| at.elapsed() < SUMMARY_CACHE_TTL * 2);
-        }
-    }
+    // Dropped if an intake invalidated while this was computing.
+    SUMMARY_CACHES
+        .lock()
+        .await
+        .store_summary(generation, cache_key, body.clone());
 
     (StatusCode::OK, Json(body))
 }
@@ -556,14 +552,13 @@ pub(crate) fn vid_from_query(uri: &axum::http::Uri) -> Option<String> {
 pub(crate) async fn visitor_card_aggregate(
     db: &DatabaseConnection,
 ) -> Result<Value, (StatusCode, Json<Value>)> {
-    {
-        let cache = VISITOR_CARD_CACHE.lock().await;
-        if let Some((at, body)) = cache.as_ref() {
-            if at.elapsed() < SUMMARY_CACHE_TTL {
-                return Ok(body.clone());
-            }
+    let generation = {
+        let caches = SUMMARY_CACHES.lock().await;
+        if let Some(body) = caches.card() {
+            return Ok(body);
         }
-    }
+        caches.generation()
+    };
 
     let today = analytics_today();
     let from = today - Duration::days(VISITOR_CARD_DAYS - 1);
@@ -627,7 +622,11 @@ ORDER BY day ASC
         "daily": daily,
     });
 
-    *VISITOR_CARD_CACHE.lock().await = Some((Instant::now(), body.clone()));
+    // Dropped if an intake invalidated while this was computing.
+    SUMMARY_CACHES
+        .lock()
+        .await
+        .store_card(generation, body.clone());
     Ok(body)
 }
 

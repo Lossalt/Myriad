@@ -494,7 +494,7 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         from: None,
         to: None,
     };
-    SUMMARY_CACHE.lock().await.clear();
+    invalidate_summary_cache().await;
     let (status, axum::Json(body)) = super::admin_api::build_analytics_summary(&db, query()).await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(body["range"]["views"], 12);
@@ -513,7 +513,7 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
     assert_eq!(body["events"][0]["targets"][0]["unique_visitors"], 1);
     assert_eq!(body["countries"][0]["unique_visitors"], 1);
 
-    SUMMARY_CACHE.lock().await.clear();
+    invalidate_summary_cache().await;
     db.execute_unprepared("ALTER TABLE analytics_country_visitor RENAME TO country_visitor_off")
         .await
         .unwrap();
@@ -523,7 +523,7 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         body.get("range").is_none(),
         "no partial statistics on failure"
     );
-    SUMMARY_CACHE.lock().await.clear();
+    invalidate_summary_cache().await;
     isolated.drop().await;
 }
 
@@ -676,6 +676,30 @@ async fn concurrent_duplicate_visits_count_once() {
     );
     drop(db);
     isolated.drop().await;
+}
+
+#[test]
+fn summary_cache_drops_results_computed_across_an_invalidation() {
+    let mut caches = SummaryCaches::default();
+    let key = || "2026-01-01..2026-01-07".to_string();
+
+    // A compute that started before an intake's invalidation must not land.
+    let started = caches.generation();
+    caches.invalidate();
+    assert!(!caches.store_summary(started, key(), json!({ "stale": true })));
+    assert!(!caches.store_card(started, json!({ "stale": true })));
+    assert!(caches.summary(&key()).is_none());
+    assert!(caches.card().is_none());
+
+    // One that started after it lands, and the next invalidation clears it.
+    let started = caches.generation();
+    assert!(caches.store_summary(started, key(), json!({ "fresh": true })));
+    assert!(caches.store_card(started, json!({ "fresh": true })));
+    assert_eq!(caches.summary(&key()), Some(json!({ "fresh": true })));
+    assert_eq!(caches.card(), Some(json!({ "fresh": true })));
+    caches.invalidate();
+    assert!(caches.summary(&key()).is_none());
+    assert!(caches.card().is_none());
 }
 
 #[test]

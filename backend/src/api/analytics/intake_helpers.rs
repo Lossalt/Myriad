@@ -82,15 +82,10 @@ static RATE_LIMIT: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, (Instant, u32
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 static VIEW_DEDUPE: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, Instant>>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
-/// Admin summary cache: `{from}..{to}` (YYYY-MM-DD) → (stored_at, body). Invalidated on write.
-pub(crate) static SUMMARY_CACHE: once_cell::sync::Lazy<
-    Arc<Mutex<HashMap<String, (Instant, Value)>>>,
-> = once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 pub(crate) const SUMMARY_CACHE_TTL: StdDuration = StdDuration::from_secs(45);
-/// Public visitor-card aggregate (today / all-time / trend). The per-visitor
-/// ordinal is **never** cached here — it is looked up per request.
-pub(crate) static VISITOR_CARD_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<(Instant, Value)>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Admin summary and public visitor-card caches. Invalidated on every write.
+pub(crate) static SUMMARY_CACHES: once_cell::sync::Lazy<Mutex<SummaryCaches>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(SummaryCaches::default()));
 /// IP → country (code, name) cache for analytics intake.
 static COUNTRY_CACHE: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, (Instant, CountryInfo)>>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -105,9 +100,75 @@ pub(crate) struct CountryInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AnalyticsSaltUnavailable;
 
+/// Summary cache entries plus a generation that every invalidation bumps.
+///
+/// A summary is computed without holding the lock, so an intake can commit and
+/// invalidate while it runs. The computing side reads [`Self::generation`]
+/// before querying and stores through `store_*`, which drop the result when
+/// the generation has moved: otherwise the stale body would be written back
+/// over the invalidation and served for a whole TTL. Bump and clear happen
+/// under the same lock as the check-and-store, so there is no window between.
+#[derive(Default)]
+pub(crate) struct SummaryCaches {
+    generation: u64,
+    /// `{from}..{to}` (YYYY-MM-DD) → (stored_at, body).
+    summary: HashMap<String, (Instant, Value)>,
+    /// Public visitor-card aggregate (today / all-time / trend). The
+    /// per-visitor ordinal is **never** cached here — it is looked up per request.
+    card: Option<(Instant, Value)>,
+}
+
+impl SummaryCaches {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn summary(&self, key: &str) -> Option<Value> {
+        self.summary
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < SUMMARY_CACHE_TTL)
+            .map(|(_, body)| body.clone())
+    }
+
+    /// Stores only if nothing was invalidated since `generation` was read.
+    pub(crate) fn store_summary(&mut self, generation: u64, key: String, body: Value) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.summary.insert(key, (Instant::now(), body));
+        // Keep map small (only a few day windows are ever queried)
+        if self.summary.len() > 12 {
+            self.summary
+                .retain(|_, (at, _)| at.elapsed() < SUMMARY_CACHE_TTL * 2);
+        }
+        true
+    }
+
+    pub(crate) fn card(&self) -> Option<Value> {
+        self.card
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < SUMMARY_CACHE_TTL)
+            .map(|(_, body)| body.clone())
+    }
+
+    /// Stores only if nothing was invalidated since `generation` was read.
+    pub(crate) fn store_card(&mut self, generation: u64, body: Value) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.card = Some((Instant::now(), body));
+        true
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.summary.clear();
+        self.card = None;
+    }
+}
+
 pub(crate) async fn invalidate_summary_cache() {
-    *VISITOR_CARD_CACHE.lock().await = None;
-    SUMMARY_CACHE.lock().await.clear();
+    SUMMARY_CACHES.lock().await.invalidate();
 }
 
 // ── Request types ──────────────────────────────────────────────────────────
