@@ -4,7 +4,7 @@
 //! missing columns go through `get_expected_schema` + generic DDL.
 //! Heals here: recent (~1 month) CREATE IF NOT EXISTS, unique-index cleanup,
 //! federation FK report/apply, triggers, credential CHECK, inbox_scope rebuild.
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, TransactionTrait};
 
 /// `phantasi_items.topic` 的部分索引（`migrations/003` 已 CREATE）。
 ///
@@ -697,6 +697,152 @@ END $$;
     )
     .await?;
     Ok(())
+}
+
+/// 本人写过的撤回（Delete / Undo）里有没有指向这条转发的：对象是转发的活动 id
+/// （旧的撤回发布、历史纯 Announce 的 Undo），或转发 Note 的 id（旧的取消转发）。
+fn repost_withdrawal_exists(user_id: &str, activity_id: &str) -> String {
+    format!(
+        "EXISTS (
+            SELECT 1 FROM federation_activities w
+            WHERE w.user_id = {user_id} AND w.is_local
+              AND w.activity_type IN ('Delete', 'Undo')
+              AND COALESCE(w.object_json->'object'->>'id', w.object_json->>'object') IN (
+                  {activity_id},
+                  (SELECT c.object_json->'object'->>'id' FROM federation_activities c
+                   WHERE c.activity_id = {activity_id})))"
+    )
+}
+
+/// 收尾修复前留下的半撤回转发，只动本地行，不写任何活动。
+///
+/// 转发现在是一个事实（`federation::interactions::withdraw_repost` 一起删转发
+/// 标记、已发布行与时间线行），但修复前两条撤回路径各只删一半：
+/// - 旧的取消转发删了标记与时间线、写了 Delete(Note)，留下已发布行；
+/// - 旧的撤回发布删了已发布行与时间线、写了 Delete(Create 活动 id)，留下标记。
+///
+/// 这些行要等用户再撤回一次才清掉，而那一次会再发一条 Delete。按远端已经收到
+/// 的事实逐类收敛：
+/// 1. 只剩一半、且本人已有指向它的 Delete / Undo：远端已撤回，本地删掉剩下的一半。
+/// 2. 只剩已发布行、没有撤回：远端仍看得到这条转发，补回标记，「已转发」与远端
+///    一致，之后取消转发只发一条 Delete。同一对象已有别的转发标记时（唯一约束）
+///    不补，这行仍可从「已发布」撤回，那一次 Delete 是远端第一次收到。
+/// 3. 只剩转发 Note 的标记、没有撤回：补回已发布行（纯 Announce 本来就没有已发布行，
+///    不动）。
+/// 4. 标记与已发布行都已不在的转发，时间线上的残留行删掉：`withdraw_repost` 两处都
+///    不在时直接返回，不会再清它们。
+///
+/// 每条规则只认确定的事实，重复执行无副作用。
+pub(crate) async fn ensure_repost_state_consistent(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let published_withdrawn = repost_withdrawal_exists("p.user_id", "p.activity_id");
+    let marker_withdrawn = repost_withdrawal_exists("i.user_id", "i.activity_id");
+    let no_marker = "NOT EXISTS (
+            SELECT 1 FROM federation_object_interactions i
+            WHERE i.user_id = p.user_id AND i.kind = 'announce'
+              AND i.activity_id = p.activity_id)";
+    let no_published = "NOT EXISTS (
+            SELECT 1 FROM federation_published_content p
+            WHERE p.user_id = i.user_id AND p.content_type = 'repost'
+              AND p.activity_id = i.activity_id)";
+    let statements = [
+        (
+            "published rows of withdrawn reposts",
+            format!(
+                "DELETE FROM federation_published_content p
+                 WHERE p.content_type = 'repost' AND {no_marker} AND {published_withdrawn}"
+            ),
+        ),
+        (
+            "markers of withdrawn reposts",
+            format!(
+                "DELETE FROM federation_object_interactions i
+                 WHERE i.kind = 'announce' AND COALESCE(i.activity_id, '') <> ''
+                   AND {no_published} AND {marker_withdrawn}"
+            ),
+        ),
+        (
+            "restored repost markers",
+            format!(
+                "INSERT INTO federation_object_interactions
+                     (user_id, object_id, kind, activity_id, created_at)
+                 SELECT p.user_id, q.object_id, 'announce', p.activity_id,
+                        COALESCE(p.published_at, a.published_at)
+                 FROM federation_published_content p
+                 JOIN federation_activities a
+                   ON a.activity_id = p.activity_id AND a.user_id = p.user_id
+                 CROSS JOIN LATERAL (SELECT CASE
+                     WHEN json_typeof(a.object_json->'object') = 'string'
+                         THEN a.object_json->>'object'
+                     ELSE COALESCE(a.object_json->'object'->>'mfp:quotedObjectId',
+                                   a.object_json->'object'->>'quoteUrl',
+                                   a.object_json->'object'->>'inReplyTo')
+                 END AS object_id) q
+                 WHERE p.content_type = 'repost' AND q.object_id <> ''
+                   AND {no_marker} AND NOT {published_withdrawn}
+                 ON CONFLICT (user_id, object_id, kind) DO NOTHING"
+            ),
+        ),
+        (
+            "restored repost published rows",
+            format!(
+                "INSERT INTO federation_published_content
+                     (user_id, content_type, content_id, activity_id, visibility, published_at)
+                 SELECT i.user_id, 'repost', n.content_id, i.activity_id, 'public',
+                        a.published_at
+                 FROM federation_object_interactions i
+                 JOIN federation_activities a
+                   ON a.activity_id = i.activity_id AND a.user_id = i.user_id
+                 CROSS JOIN LATERAL (SELECT COALESCE(
+                     a.object_json->'object'->>'mfp:contentId',
+                     substring(a.object_json->'object'->>'id' FROM '/notes/([^/]+)$')
+                 ) AS content_id) n
+                 WHERE i.kind = 'announce' AND a.activity_type = 'Create'
+                   AND a.object_json->'object'->>'mfp:kind' = 'repost'
+                   AND n.content_id <> ''
+                   AND {no_published} AND NOT {marker_withdrawn}
+                 ON CONFLICT (content_type, content_id) DO NOTHING"
+            ),
+        ),
+    ];
+    let stale_timeline = "a.activity_id = t.activity_id AND a.is_local
+               AND a.activity_type = 'Create'
+               AND a.object_json->'object'->>'mfp:kind' = 'repost'
+               AND NOT EXISTS (
+                   SELECT 1 FROM federation_object_interactions i
+                   WHERE i.user_id = a.user_id AND i.kind = 'announce'
+                     AND i.activity_id = a.activity_id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM federation_published_content p
+                   WHERE p.user_id = a.user_id AND p.content_type = 'repost'
+                     AND p.activity_id = a.activity_id)";
+    let txn = db.begin().await?;
+    for (label, sql) in &statements {
+        let healed = txn.execute_unprepared(sql).await?.rows_affected();
+        if healed > 0 {
+            tracing::info!(healed, "repost state heal: {label}");
+        }
+    }
+    // 时间线只在确有残留时才 DELETE：正常启动不对它发删除语句。
+    let stale = txn
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            format!(
+                "SELECT 1 AS stale FROM federation_timeline t
+                 JOIN federation_activities a ON {stale_timeline} LIMIT 1"
+            ),
+        ))
+        .await?;
+    if stale.is_some() {
+        let healed = txn
+            .execute_unprepared(&format!(
+                "DELETE FROM federation_timeline t USING federation_activities a
+                 WHERE {stale_timeline}"
+            ))
+            .await?
+            .rows_affected();
+        tracing::info!(healed, "repost state heal: timeline rows of withdrawn reposts");
+    }
+    txn.commit().await
 }
 
 /// 时间线只放帖子：清掉历史上写进去的非帖子行，并把旧的 Update 行并回原帖。

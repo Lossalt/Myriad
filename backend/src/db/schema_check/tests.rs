@@ -1870,3 +1870,137 @@ async fn timeline_heal_keeps_only_posts() {
 
     fixture.close().await;
 }
+
+/// 修复前的半撤回转发：已撤回的删掉剩下一半，没撤回的补回缺的一半，残留时间线行
+/// 清掉；健康转发与纯 Announce 不动，不写任何活动与投递，重复执行无副作用。
+#[tokio::test]
+async fn repost_heal_reconciles_half_withdrawn_reposts() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    // 与 announce_object 同形的转发 Create：活动 id https://h/act/{k}，
+    // Note id https://h/notes/repost_{k}，引用 {quoted}。
+    let create = |key: &str, quoted: &str| {
+        format!(
+            r#"('https://h/act/{key}', 1, 'Create', 'repost',
+               '{{"type": "Create", "id": "https://h/act/{key}", "object": {{
+                   "type": "Note", "id": "https://h/notes/repost_{key}",
+                   "mfp:kind": "repost", "mfp:contentId": "repost_{key}",
+                   "mfp:quotedObjectId": "{quoted}", "quoteUrl": "{quoted}"}}}}',
+               true, '2026-01-01T00:00:00Z')"#
+        )
+    };
+    let activities = [
+        create("ok", "https://r/n/ok"),
+        create("a1", "https://r/n/a1"),
+        create("a2", "https://r/n/a2"),
+        create("a3", "https://r/n/shared"),
+        create("ok2", "https://r/n/shared"),
+        create("b1", "https://r/n/b1"),
+        create("b2", "https://r/n/b2"),
+        create("t1", "https://r/n/t1"),
+        // 旧的取消转发：Delete 转发 Note。
+        r#"('https://h/act/del-a1', 1, 'Delete', NULL,
+            '{"type": "Delete", "object": "https://h/notes/repost_a1"}', true, NOW())"#
+            .to_string(),
+        // 旧的撤回发布：Delete 原 Create 活动 id。
+        r#"('https://h/act/del-b1', 1, 'Delete', 'repost',
+            '{"type": "Delete", "object": "https://h/act/b1"}', true, NOW())"#
+            .to_string(),
+        r#"('https://h/act/ann', 1, 'Announce', NULL,
+            '{"type": "Announce", "object": "https://r/n/ann"}', true, NOW())"#
+            .to_string(),
+    ];
+    db.execute_unprepared(&format!(
+        r#"
+        INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+        INSERT INTO federation_activities
+            (activity_id, user_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES {};
+        INSERT INTO federation_object_interactions (user_id, object_id, kind, activity_id) VALUES
+            (1, 'https://r/n/ok', 'announce', 'https://h/act/ok'),
+            (1, 'https://r/n/shared', 'announce', 'https://h/act/ok2'),
+            (1, 'https://r/n/b1', 'announce', 'https://h/act/b1'),
+            (1, 'https://r/n/b2', 'announce', 'https://h/act/b2'),
+            (1, 'https://r/n/ann', 'announce', 'https://h/act/ann');
+        INSERT INTO federation_published_content
+            (user_id, content_type, content_id, activity_id, visibility, published_at) VALUES
+            (1, 'repost', 'repost_ok', 'https://h/act/ok', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_ok2', 'https://h/act/ok2', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a1', 'https://h/act/a1', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a2', 'https://h/act/a2', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a3', 'https://h/act/a3', 'public', '2026-01-01T00:00:00Z');
+        INSERT INTO federation_timeline (user_id, activity_id, activity_type, object_type) VALUES
+            (1, 'https://h/act/ok', 'Create', 'repost'),
+            (2, 'https://h/act/ok', 'Create', 'repost'),
+            (1, 'https://h/act/t1', 'Create', 'repost'),
+            (2, 'https://h/act/t1', 'Create', 'repost');
+        "#,
+        activities.join(",\n")
+    ))
+    .await
+    .unwrap();
+
+    let pairs = |sql: &'static str| async move {
+        let mut rows: Vec<(String, String)> = db
+            .query_all_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| (row.try_get_by_index(0).unwrap(), row.try_get_by_index(1).unwrap()))
+            .collect();
+        rows.sort();
+        rows
+    };
+    let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+    let count = |sql: &'static str| async move {
+        db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    };
+    for _ in 0..2 {
+        super::ensure_heals::ensure_repost_state_consistent(db)
+            .await
+            .expect("repost heal must succeed");
+        assert_eq!(
+            pairs("SELECT activity_id, object_id FROM federation_object_interactions").await,
+            vec![
+                // a2 没撤回过：补回标记。
+                s("https://h/act/a2", "https://r/n/a2"),
+                s("https://h/act/ann", "https://r/n/ann"),
+                // b1 已有 Delete：标记删掉；b2 没撤回：标记保留并补回已发布行。
+                s("https://h/act/b2", "https://r/n/b2"),
+                s("https://h/act/ok", "https://r/n/ok"),
+                // a3 与 ok2 引用同一对象，唯一约束下不补 a3 的标记。
+                s("https://h/act/ok2", "https://r/n/shared"),
+            ]
+        );
+        assert_eq!(
+            pairs("SELECT activity_id, content_id FROM federation_published_content").await,
+            vec![
+                // a1 已有 Delete：已发布行删掉。
+                s("https://h/act/a2", "repost_a2"),
+                s("https://h/act/a3", "repost_a3"),
+                s("https://h/act/b2", "repost_b2"),
+                s("https://h/act/ok", "repost_ok"),
+                s("https://h/act/ok2", "repost_ok2"),
+            ]
+        );
+        assert_eq!(
+            pairs("SELECT user_id::text, activity_id FROM federation_timeline").await,
+            vec![s("1", "https://h/act/ok"), s("2", "https://h/act/ok")]
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM federation_activities").await, 11);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM federation_delivery_queue").await,
+            0
+        );
+    }
+
+    fixture.close().await;
+}
