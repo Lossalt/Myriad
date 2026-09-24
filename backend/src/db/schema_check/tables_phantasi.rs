@@ -199,6 +199,7 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 },
                 ColumnDef::new("url_key", "text"),
                 ColumnDef::new("site_url_key", "text"),
+                ColumnDef::new("fetch_lease_until", "timestamp with time zone"),
             ],
         },
         TableDef {

@@ -496,6 +496,7 @@ mod tests {
             updated_at: now,
             url_key: Some(url_match_key(url)),
             site_url_key: site_url.map(url_match_key),
+            fetch_lease_until: None,
         }
     }
 

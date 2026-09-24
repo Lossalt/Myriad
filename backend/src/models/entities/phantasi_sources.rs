@@ -78,6 +78,10 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     #[serde(skip_serializing, default)]
     pub site_url_key: Option<String>,
+    /// 抓取租约到期时间。调度 tick 与手动刷新先原子地占住它再联网，
+    /// 占住期间同一源不会被第二个抓取者选中；抓完清空，进程崩溃则到期自动释放。
+    #[serde(skip_serializing, default)]
+    pub fetch_lease_until: Option<DateTimeWithTimeZone>,
 }
 
 /// 规范化 URL 比较键：小写 host、去 fragment、去尾部斜杠。无法解析时退化为
