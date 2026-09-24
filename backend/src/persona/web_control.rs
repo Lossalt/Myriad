@@ -258,9 +258,9 @@ pub async fn call(
         .body(body)
         .send()
         .await
-        .map_err(|_| "Execution outcome is unknown: web capability request failed")?;
+        .map_err(|_| outcome_unknown("web capability request failed"))?;
     if response.status().is_server_error() || response.status().as_u16() == 409 {
-        return Err("Execution outcome is unknown: web capability did not return a result".into());
+        return Err(outcome_unknown("web capability did not return a result"));
     }
     if !response.status().is_success() {
         return Err(format!(
@@ -272,18 +272,19 @@ pub async fn call(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| "Execution outcome is unknown: web capability response interrupted")?
+        .map_err(|_| outcome_unknown("web capability response interrupted"))?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
-            return Err(
-                "Execution outcome is unknown: web capability response is too large".into(),
-            );
+            return Err(outcome_unknown("web capability response is too large"));
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice::<Result<Value, String>>(&bytes).map_err(|_| {
-        String::from("Execution outcome is unknown: invalid web capability response")
-    })?
+    serde_json::from_slice::<Result<Value, String>>(&bytes)
+        .map_err(|_| outcome_unknown("invalid web capability response"))?
+}
+
+fn outcome_unknown(detail: &str) -> String {
+    format!("{} {detail}", myriad_agent_rules::OUTCOME_UNKNOWN_PREFIX)
 }
 
 #[cfg(test)]

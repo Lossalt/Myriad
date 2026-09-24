@@ -15,5 +15,13 @@ pub mod transport;
 /// asynchronous notification delivery belongs to the embedding application.
 pub type StatusReporter = std::sync::Arc<dyn Fn(String, bool) + Send + Sync>;
 
+/// Prefix of an error after which the tool call may or may not have run.
+/// The host reads it to keep such calls from being retried automatically.
+pub const OUTCOME_UNKNOWN_PREFIX: &str = "Execution outcome is unknown:";
+
+pub(crate) fn outcome_unknown(detail: impl std::fmt::Display) -> String {
+    format!("{OUTCOME_UNKNOWN_PREFIX} {detail}")
+}
+
 #[cfg(all(test, unix))]
 mod test_support;

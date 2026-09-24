@@ -13,12 +13,26 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 pub use myriad_agent_rules::{
-    ErrorAnalysis, ErrorCategory, ParamFix, analyze_error, apply_param_fixes, may_retry_step,
+    ErrorAnalysis, ErrorCategory, ParamFix, StepError, StepOutcome, analyze_error,
+    apply_param_fixes, may_retry_step,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_producer_marks_an_unknown_outcome_the_same_way() {
+        assert_eq!(
+            myriad_mcp::OUTCOME_UNKNOWN_PREFIX,
+            myriad_agent_rules::OUTCOME_UNKNOWN_PREFIX
+        );
+        let mcp = StepError::from_handler(format!(
+            "{} MCP call timed out",
+            myriad_mcp::OUTCOME_UNKNOWN_PREFIX
+        ));
+        assert_eq!(mcp.outcome, StepOutcome::Unknown);
+    }
 
     #[test]
     fn test_content_policy_detection() {

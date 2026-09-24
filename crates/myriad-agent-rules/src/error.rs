@@ -71,13 +71,89 @@ fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-/// The call may have reached the other side and taken effect even though no
-/// success came back: an explicit unknown outcome, or the response was lost
-/// (timeout, dropped connection). Retrying such a call can repeat the effect.
-pub fn outcome_may_have_applied(error: &str) -> bool {
-    if error.starts_with("Execution outcome is unknown:") {
-        return true;
+/// Prefix a callee puts on an error when it cannot tell whether the call took
+/// effect (a lost cross-process mutation response). Producers outside this
+/// crate (MCP, web control) spell it the same; a test pins them together.
+pub const OUTCOME_UNKNOWN_PREFIX: &str = "Execution outcome is unknown:";
+
+/// What a failed step may have done before it failed. Decided once, where the
+/// failure is observed, and carried with the error from there on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepOutcome {
+    /// Refused or failed before taking effect.
+    NotApplied,
+    /// The call was sent but no response came back (timeout, dropped
+    /// connection, cancelled mid-call): the effect may have landed.
+    ResponseLost,
+    /// The call returned success, then its result was rejected.
+    Applied,
+    /// The callee itself declared the outcome unknown.
+    Unknown,
+}
+
+impl StepOutcome {
+    pub fn may_have_applied(self) -> bool {
+        self != Self::NotApplied
     }
+}
+
+/// A failed step: the message shown to the model and the user, and what the
+/// failure may have done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepError {
+    pub message: String,
+    pub outcome: StepOutcome,
+}
+
+impl StepError {
+    pub fn not_applied(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            outcome: StepOutcome::NotApplied,
+        }
+    }
+
+    pub fn response_lost(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            outcome: StepOutcome::ResponseLost,
+        }
+    }
+
+    pub fn applied(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            outcome: StepOutcome::Applied,
+        }
+    }
+
+    /// A capability handler's error. Handlers report failures as text, so this
+    /// is the one place the text is read for what it says about the outcome.
+    pub fn from_handler(message: String) -> Self {
+        let outcome = if message.starts_with(OUTCOME_UNKNOWN_PREFIX) {
+            StepOutcome::Unknown
+        } else if reports_lost_response(&message) {
+            StepOutcome::ResponseLost
+        } else {
+            StepOutcome::NotApplied
+        };
+        Self { message, outcome }
+    }
+}
+
+impl std::fmt::Display for StepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<StepError> for String {
+    fn from(error: StepError) -> Self {
+        error.message
+    }
+}
+
+fn reports_lost_response(error: &str) -> bool {
     let lower = error.to_lowercase();
     lower.contains("timed out")
         || lower.contains("timeout")
@@ -86,12 +162,14 @@ pub fn outcome_may_have_applied(error: &str) -> bool {
         || lower.contains("connection closed")
 }
 
-/// Whether a failed step may run again. Read-only steps retry whenever the
-/// analysis allows; a step with side effects never retries after an outcome
-/// that may already have applied — the same rule the work loop follows by
-/// sending such failures to recovery instead of repeating them.
-pub fn may_retry_step(analysis_retryable: bool, effectful: bool, error: &str) -> bool {
-    analysis_retryable && !(effectful && outcome_may_have_applied(error))
+/// Whether a failed step may run again. A declared-unknown outcome never
+/// retries; read-only steps otherwise retry whenever the analysis allows; a
+/// step with side effects never retries after a failure that may already have
+/// applied.
+pub fn may_retry_step(analysis_retryable: bool, effectful: bool, error: &StepError) -> bool {
+    analysis_retryable
+        && error.outcome != StepOutcome::Unknown
+        && !(effectful && error.outcome.may_have_applied())
 }
 
 /// 分析执行错误，返回分类和修复建议。
@@ -102,7 +180,7 @@ pub fn analyze_error(
 ) -> ErrorAnalysis {
     // A lost cross-process mutation response is not evidence that execution failed.
     // Retrying with a new invocation could repeat an accepted side effect.
-    if error.starts_with("Execution outcome is unknown:") {
+    if error.starts_with(OUTCOME_UNKNOWN_PREFIX) {
         return ErrorAnalysis {
             category: ErrorCategory::Unknown,
             retryable: false,
@@ -561,19 +639,33 @@ pub fn apply_param_fixes(
 mod tests {
     #[test]
     fn side_effects_are_not_repeated_after_an_unknown_outcome() {
-        use super::may_retry_step;
+        use super::{StepError, StepOutcome, may_retry_step};
+        let lost = StepError::from_handler("The step timed out".into());
+        assert_eq!(lost.outcome, StepOutcome::ResponseLost);
         // A read may always retry what the analysis allows.
-        assert!(may_retry_step(true, false, "The step timed out"));
+        assert!(may_retry_step(true, false, &lost));
         // A write whose response was lost may already have happened.
-        assert!(!may_retry_step(true, true, "The step timed out"));
+        assert!(!may_retry_step(true, true, &lost));
+        // A write that succeeded and then had its output rejected happened.
         assert!(!may_retry_step(
             true,
             true,
-            "Execution outcome is unknown: lost"
+            &StepError::applied("bad output")
         ));
+        assert!(may_retry_step(
+            true,
+            false,
+            &StepError::applied("bad output")
+        ));
+        // A declared-unknown outcome is never retried, read or write.
+        let unknown = StepError::from_handler("Execution outcome is unknown: lost".into());
+        assert_eq!(unknown.outcome, StepOutcome::Unknown);
+        assert!(!may_retry_step(true, false, &unknown));
         // A write that was refused outright can be tried again.
-        assert!(may_retry_step(true, true, "HTTP 503 service unavailable"));
-        assert!(!may_retry_step(false, false, "anything"));
+        let refused = StepError::from_handler("HTTP 503 service unavailable".into());
+        assert_eq!(refused.outcome, StepOutcome::NotApplied);
+        assert!(may_retry_step(true, true, &refused));
+        assert!(!may_retry_step(false, false, &refused));
     }
 
     use super::*;

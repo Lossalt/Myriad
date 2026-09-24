@@ -148,14 +148,15 @@ impl Executor {
                         prepend_steps,
                     };
                 }
-                Err(e) => {
+                Err(error) => {
                     Self::record_step_to_breaker(tier, false);
                     retry_count += 1;
-                    retry_errors.push(e.clone());
+                    retry_errors.push(error.message.clone());
 
                     // 智能错误分析（纯域规则，无 I/O）
                     let effective_params = retry_params_override.as_ref().unwrap_or(&step.params);
-                    let analysis = analyze_error(&e, &step.capability_id, effective_params);
+                    let analysis =
+                        analyze_error(&error.message, &step.capability_id, effective_params);
 
                     let effectful =
                         crate::services::agent::capability::is_effectful(&step.capability_id).await;
@@ -163,8 +164,9 @@ impl Executor {
                         retry_count,
                         config.max_attempts,
                         config.global_budget,
-                        may_retry_step(analysis.retryable, effectful, &e),
+                        may_retry_step(analysis.retryable, effectful, &error),
                     );
+                    let e = error.message;
 
                     if should_retry {
                         config.global_budget -= 1;

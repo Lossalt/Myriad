@@ -1,6 +1,7 @@
 // Executor core: run recipe / process entry
 
 use crate::config::ModelTier;
+use crate::services::agent::error_analyzer_pure::StepError;
 use crate::services::agent::tier_router::{self, TierRouter};
 use crate::services::agent::types::{self, *};
 use crate::services::ai::create_ai_analyzer_for_tier;
@@ -364,7 +365,7 @@ impl Executor {
                             dyn Future<
                                     Output = (
                                         RecipeStep,
-                                        Result<Value, String>,
+                                        Result<Value, StepError>,
                                         u64,
                                         Vec<RecipeStep>,
                                         HashMap<String, Value>,
@@ -780,12 +781,12 @@ impl Executor {
                                     }
                                 } // end pending_questions_from_dag.is_empty() guard
                             }
-                            Err(e) => {
+                            Err(error) => {
                                 Self::record_step_to_breaker(par_tier, false);
                                 let is_injected = dag_injected_ids.contains(&step.id);
 
                                 let analysis = error_analyzer::ErrorAnalyzer::analyze(
-                                    &e,
+                                    &error.message,
                                     &step.capability_id,
                                     &step.params,
                                 );
@@ -798,8 +799,9 @@ impl Executor {
                                             &step.capability_id,
                                         )
                                         .await,
-                                        &e,
+                                        &error,
                                     );
+                                let e = error.message;
 
                                 if retryable && global_retry_budget > 0 && max_retries > 1 {
                                     tracing::info!(

@@ -21,8 +21,8 @@ pub use data_read::{
     parse_rsshub_radar_rules, project_time_info, weekday_zh,
 };
 pub use error::{
-    ErrorAnalysis, ErrorCategory, ParamFix, analyze_error, apply_param_fixes, may_retry_step,
-    outcome_may_have_applied,
+    ErrorAnalysis, ErrorCategory, OUTCOME_UNKNOWN_PREFIX, ParamFix, StepError, StepOutcome,
+    analyze_error, apply_param_fixes, may_retry_step,
 };
 pub use external::{
     HTTP_FETCH_MAX_BODY_BYTES, SCRAPE_SKIP_TAGS, WEB_SCRAPE_DEFAULT_MAX_LENGTH,

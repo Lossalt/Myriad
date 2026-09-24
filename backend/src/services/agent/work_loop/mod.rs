@@ -742,7 +742,9 @@ impl Agent {
                 )
                 .await
             }
-            Err(error) => Err(error),
+            // Any failed effectful call goes to recovery below, whatever its
+            // outcome, so the Work loop needs only the message.
+            Err(error) => Err(error.message),
         };
         state.task.execution_context = Some(context);
         executor::Executor::record_step_to_breaker(tier, output.is_ok());

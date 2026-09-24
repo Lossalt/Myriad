@@ -6,6 +6,7 @@ use crate::services::agent::types::*;
 
 use super::handlers::{self, HandlerContext};
 use super::task_store::is_cancelled;
+use crate::services::agent::error_analyzer_pure::StepError;
 
 #[cfg(test)]
 use super::Executor;
@@ -59,7 +60,7 @@ pub(crate) async fn execute_capability_with_timeout_and_cancel(
     handler_ctx: &HandlerContext<'_>,
     timeout_secs: u64,
     task_id: Option<&str>,
-) -> Result<Value, String> {
+) -> Result<Value, StepError> {
     // Keep the large handler dispatch future out of every enclosing Work frame.
     let mut work = Box::pin(handlers::execute_capability(
         capability_id, action, category, params, handler_ctx,
@@ -75,7 +76,7 @@ pub(crate) async fn execute_capability_with_timeout_and_cancel(
         tokio::select! {
             biased;
             result = &mut work => {
-                return result;
+                return result.map_err(StepError::from_handler);
             }
             _ = tokio::time::sleep_until(deadline) => {
                 tracing::error!(
@@ -83,9 +84,11 @@ pub(crate) async fn execute_capability_with_timeout_and_cancel(
                     timeout_secs = timeout_secs,
                     "[Executor] Step timed out"
                 );
-                return Err(crate::services::agent::response_agent::step_timeout(
-                    capability_id,
-                    timeout_secs,
+                return Err(StepError::response_lost(
+                    crate::services::agent::response_agent::step_timeout(
+                        capability_id,
+                        timeout_secs,
+                    ),
                 ));
             }
             _ = cancel_tick.tick(), if task_id.is_some() => {
@@ -96,9 +99,9 @@ pub(crate) async fn execute_capability_with_timeout_and_cancel(
                             capability = %capability_id,
                             "[Executor] Mid-step cancel observed"
                         );
-                        return Err(
+                        return Err(StepError::response_lost(
                             crate::services::agent::response_agent::task_cancelled_by_user(),
-                        );
+                        ));
                     }
                 }
             }

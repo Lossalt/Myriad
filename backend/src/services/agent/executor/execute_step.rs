@@ -2,6 +2,7 @@
 
 use crate::services::agent::ai_process_pure::USER_TEXT_MAX_CHARS;
 use crate::services::agent::capability::get_registry;
+use crate::services::agent::error_analyzer_pure::StepError;
 use crate::services::agent::executor_utils_pure::{
     SKILL_SUB_STEP_MIN_SECS, category_timeout_fallback_secs, step_timeout_secs,
 };
@@ -28,7 +29,7 @@ impl Executor {
         step: &RecipeStep,
         context: &mut ExecutionContext,
         handler_ctx: &HandlerContext<'_>,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, StepError> {
         if let Some(task_id) = handler_ctx.task_id.as_deref() {
             let steering = take_steering(handler_ctx.db, task_id).await;
             if !steering.is_empty() {
@@ -52,16 +53,20 @@ impl Executor {
 
         // Skill 执行：以 "skill:" 开头的 capability_id 由 Skill 系统处理
         if let Some(skill_id) = step.capability_id.strip_prefix("skill:") {
+            // A skill step only plans; its sub-steps run as steps of their own.
             return self
                 .execute_skill_step(skill_id, step, context, handler_ctx)
-                .await;
+                .await
+                .map_err(StepError::not_applied);
         }
 
         // 获取能力定义
         let capability =
             crate::services::agent::capability::get_capability_by_id(&step.capability_id)
                 .await
-                .ok_or_else(|| format!("Unknown capability: {}", step.capability_id))?;
+                .ok_or_else(|| {
+                    StepError::not_applied(format!("Unknown capability: {}", step.capability_id))
+                })?;
 
         // 权限校验：授予权限唯一来源（自主上限存在时重读 grant，读不到即拒绝）
         if !capability.required_permissions.is_empty()
@@ -74,7 +79,8 @@ impl Executor {
                 &step.capability_id,
                 &capability.required_permissions,
             )
-            .await?;
+            .await
+            .map_err(StepError::not_applied)?;
         }
 
         // 动态步骤补检：`should_block_unconfirmed_dynamic_step` 为 true 时
@@ -96,7 +102,7 @@ impl Executor {
                         user_id = handler_ctx.user_id,
                         "[Executor] Blocked unconfirmed high-risk dynamic step"
                     );
-                    return Err("This step needs confirmation first".to_string());
+                    return Err(StepError::not_applied("This step needs confirmation first"));
                 }
             }
         }
@@ -177,7 +183,8 @@ impl Executor {
         )
         .await?;
 
-        Self::apply_output_contract(step, &capability, &output)?;
+        // The handler already returned success: whatever it did has happened.
+        Self::apply_output_contract(step, &capability, &output).map_err(StepError::applied)?;
 
         Ok(output)
     }
