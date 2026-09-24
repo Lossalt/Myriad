@@ -72,7 +72,7 @@ pub use agent_footer::{
     parse_pre_param_question_id, user_is_current_admin,
 };
 pub(crate) use agent_footer::{
-    granted_covers_tapp_permission, scheduler_create_actions_within_grants,
-    scheduler_create_tapp_permissions_within_grants,
+    granted_covers_tapp_permission, max_user_agent_permissions,
+    scheduler_create_actions_within_grants, scheduler_create_tapp_permissions_within_grants,
 };
 pub use agent_header::{Agent, LANE_QUEUE, SYSTEM_USER_ID};

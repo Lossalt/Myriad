@@ -200,6 +200,10 @@ impl AutonomyGrantWriteError {
 
 /// Build a persistable grant for the addressee. Heartbeat identity cannot hold
 /// one. Requested names are intersected with current granted permissions.
+///
+/// An empty request is the panel toggle: current granted permissions
+/// intersected with the non-admin candidate set. Admin-only names such as
+/// `system:admin` stay out unless the caller lists them explicitly.
 pub fn prepare_personal_grant(
     user_id: i32,
     requested_permissions: &[String],
@@ -208,11 +212,19 @@ pub fn prepare_personal_grant(
     if !is_personal_addressee(user_id) {
         return Err(AutonomyGrantWriteError::HeartbeatIdentity);
     }
-    let requested = if requested_permissions.is_empty() {
-        current_granted_permissions
+    let candidates = crate::services::agent::max_user_agent_permissions();
+    let narrowed = if requested_permissions.is_empty() {
+        Some(
+            current_granted_permissions
+                .iter()
+                .filter(|permission| candidates.contains(permission.as_str()))
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
     } else {
-        requested_permissions
+        None
     };
+    let requested: &[String] = narrowed.as_deref().unwrap_or(requested_permissions);
     let allowed_permissions: Vec<String> = requested
         .iter()
         .filter(|permission| {
@@ -371,6 +383,48 @@ mod tests {
     }
 
     #[test]
+    fn empty_request_keeps_user_grants_and_drops_admin_only() {
+        let admin_current = vec![
+            "system:admin".to_string(),
+            "phantasi:admin".to_string(),
+            "http:fetch".to_string(),
+            "scheduler:write".to_string(),
+        ];
+        let prepared = prepare_personal_grant(7, &[], &admin_current).unwrap();
+        assert!(!prepared
+            .allowed_permissions
+            .iter()
+            .any(|permission| permission == "system:admin"));
+        assert!(!prepared
+            .allowed_permissions
+            .iter()
+            .any(|permission| permission == "phantasi:admin"));
+        assert!(prepared
+            .allowed_permissions
+            .iter()
+            .any(|permission| permission == "http:fetch"));
+        assert!(prepared
+            .allowed_permissions
+            .iter()
+            .any(|permission| permission == "scheduler:write"));
+
+        let explicit = prepare_personal_grant(7, &["system:admin".into()], &admin_current).unwrap();
+        assert_eq!(
+            explicit.allowed_permissions,
+            vec!["system:admin".to_string()]
+        );
+
+        let regular = vec!["http:fetch".to_string(), "scheduler:write".to_string()];
+        let from_empty = prepare_personal_grant(7, &[], &regular).unwrap();
+        let from_explicit = prepare_personal_grant(7, &regular, &regular).unwrap();
+        assert_eq!(
+            from_empty.allowed_permissions,
+            from_explicit.allowed_permissions
+        );
+        assert_eq!(from_empty.allowed_permissions, regular);
+    }
+
+    #[test]
     fn grant_then_revoke_and_permission_drop_go_through_work_entry_check() {
         let current = vec!["calendar:read".to_string(), "mail:send".to_string()];
         let live = prepare_personal_grant(7, &["calendar:read".into()], &current).unwrap();
@@ -416,11 +470,9 @@ mod tests {
             effective_granted_permissions(&granted, Some(&cap)),
             vec!["calendar:read".to_string()]
         );
-        assert!(
-            !effective_granted_permissions(&granted, Some(&cap))
-                .iter()
-                .any(|p| p == "mail:send")
-        );
+        assert!(!effective_granted_permissions(&granted, Some(&cap))
+            .iter()
+            .any(|p| p == "mail:send"));
         assert_eq!(effective_granted_permissions(&granted, None), granted);
         assert!(required_permissions_within_cap(
             &["calendar:read".into()],

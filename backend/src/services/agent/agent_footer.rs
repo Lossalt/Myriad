@@ -411,7 +411,10 @@ pub async fn user_is_current_admin(
 }
 
 /// 非管理员 Agent 能力候选全集；之后按当前授予权限过滤。
-fn max_user_agent_permissions() -> std::collections::HashSet<String> {
+///
+/// 空的自治授权请求用它做默认范围：当前授予 ∩ 这个集合。管理员专属权限
+/// 不进默认自治范围；显式列出且当前已授予时仍然允许。
+pub(crate) fn max_user_agent_permissions() -> std::collections::HashSet<String> {
     // 共享订阅库管理、报告生成和系统管理不进入非管理员候选集。
     [
         "platform:read",
