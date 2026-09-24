@@ -105,7 +105,22 @@ pub(super) async fn flush_outbound(
                 }
                 delay = 1;
             }
-            Err(error) => {
+            // Retrying a refused item only blocks the session (every new
+            // message gets "still working") until the outbox expires days
+            // later. Skip it and deliver the rest.
+            Err(super::transport::SendError::Permanent) => {
+                warn!("channel delivery refused by the platform; skipping item");
+                match acknowledge_item(db, sink.platform(), key, &stored).await {
+                    Ok(true) => {}
+                    Ok(false) => return,
+                    Err(error) => {
+                        warn!(%error, "channel outbox progress write failed");
+                        return;
+                    }
+                }
+                delay = 1;
+            }
+            Err(error @ super::transport::SendError::Transient) => {
                 warn!(%error, retry_seconds = delay, "channel delivery failed; retrying stored item");
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(60);
