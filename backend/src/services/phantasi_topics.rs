@@ -404,36 +404,6 @@ pub async fn recommend_topics_for_item_ids(db: &DatabaseConnection, item_ids: &[
     }
 }
 
-/// Agent 订阅没有 RETURNING id，按最近未打标的抓。
-pub async fn recommend_unlabeled_for_source(
-    db: &DatabaseConnection,
-    source_id: i32,
-    inserted_count: usize,
-) {
-    let limit = inserted_count.min(MAX_INGEST_SUGGESTS) as u64;
-    if limit == 0 {
-        return;
-    }
-    let ids = match phantasi_items::Entity::find()
-        .filter(phantasi_items::Column::SourceId.eq(source_id))
-        .filter(phantasi_items::Column::Topic.is_null())
-        .order_by_desc(phantasi_items::Column::FetchedAt)
-        .limit(limit)
-        .select_only()
-        .column(phantasi_items::Column::Id)
-        .into_tuple::<i32>()
-        .all(db)
-        .await
-    {
-        Ok(items) => items,
-        Err(error) => {
-            tracing::warn!(%error, source_id, "list unlabeled items for topic suggest failed");
-            return;
-        }
-    };
-    recommend_topics_for_item_ids(db, &ids).await;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,6 +17,9 @@ use crate::services::agent::executor::utils::validate_platform_name;
 use crate::services::agent::external_pure::first_i64_param;
 use crate::services::data_paths::platform_filtered_file;
 use crate::services::phantasi_parser::FeedParser;
+use crate::services::phantasi_subscribe::{
+    NewSource, SourceCreation, create_or_find_source, find_subscribed,
+};
 use crate::services::tapp_storage::{
     read_storage_value, sandbox_storage_entries, validate_sandbox_storage_key,
     validate_storage_value_size, write_storage_value,
@@ -24,7 +27,7 @@ use crate::services::tapp_storage::{
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QuerySelect,
+    QuerySelect, TransactionTrait,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -353,10 +356,8 @@ async fn execute_phantasi_subscribe(
 
         tried_urls.push(url.clone());
 
-        // 检查是否已订阅
-        let existing = phantasi_sources::Entity::find()
-            .filter(phantasi_sources::Column::Url.eq(&url))
-            .one(ctx.db)
+        // 预检是否已订阅（与其余创建路径同一规则），省掉一次无谓探测。
+        let existing = find_subscribed(ctx.db, &url)
             .await
             .map_err(|error| write_store_failed("check existing phantasi source", error))?;
 
@@ -382,8 +383,7 @@ async fn execute_phantasi_subscribe(
                     .or(feed_name)
                     .unwrap_or(feed.title.clone());
 
-                // item_count filled after insert from rows_affected
-                // (take(50) + ON CONFLICT skips must not over-count).
+                // 已经抓过一次：记下抓取时间，调度器不必立刻再抓。
                 let new_source = phantasi_sources::ActiveModel {
                     user_id: Set(user_id),
                     name: Set(name.clone()),
@@ -397,111 +397,45 @@ async fn execute_phantasi_subscribe(
                     error_count: Set(0),
                     item_count: Set(0),
                     update_interval: Set(update_interval),
+                    last_fetched_at: Set(Some(now.into())),
+                    last_success_at: Set(Some(now.into())),
                     created_at: Set(now.into()),
                     updated_at: Set(now.into()),
                     ..Default::default()
                 };
 
-                let source = new_source.insert(ctx.db).await.map_err(|e| {
+                // 探测期间可能有人订阅了同一个源：锁内重新判定后再插入。
+                let created = async {
+                    let txn = ctx.db.begin().await?;
+                    let created = create_or_find_source(&txn, NewSource::new(new_source)).await?;
+                    txn.commit().await?;
+                    Ok::<_, sea_orm::DbErr>(created)
+                }
+                .await
+                .map_err(|e| {
                     tracing::error!("Failed to create phantasi source: {e}");
                     "Failed to create feed".to_string()
                 })?;
-
-                // 批量构建文章 ActiveModel，一次性 insert 代替 N+1 个单条 insert
-                let item_models: Vec<phantasi_items::ActiveModel> = feed
-                    .items
-                    .iter()
-                    .take(50)
-                    .map(|item| {
-                        let empty_string = String::new();
-                        let content_text = item
-                            .content
-                            .as_ref()
-                            .or(item.summary.as_ref())
-                            .unwrap_or(&empty_string);
-                        let word_count = content_text.chars().count() as i32;
-                        let reading_time = (word_count / 400).max(1);
-
-                        let enclosures_json: Option<serde_json::Value> =
-                            if item.enclosures.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    serde_json::to_value(&item.enclosures)
-                                        .unwrap_or(serde_json::json!([])),
-                                )
-                            };
-                        let categories_json: Option<serde_json::Value> =
-                            if item.categories.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    serde_json::to_value(&item.categories)
-                                        .unwrap_or(serde_json::json!([])),
-                                )
-                            };
-                        let published_at = item.published_at.unwrap_or(now);
-
-                        phantasi_items::ActiveModel {
-                            source_id: Set(source.id),
-                            guid: Set(item.guid.clone()),
-                            title: Set(item.title.clone()),
-                            link: Set(item.link.clone()),
-                            summary: Set(item.summary.clone()),
-                            content: Set(item.content.clone()),
-                            author: Set(item.author.clone()),
-                            image: Set(item.image.clone()),
-                            audio_url: Set(item.audio_url.clone()),
-                            video_url: Set(item.video_url.clone()),
-                            enclosures: Set(enclosures_json),
-                            categories: Set(categories_json),
-                            published_at: Set(published_at.into()),
-                            fetched_at: Set(now.into()),
-                            word_count: Set(Some(word_count)),
-                            reading_time: Set(Some(reading_time)),
-                            fulltext_fetched: Set(false),
-                            // 与调度器一样：先 NULL，插入后再异步让 AI 建议。
-                            topic: Set(None),
-                            ..Default::default()
-                        }
-                    })
-                    .collect();
-
-                // Shared insertion keeps RSS references atomic and counts only inserted rows.
-                let inserted_count = if item_models.is_empty() {
-                    0usize
-                } else {
-                    match crate::services::phantasi_scheduler::insert_feed_items(
-                        ctx.db,
-                        item_models,
-                    )
-                    .await
-                    {
-                        Ok(rows) => rows.len(),
-                        Err(e) => {
-                            tracing::warn!("[Phantasi] bulk insert items failed: {}", e);
-                            0
-                        }
+                let source = match created {
+                    SourceCreation::Created(source) => source,
+                    SourceCreation::Existing(_) => {
+                        tracing::debug!(url = %url, "[Phantasi] subscribed concurrently, skip");
+                        continue;
                     }
                 };
 
-                if inserted_count > 0 {
-                    let mut source_active: phantasi_sources::ActiveModel = source.clone().into();
-                    source_active.item_count = Set(inserted_count as i32);
-                    if let Err(e) = source_active.update(ctx.db).await {
-                        tracing::warn!("[Phantasi] failed to update source counts: {}", e);
+                // 首批条目走调度器同一条入库路径（封面缓存、阅读时长、主题建议、计数）。
+                let inserted_count = match crate::services::phantasi_scheduler::store_feed_items(
+                    ctx.db, &source, &feed,
+                )
+                .await
+                {
+                    Ok(rows) => rows.len(),
+                    Err(e) => {
+                        tracing::warn!("[Phantasi] storing initial items failed: {}", e);
+                        0
                     }
-                    let topic_db = ctx.db.clone();
-                    let source_id = source.id;
-                    tokio::spawn(async move {
-                        crate::services::phantasi_topics::recommend_unlabeled_for_source(
-                            &topic_db,
-                            source_id,
-                            inserted_count,
-                        )
-                        .await;
-                    });
-                }
+                };
 
                 tracing::info!(
                     url = %url,
@@ -795,9 +729,9 @@ mod phantasi_mark_visibility_tests {
             .unwrap_or(body.len());
         let subscribe = &body[..end];
         let after_insert = subscribe
-            .split("if inserted_count > 0")
+            .split("store_feed_items(")
             .nth(1)
-            .expect("subscribe count update");
+            .expect("subscribe stores items through the scheduler path");
         assert!(
             !after_insert.contains("unread_count"),
             "Agent subscribe must not increment site-wide source unread_count after insert"

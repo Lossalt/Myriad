@@ -695,7 +695,15 @@ mod tests {
             .map(|index| index + 1)
             .unwrap_or(body.len());
         let subscribe = &body[..end];
-        assert!(subscribe.contains("Url.eq"));
+        assert!(subscribe.contains("find_subscribed("));
+        assert!(
+            subscribe.contains("create_or_find_source("),
+            "Agent subscribe creates through the shared locked create path"
+        );
+        assert!(
+            subscribe.contains("store_feed_items("),
+            "Agent subscribe stores its first items through the scheduler path"
+        );
         assert!(
             !subscribe.contains("UserId.eq(user_id)"),
             "Agent subscribe must dedup by URL across the shared catalog"

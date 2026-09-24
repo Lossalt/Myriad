@@ -65,6 +65,151 @@ pub(crate) async fn insert_feed_items(
     Ok(inserted)
 }
 
+/// 把一次抓取结果里的新条目入库：按 guid 跳过已有条目、封面走图片缓存、
+/// 统一的字数/阅读时长算法、`ON CONFLICT DO NOTHING` 批量插入、AI 主题建议、
+/// `item_count` 原子自增。调度抓取与 Agent 订阅首批条目共用，返回真正插入的行。
+pub(crate) async fn store_feed_items(
+    db: &DatabaseConnection,
+    source: &phantasi_sources::Model,
+    feed: &ParsedFeed,
+) -> Result<Vec<phantasi_items::Model>, String> {
+    let now = Utc::now();
+
+    // 批量获取所有已存在的 guid，避免 N+1 查询
+    let all_guids: Vec<&str> = feed.items.iter().map(|item| item.guid.as_str()).collect();
+    let existing_guids: std::collections::HashSet<String> = phantasi_items::Entity::find()
+        .filter(phantasi_items::Column::SourceId.eq(source.id))
+        .filter(phantasi_items::Column::Guid.is_in(all_guids))
+        .select_only()
+        .column(phantasi_items::Column::Guid)
+        .into_tuple::<String>()
+        .all(db)
+        .await
+        .map_err(|error| phantasi_store_failed("check existing items", error))?
+        .into_iter()
+        .collect();
+
+    let mut new_items: Vec<phantasi_items::ActiveModel> = Vec::new();
+
+    let image_cache = crate::services::image_cache::ImageCacheService::new();
+    let newcomers: Vec<_> = feed
+        .items
+        .iter()
+        .filter(|item| !existing_guids.contains(&item.guid))
+        .cloned()
+        .collect();
+    let mut processed_images: Vec<_> = stream::iter(newcomers.iter().cloned().enumerate())
+        .map(|(index, item)| {
+            let image_cache = image_cache.clone();
+            async move {
+                let processed = image_cache.process_image_url(item.image.as_deref()).await;
+                (index, processed)
+            }
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+    processed_images.sort_by_key(|(index, _)| *index);
+
+    for (item, (_, processed_image)) in newcomers.into_iter().zip(processed_images) {
+        let content_for_stats = item
+            .content
+            .as_deref()
+            .or(item.summary.as_deref())
+            .unwrap_or("");
+        let (word_count, reading_time) = calculate_reading_stats(content_for_stats);
+
+        let new_item = phantasi_items::ActiveModel {
+            source_id: Set(source.id),
+            guid: Set(item.guid.clone()),
+            title: Set(item.title.clone()),
+            link: Set(item.link.clone()),
+            summary: Set(item.summary.clone()),
+            content: Set(item.content.clone()),
+            author: Set(item.author.clone()),
+            image: Set(processed_image),
+            audio_url: Set(item.audio_url.clone()),
+            video_url: Set(item.video_url.clone()),
+            enclosures: Set(if item.enclosures.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&item.enclosures).ok()
+            }),
+            categories: Set(if item.categories.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&item.categories).ok()
+            }),
+            published_at: Set(item.published_at.unwrap_or(now).into()),
+            fetched_at: Set(now.into()),
+            word_count: Set(Some(word_count)),
+            reading_time: Set(Some(reading_time)),
+            fulltext_fetched: Set(item.content.is_some()),
+            // 主题由入库后的 AI 建议或站长手填；这里保持 NULL。
+            topic: Set(None),
+            ..Default::default()
+        };
+
+        new_items.push(new_item);
+    }
+
+    if new_items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Concurrent-safe batch insert (unique: source_id + guid).
+    //
+    // Strategy: ON CONFLICT DO NOTHING + RETURNING so:
+    // - only rows PostgreSQL actually inserted are counted (no over-count on race);
+    // - all-conflict / empty RETURNING is intentional success with 0 inserts, not a
+    //   hard failure (another worker may have inserted the same guids first);
+    // - real DB errors still fail the fetch.
+    // Counts and notification titles come only from returned models.
+    let candidate_len = new_items.len();
+    let inserted = match insert_feed_items(db, new_items).await {
+        Ok(models) => models,
+        // SeaORM may surface zero RETURNING rows as RecordNotInserted; for our
+        // DO NOTHING path that means concurrent/idempotent skips — count 0.
+        Err(sea_orm::DbErr::RecordNotInserted) => {
+            tracing::debug!(
+                source_id = source.id,
+                candidates = candidate_len,
+                "[PhantasiScheduler] insert skipped all candidates (concurrent ON CONFLICT DO NOTHING)"
+            );
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::error!(%e, source_id = source.id, "failed to batch insert phantasi items");
+            return Err("Failed to batch insert items".to_string());
+        }
+    };
+    if inserted.is_empty() {
+        return Ok(inserted);
+    }
+
+    let topic_db = db.clone();
+    let topic_ids: Vec<i32> = inserted.iter().map(|m| m.id).collect();
+    tokio::spawn(async move {
+        crate::services::phantasi_topics::recommend_topics_for_item_ids(&topic_db, &topic_ids)
+            .await;
+    });
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE phantasi_sources SET item_count = item_count + $2, updated_at = $3::timestamptz \
+         WHERE id = $1",
+        [
+            SeaValue::Int(Some(source.id)),
+            SeaValue::Int(Some(i32::try_from(inserted.len()).unwrap_or(i32::MAX))),
+            SeaValue::String(Some(now.to_rfc3339())),
+        ],
+    ))
+    .await
+    .map_err(|error| phantasi_store_failed("update source counts", error))?;
+
+    Ok(inserted)
+}
+
 // 调度器常量
 
 /// 每轮 tick 最多处理的订阅源数量
@@ -700,154 +845,24 @@ impl PhantasiSchedulerEngine {
         }
     }
 
-    /// 存储新文章
-    /// 性能优化：批量检查文章是否存在，避免 N+1 查询
+    /// 存储新文章并通知前端。
     async fn save_items(
         db: &DatabaseConnection,
         source: &phantasi_sources::Model,
         feed: &ParsedFeed,
         notification_tx: &broadcast::Sender<NewItemsNotification>,
     ) -> Result<i32, String> {
-        let now = Utc::now();
-
-        // 批量获取所有已存在的 guid，避免 N+1 查询
-        let all_guids: Vec<&str> = feed.items.iter().map(|item| item.guid.as_str()).collect();
-        let existing_guids: std::collections::HashSet<String> = phantasi_items::Entity::find()
-            .filter(phantasi_items::Column::SourceId.eq(source.id))
-            .filter(phantasi_items::Column::Guid.is_in(all_guids))
-            .select_only()
-            .column(phantasi_items::Column::Guid)
-            .into_tuple::<String>()
-            .all(db)
-            .await
-            .map_err(|error| phantasi_store_failed("check existing items", error))?
-            .into_iter()
-            .collect();
-
-        let mut new_items: Vec<phantasi_items::ActiveModel> = Vec::new();
-
-        let image_cache = crate::services::image_cache::ImageCacheService::new();
-        let newcomers: Vec<_> = feed
-            .items
-            .iter()
-            .filter(|item| !existing_guids.contains(&item.guid))
-            .cloned()
-            .collect();
-        let mut processed_images: Vec<_> = stream::iter(newcomers.iter().cloned().enumerate())
-            .map(|(index, item)| {
-                let image_cache = image_cache.clone();
-                async move {
-                    let processed = image_cache.process_image_url(item.image.as_deref()).await;
-                    (index, processed)
-                }
-            })
-            .buffer_unordered(4)
-            .collect()
-            .await;
-        processed_images.sort_by_key(|(index, _)| *index);
-
-        for (item, (_, processed_image)) in newcomers.into_iter().zip(processed_images) {
-            let content_for_stats = item
-                .content
-                .as_deref()
-                .or(item.summary.as_deref())
-                .unwrap_or("");
-            let (word_count, reading_time) = calculate_reading_stats(content_for_stats);
-
-            let new_item = phantasi_items::ActiveModel {
-                source_id: Set(source.id),
-                guid: Set(item.guid.clone()),
-                title: Set(item.title.clone()),
-                link: Set(item.link.clone()),
-                summary: Set(item.summary.clone()),
-                content: Set(item.content.clone()),
-                author: Set(item.author.clone()),
-                image: Set(processed_image),
-                audio_url: Set(item.audio_url.clone()),
-                video_url: Set(item.video_url.clone()),
-                enclosures: Set(if item.enclosures.is_empty() {
-                    None
-                } else {
-                    serde_json::to_value(&item.enclosures).ok()
-                }),
-                categories: Set(if item.categories.is_empty() {
-                    None
-                } else {
-                    serde_json::to_value(&item.categories).ok()
-                }),
-                published_at: Set(item.published_at.unwrap_or(now).into()),
-                fetched_at: Set(now.into()),
-                word_count: Set(Some(word_count)),
-                reading_time: Set(Some(reading_time)),
-                fulltext_fetched: Set(item.content.is_some()),
-                // 主题由入库后的 AI 建议或站长手填；这里保持 NULL。
-                topic: Set(None),
-                ..Default::default()
-            };
-
-            new_items.push(new_item);
-        }
-
-        // Concurrent-safe batch insert (unique: source_id + guid).
-        //
-        // Strategy: ON CONFLICT DO NOTHING + RETURNING so:
-        // - only rows PostgreSQL actually inserted are counted (no over-count on race);
-        // - all-conflict / empty RETURNING is intentional success with 0 inserts, not a
-        //   hard failure (another worker may have inserted the same guids first);
-        // - real DB errors still fail the fetch.
-        // new_count and notification titles come only from returned models.
-        let (new_count, new_titles) = if new_items.is_empty() {
-            (0_i32, Vec::new())
-        } else {
-            let candidate_len = new_items.len();
-            let inserted = match insert_feed_items(db, new_items).await {
-                Ok(models) => models,
-                // SeaORM may surface zero RETURNING rows as RecordNotInserted; for our
-                // DO NOTHING path that means concurrent/idempotent skips — count 0.
-                Err(sea_orm::DbErr::RecordNotInserted) => {
-                    tracing::debug!(
-                        source_id = source.id,
-                        candidates = candidate_len,
-                        "[PhantasiScheduler] insert skipped all candidates (concurrent ON CONFLICT DO NOTHING)"
-                    );
-                    Vec::new()
-                }
-                Err(e) => {
-                    tracing::error!(%e, source_id = source.id, "failed to batch insert phantasi items");
-                    return Err("Failed to batch insert items".to_string());
-                }
-            };
-            if !inserted.is_empty() {
-                let topic_db = db.clone();
-                let topic_ids: Vec<i32> = inserted.iter().map(|m| m.id).collect();
-                tokio::spawn(async move {
-                    crate::services::phantasi_topics::recommend_topics_for_item_ids(
-                        &topic_db, &topic_ids,
-                    )
-                    .await;
-                });
-            }
-            let titles: Vec<String> = inserted.iter().map(|m| m.title.clone()).take(5).collect();
-            (inserted.len() as i32, titles)
-        };
-
+        let inserted = store_feed_items(db, source, feed).await?;
+        let new_count = i32::try_from(inserted.len()).unwrap_or(i32::MAX);
         if new_count > 0 {
-            let mut source_active: phantasi_sources::ActiveModel = source.clone().into();
-            source_active.item_count = Set(source.item_count + new_count);
-            source_active.updated_at = Set(now.into());
-            source_active
-                .update(db)
-                .await
-                .map_err(|error| phantasi_store_failed("update source counts", error))?;
-
             let notification = NewItemsNotification {
                 msg_type: "phantasi:new_items".to_string(),
                 user_id: source.user_id,
                 source_id: source.id,
                 source_name: source.name.clone(),
                 new_count,
-                titles: new_titles,
-                timestamp: now.timestamp_millis(),
+                titles: inserted.iter().map(|m| m.title.clone()).take(5).collect(),
+                timestamp: Utc::now().timestamp_millis(),
             };
 
             if let Some(manager) = crate::services::agent::notifications::get_notification_manager()
