@@ -140,45 +140,109 @@ pub(super) async fn retry_deletions(
     Ok(())
 }
 
+/// Seconds between upgrade steps, measured from the end of the previous step.
+const UPGRADE_STEP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// Steps skipped after the database was unavailable: 11 × 5s plus the regular
+/// pause keeps the previous one-minute retry cadence.
+const UPGRADE_UNAVAILABLE_SKIPS: u32 = 11;
+
 /// Owned by the process lifecycle; never awaited by database/schema startup.
-pub fn start_upgrade_worker() -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async {
-        loop {
-            // Give initialization time to connect the DB. No elapsed-time test
-            // marks the migration complete; its durable cursor is authoritative.
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let Ok(db) = crate::services::tapp_registry::database() else {
-                continue;
-            };
-            let service = MediaService::from_data_paths(crate::services::data_paths::paths());
-            let legacy = super::LegacyPaths::from_data_paths(crate::services::data_paths::paths());
-            let origins = super::upgrade::configured_origins().await;
-            match super::upgrade::automatic_step(
-                &db,
-                service.store(),
-                &legacy,
-                &origins,
-                chrono::Utc::now().timestamp(),
-            )
-            .await
-            {
-                Ok(Some(progress)) if progress.complete => {
-                    tracing::info!(
-                        scanned = progress.scanned,
-                        unresolved = progress.unresolved,
-                        "media upgrade completed"
-                    )
-                }
-                Ok(Some(progress)) if progress.error.is_some() => tracing::warn!(
-                    error = ?progress.error, source = ?progress.error_source, pending_failures = progress.pending_failures, next_retry_at = ?progress.next_retry_at,
-                    "media upgrade has deferred records; normal records continue before retry"),
-                Ok(_) => {}
-                Err(error) => {
-                    // Disconnected/uninitialized DB cannot persist its backoff yet.
-                    tracing::warn!(%error, "media upgrade unavailable; retrying later");
-                    tokio::time::sleep(std::time::Duration::from_secs(55)).await;
-                }
-            }
-        }
+///
+/// Periodic, not one-shot: completion is not final. A `REVISION` bump or an
+/// admin restart (`upgrade::advance(.., restart = true)`) reopens the durable
+/// job and relies on this loop to carry it on, so it keeps probing after
+/// completion. A completed or backed-off job costs one short transaction per
+/// step (`upgrade::automatic_step` returns before doing work). It runs on the
+/// process job runner: shutdown lets an in-flight step finish before the drain
+/// deadline, and the durable cursor makes an aborted step resumable.
+pub fn start_upgrade_worker() -> crate::services::jobs::JobHandle {
+    start_upgrade_job(crate::services::jobs::jobs(), UPGRADE_STEP_PAUSE)
+}
+
+pub(super) fn start_upgrade_job(
+    runner: &crate::services::jobs::JobRunner,
+    pause: std::time::Duration,
+) -> crate::services::jobs::JobHandle {
+    // Give initialization time to connect the DB. No elapsed-time test marks
+    // the migration complete; its durable cursor is authoritative.
+    let every = crate::services::jobs::Every::new(pause)
+        .after(pause)
+        .spaced();
+    let skips = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    runner.periodic("media upgrade", every, move || {
+        let skips = skips.clone();
+        async move { upgrade_step(&skips).await }
     })
+}
+
+async fn upgrade_step(skips: &std::sync::atomic::AtomicU32) {
+    use std::sync::atomic::Ordering;
+    if skips
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+        .is_ok()
+    {
+        return;
+    }
+    let Ok(db) = crate::services::tapp_registry::database() else {
+        return;
+    };
+    let service = MediaService::from_data_paths(crate::services::data_paths::paths());
+    let legacy = super::LegacyPaths::from_data_paths(crate::services::data_paths::paths());
+    let origins = super::upgrade::configured_origins().await;
+    match super::upgrade::automatic_step(
+        &db,
+        service.store(),
+        &legacy,
+        &origins,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+    {
+        Ok(Some(progress)) if progress.complete => {
+            tracing::info!(
+                scanned = progress.scanned,
+                unresolved = progress.unresolved,
+                "media upgrade completed"
+            )
+        }
+        Ok(Some(progress)) if progress.error.is_some() => tracing::warn!(
+            error = ?progress.error, source = ?progress.error_source, pending_failures = progress.pending_failures, next_retry_at = ?progress.next_retry_at,
+            "media upgrade has deferred records; normal records continue before retry"),
+        Ok(_) => {}
+        Err(error) => {
+            // Disconnected/uninitialized DB cannot persist its backoff yet.
+            tracing::warn!(%error, "media upgrade unavailable; retrying later");
+            skips.store(UPGRADE_UNAVAILABLE_SKIPS, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn upgrade_job_is_registered_on_the_runner_and_stops_with_it() {
+        let runner = crate::services::jobs::JobRunner::new();
+        // A long pause keeps the step (and its process database) out of the test.
+        let handle = start_upgrade_job(&runner, Duration::from_secs(3600));
+        assert!(!handle.is_cancelled());
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runner.shutdown(Duration::from_secs(1)),
+        )
+        .await
+        .expect("upgrade job must stop with the runner");
+        assert!(handle.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn unavailable_backoff_skips_steps_without_touching_the_database() {
+        let skips = AtomicU32::new(2);
+        upgrade_step(&skips).await;
+        upgrade_step(&skips).await;
+        assert_eq!(skips.load(Ordering::Relaxed), 0);
+    }
 }

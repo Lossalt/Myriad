@@ -1,22 +1,22 @@
 //! Process-owned reclamation, including workers that never receive HTTP requests.
 use std::time::Duration;
 
+/// Both jobs live on the process job runner, so shutdown drains them with the
+/// other background jobs; dropping the guard also stops them.
 pub(crate) struct MemoryCleanup(
     crate::services::jobs::JobHandle,
-    Option<tokio::task::JoinHandle<()>>,
+    Option<crate::services::jobs::JobHandle>,
 );
 
 impl Drop for MemoryCleanup {
     fn drop(&mut self) {
         self.0.cancel();
         if let Some(upgrade) = &self.1 {
-            upgrade.abort();
+            upgrade.cancel();
         }
     }
 }
 
-/// The reclaim loop runs on the process job runner, so shutdown drains it with
-/// the other background jobs; dropping the guard also stops it.
 pub(crate) fn start(automatic_media_upgrade: bool) -> MemoryCleanup {
     let cleanup = crate::services::jobs::jobs().periodic(
         "memory cleanup",
