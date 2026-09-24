@@ -857,6 +857,10 @@ pub(crate) async fn update_source(
                     let response: phantasi_sources::SourceResponse = updated.into();
                     Ok(Json(json!({ "success": true, "source": response })))
                 }
+                // 新地址规范化后撞上另一个源（url_key 全站唯一）。
+                Err(e) if crate::federation::types::is_unique_violation(&e) => Err(
+                    phantasi_http_err(StatusCode::CONFLICT, "Another source already uses this URL"),
+                ),
                 Err(e) => Err(phantasi_store_http("update source", e)),
             }
         }

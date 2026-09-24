@@ -6,11 +6,12 @@
 //!
 //! 并发创建靠事务级 advisory 锁串行：锁住新行将暴露的全部键（身份键 + 自身
 //! `site_url` 键）再查再插，两个等价的并发创建必然有一个看见另一个。
-//! `url_key` 本身不是 UNIQUE —— 存量库可能已有重复行，加约束前要先清洗。
+//! `url_key` 另有全站 UNIQUE 索引兜底（存量重复由启动 heal 合并）：绕过锁的
+//! 写入撞上它时，插入退回到重新查询。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
-    DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder, Statement,
+    DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder, Statement, TransactionTrait,
 };
 
 use crate::models::entities::phantasi_sources::{self, url_match_key};
@@ -133,11 +134,27 @@ pub(crate) async fn create_or_find_source(
     txn: &DatabaseTransaction,
     new: NewSource,
 ) -> Result<SourceCreation, DbErr> {
+    let identity_keys = new.identity_keys()?;
     lock_source_url_keys(txn, &new.lock_keys()?).await?;
-    if let Some(existing) = find_existing_source(txn, &new.identity_keys()?).await? {
+    if let Some(existing) = find_existing_source(txn, &identity_keys).await? {
         return Ok(SourceCreation::Existing(existing));
     }
-    new.model.insert(txn).await.map(SourceCreation::Created)
+    // 保存点包住插入：唯一冲突只回滚这一步，调用方的事务还能重新查询。
+    let savepoint = txn.begin().await?;
+    match new.model.insert(&savepoint).await {
+        Ok(created) => {
+            savepoint.commit().await?;
+            Ok(SourceCreation::Created(created))
+        }
+        Err(error) if crate::federation::types::is_unique_violation(&error) => {
+            savepoint.rollback().await?;
+            find_existing_source(txn, &identity_keys)
+                .await?
+                .map(SourceCreation::Existing)
+                .ok_or(error)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
