@@ -59,7 +59,7 @@ pub async fn get_tapp_analytics_summary(
         })));
     }
 
-    let role = current_tapp_user_role(&db, &claims).await;
+    let role = current_tapp_user_role(&db, &claims).await?;
     if role != UserRole::Admin {
         // Guests / users: visitor-card aggregates only — never pages/referrers/etc.
         return Ok(Json(visitor_card_tapp_payload(&db).await?));

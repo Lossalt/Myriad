@@ -148,7 +148,7 @@ pub(super) async fn install_tapp(
         .subject_id()
         .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let is_current_admin = role == UserRole::Admin;
     let install_permit = acquire_install_permit().await?;
     let InstallTappRequest {
@@ -710,7 +710,7 @@ pub(super) async fn install_tapp_file(
         .subject_id()
         .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let is_current_admin = role == UserRole::Admin;
     let install_permit = acquire_install_permit().await?;
     // 读取上传的文件
@@ -826,7 +826,7 @@ pub(super) async fn update_tapp(
         .subject_id()
         .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let _update_permit = acquire_install_permit().await?;
     validate_tapp_id(&tapp_id).map_err(|error| api_http_error(StatusCode::BAD_REQUEST, error))?;
     let admin_id = get_admin_user_id(&db).await?;

@@ -53,7 +53,7 @@ pub(super) async fn authorize_credential_management(
         .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     let tapp = tapp_common::resolve_accessible_tapp(db, subject_id, tapp_id).await?;
     let access = TappStorageAccess::from_owner_and_subject(tapp.user_id, subject_id);
-    if !can_write_installation_settings(access, current_is_admin(claims, db).await) {
+    if !can_write_installation_settings(access, current_is_admin(claims, db).await?) {
         return Err(HttpError(AppError::forbidden("Forbidden")));
     }
     Ok(tapp)

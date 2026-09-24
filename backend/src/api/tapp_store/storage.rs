@@ -222,7 +222,7 @@ pub(super) async fn set_tapp_setting(
     validate_storage_value_size(&value)?;
     let (access, storage_key, setting) =
         authorize_tapp_setting_write(&db, &claims, &tapp_id, &key).await?;
-    if !can_write_installation_settings(access, current_is_admin(&claims, &db).await) {
+    if !can_write_installation_settings(access, current_is_admin(&claims, &db).await?) {
         return Err(HttpError(AppError::forbidden("Forbidden")));
     }
     if !tapp_setting_value_is_valid(&setting, &value) {
@@ -368,7 +368,7 @@ async fn require_shared_write(
     claims: &Claims,
     access: TappStorageAccess,
 ) -> Result<(), HttpError> {
-    if can_write_installation_settings(access, current_is_admin(claims, db).await) {
+    if can_write_installation_settings(access, current_is_admin(claims, db).await?) {
         Ok(())
     } else {
         Err(HttpError(AppError::forbidden("Forbidden")))
@@ -512,7 +512,11 @@ async fn authorize_tapp_private(
     validate_tapp_id(tapp_id).map_err(|_| HttpError(AppError::bad_request("Bad request")))?;
     let subject_id = require_private_kv_subject(claims)?;
     let tapp = tapp_common::resolve_accessible_tapp(db, subject_id, tapp_id).await?;
-    decide_private_kv_access(subject_id, tapp.user_id, current_is_admin(claims, db).await)
+    decide_private_kv_access(
+        subject_id,
+        tapp.user_id,
+        current_is_admin(claims, db).await?,
+    )
 }
 
 fn private_storage_key(key: &str) -> Result<String, HttpError> {

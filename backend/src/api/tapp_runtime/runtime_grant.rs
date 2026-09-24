@@ -224,7 +224,7 @@ pub async fn issue_runtime_grant(
     // validate exercise the exact same branch.
     tapp_runtime_grant::refuse_if_needs_reauthorization(tapp.needs_reauthorization)
         .map_err(grant_http_error)?;
-    let role = current_tapp_user_role(&db, &claims).await;
+    let role = current_tapp_user_role(&db, &claims).await?;
     let installed_permissions: Vec<String> =
         serde_json::from_value(tapp.approved_permissions.clone()).unwrap_or_default();
     let permissions = {

@@ -552,7 +552,7 @@ pub(super) async fn cleanup_temporary_tapps(
     if mode == "logout" {
         // Wipe this subject's private installs now.
         // Admins operate the public namespace and never have private temps here.
-        if current_is_admin(&claims, &db).await {
+        if current_is_admin(&claims, &db).await? {
             return Ok(Json(ApiResponse::success(0)));
         }
         let user_tapps = tapps::Entity::find()
