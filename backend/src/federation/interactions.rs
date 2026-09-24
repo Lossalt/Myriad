@@ -6,7 +6,7 @@
 
 use axum::{Json, http::StatusCode};
 use myriad_error::AppError;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -352,7 +352,10 @@ pub async fn like_object(
     let activity_id = generate_activity_id(&base_url);
 
     // Idempotent insert
-    let inserted = db
+    // 点赞行与 Like 活动同一事务：活动写失败时点赞也不落库，重试不会被
+    // 「已点赞」短路成永远没有活动。
+    let txn = db.begin().await.map_err(db_err)?;
+    let inserted = txn
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"INSERT INTO federation_object_interactions
@@ -370,6 +373,7 @@ pub async fn like_object(
 
     if inserted.rows_affected() == 0 {
         // Already liked — return current state without new activity
+        txn.rollback().await.map_err(db_err)?;
         let st = stats_for_one(db, user_id, &object_id).await?;
         return Ok(InteractionResponse {
             success: true,
@@ -397,7 +401,7 @@ pub async fn like_object(
     });
 
     let act_db_id = crate::federation::types::insert_local_activity(
-        db,
+        &txn,
         user_id,
         &activity_id,
         "Like",
@@ -406,6 +410,7 @@ pub async fn like_object(
     )
     .await
     .map_err(db_err)?;
+    txn.commit().await.map_err(db_err)?;
     // Like 只投原作者，不进粉丝的首页。
     deliver_to_object_author(db, act_db_id, &like_json, &object_id).await;
 
@@ -436,11 +441,15 @@ pub async fn unlike_object(
     let base_url = get_base_url().await;
     let local_actor = actor_url(&base_url, username);
 
-    let row = db
+    // 删点赞与写 Undo 同一事务；DELETE … RETURNING 让并发的两次取消只有
+    // 一次拿到原 Like id，不会发两条 Undo。
+    let txn = db.begin().await.map_err(db_err)?;
+    let row = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"SELECT activity_id FROM federation_object_interactions
-               WHERE user_id = $1 AND object_id = $2 AND kind = 'like'"#,
+            r#"DELETE FROM federation_object_interactions
+               WHERE user_id = $1 AND object_id = $2 AND kind = 'like'
+               RETURNING activity_id"#,
             [user_id.into(), object_id.clone().into()],
         ))
         .await
@@ -452,15 +461,7 @@ pub async fn unlike_object(
             .flatten()
     });
 
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"DELETE FROM federation_object_interactions
-           WHERE user_id = $1 AND object_id = $2 AND kind = 'like'"#,
-        [user_id.into(), object_id.clone().into()],
-    ))
-    .await
-    .map_err(db_err)?;
-
+    let mut undo = None;
     if let Some(like_id) = original_like_id.filter(|s| !s.is_empty()) {
         let undo_id = generate_activity_id(&base_url);
         let undo_json = json!({
@@ -478,7 +479,7 @@ pub async fn unlike_object(
         });
 
         let act_db_id = crate::federation::types::insert_local_activity(
-            db,
+            &txn,
             user_id,
             &undo_id,
             "Undo",
@@ -487,8 +488,13 @@ pub async fn unlike_object(
         )
         .await
         .map_err(db_err)?;
-        // 与 Like 对称：只投原作者。粉丝从没收到过这个 Like，给他们发
-        // Undo(Like) 只是空转（远端按 remote_actor_id 删不到任何行）。
+        undo = Some((act_db_id, undo_json));
+    }
+    txn.commit().await.map_err(db_err)?;
+
+    // 与 Like 对称：只投原作者。粉丝从没收到过这个 Like，给他们发
+    // Undo(Like) 只是空转（远端按 remote_actor_id 删不到任何行）。
+    if let Some((act_db_id, undo_json)) = undo {
         deliver_to_object_author(db, act_db_id, &undo_json, &object_id).await;
     }
 
@@ -973,7 +979,10 @@ pub async fn announce_object(
         note_content_id
     );
 
-    let inserted = db
+    // 转发标记、Create 活动、已发布行、作者时间线与远端投递行同一事务：
+    // 任何一步失败都整体回滚，重试不会被「已转发」短路成一条没人收到的转发。
+    let txn = db.begin().await.map_err(db_err)?;
+    let inserted = txn
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"INSERT INTO federation_object_interactions
@@ -990,6 +999,7 @@ pub async fn announce_object(
         .map_err(db_err)?;
 
     if inserted.rows_affected() == 0 {
+        txn.rollback().await.map_err(db_err)?;
         let st = stats_for_one(db, user_id, &object_id).await?;
         return Ok(InteractionResponse {
             success: true,
@@ -1068,7 +1078,7 @@ pub async fn announce_object(
     });
 
     let act_db_id = crate::federation::types::insert_local_activity(
-        db,
+        &txn,
         user_id,
         &activity_id,
         "Create",
@@ -1079,48 +1089,51 @@ pub async fn announce_object(
     .map_err(db_err)?;
 
     // Surface under 已发布 (content_type=repost; list_published includes it).
-    let _ = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_published_content
-                   (user_id, content_type, content_id, activity_id, visibility, published_at)
-               VALUES ($1, 'repost', $2, $3, 'public', NOW())
-               ON CONFLICT (content_type, content_id) DO NOTHING"#,
-            [
-                user_id.into(),
-                note_content_id.clone().into(),
-                activity_id.clone().into(),
-            ],
-        ))
-        .await;
+    // 事务里不能吞错：一条语句失败整个事务就作废，后面的写入只会跟着失败。
+    txn.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"INSERT INTO federation_published_content
+               (user_id, content_type, content_id, activity_id, visibility, published_at)
+           VALUES ($1, 'repost', $2, $3, 'public', NOW())
+           ON CONFLICT (content_type, content_id) DO NOTHING"#,
+        [
+            user_id.into(),
+            note_content_id.clone().into(),
+            activity_id.clone().into(),
+        ],
+    ))
+    .await
+    .map_err(db_err)?;
 
     // Author timeline: show the quote-repost as a Create Note (user's commentary).
     let preview: Option<String> = Some(content.chars().take(200).collect::<String>());
     let content_for_tl = create_json.get("object").cloned().unwrap_or(json!({}));
 
-    let _ = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_timeline
-                   (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
-               VALUES ($1, $2, NULL, 'Create', 'repost', $3, $4, NOW())
-               ON CONFLICT (user_id, activity_id) DO NOTHING"#,
-            [
-                user_id.into(),
-                activity_id.clone().into(),
-                preview.clone().into(),
-                content_for_tl.into(),
-            ],
-        ))
-        .await;
+    txn.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"INSERT INTO federation_timeline
+               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
+           VALUES ($1, $2, NULL, 'Create', 'repost', $3, $4, NOW())
+           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
+        [
+            user_id.into(),
+            activity_id.clone().into(),
+            preview.clone().into(),
+            content_for_tl.into(),
+        ],
+    ))
+    .await
+    .map_err(db_err)?;
 
-    if act_db_id > 0 {
-        // Fan-out Create to followers + notify original author.
-        content::fan_out_to_followers(db, user_id, act_db_id, &create_json)
-            .await
-            .map_err(db_err)?;
-        deliver_to_object_author(db, act_db_id, &create_json, &object_id).await;
-    }
+    // 远端粉丝的投递行随转发一起提交；坏粉丝只跳过自己。
+    let staged = content::stage_follower_fan_out(&txn, &base_url, user_id, act_db_id)
+        .await
+        .map_err(db_err)?;
+    txn.commit().await.map_err(db_err)?;
+
+    // 提交后：同实例粉丝进程内投递、通知原作者，都逐个尽力而为。
+    content::deliver_to_local_followers(db, &staged.local_followers, &create_json).await;
+    deliver_to_object_author(db, act_db_id, &create_json, &object_id).await;
 
     let st = stats_for_one(db, user_id, &object_id).await?;
     Ok(InteractionResponse {
@@ -1149,11 +1162,15 @@ pub async fn unannounce_object(
     let base_url = get_base_url().await;
     let local_actor = actor_url(&base_url, username);
 
-    let row = db
+    // 删转发标记、撤时间线、写 Undo / Delete 与远端投递行同一事务。
+    // DELETE … RETURNING 让并发的两次取消只有一次拿到原活动 id。
+    let txn = db.begin().await.map_err(db_err)?;
+    let row = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"SELECT activity_id FROM federation_object_interactions
-               WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'"#,
+            r#"DELETE FROM federation_object_interactions
+               WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'
+               RETURNING activity_id"#,
             [user_id.into(), object_id.clone().into()],
         ))
         .await
@@ -1165,27 +1182,19 @@ pub async fn unannounce_object(
             .flatten()
     });
 
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"DELETE FROM federation_object_interactions
-           WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'"#,
-        [user_id.into(), object_id.clone().into()],
-    ))
-    .await
-    .map_err(db_err)?;
-
+    let mut withdrawn = None;
     if let Some(ann_id) = original_id.filter(|s| !s.is_empty()) {
         // Remove from local timelines
-        let _ = db
-            .execute_raw(Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                "DELETE FROM federation_timeline WHERE activity_id = $1",
-                [ann_id.clone().into()],
-            ))
-            .await;
+        txn.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "DELETE FROM federation_timeline WHERE activity_id = $1",
+            [ann_id.clone().into()],
+        ))
+        .await
+        .map_err(db_err)?;
 
         // Load original activity to decide Undo(Announce) vs Delete(Create Note).
-        let orig_act = db
+        let orig_act = txn
             .query_one_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT activity_type, object_json FROM federation_activities
@@ -1193,8 +1202,7 @@ pub async fn unannounce_object(
                 [ann_id.clone().into()],
             ))
             .await
-            .ok()
-            .flatten();
+            .map_err(db_err)?;
 
         let (act_type, object_json): (String, Option<serde_json::Value>) = if let Some(r) = orig_act
         {
@@ -1249,7 +1257,7 @@ pub async fn unannounce_object(
             .and_then(|v| v.as_str())
             .unwrap_or("Undo");
         let act_db_id = crate::federation::types::insert_local_activity(
-            db,
+            &txn,
             user_id,
             &undo_id,
             undo_type,
@@ -1258,9 +1266,15 @@ pub async fn unannounce_object(
         )
         .await
         .map_err(db_err)?;
-        content::fan_out_to_followers(db, user_id, act_db_id, &undo_json)
+        let staged = content::stage_follower_fan_out(&txn, &base_url, user_id, act_db_id)
             .await
             .map_err(db_err)?;
+        withdrawn = Some((act_db_id, undo_json, staged.local_followers));
+    }
+    txn.commit().await.map_err(db_err)?;
+
+    if let Some((act_db_id, undo_json, local_followers)) = withdrawn {
+        content::deliver_to_local_followers(db, &local_followers, &undo_json).await;
         deliver_to_object_author(db, act_db_id, &undo_json, &object_id).await;
     }
 
@@ -1686,16 +1700,149 @@ mod tests {
         fixture.close().await;
     }
 
+    /// 互动的写入与远端投递行同一事务，扇出逐个粉丝尽力：事务里不吞错，
+    /// 同实例粉丝与原作者在提交之后投递。
     #[test]
-    fn interaction_fanout_does_not_ignore_enqueue_failure() {
+    fn interaction_writes_and_fan_out_share_one_transaction() {
         let src = include_str!("interactions.rs");
-        let swallowed = ["let _ = content::", "fan_out_to_followers"].concat();
-        assert!(
-            !src.contains(&swallowed),
-            "follower fan-out failure must fail the interaction write"
+        let body = |start: &str, end: &str| {
+            src.split(start)
+                .nth(1)
+                .and_then(|rest| rest.split(end).next())
+                .unwrap_or_else(|| panic!("{start}"))
+                .to_string()
+        };
+        for (start, end) in [
+            ("pub async fn like_object(", "pub async fn unlike_object("),
+            ("pub async fn unlike_object(", "// Bookmark (local-first)"),
+            (
+                "pub async fn announce_object(",
+                "pub async fn unannounce_object(",
+            ),
+            ("pub async fn unannounce_object(", "// Delivery helpers"),
+        ] {
+            let f = body(start, end);
+            let pos = |needle: &str| f.find(needle).unwrap_or_else(|| panic!("{start} {needle}"));
+            assert!(pos("db.begin()") < pos("insert_local_activity("), "{start}");
+            assert!(
+                pos("insert_local_activity(") < pos("txn.commit()"),
+                "{start}"
+            );
+            assert!(
+                pos("txn.commit()") < pos("deliver_to_object_author("),
+                "{start}"
+            );
+            assert!(!f.contains("let _ = db"), "{start}");
+            assert!(!f.contains("fan_out_to_followers"), "{start}");
+        }
+        for start in [
+            "pub async fn announce_object(",
+            "pub async fn unannounce_object(",
+        ] {
+            let f = body(start, "// Delivery helpers");
+            let stage = f.find("stage_follower_fan_out(&txn").expect(start);
+            let commit = f.find("txn.commit()").expect(start);
+            let local = f.find("deliver_to_local_followers(db").expect(start);
+            assert!(stage < commit && commit < local, "{start}");
+        }
+    }
+
+    async fn count(db: &DatabaseConnection, sql: &str) -> i64 {
+        db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    }
+
+    /// alice(1) 的四个粉丝里有一个空 inbox 的坏远端、一个已不存在的本地用户：
+    /// 转发与取消转发都照常成功，正常远端排上队，本地 bob 的时间线先有后无。
+    #[tokio::test]
+    async fn repost_fan_out_skips_bad_followers() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = get_base_url().await;
+        db.execute_unprepared(&format!(
+            r#"
+            INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+            INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+                (11, 'https://good.example/users/g', 'good.example', 'https://good.example/users/g/inbox'),
+                (12, 'https://bad.example/users/b', 'bad.example', ''),
+                (13, '{base}/users/bob', 'local', '{base}/users/bob/inbox'),
+                (14, '{base}/users/ghost', 'local', '{base}/users/ghost/inbox');
+            INSERT INTO federation_follows (user_id, remote_actor_id, direction, status) VALUES
+                (1, 11, 'incoming', 'accepted'), (1, 12, 'incoming', 'accepted'),
+                (1, 13, 'incoming', 'accepted'), (1, 14, 'incoming', 'accepted');
+            "#
+        ))
+        .await
+        .unwrap();
+        let target = "https://remote.example/notes/1";
+        let good_inbox = "https://good.example/users/g/inbox";
+
+        let reposted = announce_object(1, "alice", db, target, "look")
+            .await
+            .expect("bad followers must not fail the repost");
+        let create_id = reposted.activity_id.expect("repost activity");
+        let queued_for = |activity_id: &str| {
+            format!(
+                "SELECT COUNT(*) FROM federation_delivery_queue q \
+                 JOIN federation_activities a ON a.id = q.activity_id \
+                 WHERE a.activity_id = '{activity_id}' AND q.target_inbox = '{good_inbox}'"
+            )
+        };
+        assert_eq!(count(db, &queued_for(&create_id)).await, 1);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_delivery_queue WHERE target_inbox = ''"
+            )
+            .await,
+            0
         );
-        assert!(src.contains("content::fan_out_to_followers"));
-        assert!(src.contains("map_err(db_err)"));
+        let bob_rows = format!(
+            "SELECT COUNT(*) FROM federation_timeline WHERE user_id = 2 AND activity_id = '{create_id}'"
+        );
+        assert_eq!(count(db, &bob_rows).await, 1, "bob got the repost locally");
+
+        // 再转发一次：已转发，不产生新活动。
+        let again = announce_object(1, "alice", db, target, "look")
+            .await
+            .unwrap();
+        assert!(again.activity_id.is_none());
+
+        unannounce_object(1, "alice", db, target)
+            .await
+            .expect("bad followers must not fail the withdrawal");
+        let delete_id: String = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT activity_id FROM federation_activities WHERE activity_type = 'Delete'",
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "activity_id")
+            .unwrap();
+        assert_eq!(count(db, &queued_for(&delete_id)).await, 1);
+        assert_eq!(
+            count(db, &bob_rows).await,
+            0,
+            "bob's copy withdrawn locally"
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_object_interactions WHERE kind = 'announce'"
+            )
+            .await,
+            0
+        );
+
+        fixture.close().await;
     }
 
     #[test]
