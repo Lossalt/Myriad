@@ -1,3 +1,5 @@
+use crate::services::agent::notification_preferences::NotificationEventKey;
+
 /// Where the addressee is, right now. Axes are independent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IngestSight {
@@ -27,29 +29,14 @@ pub struct IngestDecision {
     pub reason: &'static str,
 }
 
-const VALUABLE: &[&str] = &[
-    "agent.task_completed",
-    "agent.task_failed",
-    "agent.task_cancelled",
-    "agent.clarification",
-    "phantasi.source_error",
-    "platform.sync.failed",
-    "agent.merope.platform_activity",
-    "agent.merope.report_ready",
-];
-
+/// Derived from the notification catalog: only catalogued keys may interrupt.
 pub fn is_valuable_event(event_key: &str) -> bool {
-    VALUABLE.contains(&event_key)
+    NotificationEventKey::from_key(event_key)
+        .is_some_and(NotificationEventKey::interrupts_when_away)
 }
 
 pub fn is_task_outcome(event_key: &str) -> bool {
-    matches!(
-        event_key,
-        "agent.task_completed"
-            | "agent.task_failed"
-            | "agent.task_cancelled"
-            | "agent.clarification"
-    )
+    NotificationEventKey::from_key(event_key).is_some_and(NotificationEventKey::is_task_outcome)
 }
 
 pub fn worth_notifying(event_key: &str) -> bool {

@@ -23,6 +23,7 @@ use super::{
 };
 use crate::services::agent::consciousness::{SpeakIntent, drain_speak_intents, last_live_presence};
 use crate::services::agent::merope::gates::IngestSight;
+use crate::services::agent::notification_preferences::{ACTION_OPEN_AGENT, NotificationEventKey};
 use crate::services::agent::notifications::{
     LiveSpeech, Notification, NotificationPriority, NotificationType, get_notification_manager,
 };
@@ -420,9 +421,12 @@ async fn emit_speech_notification(
     let Some(manager) = get_notification_manager() else {
         return false;
     };
-    if !is_valuable_event(event_key) {
+    // Only catalogued, interrupt-worthy events may become a notification.
+    let Some(event) =
+        NotificationEventKey::from_key(event_key).filter(|event| event.interrupts_when_away())
+    else {
         return false;
-    }
+    };
     let title = display_name(db).await;
     let session_id = latest_open_session(db, user_id)
         .await
@@ -430,8 +434,7 @@ async fn emit_speech_notification(
         .flatten()
         .map(|(id, _)| id);
     let mut metadata = serde_json::json!({
-        "event_key": event_key,
-        "action": "open_agent",
+        "action": ACTION_OPEN_AGENT,
         "session_id": session_id,
     });
     if let Some(object) = metadata.as_object_mut() {
@@ -461,7 +464,7 @@ async fn emit_speech_notification(
         title,
         spoken,
     )
-    .with_metadata(metadata);
+    .with_event(event, metadata);
     // Name/session lookup above may also yield. Decide the notification channel
     // from the current panel/DND state, not the original routing decision.
     if !current_delivery(db, intent, input_at, false)

@@ -21,7 +21,9 @@ use tokio::sync::{RwLock, broadcast};
 
 use crate::models::entities::agent_notifications as notif_entity;
 
-use super::notification_preferences::{self, NotificationPreferences};
+use super::notification_preferences::{
+    self, ACTION_OPEN_AGENT, EVENT_KEY_FIELD, NotificationEventKey, NotificationPreferences,
+};
 
 /// 全局通知管理器单例
 static NOTIFICATION_MANAGER: OnceLock<Arc<NotificationManager>> = OnceLock::new();
@@ -199,10 +201,21 @@ impl Notification {
         self
     }
 
+    /// 事件键只能经由类型化目录写入：生产者无法拼出目录外的键。
+    pub fn with_event(self, event: NotificationEventKey, mut metadata: serde_json::Value) -> Self {
+        if !metadata.is_object() {
+            metadata = serde_json::Value::Object(serde_json::Map::new());
+        }
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(EVENT_KEY_FIELD.to_string(), event.key().into());
+        }
+        self.with_metadata(metadata)
+    }
+
     pub fn event_key(&self) -> Option<&str> {
         self.metadata
             .as_ref()
-            .and_then(|metadata| metadata.get("event_key"))
+            .and_then(|metadata| metadata.get(EVENT_KEY_FIELD))
             .and_then(|value| value.as_str())
     }
 }
@@ -547,19 +560,19 @@ impl NotificationManager {
             "waiting_for_input" => NotificationPriority::High,
             _ => NotificationPriority::Normal,
         };
-        let event_key = match status {
-            "completed" => "agent.task_completed",
-            "failed" => "agent.task_failed",
-            "cancelled" => "agent.task_cancelled",
-            "waiting_for_input" => "agent.clarification",
-            _ => "agent.task_progress",
+        let event = match status {
+            "completed" => NotificationEventKey::AgentTaskCompleted,
+            "failed" => NotificationEventKey::AgentTaskFailed,
+            "cancelled" => NotificationEventKey::AgentTaskCancelled,
+            "waiting_for_input" => NotificationEventKey::AgentClarification,
+            _ => NotificationEventKey::AgentTaskProgress,
         };
         // Heartbeat already notifies admins via `notify_heartbeat_result`.
         if user_id == crate::services::agent::SYSTEM_USER_ID {
             return;
         }
-        if event_key != "agent.task_progress" {
-            crate::services::agent::merope::spawn_ingest(user_id, event_key, body);
+        if event != NotificationEventKey::AgentTaskProgress {
+            crate::services::agent::merope::spawn_ingest(user_id, event.key(), body);
         }
         // Looking at the Agent panel: no Agent notification of any kind, including
         // in-progress snapshots. Speech still goes through ingest → face.
@@ -578,7 +591,6 @@ impl NotificationManager {
             _ => None,
         };
         let mut metadata = serde_json::json!({
-            "event_key": event_key,
             "run_id": run_id,
             "task_id": task_id,
             "session_id": session_id,
@@ -589,10 +601,10 @@ impl NotificationManager {
         // Flag off must look exactly like before: no landing hint of its own,
         // the panel keeps resolving these by notification type and session id.
         if merope_on {
-            metadata["action"] = serde_json::json!("open_agent");
+            metadata["action"] = serde_json::json!(ACTION_OPEN_AGENT);
         }
         let mut notification = Notification::new(user_id, notification_type, priority, title, body)
-            .with_metadata(metadata);
+            .with_event(event, metadata);
         notification.id = format!("agent_run_{}", run_id);
         self.upsert(notification).await;
     }
