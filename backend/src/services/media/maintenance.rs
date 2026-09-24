@@ -21,6 +21,11 @@ pub async fn maintain(db: &DatabaseConnection) -> Result<(), MediaError> {
 /// pruned here rather than at every delete site. Expired references are kept
 /// a day for diagnosis. Run inputs bound before they expired on their own are
 /// dropped once the run is long over. Bounded per tick.
+///
+/// 已撤回的联邦发布：撤回现在在同一事务里释放以原 Create 为消费者的引用，
+/// 但更早撤回的帖子没有，升级任务回填历史活动时也会给它们重新绑上。判定只看
+/// 两件确定的事：已发布行已经不在，且同一用户有一条以该 Create 为对象的本地
+/// Delete（只有撤回会写）。还在已发布列表里的、从没撤回过的都不碰。
 pub async fn prune_references(db: &DatabaseConnection, limit: u64) -> Result<u64, MediaError> {
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
     let result = db
@@ -48,6 +53,18 @@ DELETE FROM media_references WHERE id IN (
            AND r.consumer_id LIKE 'run\_%'
            AND r.expires_at IS NULL
            AND r.created_at < NOW() - interval '1 day')
+       OR (r.consumer_type = 'federation_activity'
+           AND NOT EXISTS (SELECT 1 FROM federation_published_content p
+                           WHERE p.activity_id = r.consumer_id)
+           AND EXISTS (SELECT 1 FROM federation_activities c
+                       WHERE c.activity_id = r.consumer_id
+                         AND c.is_local AND c.activity_type = 'Create'
+                         AND (c.user_id, c.activity_id) IN (
+                             SELECT d.user_id,
+                                    COALESCE(d.object_json #>> '{object,id}',
+                                             d.object_json ->> 'object')
+                             FROM federation_activities d
+                             WHERE d.is_local AND d.activity_type = 'Delete')))
     LIMIT $1
 )
 "#,

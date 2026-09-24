@@ -2536,6 +2536,53 @@ async fn postgres_references_of_gone_consumers_are_pruned() {
     f.close().await;
 }
 
+/// 撤回修复之前撤回的帖子：已发布行没了、且有以原 Create 为对象的本地 Delete
+/// 时，引用被释放；仍在发布的、没有 Delete 的、别人的 Delete、远端活动都不动。
+#[tokio::test]
+async fn postgres_references_of_withdrawn_publications_are_pruned() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let id = image.id;
+    f.db.execute_unprepared(&format!(
+        r#"
+        INSERT INTO users (id, username) VALUES (2, 'media-other');
+        INSERT INTO federation_activities
+            (activity_id, user_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES
+            ('https://s/a/withdrawn', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/withdrawn-obj', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/live', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/no-delete', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/foreign-delete', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/d/1', 1, 'Delete', 'note', '{{"object": "https://s/a/withdrawn"}}', true, NOW()),
+            ('https://s/d/2', 1, 'Delete', 'note', '{{"object": {{"id": "https://s/a/withdrawn-obj"}}}}', true, NOW()),
+            ('https://s/d/3', 1, 'Delete', 'note', '{{"object": "https://s/a/live"}}', true, NOW()),
+            ('https://s/d/4', 2, 'Delete', 'note', '{{"object": "https://s/a/foreign-delete"}}', true, NOW());
+        INSERT INTO federation_activities
+            (activity_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES ('https://r/a/remote', 'Create', 'Note', '{{}}', false, NOW());
+        INSERT INTO federation_published_content
+            (user_id, content_type, content_id, activity_id, visibility, published_at)
+        VALUES (1, 'note', 'live', 'https://s/a/live', 'public', NOW());
+        INSERT INTO media_references (asset_id, consumer_type, consumer_id, slot, expires_at, created_at) VALUES
+            ({id}, 'federation_activity', 'https://s/a/withdrawn', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/withdrawn-obj', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/live', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/no-delete', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/foreign-delete', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://r/a/remote', 'attachment:0', NULL, NOW());
+        "#
+    ))
+    .await
+    .unwrap();
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 2);
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
+    assert_eq!(references::active_count(&f.db, id).await.unwrap(), 4);
+    f.close().await;
+}
+
 #[tokio::test]
 async fn postgres_feeds_never_publish_what_they_cite() {
     let Some(f) = Fixture::new().await else {
