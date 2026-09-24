@@ -8,6 +8,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, T
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::federation::content::ContentKind;
 use crate::federation::types::*;
 
 /// Username lookup miss is not another subject's id.
@@ -803,20 +804,20 @@ pub async fn trigger_sync(
 
 /// 最近 20 条公开发布的 phantasi-article（手发）。
 async fn collect_legacy_phantasi_activities(db: &impl ConnectionTrait) -> Vec<serde_json::Value> {
-    ring_objects(db, "phantasi-article", "phantasi").await
+    ring_objects(db, ContentKind::PhantasiArticle, "phantasi").await
 }
 
 /// Public local objects of one content type, as ring entries. Only what the
 /// outbox would serve publicly may be gossiped.
 async fn ring_objects(
     db: &impl ConnectionTrait,
-    content_type: &str,
+    kind: ContentKind,
     entry_type: &str,
 ) -> Vec<serde_json::Value> {
-    crate::federation::outbox::public_local_objects(db, content_type, 20)
+    crate::federation::outbox::public_local_objects(db, kind, 20)
         .await
         .unwrap_or_else(|error| {
-            tracing::warn!(%error, content_type, "ring: public objects query failed");
+            tracing::warn!(%error, content_type = kind.as_str(), "ring: public objects query failed");
             Vec::new()
         })
         .into_iter()
@@ -944,7 +945,7 @@ async fn collect_phantasi_recommend_entries(
                       fpc.activity_id AS published_activity_id
                FROM phantasi_items bi
                LEFT JOIN federation_published_content fpc
-                 ON fpc.content_type = 'phantasi-article'
+                 ON fpc.content_type = $4
                 AND fpc.content_id = bi.id::text
                 AND fpc.user_id = $1
                WHERE bi.source_id = ANY($2)
@@ -954,6 +955,7 @@ async fn collect_phantasi_recommend_entries(
                 user_id.into(),
                 matching_source_ids.clone().into(),
                 (PHANTASI_RING_ITEM_LIMIT as i64).into(),
+                ContentKind::PhantasiArticle.as_str().into(),
             ],
         ))
         .await
@@ -1007,7 +1009,7 @@ async fn collect_phantasi_recommend_entries(
                     "source": source_name,
                     "categories": categories,
                     "phantasi_item_id": item_id,
-                    "mfp:contentType": "phantasi-article",
+                    "mfp:contentType": ContentKind::PhantasiArticle.as_str(),
                     "mfp:contentId": item_id.to_string()
                 }
             }))
@@ -1104,11 +1106,11 @@ async fn collect_sync_entries(
         "phantasi-recommend" => {
             collect_phantasi_recommend_entries(db, user_id, username, category_filter).await
         }
-        "tapp-store" => ring_objects(db, "tapp", "tapp").await,
+        "tapp-store" => ring_objects(db, ContentKind::Tapp, "tapp").await,
         "library-exchange" => {
             // Prefer federated Create(library) publishes; fall back to local platform_metadata snapshots
             // so rings have something to gossip even before users explicitly publish.
-            let mut entries = ring_objects(db, "library", "library").await;
+            let mut entries = ring_objects(db, ContentKind::Library, "library").await;
             if entries.is_empty() {
                 let meta_rows = db
                     .query_all_raw(Statement::from_sql_and_values(
@@ -1135,7 +1137,7 @@ async fn collect_sync_entries(
                             "type": "Collection",
                             "name": format!("{} library", platform),
                             "summary": format!("Local {} library snapshot", platform),
-                            "mfp:contentType": "library",
+                            "mfp:contentType": ContentKind::Library.as_str(),
                             "mfp:platform": platform,
                             "mfp:metadataId": id,
                             "platform": platform,
@@ -1542,6 +1544,9 @@ mod tests {
         assert!(!body.contains("object_type = 'tapp'"));
         assert!(!body.contains("object_type = 'library'"));
         assert!(body.contains("outbox::public_local_objects("));
+        // 内容类型只经 ContentKind 绑定参数，不在 SQL 里写字面量。
+        assert!(!body.contains("content_type = 'phantasi-article'"));
+        assert!(!body.contains("ring_objects(db, \""));
     }
 
     #[test]

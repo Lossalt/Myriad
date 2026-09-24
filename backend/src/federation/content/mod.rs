@@ -3,11 +3,14 @@
 //! Real submodules (not `include!`) so each file owns its imports and visibility.
 
 mod ap_object;
+mod kind;
 mod media;
 mod publish;
 mod timeline;
 mod types;
 
+pub use kind::ContentKind;
+pub(crate) use kind::REPOST_CONTENT_TYPE;
 pub use media::classify_media_mime;
 pub use publish::{create_note, list_published, publish_content, unpublish_content};
 pub use types::{

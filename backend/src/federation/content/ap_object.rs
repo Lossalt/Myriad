@@ -2,10 +2,10 @@
 
 use axum::{Json, http::StatusCode};
 use myriad_error::AppError;
-use myriad_phantasi::article_federation_path;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::json;
 
+use super::kind::ContentKind;
 use super::media::{attachment_url_rejection_reason, classify_media_mime};
 use super::types::NoteAttachmentInput;
 use crate::federation::audience::Visibility;
@@ -22,7 +22,7 @@ pub(super) async fn build_ap_object(
     user_id: i32,
     username: &str,
     base_url: &str,
-    content_type: &str,
+    kind: ContentKind,
     content_id: &str,
     visibility: Visibility,
     note_text: Option<&str>,
@@ -32,8 +32,8 @@ pub(super) async fn build_ap_object(
     let local_actor = actor_url(base_url, username);
     let (to, cc) = resolve_audience(visibility, base_url, username);
 
-    match content_type {
-        "note" => {
+    match kind {
+        ContentKind::Note => {
             let text = note_text.unwrap_or("").trim();
             let attachments = note_attachments.unwrap_or(&[]);
             if text.is_empty() && attachments.is_empty() {
@@ -96,7 +96,7 @@ pub(super) async fn build_ap_object(
 
             let mut note = json!({
                 "type": "Note",
-                "id": format!("{}/notes/{}", base_url.trim_end_matches('/'), content_id),
+                "id": kind.object_url(base_url, content_id),
                 "attributedTo": &local_actor,
                 "content": content_html,
                 "source": {
@@ -108,7 +108,7 @@ pub(super) async fn build_ap_object(
                 "to": to,
                 "cc": cc,
                 "attachment": ap_attachments,
-                "mfp:contentType": "note",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
             });
             if let Some(parent) = in_reply_to.map(str::trim).filter(|s| !s.is_empty()) {
@@ -116,7 +116,7 @@ pub(super) async fn build_ap_object(
             }
             Ok(note)
         }
-        "report" => {
+        ContentKind::Report => {
             // 单平台报告 → AP Article
             let report_id: i32 = content_id.parse().unwrap_or(0);
             let row = db
@@ -168,7 +168,7 @@ pub(super) async fn build_ap_object(
             // Also expose mfp:* for ActivityPub-style clients. Do not send full report JSON.
             Ok(json!({
                 "type": "Article",
-                "id": format!("{}/reports/{}", base_url, report_id),
+                "id": kind.object_url(base_url, &report_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &name,
                 "summary": &summary,
@@ -177,7 +177,7 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "report",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:reportId": report_id,
                 "mfp:platform": &platform,
@@ -189,7 +189,7 @@ pub(super) async fn build_ap_object(
                 "content_preview": &content_preview,
             }))
         }
-        "phantasi-article" => {
+        ContentKind::PhantasiArticle => {
             // Phantasi 文章 → AP Article
             let item_id: i32 = content_id.parse().unwrap_or(0);
             let row = db
@@ -221,7 +221,7 @@ pub(super) async fn build_ap_object(
 
             Ok(json!({
                 "type": "Article",
-                "id": format!("{}{}", base_url, article_federation_path(item_id)),
+                "id": kind.object_url(base_url, &item_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &title,
                 "content": format!("<p>{}</p>", &summary_text),
@@ -230,13 +230,13 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "phantasi-article",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:source": source_name,
                 "mfp:author": author,
             }))
         }
-        "tapp" => {
+        ContentKind::Tapp => {
             // Tapp 应用 → AP Application。仅发布清单元数据，不发布代码包。
             let row = db
                 .query_one_raw(Statement::from_sql_and_values(
@@ -257,11 +257,10 @@ pub(super) async fn build_ap_object(
             let author: Option<serde_json::Value> = row.try_get("", "author").ok();
             let icon: Option<String> = row.try_get("", "icon").ok();
             let manifest: serde_json::Value = row.try_get("", "manifest").unwrap_or(json!({}));
-            let encoded_id = urlencoding::encode(&tapp_id);
 
             Ok(json!({
                 "type": "Application",
-                "id": format!("{}/tapps/{}", base_url, encoded_id),
+                "id": kind.object_url(base_url, &tapp_id),
                 "attributedTo": &local_actor,
                 "name": name,
                 "summary": description,
@@ -272,14 +271,14 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "tapp",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": tapp_id,
                 "mfp:version": version,
                 "mfp:author": author,
                 "mfp:manifest": manifest,
             }))
         }
-        "library" => {
+        ContentKind::Library => {
             // Library 发布：content_id = platform_metadata.id（平台收藏快照）
             // 或 platform 名（取该用户该平台最新一条 metadata）。
             // 无独立 library_items 表；数据来自 platform_metadata.raw_data 摘要。
@@ -358,7 +357,7 @@ pub(super) async fn build_ap_object(
 
             Ok(json!({
                 "type": "Collection",
-                "id": format!("{}/library/{}", base_url, meta_id),
+                "id": kind.object_url(base_url, &meta_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &name,
                 "summary": &summary,
@@ -366,7 +365,7 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "library",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:platform": &platform_name,
                 "mfp:metadataId": meta_id,
@@ -375,10 +374,6 @@ pub(super) async fn build_ap_object(
                 "item_count": item_count,
             }))
         }
-        _ => Err((
-            StatusCode::BAD_REQUEST,
-            Json(AppError::public_json("Unsupported content type")),
-        )),
     }
 }
 

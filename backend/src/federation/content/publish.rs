@@ -8,6 +8,7 @@ use super::ap_object::{
     StagedFanOut, build_ap_object, deliver_to_local_followers, resolve_audience,
     stage_follower_fan_out, stage_room_peer_fan_out,
 };
+use super::kind::{ContentKind, REPOST_CONTENT_TYPE};
 use super::timeline::{insert_author_timeline, published_fields_from_activity_json};
 use super::types::{CreateNoteRequest, PublishRequest, PublishResponse, PublishedItem};
 use crate::federation::audience::{FanOutScope, Visibility};
@@ -59,8 +60,15 @@ pub async fn publish_content(
             Json(AppError::public_json("content_type required")),
         ));
     }
+    let kind: ContentKind = content_type.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Unsupported content type")),
+        )
+    })?;
+    let content_type = kind.as_str();
 
-    let content_id = if content_type == "note" {
+    let content_id = if kind == ContentKind::Note {
         match req
             .content_id
             .as_deref()
@@ -91,7 +99,7 @@ pub async fn publish_content(
         user_id,
         username,
         &base_url,
-        content_type,
+        kind,
         &content_id,
         visibility_kind,
         req.text.as_deref(),
@@ -286,7 +294,7 @@ pub async fn create_note(
     req: &CreateNoteRequest,
 ) -> Result<PublishResponse, (StatusCode, Json<serde_json::Value>)> {
     let publish_req = PublishRequest {
-        content_type: "note".to_string(),
+        content_type: ContentKind::Note.as_str().to_string(),
         content_id: None,
         visibility: req.visibility.clone(),
         text: req.text.clone(),
@@ -298,54 +306,36 @@ pub async fn create_note(
 
 /// Normalize a content_id that may be a bare id, object URL, or path.
 /// Returns (optional content_type hint, bare content_id).
+///
+/// An object URL maps back through [`ContentKind::from_object_url`], so a
+/// percent-encoded Tapp id is decoded to the id the row was stored under. An
+/// explicit `content_type` wins over the kind inferred from the URL.
 fn normalize_unpublish_target(
     content_type: Option<&str>,
     content_id: &str,
 ) -> (Option<String>, String) {
-    let raw = content_id.trim();
-    if raw.is_empty() {
-        return (content_type.map(|s| s.to_string()), String::new());
-    }
-
-    // Already bare id (note_uuid / numeric / tapp id)
-    if !raw.contains("://") && !raw.contains('/') {
-        return (
-            content_type
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string()),
-            raw.to_string(),
-        );
-    }
-
-    // Object URL or path: …/notes/{id}, …/reports/{id}, …/library/{id}, …
-    let path = raw.split('?').next().unwrap_or(raw).trim_end_matches('/');
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let trailing = segments.last().copied().unwrap_or(raw).to_string();
-
-    let inferred = if segments.len() >= 2 {
-        let prev = segments[segments.len() - 2];
-        match prev {
-            "notes" => Some("note".to_string()),
-            "reports" => Some("report".to_string()),
-            "library" => Some("library".to_string()),
-            "tapps" => Some("tapp".to_string()),
-            "articles" if segments.len() >= 3 && segments[segments.len() - 3] == "phantasi" => {
-                Some("phantasi-article".to_string())
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-
-    let ct = content_type
+    let explicit = content_type
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or(inferred);
+        .map(str::to_string);
+    let raw = content_id.trim();
+    // Already bare id (note_uuid / numeric / tapp id)
+    if raw.is_empty() || (!raw.contains("://") && !raw.contains('/')) {
+        return (explicit, raw.to_string());
+    }
 
-    (ct, trailing)
+    if let Some((kind, id)) = ContentKind::from_object_url(raw) {
+        return (explicit.or_else(|| Some(kind.as_str().to_string())), id);
+    }
+    // Unknown URL family: fall back to its last path segment.
+    let path = raw.split(['?', '#']).next().unwrap_or(raw);
+    let trailing = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(raw)
+        .to_string();
+    (explicit, trailing)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -588,7 +578,7 @@ fn unpublish_audience(stored_visibility: Option<&str>, content_type: &str) -> Un
             addressing: Some(visibility),
             fan_out: visibility,
             // 转发（repost）只投粉丝与原作者，从没投过群邻（见 interactions 的转发路径）。
-            room_peers: visibility == Visibility::Public && content_type != "repost",
+            room_peers: visibility == Visibility::Public && content_type != REPOST_CONTENT_TYPE,
         },
         // 历史行：维持改动前的行为 —— 投全部粉丝、不投群邻。
         _ => UnpublishAudience {
@@ -615,10 +605,10 @@ pub async fn list_published(
                FROM federation_published_content p
                LEFT JOIN federation_activities a ON a.activity_id = p.activity_id
                WHERE p.user_id = $1
-                 AND p.content_type NOT IN ('announce')
+                 AND p.content_type = ANY($2)
                ORDER BY p.published_at DESC
                LIMIT 200"#,
-            [user_id.into()],
+            [user_id.into(), listable_content_types().into()],
         ))
         .await
         .map_err(db_err)?;
@@ -664,6 +654,16 @@ pub async fn list_published(
         .collect();
 
     Ok(items)
+}
+
+/// `content_type` values 已发布 lists: every [`ContentKind`] plus quote-reposts.
+fn listable_content_types() -> Vec<String> {
+    ContentKind::ALL
+        .iter()
+        .map(|kind| kind.as_str())
+        .chain([REPOST_CONTENT_TYPE])
+        .map(str::to_string)
+        .collect()
 }
 
 async fn rewrite_activity_attachment_urls(
@@ -726,6 +726,48 @@ fn media_ref_err(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unpublish_target_maps_object_urls_back_to_stored_ids() {
+        let ct = |s: &str| Some(s.to_string());
+        assert_eq!(
+            normalize_unpublish_target(None, "note_1"),
+            (None, "note_1".into())
+        );
+        assert_eq!(
+            normalize_unpublish_target(None, "https://x.example/notes/note_1"),
+            (ct("note"), "note_1".into())
+        );
+        assert_eq!(
+            normalize_unpublish_target(None, "/phantasi/articles/8/"),
+            (ct("phantasi-article"), "8".into())
+        );
+        // Tapp 对象 URL 里的 id 是编码过的；已发布行存的是原始 id。
+        assert_eq!(
+            normalize_unpublish_target(None, "https://x.example/tapps/demo%2Ftapp%20x"),
+            (ct("tapp"), "demo/tapp x".into())
+        );
+        // 显式 content_type 优先；未知 URL 族退回最后一段。
+        assert_eq!(
+            normalize_unpublish_target(Some("repost"), "https://x.example/notes/n"),
+            (ct("repost"), "n".into())
+        );
+        assert_eq!(
+            normalize_unpublish_target(None, "https://x.example/other/z?q=1"),
+            (None, "z".into())
+        );
+    }
+
+    #[test]
+    fn published_list_covers_every_kind_and_reposts_only() {
+        let listed = listable_content_types();
+        for kind in ContentKind::ALL {
+            assert!(listed.iter().any(|t| t == kind.as_str()));
+        }
+        assert!(listed.iter().any(|t| t == REPOST_CONTENT_TYPE));
+        assert!(!listed.iter().any(|t| t == "announce"));
+        assert_eq!(listed.len(), ContentKind::ALL.len() + 1);
+    }
 
     /// C4 回归：非广播 visibility 必须完全跳过粉丝 fan-out。
     #[test]

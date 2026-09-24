@@ -11,11 +11,11 @@ use axum::{
     response::Response,
 };
 use myriad_error::AppError;
-use myriad_phantasi::ARTICLE_OBJECT_PREFIX;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::federation::content::ContentKind;
 use crate::federation::types::*;
 
 const OUTBOX_PAGE_SIZE: i64 = 20;
@@ -41,13 +41,13 @@ const PUBLIC_CONTENT_PROJECTION: &str = r#"
       AND p.visibility = 'public'
 "#;
 
-/// Newest public local objects of one MFP content type (`tapp`, `library`,
-/// `phantasi-article`, ...), as `(activity_id, object_json)`. Ring gossip and
+/// Newest public local objects of one content kind, as
+/// `(activity_id, object_json)`. Ring gossip and
 /// every other re-publisher go through here so that withdrawn or
 /// followers-only content never leaves through a side door.
 pub(crate) async fn public_local_objects(
     db: &impl ConnectionTrait,
-    content_type: &str,
+    kind: ContentKind,
     limit: i64,
 ) -> Result<Vec<(String, Value)>, sea_orm::DbErr> {
     let rows = db
@@ -58,7 +58,7 @@ pub(crate) async fn public_local_objects(
                    AND a.activity_type = 'Create' AND p.content_type = $1 \
                  ORDER BY a.published_at DESC LIMIT $2"
             ),
-            [content_type.into(), limit.into()],
+            [kind.as_str().into(), limit.into()],
         ))
         .await?;
     Ok(rows
@@ -305,55 +305,12 @@ pub async fn get_activity(
     ))
 }
 
-/// The object URLs embedded in public Create activities are dereferenceable
-/// documents in their own right.  Keep their projection deliberately narrow:
-/// the only source is the same local Create/Announce + public
-/// `federation_published_content` join used by the Outbox and Activity
-/// handlers.  Do not rebuild an object from its backing MFP table here; doing
-/// so would make an unpublished/private row reachable by guessing its id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PublicObjectKind {
-    Note,
-    Report,
-    PhantasiArticle,
-    Tapp,
-    Library,
-}
-
-impl PublicObjectKind {
-    const fn content_type(self) -> &'static str {
-        match self {
-            Self::Note => "note",
-            Self::Report => "report",
-            Self::PhantasiArticle => "phantasi-article",
-            Self::Tapp => "tapp",
-            Self::Library => "library",
-        }
-    }
-
-    const fn activity_object_type(self) -> &'static str {
-        match self {
-            Self::Note => "Note",
-            Self::Report | Self::PhantasiArticle => "Article",
-            Self::Tapp => "Application",
-            Self::Library => "Collection",
-        }
-    }
-
-    fn object_id(self, base_url: &str, id: &str) -> String {
-        let base_url = base_url.trim_end_matches('/');
-        match self {
-            Self::Note => format!("{base_url}/notes/{id}"),
-            Self::Report => format!("{base_url}/reports/{id}"),
-            Self::PhantasiArticle => format!("{base_url}{ARTICLE_OBJECT_PREFIX}/articles/{id}"),
-            // `build_ap_object` URL-encodes tapp ids before embedding them in
-            // the object URL.  Path extraction gives us the decoded segment,
-            // so encode it once more for the canonical comparison.
-            Self::Tapp => format!("{base_url}/tapps/{}", urlencoding::encode(id)),
-            Self::Library => format!("{base_url}/library/{id}"),
-        }
-    }
-}
+// The object URLs embedded in public Create activities are dereferenceable
+// documents in their own right.  Keep their projection deliberately narrow:
+// the only source is the same local Create/Announce + public
+// `federation_published_content` join used by the Outbox and Activity
+// handlers.  Do not rebuild an object from its backing MFP table here; doing
+// so would make an unpublished/private row reachable by guessing its id.
 
 /// GET /notes/{id}
 pub async fn get_note(
@@ -361,7 +318,7 @@ pub async fn get_note(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    get_public_object(&db, PublicObjectKind::Note, id, headers).await
+    get_public_object(&db, ContentKind::Note, id, headers).await
 }
 
 /// GET /reports/{id}
@@ -370,7 +327,7 @@ pub async fn get_report(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    get_public_object(&db, PublicObjectKind::Report, id, headers).await
+    get_public_object(&db, ContentKind::Report, id, headers).await
 }
 
 /// GET /phantasi/articles/{id}
@@ -379,7 +336,7 @@ pub async fn get_phantasi_article(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    get_public_object(&db, PublicObjectKind::PhantasiArticle, id, headers).await
+    get_public_object(&db, ContentKind::PhantasiArticle, id, headers).await
 }
 
 /// GET /tapps/{id}
@@ -388,7 +345,7 @@ pub async fn get_tapp(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    get_public_object(&db, PublicObjectKind::Tapp, id, headers).await
+    get_public_object(&db, ContentKind::Tapp, id, headers).await
 }
 
 /// GET /library/{id}
@@ -397,12 +354,12 @@ pub async fn get_library(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    get_public_object(&db, PublicObjectKind::Library, id, headers).await
+    get_public_object(&db, ContentKind::Library, id, headers).await
 }
 
 async fn get_public_object(
     db: &DatabaseConnection,
-    kind: PublicObjectKind,
+    kind: ContentKind,
     raw_id: String,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
@@ -411,15 +368,15 @@ async fn get_public_object(
     // decoded separators instead of allowing a caller to make one kind's
     // handler reinterpret a path intended for another route.  Tapp ids are
     // percent-encoded by the publisher, so a decoded separator is re-encoded
-    // by `object_id` below.
+    // by `object_url` below.
     if id.is_empty()
-        || (kind != PublicObjectKind::Tapp && id.chars().any(|c| matches!(c, '/' | '?' | '#')))
+        || (kind != ContentKind::Tapp && id.chars().any(|c| matches!(c, '/' | '?' | '#')))
     {
         return Err(object_not_found());
     }
 
     let base_url = get_base_url().await;
-    let object_id = kind.object_id(&base_url, id);
+    let object_id = kind.object_url(&base_url, id);
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
@@ -430,7 +387,7 @@ async fn get_public_object(
                  LIMIT 1",
                 PUBLIC_CONTENT_PROJECTION
             ),
-            [kind.content_type().into(), object_id.clone().into()],
+            [kind.as_str().into(), object_id.clone().into()],
         ))
         .await
         .map_err(db_err)?;
@@ -467,19 +424,15 @@ fn object_not_found() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn public_object_matches(
-    kind: PublicObjectKind,
-    object: &serde_json::Value,
-    object_id: &str,
-) -> bool {
+fn public_object_matches(kind: ContentKind, object: &serde_json::Value, object_id: &str) -> bool {
     object.get("id").and_then(|value| value.as_str()) == Some(object_id)
         && object.get("type").and_then(|value| value.as_str())
-            == Some(kind.activity_object_type())
+            == Some(kind.ap_type())
         // `mfp:contentType` 缺省视为匹配；有值则必须等于 published-content type。
         && object
             .get("mfp:contentType")
             .and_then(|value| value.as_str())
-            .map(|value| value == kind.content_type())
+            .map(|value| value == kind.as_str())
             .unwrap_or(true)
 }
 
@@ -587,47 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn public_object_links_use_emitted_paths_and_content_types() {
-        let base = "https://example.test/";
-        assert_eq!(
-            PublicObjectKind::Note.object_id(base, "n-1"),
-            "https://example.test/notes/n-1"
-        );
-        assert_eq!(
-            PublicObjectKind::Report.object_id(base, "7"),
-            "https://example.test/reports/7"
-        );
-        assert_eq!(
-            PublicObjectKind::PhantasiArticle.object_id(base, "8"),
-            "https://example.test/phantasi/articles/8"
-        );
-        assert_eq!(
-            PublicObjectKind::Tapp.object_id(base, "demo tapp"),
-            "https://example.test/tapps/demo%20tapp"
-        );
-        assert_eq!(
-            PublicObjectKind::Tapp.object_id(base, "demo/tapp"),
-            "https://example.test/tapps/demo%2Ftapp"
-        );
-        assert_eq!(
-            PublicObjectKind::Library.object_id(base, "9"),
-            "https://example.test/library/9"
-        );
-
-        assert_eq!(PublicObjectKind::Note.activity_object_type(), "Note");
-        assert_eq!(PublicObjectKind::Report.activity_object_type(), "Article");
-        assert_eq!(
-            PublicObjectKind::PhantasiArticle.activity_object_type(),
-            "Article"
-        );
-        assert_eq!(PublicObjectKind::Tapp.activity_object_type(), "Application");
-        assert_eq!(
-            PublicObjectKind::Library.activity_object_type(),
-            "Collection"
-        );
-    }
-
-    #[test]
     fn private_or_unpublished_rows_are_excluded_by_public_projection() {
         assert!(PUBLIC_CONTENT_PROJECTION.contains("JOIN federation_published_content"));
         assert!(PUBLIC_CONTENT_PROJECTION.contains("a.is_local = true"));
@@ -643,10 +555,10 @@ mod tests {
             "id": id,
             "mfp:contentType": "note"
         });
-        assert!(public_object_matches(PublicObjectKind::Note, &note, id));
-        assert!(!public_object_matches(PublicObjectKind::Report, &note, id));
+        assert!(public_object_matches(ContentKind::Note, &note, id));
+        assert!(!public_object_matches(ContentKind::Report, &note, id));
         assert!(!public_object_matches(
-            PublicObjectKind::Note,
+            ContentKind::Note,
             &note,
             "https://example.test/notes/missing"
         ));
@@ -657,7 +569,7 @@ mod tests {
             "mfp:contentType": "report"
         });
         assert!(!public_object_matches(
-            PublicObjectKind::Note,
+            ContentKind::Note,
             &stale_cross_type,
             id
         ));
