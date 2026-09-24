@@ -510,12 +510,11 @@ export const AgentEngine: React.FC = () => {
   )
 
   useEffect(() => {
-    const handleOpenSession = (e: Event) => {
-      const detail = (e as CustomEvent).detail as {
-        sessionId?: string
-        runId?: string
-        taskId?: string
-      } | null
+    const openSession = (detail: {
+      sessionId?: string
+      runId?: string
+      taskId?: string
+    } | null) => {
       const sid = detail?.sessionId
       dispatchAgentPanelOpen('messages')
       if (typeof sid !== 'string' || !sid) return
@@ -542,11 +541,10 @@ export const AgentEngine: React.FC = () => {
         'work',
       )
     }
+    const handleOpenSession = (e: Event) => openSession((e as CustomEvent).detail)
     window.addEventListener('arael-open-session', handleOpenSession)
     const { queued, detach } = attachAgentSessionOpenQueue()
-    if (queued) {
-      handleOpenSession(new CustomEvent('arael-open-session', { detail: queued }))
-    }
+    if (queued) openSession(queued)
     return () => {
       window.removeEventListener('arael-open-session', handleOpenSession)
       detach()

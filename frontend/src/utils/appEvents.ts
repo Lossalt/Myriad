@@ -30,6 +30,11 @@ export interface AppEventMap {
   'auth-state-changed': { isAuthenticated: boolean, isAdmin: boolean }
   'tapp-subject-ready': { isAuthenticated: boolean }
 
+  // Site appearance (config saves and the wallpaper loader)
+  'wallpaperChanged': { url: string, timestamp: number, fromCache: boolean }
+  'wallpaperConfigChanged': void
+  'footerConfigChanged': void
+
   // Shell chrome
   'config-loaded': void
   'open-control-panel': { tab?: 'notifications' } | undefined

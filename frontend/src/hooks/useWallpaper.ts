@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { API_URL } from '../config'
 import { useI18n } from '../contexts/I18nContext'
 import { fetchJsonWithRetry } from '../utils/apiRetry'
+import { emitAppEvent } from '../utils/appEvents'
 import { cssBackgroundImage } from '../utils/cssUrl'
 import { loadImagePooled } from '../utils/objectPool'
 import { proxyImageUrl } from '../utils/proxyImageUrl'
@@ -773,15 +774,11 @@ export function useWallpaper() {
       setWallpaperUrl(verifiedUrl)
       setBlur(config.wallpaper_blur)
 
-      window.dispatchEvent(
-        new CustomEvent('wallpaperChanged', {
-          detail: {
-            url: verifiedUrl,
-            timestamp: wallpaperState.getAppliedTimestamp(),
-            fromCache: !!cachedAlternative,
-          },
-        }),
-      )
+      emitAppEvent('wallpaperChanged', {
+        url: verifiedUrl,
+        timestamp: wallpaperState.getAppliedTimestamp(),
+        fromCache: !!cachedAlternative,
+      })
 
       return verifiedUrl
     } catch (error) {

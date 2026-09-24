@@ -389,14 +389,11 @@ export function AgentGlobalActions() {
 
         navigate('/journal')
       } else {
-        const event = new CustomEvent('agent:open-phantasi-article', {
-          detail: {
-            articleId: params?.articleId,
-            articleLink: params?.articleLink,
-            openLatest: params?.openLatest ?? true,
-          },
+        emitAppEvent('agent:open-phantasi-article', {
+          articleId: params?.articleId,
+          articleLink: params?.articleLink,
+          openLatest: params?.openLatest ?? true,
         })
-        window.dispatchEvent(event)
       }
 
       return true

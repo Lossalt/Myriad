@@ -4,6 +4,7 @@ import { API_URL } from '../../../config'
 import { notifyPersonaUpdated } from '../../../features/merope/events'
 import { reloadSystemConfig } from '../../../services/configApi'
 import { invalidateSpeechStatusCache } from '../../../services/speechApi'
+import { emitAppEvent } from '../../../utils/appEvents'
 import { deepEqual } from '../../../utils/deepEqual'
 import { ISLAND_CONTENT_CHANGED_EVENT } from '../../../utils/islandContent'
 import {
@@ -47,7 +48,7 @@ export function configBagEffects(
         const { invalidateWallpaperLoadCache } =
           await import('../../../hooks/useWallpaper')
         invalidateWallpaperLoadCache()
-        window.dispatchEvent(new CustomEvent('wallpaperConfigChanged'))
+        emitAppEvent('wallpaperConfigChanged')
       },
     })
   }
@@ -67,7 +68,7 @@ export function configBagEffects(
       id: 'footer',
       run: () => {
         clearDedupCache(`${API_URL}/api/config/ui`)
-        window.dispatchEvent(new CustomEvent('footerConfigChanged'))
+        emitAppEvent('footerConfigChanged')
       },
     })
   }
