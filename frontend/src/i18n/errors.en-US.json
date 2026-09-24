@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "The AI budget for today is used up; it resets tomorrow.",
     "AI_QUOTA_EXCEEDED": "The AI budget for today is used up; it resets tomorrow.",
     "QUEUE_FULL": "The agent queue is full. Try again in a moment.",
-    "agent_access_denied": "You do not have permission to do that."
+    "agent_access_denied": "You do not have permission to do that.",
+    "playground_ai_unconfigured": "Pro AI is not enabled or configured on this server. Ask an admin to set up the Pro model, then retry.",
+    "playground_ai_failed": "The AI model failed to complete generation (upstream error). Your project and prompt were kept — wait a moment and press Retry.",
+    "playground_validation_failed": "The generated Tapp did not pass package validation after automatic repairs. Try a clearer prompt, or simplify the request and Retry.",
+    "playground_payload_too_large": "This request is too large (project or history snapshots). Start a new session or delete older revisions, then retry.",
+    "playground_agent_busy": "Playground is restarting or temporarily unavailable. Wait a moment and press Retry.",
+    "playground_cancelled": "Generation cancelled. Your project and prompt were kept — send again when ready.",
+    "playground_auth_required": "Please sign in before using Tapp Playground, then try again.",
+    "playground_admin_required": "Tapp Playground is admin-only. Sign in with an administrator account and try again.",
+    "playground_rate_limited": "Too many requests. Wait a moment, then press Retry.",
+    "playground_generate_failed": "Generation failed. Please try again.",
+    "playground_bad_request": "Invalid request."
   }
 }

@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "Das KI-Kontingent für heute ist aufgebraucht; morgen wird es zurückgesetzt.",
     "AI_QUOTA_EXCEEDED": "Das KI-Kontingent für heute ist aufgebraucht; morgen wird es zurückgesetzt.",
     "QUEUE_FULL": "Die Agent-Warteschlange ist voll. Gleich nochmal versuchen.",
-    "agent_access_denied": "Dafür fehlen Ihnen die Rechte."
+    "agent_access_denied": "Dafür fehlen Ihnen die Rechte.",
+    "playground_ai_unconfigured": "Pro-KI ist auf diesem Server nicht aktiviert oder konfiguriert. Bitten Sie einen Admin, das Pro-Modell einzurichten, dann erneut versuchen.",
+    "playground_ai_failed": "Das KI-Modell hat die Erzeugung nicht abgeschlossen (Upstream-Fehler). Projekt und Prompt bleiben erhalten — kurz warten und auf Erneut tippen.",
+    "playground_validation_failed": "Der erzeugte Tapp hat die Paketprüfung nach automatischen Reparaturen nicht bestanden. Formulieren Sie klarer oder vereinfachen Sie die Anfrage und tippen Sie auf Erneut.",
+    "playground_payload_too_large": "Diese Anfrage ist zu groß (Projekt oder Verlaufssicherungen). Starten Sie eine neue Sitzung oder löschen Sie ältere Versionen, dann erneut versuchen.",
+    "playground_agent_busy": "Playground startet neu oder ist vorübergehend nicht verfügbar. Kurz warten und auf Erneut tippen.",
+    "playground_cancelled": "Erzeugung abgebrochen. Projekt und Prompt bleiben erhalten — senden Sie erneut, wenn Sie bereit sind.",
+    "playground_auth_required": "Bitte anmelden, bevor Sie Tapp Playground nutzen, dann erneut versuchen.",
+    "playground_admin_required": "Tapp Playground ist nur für Admins. Melden Sie sich mit einem Administratorkonto an und versuchen Sie es erneut.",
+    "playground_rate_limited": "Zu viele Anfragen. Kurz warten, dann auf Erneut tippen.",
+    "playground_generate_failed": "Erzeugung fehlgeschlagen. Bitte erneut versuchen.",
+    "playground_bad_request": "Ungültige Anfrage."
   }
 }

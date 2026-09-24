@@ -1,19 +1,16 @@
+import { currentCopy } from '../../i18n/localeCopy'
+import { resolveErrorCode } from '../../utils/errorCodes'
+
+/**
+ * Copy for failures the backend never labels (the request never reached the
+ * Playground handler, or the browser gave up). Everything the backend reports
+ * arrives with a `playground_*` code and reads from the shared `errors.byCode`.
+ */
 export interface PlaygroundErrorCopy {
   playgroundTimeoutHint: string
   playgroundServerErrorHint: string
   playgroundGenerateFailed: string
-  playgroundCancelled?: string
-  playgroundAiNotConfiguredHint: string
-  playgroundAiGenerationFailedHint: string
-  playgroundValidationFailedHint: string
-  playgroundPayloadTooLargeHint: string
-  playgroundAdminRequiredHint: string
-  playgroundAuthRequiredHint: string
-  playgroundRateLimitHint: string
   playgroundNetworkHint: string
-  playgroundStreamIncompleteHint: string
-  playgroundAgentBusyHint: string
-  playgroundBadRequestHint: string
   playgroundErrorDetail: string
   playgroundRuntimeError: string
   playgroundUnknownError?: string
@@ -21,9 +18,14 @@ export interface PlaygroundErrorCopy {
 
 export interface MapPlaygroundErrorOpts {
   userCancelled?: boolean
+  /** API `code` (`playground_*` from the Playground handler, or a generic one). */
   code?: string
+  /** HTTP status when the failure came from an HTTP response. */
+  status?: number
   format?: (template: string, params: Record<string, string | number>) => string
 }
+
+type Format = (template: string, params: Record<string, string | number>) => string
 
 const DETAIL_MAX = 720
 
@@ -47,7 +49,7 @@ function compose(
   primary: string,
   detail: string | undefined,
   detailTemplate: string,
-  format: (template: string, params: Record<string, string | number>) => string,
+  format: Format,
 ): string {
   const d = detail ? truncateDetail(detail) : ''
   if (!d || d === primary || primary.includes(d)) return primary
@@ -58,9 +60,7 @@ function compose(
 }
 
 function extractValidationDetail(raw: string): string {
-  const m = raw.match(
-    /did not pass validation after \d+ attempts?: (.+)$/i,
-  )
+  const m = raw.match(/did not pass validation after \d+ attempts?: (.+)$/i)
   if (m?.[1]) return m[1].trim()
   const colon = raw.indexOf(': ')
   if (colon > 0 && /validation/i.test(raw.slice(0, colon))) {
@@ -69,208 +69,112 @@ function extractValidationDetail(raw: string): string {
   return raw
 }
 
+/** The backend detail worth showing under the code copy, per code. */
+function codeDetail(code: string, raw: string): string | undefined {
+  switch (code) {
+    case 'playground_validation_failed':
+      return extractValidationDetail(raw)
+    case 'playground_payload_too_large':
+    case 'playground_bad_request':
+      return raw.replaceAll(/^HTTP\s*\d{3}\s*:?\s*/gi, '').trim() || undefined
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Responses that never reached the Playground handler (auth middleware, CSRF,
+ * rate limiter, body limit) carry only a status; read them as the Playground
+ * code the handler itself would have used for that status.
+ */
+function playgroundCodeForStatus(status: number | undefined, raw: string): string | undefined {
+  switch (status) {
+    case 401:
+      return 'playground_auth_required'
+    case 403:
+      // A CSRF rejection means the session needs refreshing, not admin rights.
+      return /csrf/i.test(raw) ? 'playground_auth_required' : 'playground_admin_required'
+    case 413:
+      return 'playground_payload_too_large'
+    case 422:
+      return 'playground_validation_failed'
+    case 429:
+      return 'playground_rate_limited'
+    default:
+      return undefined
+  }
+}
+
+function sharedCopy(code: string | undefined): string | undefined {
+  if (!code) return undefined
+  const table: Readonly<Record<string, string | undefined>> =
+    currentCopy().errors.byCode
+  return table[code]
+}
+
+function isTimeoutText(raw: string): boolean {
+  return (
+    /^timeouterror$/i.test(raw) ||
+    /^aborterror$/i.test(raw) ||
+    /timed?\s*out/i.test(raw) ||
+    /\btimeout\b/i.test(raw) ||
+    /the operation was aborted/i.test(raw)
+  )
+}
+
+function isNetworkText(raw: string): boolean {
+  return (
+    /failed to fetch/i.test(raw) ||
+    /networkerror/i.test(raw) ||
+    /load failed/i.test(raw) ||
+    /network request failed/i.test(raw) ||
+    /net::err_/i.test(raw)
+  )
+}
+
 export function mapPlaygroundGenerateError(
   message: string,
   copy: PlaygroundErrorCopy,
   opts?: MapPlaygroundErrorOpts,
 ): string {
   const format = opts?.format ?? defaultFormat
+  const raw = (message || '').trim()
 
-  if (opts?.userCancelled && copy.playgroundCancelled) {
-    return copy.playgroundCancelled
+  if (opts?.userCancelled) {
+    return sharedCopy('playground_cancelled') || copy.playgroundTimeoutHint
   }
 
-  const raw = (message || '').trim()
+  // 1. The Playground handler's own code (HTTP body or SSE error event).
+  const explicit = opts?.code?.trim() || undefined
+  const playgroundCode = explicit?.startsWith('playground_')
+    ? explicit
+    : playgroundCodeForStatus(opts?.status, raw)
+  const playgroundCopy = sharedCopy(playgroundCode)
+  if (playgroundCode && playgroundCopy) {
+    return compose(
+      playgroundCopy,
+      codeDetail(playgroundCode, raw),
+      copy.playgroundErrorDetail,
+      format,
+    )
+  }
+
   if (!raw) return copy.playgroundGenerateFailed
 
-  switch (opts?.code) {
-    case 'playground_ai_unconfigured':
-      return copy.playgroundAiNotConfiguredHint
-    case 'playground_ai_failed':
-      return copy.playgroundAiGenerationFailedHint
-    case 'playground_validation_failed':
-      return compose(
-        copy.playgroundValidationFailedHint,
-        extractValidationDetail(raw),
-        copy.playgroundErrorDetail,
-        format,
-      )
-    case 'playground_payload_too_large':
-      return compose(
-        copy.playgroundPayloadTooLargeHint,
-        raw,
-        copy.playgroundErrorDetail,
-        format,
-      )
-    case 'playground_agent_busy':
-      return copy.playgroundAgentBusyHint
-    case 'playground_cancelled':
-      return copy.playgroundCancelled || copy.playgroundTimeoutHint
-    case 'playground_auth_required':
-      return copy.playgroundAuthRequiredHint
-    case 'playground_admin_required':
-      return copy.playgroundAdminRequiredHint
-    case 'playground_rate_limited':
-      return copy.playgroundRateLimitHint
-    case 'playground_bad_request':
-      return format(copy.playgroundBadRequestHint, {
-        detail: truncateDetail(raw.replaceAll(/^HTTP\s*400\s*:?\s*/gi, '').trim() || raw),
-      })
-    default:
-      break
+  // 2. Browser-side failures: no response, so no code. The Playground wording
+  //    ("your project and prompt were kept — Retry") is specific to this page.
+  if (isTimeoutText(raw)) return copy.playgroundTimeoutHint
+  if (isNetworkText(raw)) return copy.playgroundNetworkHint
+
+  // 3. Any other coded failure: the shared table, same as everywhere else.
+  const code = resolveErrorCode(explicit, raw)
+  const otherCopy = sharedCopy(code)
+  if (otherCopy) {
+    return compose(otherCopy, raw, copy.playgroundErrorDetail, format)
   }
 
-  const lower = raw.toLowerCase()
-
-  if (
-    /pro ai agent generation failed/i.test(raw) ||
-    /agent generation failed/i.test(raw) ||
-    /generation failed \(\s*502\s*\)/i.test(raw)
-  ) {
-    return copy.playgroundAiGenerationFailedHint
-  }
-
-  if (
-    /pro ai model is not enabled/i.test(raw) ||
-    /model is not enabled or configured/i.test(raw) ||
-    /ai model is not enabled/i.test(raw)
-  ) {
-    return copy.playgroundAiNotConfiguredHint
-  }
-
-  const isTimeout =
-    raw === 'TimeoutError' ||
-    lower === 'timeouterror' ||
-    /timed?\s*out/i.test(raw) ||
-    /aborted due to timeout/i.test(raw) ||
-    /signal timed out/i.test(raw) ||
-    /backend proxy timeout/i.test(raw) ||
-    /\btimeout\b/i.test(raw)
-
-  if (isTimeout) return copy.playgroundTimeoutHint
-
-  if (
-    raw === 'AbortError' ||
-    lower === 'aborterror' ||
-    /the operation was aborted/i.test(raw)
-  ) {
-    return copy.playgroundTimeoutHint
-  }
-
-  if (
-    /\bHTTP\s*401\b/i.test(raw) ||
-    /please login/i.test(raw) ||
-    /unauthorized/i.test(raw) ||
-    /invalid user id in authorization/i.test(raw)
-  ) {
-    return copy.playgroundAuthRequiredHint
-  }
-
-  if (
-    /\bHTTP\s*403\b/i.test(raw) ||
-    /administrator access required/i.test(raw) ||
-    /only current admin/i.test(raw) ||
-    (/forbidden/i.test(raw) && /admin/i.test(raw))
-  ) {
-    return copy.playgroundAdminRequiredHint
-  }
-
-  if (/csrf/i.test(raw)) {
-    return copy.playgroundAuthRequiredHint
-  }
-
-  if (/\bHTTP\s*429\b/i.test(raw) || /rate\s*limit/i.test(raw) || /too many requests/i.test(raw)) {
-    return copy.playgroundRateLimitHint
-  }
-
-  if (
-    /\bHTTP\s*413\b/i.test(raw) ||
-    /payload too large/i.test(raw) ||
-    /request body exceeds/i.test(raw) ||
-    /current project is too large/i.test(raw) ||
-    /project exceeds/i.test(raw) ||
-    /history.*too large/i.test(raw) ||
-    /history accepts at most/i.test(raw)
-  ) {
-    return compose(
-      copy.playgroundPayloadTooLargeHint,
-      raw,
-      copy.playgroundErrorDetail,
-      format,
-    )
-  }
-
-  if (
-    /did not pass validation/i.test(raw) ||
-    (/validation/i.test(raw) && /after\s+\d+\s+attempts/i.test(raw)) ||
-    /\bHTTP\s*422\b/i.test(raw)
-  ) {
-    const detail = extractValidationDetail(raw)
-    const useful =
-      detail && !/^HTTP\s*422$/i.test(detail) ? detail : undefined
-    return compose(
-      copy.playgroundValidationFailedHint,
-      useful,
-      copy.playgroundErrorDetail,
-      format,
-    )
-  }
-
-  if (
-    /agent is shutting down/i.test(raw) ||
-    /playground agent is shutting down/i.test(raw)
-  ) {
-    return copy.playgroundAgentBusyHint
-  }
-
-  if (
-    /stream ended without a final response/i.test(raw) ||
-    /stream body unavailable/i.test(raw) ||
-    /failed to serialize stream event/i.test(raw)
-  ) {
-    return copy.playgroundStreamIncompleteHint
-  }
-
-  if (
-    /failed to fetch/i.test(raw) ||
-    /networkerror/i.test(raw) ||
-    /load failed/i.test(raw) ||
-    /network request failed/i.test(raw) ||
-    /net::err_/i.test(raw)
-  ) {
-    return copy.playgroundNetworkHint
-  }
-
-  if (
-    /invalid agent plan/i.test(raw) ||
-    /invalid json project/i.test(raw)
-  ) {
-    return copy.playgroundValidationFailedHint
-  }
-
-  if (
-    /\bHTTP\s*400\b/i.test(raw) ||
-    /instruction must contain/i.test(raw) ||
-    /invalid current project/i.test(raw) ||
-    /invalid request payload/i.test(raw) ||
-    /invalid runtime feedback/i.test(raw) ||
-    /history turn/i.test(raw) ||
-    /failed history entries/i.test(raw)
-  ) {
-    const detail = raw.replaceAll(/^HTTP\s*400\s*:?\s*/gi, '').trim()
-    return format(copy.playgroundBadRequestHint, {
-      detail: truncateDetail(detail || raw),
-    })
-  }
-
-  const isServer =
-    /\bHTTP\s*50[0234]\b/i.test(raw) ||
-    /bad gateway/i.test(raw) ||
-    /gateway timeout/i.test(raw) ||
-    /service unavailable/i.test(raw) ||
-    /internal server error/i.test(raw)
-
-  if (isServer) {
+  const status = opts?.status ?? 0
+  if (status >= 500 || /^HTTP\s*5\d\d\b/i.test(raw)) {
     return compose(
       copy.playgroundServerErrorHint,
       raw.startsWith('HTTP') ? raw : undefined,
@@ -279,28 +183,16 @@ export function mapPlaygroundGenerateError(
     )
   }
 
-  const looksLocalized =
-    /[\u3040-\u30FF\u3400-\u9FFF]/.test(raw) ||
-    raw.length > 40
+  const looksLocalized = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(raw) || raw.length > 40
 
   if (looksLocalized && !/^HTTP\s*\d+/i.test(raw) && !/^[a-z]{2,}Error$/i.test(raw)) {
     if (/^[\w .:/-]{1,48}$/.test(raw) && !/\s{2,}/.test(raw) && raw.split(' ').length <= 4) {
-      return compose(
-        copy.playgroundGenerateFailed,
-        raw,
-        copy.playgroundErrorDetail,
-        format,
-      )
+      return compose(copy.playgroundGenerateFailed, raw, copy.playgroundErrorDetail, format)
     }
     return raw
   }
 
-  return compose(
-    copy.playgroundGenerateFailed,
-    raw,
-    copy.playgroundErrorDetail,
-    format,
-  )
+  return compose(copy.playgroundGenerateFailed, raw, copy.playgroundErrorDetail, format)
 }
 
 export function mapPlaygroundRuntimeError(
@@ -309,7 +201,7 @@ export function mapPlaygroundRuntimeError(
     PlaygroundErrorCopy,
     'playgroundRuntimeError' | 'playgroundUnknownError'
   >,
-  format: (template: string, params: Record<string, string | number>) => string = defaultFormat,
+  format: Format = defaultFormat,
 ): string {
   const raw =
     (message || '').trim() || copy.playgroundUnknownError || ''

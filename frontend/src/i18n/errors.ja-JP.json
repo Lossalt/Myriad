@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "本日の AI 利用枠を使い切りました。明日リセットされます。",
     "AI_QUOTA_EXCEEDED": "本日の AI 利用枠を使い切りました。明日リセットされます。",
     "QUEUE_FULL": "ただいま混み合っています。少し待って再試行してください。",
-    "agent_access_denied": "この操作を行う権限がありません。"
+    "agent_access_denied": "この操作を行う権限がありません。",
+    "playground_ai_unconfigured": "このサーバーでは Pro AI が未設定または無効です。管理者にモデル設定を依頼してから再試行してください。",
+    "playground_ai_failed": "AI モデルが生成を完了できませんでした（上流エラー）。プロジェクトと入力は保持されています。少し待って再試行してください。",
+    "playground_validation_failed": "生成結果が自動修復後もパッケージ検証に通りませんでした。指示をより具体にするか、内容を簡略化して再試行してください。",
+    "playground_payload_too_large": "リクエストが大きすぎます（プロジェクトまたは履歴スナップショット過多）。新しいセッションを開始するか古い版を削除してから再試行してください。",
+    "playground_agent_busy": "プレイグラウンドが再起動中、または一時利用できません。少し待って再試行してください。",
+    "playground_cancelled": "生成をキャンセルしました。プロジェクトと入力は保持されています。準備ができたら再送してください。",
+    "playground_auth_required": "Tapp プレイグラウンドを使う前にログインしてください。",
+    "playground_admin_required": "Tapp プレイグラウンドは管理者のみ利用できます。管理者アカウントでログインしてから再試行してください。",
+    "playground_rate_limited": "リクエストが多すぎます。少し待ってから再試行してください。",
+    "playground_generate_failed": "生成に失敗しました。もう一度お試しください。",
+    "playground_bad_request": "無効なリクエストです。"
   }
 }

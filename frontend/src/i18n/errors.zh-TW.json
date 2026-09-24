@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "今天的 AI 額度用完了，明天會重置。",
     "AI_QUOTA_EXCEEDED": "今天的 AI 額度用完了，明天會重置。",
     "QUEUE_FULL": "當前排隊已滿，請稍後再試。",
-    "agent_access_denied": "沒有權限執行這次操作。"
+    "agent_access_denied": "沒有權限執行這次操作。",
+    "playground_ai_unconfigured": "本伺服器未啟用或未配置 Pro AI 模型。請管理員在系統設定中完成配置後再試。",
+    "playground_ai_failed": "AI 模型未能完成生成（上游異常）。專案與輸入已保留，請稍候點選重試。",
+    "playground_validation_failed": "生成結果經自動修復後仍未透過包校驗。可改寫需求更具體一些，或簡化後重試。",
+    "playground_payload_too_large": "請求內容過大（專案或歷史快照過多）。請新建會話或刪除舊版本後再試。",
+    "playground_agent_busy": "遊樂場服務正在重啟或暫時不可用，請稍後再試。",
+    "playground_cancelled": "已取消生成。當前專案與輸入內容已保留，可再次傳送。",
+    "playground_auth_required": "請先登入後再使用 Tapp 遊樂場。",
+    "playground_admin_required": "Tapp 遊樂場僅管理員可用。請使用管理員賬號登入後再試。",
+    "playground_rate_limited": "請求過於頻繁，請稍後再點選重試。",
+    "playground_generate_failed": "生成失敗，請稍後重試。",
+    "playground_bad_request": "請求無效。"
   }
 }

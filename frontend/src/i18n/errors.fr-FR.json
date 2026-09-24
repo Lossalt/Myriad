@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "Le budget IA du jour est épuisé ; il se remet demain.",
     "AI_QUOTA_EXCEEDED": "Le budget IA du jour est épuisé ; il se remet demain.",
     "QUEUE_FULL": "La file d'Agent est pleine. Réessayez dans un instant.",
-    "agent_access_denied": "Vous n'avez pas le droit de faire ça."
+    "agent_access_denied": "Vous n'avez pas le droit de faire ça.",
+    "playground_ai_unconfigured": "L’IA Pro n’est pas activée ou configurée sur ce serveur. Demandez à un administrateur de configurer le modèle Pro, puis réessayez.",
+    "playground_ai_failed": "Le modèle IA n’a pas pu terminer la génération (erreur amont). Votre projet et votre consigne ont été conservés — attendez un instant et appuyez sur Réessayer.",
+    "playground_validation_failed": "Le Tapp généré n’a pas passé la validation du paquet après les corrections automatiques. Clarifiez la consigne, ou simplifiez et réessayez.",
+    "playground_payload_too_large": "Cette requête est trop grande (projet ou instantanés d’historique). Démarrez une nouvelle session ou supprimez d’anciennes révisions, puis réessayez.",
+    "playground_agent_busy": "L’atelier redémarre ou est temporairement indisponible. Attendez un instant et appuyez sur Réessayer.",
+    "playground_cancelled": "Génération annulée. Votre projet et votre consigne ont été conservés — renvoyez quand vous serez prêt.",
+    "playground_auth_required": "Connectez-vous avant d’utiliser l’atelier Tapp, puis réessayez.",
+    "playground_admin_required": "L’atelier Tapp est réservé aux administrateurs. Connectez-vous avec un compte administrateur et réessayez.",
+    "playground_rate_limited": "Trop de requêtes. Attendez un instant, puis appuyez sur Réessayer.",
+    "playground_generate_failed": "La génération a échoué. Réessayez.",
+    "playground_bad_request": "Requête invalide."
   }
 }

@@ -1577,10 +1577,12 @@ Tapp.lifecycle.onReady(function () {
 
         let err = PlaygroundStreamEvent::Error {
             message: "Generation cancelled".into(),
+            code: "playground_cancelled".into(),
         };
         let err_json = serde_json::to_value(&err).expect("error json");
         assert_eq!(err_json["type"], "error");
         assert_eq!(err_json["message"], "Generation cancelled");
+        assert_eq!(err_json["code"], "playground_cancelled");
     }
 
     #[test]

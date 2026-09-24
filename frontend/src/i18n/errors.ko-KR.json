@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "오늘의 AI 한도가 다 찼습니다. 내일 초기화됩니다.",
     "AI_QUOTA_EXCEEDED": "오늘의 AI 한도가 다 찼습니다. 내일 초기화됩니다.",
     "QUEUE_FULL": "Agent 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.",
-    "agent_access_denied": "그럴 권한이 없습니다."
+    "agent_access_denied": "그럴 권한이 없습니다.",
+    "playground_ai_unconfigured": "이 서버에 Pro AI가 켜져 있지 않거나 설정되지 않았어요. 관리자에게 Pro 모델 설정을 부탁한 뒤 다시 시도하세요.",
+    "playground_ai_failed": "AI 모델이 생성을 끝내지 못했어요(업스트림 오류). 프로젝트와 프롬프트는 남겨 뒀어요. 잠시 후 다시 시도를 누르세요.",
+    "playground_validation_failed": "생성된 Tapp이 자동 수리 후에도 패키지 검증을 통과하지 못했어요. 더 분명한 프롬프트를 쓰거나 요청을 단순화한 뒤 다시 시도하세요.",
+    "playground_payload_too_large": "이 요청이 너무 커요(프로젝트나 기록 스냅샷). 새 세션을 시작하거나 오래된 버전을 지운 뒤 다시 시도하세요.",
+    "playground_agent_busy": "플레이그라운드가 다시 시작 중이거나 잠시 쓸 수 없어요. 잠시 후 다시 시도를 누르세요.",
+    "playground_cancelled": "생성을 취소했어요. 프로젝트와 프롬프트는 남겨 뒀어요. 준비되면 다시 보내세요.",
+    "playground_auth_required": "Tapp 플레이그라운드를 쓰려면 먼저 로그인하세요.",
+    "playground_admin_required": "Tapp 플레이그라운드는 관리자만 쓸 수 있어요. 관리자 계정으로 로그인한 뒤 다시 시도하세요.",
+    "playground_rate_limited": "요청이 너무 많아요. 잠시 후 다시 시도를 누르세요.",
+    "playground_generate_failed": "생성에 실패했어요. 다시 시도하세요.",
+    "playground_bad_request": "잘못된 요청입니다."
   }
 }

@@ -661,6 +661,17 @@
     "AI_ANONYMOUS_DAILY_TOKEN_LIMIT": "今天的 AI 额度用完了，明天会重置。",
     "AI_QUOTA_EXCEEDED": "今天的 AI 额度用完了，明天会重置。",
     "QUEUE_FULL": "当前排队已满，请稍后再试。",
-    "agent_access_denied": "没有权限执行这次操作。"
+    "agent_access_denied": "没有权限执行这次操作。",
+    "playground_ai_unconfigured": "本服务器未启用或未配置 Pro AI 模型。请管理员在系统设置中完成配置后再试。",
+    "playground_ai_failed": "AI 模型未能完成生成（上游异常）。项目与输入已保留，请稍候点击重试。",
+    "playground_validation_failed": "生成结果经自动修复后仍未通过包校验。可改写需求更具体一些，或简化后重试。",
+    "playground_payload_too_large": "请求内容过大（项目或历史快照过多）。请新建会话或删除旧版本后再试。",
+    "playground_agent_busy": "游乐场服务正在重启或暂时不可用，请稍后再试。",
+    "playground_cancelled": "已取消生成。当前项目与输入内容已保留，可再次发送。",
+    "playground_auth_required": "请先登录后再使用 Tapp 游乐场。",
+    "playground_admin_required": "Tapp 游乐场仅管理员可用。请使用管理员账号登录后再试。",
+    "playground_rate_limited": "请求过于频繁，请稍后再点击重试。",
+    "playground_generate_failed": "生成失败，请稍后重试。",
+    "playground_bad_request": "请求无效。"
   }
 }

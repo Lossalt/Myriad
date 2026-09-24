@@ -28,6 +28,7 @@ import { useImmersiveChrome } from '../../contexts/NavigationContext'
 import { isExlight, useAnimationLevel } from '../../hooks/useAnimationLevel'
 import { useBreakpoints } from '../../hooks/useBreakpoints'
 import { usePageSeo } from '../../hooks/usePageSeo'
+import { ApiError } from '../../services/api'
 import { buildPrivatePageSeo } from '../../utils/modulePageSeo'
 import { showStickyToast, showToast } from '../../utils/toastManager'
 import {
@@ -1044,6 +1045,8 @@ export function TappPlaygroundPage() {
           typeof (requestError as { code: unknown }).code === 'string'
             ? (requestError as { code: string }).code
             : undefined,
+        status:
+          requestError instanceof ApiError ? requestError.status : undefined,
       })
 
       if (userCancelled) {
