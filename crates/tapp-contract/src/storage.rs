@@ -2,15 +2,76 @@
 
 use crate::contract_rules::MAX_STORAGE_KEY_LEN;
 
-pub const HOST_STORAGE_KEY_PREFIXES: [&str; 7] = [
-    "_settings.",
-    "_credentials.",
-    "_shared.",
-    "_private.",
-    "_component:",
-    "_shortcut:",
-    "_report:",
-];
+/// A kind of record the host keeps in a Tapp's storage. Each owns a key
+/// prefix the sandbox cannot write; every reader, writer and SQL filter takes
+/// its prefix from here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostNamespace {
+    Settings,
+    Credentials,
+    Shared,
+    Private,
+    Component,
+    Shortcut,
+    Report,
+}
+
+impl HostNamespace {
+    pub const ALL: [Self; 7] = [
+        Self::Settings,
+        Self::Credentials,
+        Self::Shared,
+        Self::Private,
+        Self::Component,
+        Self::Shortcut,
+        Self::Report,
+    ];
+
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Settings => "_settings.",
+            Self::Credentials => "_credentials.",
+            Self::Shared => "_shared.",
+            Self::Private => "_private.",
+            Self::Component => "_component:",
+            Self::Shortcut => "_shortcut:",
+            Self::Report => "_report:",
+        }
+    }
+
+    /// The namespace's own name as a bare key, reserved alongside its prefix.
+    const fn bare_key(self) -> Option<&'static str> {
+        match self {
+            Self::Settings => Some("_settings"),
+            Self::Private => Some("_private"),
+            _ => None,
+        }
+    }
+
+    pub fn key(self, name: &str) -> String {
+        format!("{}{name}", self.prefix())
+    }
+
+    pub fn strip(self, key: &str) -> Option<&str> {
+        key.strip_prefix(self.prefix())
+    }
+}
+
+/// SQL predicate (over a `key` column) that admits only sandbox keys, so
+/// queries using it never load host-managed rows.
+pub fn sandbox_key_predicate_sql() -> String {
+    HostNamespace::ALL
+        .iter()
+        .filter_map(|namespace| namespace.bare_key())
+        .map(|bare| format!("key <> '{bare}'"))
+        .chain(
+            HostNamespace::ALL
+                .iter()
+                .map(|namespace| format!("NOT starts_with(key, '{}')", namespace.prefix())),
+        )
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
 
 /// Path segments that collide with fixed `/storage/{segment}` routes.
 /// Sandbox keys must not equal these exact strings.
@@ -41,11 +102,9 @@ pub fn validate_storage_key(key: &str) -> Result<(), &'static str> {
 }
 
 pub fn is_host_storage_key(key: &str) -> bool {
-    key == "_settings"
-        || key == "_private"
-        || HOST_STORAGE_KEY_PREFIXES
-            .iter()
-            .any(|prefix| key.starts_with(prefix))
+    HostNamespace::ALL
+        .iter()
+        .any(|namespace| namespace.bare_key() == Some(key) || key.starts_with(namespace.prefix()))
 }
 
 pub fn is_reserved_storage_route_key(key: &str) -> bool {

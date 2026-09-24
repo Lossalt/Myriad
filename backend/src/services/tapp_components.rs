@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::models::entities::tapp_storage;
 
-const COMPONENT_KEY_PREFIX: &str = "_component:";
+const COMPONENT_KEY_PREFIX: &str = myriad_tapp_contract::storage::HostNamespace::Component.prefix();
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

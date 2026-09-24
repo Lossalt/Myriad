@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-const CREDENTIAL_STORAGE_PREFIX: &str = "_credentials.";
+const CREDENTIAL_STORAGE_PREFIX: &str =
+    myriad_tapp_contract::storage::HostNamespace::Credentials.prefix();
 
 fn storage_key(key: &str) -> String {
     format!("{CREDENTIAL_STORAGE_PREFIX}{key}")
@@ -391,7 +392,7 @@ pub async fn put_credential(
     tapp_storage::Entity::delete_many()
         .filter(tapp_storage::Column::UserId.eq(owner_id))
         .filter(tapp_storage::Column::TappId.eq(tapp_id))
-        .filter(tapp_storage::Column::Key.eq(format!("_settings.{key}")))
+        .filter(tapp_storage::Column::Key.eq(myriad_tapp_contract::storage::HostNamespace::Settings.key(key)))
         .exec(db)
         .await
         .map_err(|error| {

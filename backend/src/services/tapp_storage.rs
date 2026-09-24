@@ -9,7 +9,7 @@ use sea_orm::{
 use serde_json::Value;
 
 pub use myriad_tapp_contract::storage::{
-    HOST_STORAGE_KEY_PREFIXES, is_host_storage_key, is_reserved_storage_route_key,
+    HostNamespace, is_host_storage_key, is_reserved_storage_route_key,
     validate_sandbox_storage_key, validate_storage_key,
 };
 
@@ -175,26 +175,21 @@ pub struct SandboxStorageEntry {
 /// SQL-level boundary for subject-private sandbox storage. Queries using this
 /// predicate never load host-managed records or their encrypted columns into
 /// the generic storage response path.
-const SANDBOX_STORAGE_PREDICATE_SQL: &str = r#"
-key <> '_settings'
-AND key <> '_private'
-AND NOT starts_with(key, '_settings.')
-AND NOT starts_with(key, '_credentials.')
-AND NOT starts_with(key, '_shared.')
-AND NOT starts_with(key, '_private.')
-AND NOT starts_with(key, '_component:')
-AND NOT starts_with(key, '_shortcut:')
-AND NOT starts_with(key, '_report:')
-"#;
+fn sandbox_predicate() -> &'static str {
+    static PREDICATE: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(myriad_tapp_contract::storage::sandbox_key_predicate_sql);
+    &PREDICATE
+}
 
 pub async fn sandbox_storage_entries(
     db: &impl ConnectionTrait,
     user_id: i32,
     tapp_id: &str,
 ) -> Result<Vec<SandboxStorageEntry>, TappStorageError> {
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT id, key, value, created_at, updated_at FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL}) \
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate}) \
          ORDER BY id"
     );
     SandboxStorageEntry::find_by_statement(Statement::from_sql_and_values(
@@ -218,9 +213,10 @@ pub async fn sandbox_storage_keys(
     struct KeyRow {
         key: String,
     }
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT key FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL}) \
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate}) \
          ORDER BY id"
     );
     KeyRow::find_by_statement(Statement::from_sql_and_values(
@@ -243,9 +239,10 @@ pub async fn sandbox_storage_count(
     struct CountRow {
         count: i64,
     }
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL})"
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate})"
     );
     CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -263,9 +260,10 @@ pub async fn clear_sandbox_storage(
     user_id: i32,
     tapp_id: &str,
 ) -> Result<(), TappStorageError> {
+    let predicate = sandbox_predicate();
     let sql = format!(
         "DELETE FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL})"
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate})"
     );
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -326,9 +324,13 @@ SELECT key, value
 FROM tapp_storage
 WHERE user_id = $1
   AND tapp_id = $2
-  AND starts_with(key, '_settings.')
+  AND starts_with(key, $3)
 "#,
-        vec![owner_id.into(), tapp_id.into()],
+        vec![
+            owner_id.into(),
+            tapp_id.into(),
+            HostNamespace::Settings.prefix().into(),
+        ],
     ))
     .all(db)
     .await
@@ -336,7 +338,7 @@ WHERE user_id = $1
 
     let mut stored_by_key = std::collections::BTreeMap::new();
     for row in stored {
-        if let Some(key) = row.key.strip_prefix("_settings.") {
+        if let Some(key) = HostNamespace::Settings.strip(&row.key) {
             stored_by_key.insert(key.to_string(), row.value);
         }
     }
@@ -472,9 +474,9 @@ async fn bind_storage_media(
 #[cfg(test)]
 mod tests {
     use super::{
-        SANDBOX_STORAGE_PREDICATE_SQL, TappStorageAccess, TappStorageAccessError,
-        can_write_installation_settings, is_host_storage_key, validate_sandbox_storage_key,
-        validate_storage_key, validate_storage_value_size,
+        TappStorageAccess, TappStorageAccessError, can_write_installation_settings,
+        is_host_storage_key, validate_sandbox_storage_key, validate_storage_key,
+        validate_storage_value_size,
     };
     use serde_json::json;
 
@@ -500,15 +502,17 @@ mod tests {
 
     #[test]
     fn sandbox_query_predicate_covers_every_host_storage_prefix() {
-        assert!(SANDBOX_STORAGE_PREDICATE_SQL.contains("key <> '_settings'"));
-        assert!(SANDBOX_STORAGE_PREDICATE_SQL.contains("key <> '_private'"));
-        for prefix in super::HOST_STORAGE_KEY_PREFIXES {
+        let predicate = super::sandbox_predicate();
+        assert!(predicate.contains("key <> '_settings'"));
+        assert!(predicate.contains("key <> '_private'"));
+        for namespace in super::HostNamespace::ALL {
+            let prefix = namespace.prefix();
             assert!(
-                SANDBOX_STORAGE_PREDICATE_SQL.contains(&format!("starts_with(key, '{prefix}')")),
+                predicate.contains(&format!("NOT starts_with(key, '{prefix}')")),
                 "missing SQL exclusion for {prefix}"
             );
         }
-        assert!(!SANDBOX_STORAGE_PREDICATE_SQL.contains("encrypted_value"));
+        assert!(!predicate.contains("encrypted_value"));
     }
 
     #[test]
