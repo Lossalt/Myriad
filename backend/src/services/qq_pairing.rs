@@ -7,14 +7,9 @@ use myriad_agent_rules::channel::{
 use sea_orm::{DatabaseConnection, DbErr};
 use tracing::{info, warn};
 
-use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::services::channel_pairing::{self, QQ};
-use crate::services::http_client;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
-
-const API_BASE: &str = "https://api.bot.qq.com";
-const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[cfg(test)]
 pub fn mask_openid(openid: &str) -> String {
@@ -64,7 +59,7 @@ pub async fn handle_inbound_c2c(event: InboundC2cText, auth_header: &str) {
     match ingest_c2c_text(&event, pairing, false) {
         InboundDecision::Duplicate { .. } => {}
         InboundDecision::PairingRequired { reply, msg_id, .. } => {
-            send_passive_text(auth_header, &event.user_openid, &reply, &msg_id).await;
+            send_passive_text(&db, auth_header, &event.user_openid, &reply, &msg_id).await;
         }
         InboundDecision::ConsumePairingCode {
             user_openid,
@@ -82,6 +77,7 @@ pub async fn handle_inbound_c2c(event: InboundC2cText, auth_header: &str) {
                 info!(user_id, "QQ C2C paired");
             }
             send_passive_text(
+                &db,
                 auth_header,
                 &event.user_openid,
                 pairing_bind_reply(result),
@@ -112,49 +108,24 @@ pub async fn handle_inbound_c2c(event: InboundC2cText, auth_header: &str) {
     }
 }
 
-async fn send_passive_text(auth_header: &str, openid: &str, content: &str, msg_id: &str) {
-    if content.is_empty() || openid.is_empty() || msg_id.is_empty() {
+/// Pairing replies go through the same sender as Work replies: per-message
+/// `msg_seq` from the shared sequence table (a second reply to one message
+/// with a fixed seq is rejected as a duplicate) and the fallback to an active
+/// message once the passive reply window has closed.
+async fn send_passive_text(
+    db: &DatabaseConnection,
+    auth_header: &str,
+    openid: &str,
+    content: &str,
+    msg_id: &str,
+) {
+    if msg_id.is_empty() {
         return;
     }
-    let enabled = {
-        let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-        config.qq_bot_enabled
-    };
-    if !enabled {
-        return;
-    }
-    let client = http_client::get_global_client().await;
-    let url = format!("{API_BASE}/v2/users/{openid}/messages");
-    let body = serde_json::json!({
-        "content": content,
-        "msg_type": 0,
-        "msg_id": msg_id,
-        "msg_seq": 1,
-    });
-    match client
-        .post(&url)
-        .timeout(HTTP_TIMEOUT)
-        .header("Authorization", auth_header)
-        .json(&body)
-        .send()
-        .await
+    if let Err(kind) =
+        crate::services::qq_work::send_c2c(db, auth_header, openid, content, Some(msg_id)).await
     {
-        Ok(resp) if resp.status().is_success() => {}
-        Ok(resp) => {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            warn!(
-                status = status.as_u16(),
-                body = %myriad_error::redact_secrets(&text),
-                "QQ pairing reply failed"
-            );
-        }
-        Err(error) => {
-            warn!(
-                error = %myriad_error::redact_secrets(&error.to_string()),
-                "QQ pairing reply request failed"
-            );
-        }
+        warn!(?kind, "QQ pairing reply failed");
     }
 }
 
