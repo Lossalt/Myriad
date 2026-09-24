@@ -96,6 +96,7 @@ impl UpdaterClientError {
                     None => format!("updater upstream {status}"),
                 };
                 AppError::from_status_u16(status.as_u16(), message)
+                    .with_code("updater_upstream_failed")
             }
             Self::Transport(error) => {
                 tracing::error!(%error, "updater transport failed");
@@ -399,6 +400,7 @@ mod tests {
         assert_eq!(e.status_u16(), 409);
         let json = e.to_json();
         assert_eq!(json["error"], "updater upstream 409 Conflict");
+        assert_eq!(json["code"], "updater_upstream_failed");
         assert!(json.get("message").is_none());
     }
 

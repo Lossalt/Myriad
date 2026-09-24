@@ -656,96 +656,58 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('mcp_io_failed')) {
     return classified(t.mcpTalkFailed, raw, hint)
   }
-  if (/^upstream (request failed|http)/i.test(raw)) {
+  if (is('upstream_request_failed')) {
     return classified(
       fill(t.serverError, { status: status || 502 }),
       raw,
       hint,
     )
   }
-  if (
-    /^failed to save report/i.test(raw) ||
-    /serialize report|insert report|report persist/i.test(raw)
-  ) {
+  if (is('report_save_failed')) {
     return classified(t.reportSaveFailed, raw, hint)
   }
-  if (/^failed to save reminder/i.test(raw)) {
+  if (is('reminder_save_failed')) {
     return classified(t.reminderSaveFailed, raw, hint)
   }
-  if (/^failed to save note/i.test(raw)) {
+  if (is('note_save_failed')) {
     return classified(t.noteSaveFailed, raw, hint)
   }
-  if (/^failed to save bookmark/i.test(raw)) {
+  if (is('bookmark_save_failed')) {
     return classified(t.bookmarkSaveFailed, raw, hint)
   }
-  if (
-    /failed to (save|load|resolve) profile text|failed to list identities/i.test(
-      raw,
-    )
-  ) {
-    const label = /save/i.test(raw)
-      ? t.profileTextSaveFailed
-      : t.profileTextLoadFailed
-    return classified(label, raw, hint)
+  if (is('profile_text_source_save_failed')) {
+    return classified(t.profileTextSaveFailed, raw, hint)
   }
-  if (/failed to (load|save) avatar source/i.test(raw)) {
-    const label = /save/i.test(raw)
-      ? t.avatarSourceSaveFailed
-      : t.avatarSourceLoadFailed
-    return classified(label, raw, hint)
+  if (is('profile_text_source_load_failed')) {
+    return classified(t.profileTextLoadFailed, raw, hint)
   }
-  if (/^failed to (load|save) avatar/i.test(raw)) {
-    return classified(currentCopy().merope.loadFailed, raw, hint)
+  if (is('avatar_source_save_failed')) {
+    return classified(t.avatarSourceSaveFailed, raw, hint)
   }
-  if (
-    code === 'storage_read_failed' ||
-    code === 'storage_save_failed' ||
-    /^failed to (read|save) storage/i.test(raw) ||
-    /^failed to (update|delete) tapp storage/i.test(raw)
-  ) {
+  if (is('avatar_source_load_failed')) {
+    return classified(t.avatarSourceLoadFailed, raw, hint)
+  }
+  if (is('storage_read_failed') || is('storage_save_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.tappStorageFailed, action), raw, hint)
   }
-  if (
-    code === 'cache_clear_failed' ||
-    /^ai[_ ]task[_ ]registry/i.test(raw)
-  ) {
+  if (code === 'cache_clear_failed' || is('AI_TASK_REGISTRY_UNAVAILABLE')) {
     return classified(t.database, raw, hint)
   }
-  if (
-    code === 'update_failed' ||
-    /^updater transport|^decode json failed|^updater upstream/i.test(raw)
-  ) {
+  if (code === 'update_failed' || is('updater_upstream_failed')) {
     return classified(t.noticeUpdaterFailed, raw, hint)
   }
-  if (
-    /^tripo |could not (load|create|query) tripo|invalid (glb json|3d model|tripo )|failed to store 3d/i.test(
-      raw,
-    ) ||
-    code === 'TRIPO_ERROR'
-  ) {
+  if (is('TRIPO_ERROR')) {
     return classified(t.model3dFailed, raw, hint)
   }
-  if (/invalid credential binding/i.test(raw)) {
+  if (is('tapp_credential_binding_invalid')) {
     return classified(t.unauthorized, raw, hint)
   }
-  if (/output schema validation|AI_OUTPUT_SCHEMA_MISMATCH/i.test(raw)) {
+  if (is('AI_OUTPUT_SCHEMA_MISMATCH')) {
     return classified(t.schemaMismatch, raw, hint)
   }
-  if (
-    /invalid backend action|invalid schedule config/i.test(raw) ||
-    /^scheduled (tapp is no longer|task failed)/i.test(raw) ||
-    /^all \d+ retries failed/i.test(raw) ||
-    /no active tapp runtime callback/i.test(raw) ||
-    /^(query|insert|delete|update) failed/i.test(raw) ||
-    /^failed to .*(due tasks|due task|execution|scheduled task|scheduler|frontend dispatch|frontend pending|frontend stats|task stats|missed stats|audience|enqueue task|user role|delete storage|list connections)/i.test(
-      raw,
-    )
-  ) {
-    const action =
-      raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() ||
-      raw.match(/^(query|insert|delete|update) failed/i)?.[1]?.toLowerCase() ||
-      ''
+  if (is('scheduler_failed')) {
+    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(
       joinParts(t.noticeScheduleFailed, action),
       raw,

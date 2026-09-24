@@ -708,17 +708,10 @@ describe('userFacingError', () => {
     assert.notEqual(invalid, parse)
   })
 
-  it('maps leftover scheduler store steps without SQL and keeps the step', () => {
-    const register = userFacingError(
-      'Failed to register scheduled task: relation "tapp_scheduled_tasks" does not exist',
-    )
+  it('maps scheduler store steps and keeps the step', () => {
+    const register = userFacingError('Failed to create scheduled task')
     const list = userFacingError('Failed to list scheduled tasks')
-    const leftover = userFacingError(
-      'Query failed: relation "tapp_scheduled_tasks" does not exist',
-    )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(register), false)
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(leftover), false)
-    assert.match(register, /register/)
+    assert.match(register, /create scheduled task/)
     assert.match(list, /list/)
     assert.notEqual(register, list)
     assert.notEqual(register, currentCopy().errors.operationFailed)
@@ -815,9 +808,8 @@ describe('userFacingError', () => {
     assert.equal(/AI_TASK_REGISTRY/.test(registry), false)
   })
 
-  it('maps leftover report persist dumps', () => {
-    const text = userFacingError('insert report for steam: relation "platform_reports" does not exist')
-    assert.equal(/platform_reports|does not exist/.test(text), false)
+  it('maps agent report save failures', () => {
+    assert.equal(userFacingError('Failed to save report'), currentCopy().errors.reportSaveFailed)
   })
 
   it('maps leftover platform fetches without reqwest and keeps name and status', () => {
@@ -864,9 +856,10 @@ describe('userFacingError', () => {
     assert.equal(/invalid_client/.test(discord), false)
   })
 
-  it('maps leftover game-presence upstream dumps', () => {
-    const text = userFacingError('Upstream HTTP 502: <html>bad gateway</html>')
-    assert.equal(/bad gateway|<html>/.test(text), false)
+  it('maps game-presence upstream failures', () => {
+    const text = userFacingError('Upstream request failed')
+    assert.match(text, /502/)
+    assert.equal(/Upstream request failed/.test(text), false)
   })
 
   it('maps leftover feed URL and Gemini JSON dumps', () => {
@@ -880,20 +873,16 @@ describe('userFacingError', () => {
 
   it('maps leftover Tripo and scheduler-connection dumps', () => {
     const tripo = userFacingError(
-      'Tripo API returned HTTP 502: {"error":"upstream exploded"}',
+      new ApiError('Tripo API request failed', 502, 'TRIPO_ERROR'),
     )
-    assert.equal(/upstream exploded/.test(tripo), false)
-    const glb = userFacingError('Invalid GLB JSON: expected value at line 1')
-    assert.equal(/expected value|line 1/.test(glb), false)
-    const sched = userFacingError(
-      'Failed to register scheduler connection: db closed',
-    )
-    assert.match(sched, /db closed/)
+    assert.equal(tripo, currentCopy().errors.model3dFailed)
+    const model = userFacingError('Invalid 3D model')
+    assert.equal(model, currentCopy().errors.model3dFailed)
+    const sched = userFacingError('Failed to register scheduler connection')
+    assert.match(sched, /register scheduler connection/)
     assert.equal(/Failed to register scheduler/.test(sched), false)
-    const enqueue = userFacingError(
-      'Failed to enqueue scheduler task: relation "tapp_registry" does not exist',
-    )
-    assert.equal(/tapp_registry/.test(enqueue), false)
+    const enqueue = userFacingError('Failed to enqueue task')
+    assert.match(enqueue, /enqueue task/)
     const schema = userFacingError(
       'Model response failed output schema validation: missing field `title`',
     )
@@ -901,20 +890,17 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover avatar, scheduler, and updater dumps', () => {
-    const avatar = userFacingError('Failed to load avatar row: db closed')
-    assert.match(avatar, /db closed/)
-    assert.equal(/Failed to load avatar/.test(avatar), false)
+    const avatar = userFacingError('Failed to load avatar sources')
+    assert.equal(avatar, currentCopy().errors.avatarSourceLoadFailed)
     const scheduled = userFacingError(
       'Scheduled Tapp is no longer accessible: Record not found',
     )
     assert.match(scheduled, /Record not found/)
     assert.equal(/Scheduled Tapp is no longer/.test(scheduled), false)
-    const retries = userFacingError(
-      'All 3 retries failed. Last error: relation "tapp_scheduled_tasks" does not exist',
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
     )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(retries), false)
-    const updater = userFacingError('decode json failed: expected value at line 1')
-    assert.equal(/expected value|line 1/.test(updater), false)
+    assert.equal(updater, currentCopy().errors.noticeUpdaterFailed)
   })
 
   it('maps leftover preset fetch save delete away from updater and SQL', () => {
@@ -925,7 +911,10 @@ describe('userFacingError', () => {
     const leftoverCode = userFacingError(
       new ApiError('Failed to update preset', 500, 'preset_update_failed'),
     )
-    const updater = userFacingError('decode json failed: expected value at line 1')
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
+    )
+    assert.equal(/agent_task_presets|does not exist/.test(favorites), false)
     assert.match(favorites, /预设|preset|プリセット/)
     assert.match(favorites, /fetch favorites/)
     assert.match(history, /fetch history/)
@@ -946,7 +935,9 @@ describe('userFacingError', () => {
     const change = userFacingError('Failed to change password')
     const set = userFacingError('Failed to set password')
     const local = userFacingError('Failed to update local login')
-    const updater = userFacingError('decode json failed: expected value at line 1')
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
+    )
     const register = userFacingError(
       new ApiError('Failed to create account', 500, 'account_create_failed'),
     )
@@ -1487,10 +1478,10 @@ describe('userFacingError', () => {
 
   it('maps leftover merope portrait upload and tripo without unifying them', () => {
     const upload = userFacingError('Could not upload portrait')
-    const tripo = userFacingError('Could not load Tripo status')
+    const tripo = userFacingError('Tripo request failed')
     assert.equal(upload, currentCopy().merope.portraitUploadFailed)
     assert.match(tripo, /三维|3D|モデル/i)
-    assert.equal(/Could not load Tripo/i.test(tripo), false)
+    assert.equal(/Tripo request failed/i.test(tripo), false)
     assert.notEqual(upload, tripo)
   })
 
