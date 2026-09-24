@@ -488,4 +488,90 @@ pub(crate) mod tests {
             }
         }
     }
+
+    #[test]
+    fn default_platform_seeds_match_the_registry() {
+        let seeds = crate::db::schema_check::default_platform_seeds();
+        assert_eq!(seeds.len(), PlatformId::ALL.len());
+        for (seed, id) in seeds.iter().zip(PlatformId::ALL) {
+            assert_eq!(PlatformId::parse(seed.name), Some(id), "{}", seed.name);
+            assert_eq!(seed.display_name, id.display_name());
+        }
+    }
+
+    /// `"slug"` used as a list element (`"slug",` / `"slug"]` / `"slug".to_string(),`),
+    /// as opposed to a per-platform match arm (`"slug" =>` / `"slug" |`) or the key
+    /// of a per-platform tuple row (`("slug", …)`).
+    fn lists_slug(text: &str, slug: &str) -> bool {
+        let needle = format!("\"{slug}\"");
+        text.match_indices(&needle).any(|(at, _)| {
+            if text[..at].trim_end().ends_with('(') {
+                return false;
+            }
+            let rest = &text[at + needle.len()..];
+            let rest = rest.strip_prefix(".to_string()").unwrap_or(rest);
+            matches!(rest.trim_start().chars().next(), Some(',' | ']'))
+        })
+    }
+
+    /// Platform slug lists live here only. A file listing (nearly) every slug as
+    /// string literals within a few lines is a second registry in disguise.
+    #[test]
+    fn no_other_file_hardcodes_the_platform_slug_list() {
+        // Different namespaces, not the core platform id list.
+        const ALLOWED: &[(&str, &str)] = &[
+            (
+                "services/library_items.rs",
+                "persisted library platform names (Steam, Netease, …), not slugs",
+            ),
+            (
+                "db/schema_check/seeds.rs",
+                "DB seed rows; checked against the registry above",
+            ),
+        ];
+        const WINDOW: usize = 14;
+        const THRESHOLD: usize = 8;
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read src dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(&root)
+                    .expect("under src")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel == "services/platform_id.rs" || ALLOWED.iter().any(|(f, _)| *f == rel) {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("read source");
+                let lines: Vec<&str> = text.lines().collect();
+                for start in 0..lines.len() {
+                    let window = lines[start..(start + WINDOW).min(lines.len())].join("\n");
+                    let hits = PLATFORM_SLUGS
+                        .iter()
+                        .filter(|slug| lists_slug(&window, slug))
+                        .count();
+                    if hits >= THRESHOLD {
+                        offenders.push(format!("{rel}:{}", start + 1));
+                        break;
+                    }
+                }
+            }
+        }
+        offenders.sort();
+        assert!(
+            offenders.is_empty(),
+            "platform slug lists outside services/platform_id.rs (use PlatformId::ALL / PLATFORM_SLUGS): {offenders:?}"
+        );
+    }
 }

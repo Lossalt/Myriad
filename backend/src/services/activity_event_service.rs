@@ -130,19 +130,12 @@ pub fn build_activity_payload(
 }
 
 pub fn platform_label(platform: &str) -> &str {
-    match platform {
-        "steam" => "Steam",
-        "github" => "GitHub",
-        "bilibili" => "Bilibili",
-        "youtube" => "YouTube",
-        "netease" | "netease_music" => "NetEase Cloud Music",
-        "bangumi" => "Bangumi",
-        "x" => "X",
-        "discord" => "Discord",
-        "mal" | "myanimelist" => "MyAnimeList",
-        "xbox" => "Xbox",
-        "psn" | "playstation" => "PlayStation",
-        _ => platform,
+    use crate::services::platform_id::PlatformId;
+    match PlatformId::parse(platform) {
+        // Activity cards have always spelled out NetEase's product name.
+        Some(PlatformId::Netease) => "NetEase Cloud Music",
+        Some(id) => id.display_name(),
+        None => platform,
     }
 }
 

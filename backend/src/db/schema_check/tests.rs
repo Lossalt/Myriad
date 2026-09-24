@@ -327,21 +327,12 @@ fn test_agent_addressee_schema_includes_music_mood_cooldown() {
 fn test_default_platform_seeds_include_x_and_core() {
     let seeds = default_platform_seeds();
     let names: Vec<&str> = seeds.iter().map(|s| s.name).collect();
-    for required in [
-        "github",
-        "bilibili",
-        "steam",
-        "youtube",
-        "netease_music",
-        "bangumi",
-        "x",
-        "discord",
-        "mal",
-        "xbox",
-        "psn",
-    ] {
+    for required in crate::services::platform_id::PlatformId::ALL {
         assert!(
-            names.contains(&required),
+            names
+                .iter()
+                .any(|name| crate::services::platform_id::PlatformId::parse(name)
+                    == Some(required)),
             "missing default platform seed: {}",
             required
         );

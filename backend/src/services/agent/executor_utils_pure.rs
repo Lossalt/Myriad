@@ -62,10 +62,7 @@ pub fn step_timeout_secs(
 }
 
 /// 支持的平台名称列表
-pub const VALID_PLATFORMS: &[&str] = &[
-    "steam", "bilibili", "github", "youtube", "netease", "bangumi", "x", "discord", "mal", "xbox",
-    "psn",
-];
+pub const VALID_PLATFORMS: &[&str] = crate::services::platform_id::PLATFORM_SLUGS;
 
 /// 验证平台名称是否在白名单中（含 "all"），返回 Result
 pub fn validate_platform_name(platform: &str) -> Result<&str, String> {

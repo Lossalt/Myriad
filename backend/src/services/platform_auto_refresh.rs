@@ -33,20 +33,7 @@ pub fn clamp_interval_hours(interval_hours: i32) -> i32 {
 }
 
 pub fn normalize_platform_name(name: &str) -> Option<&'static str> {
-    match name.trim().to_ascii_lowercase().as_str() {
-        "github" => Some("github"),
-        "bilibili" => Some("bilibili"),
-        "steam" => Some("steam"),
-        "youtube" | "yt" => Some("youtube"),
-        "netease" | "netease music" | "netease_music" => Some("netease"),
-        "bangumi" => Some("bangumi"),
-        "x" | "twitter" => Some("x"),
-        "discord" => Some("discord"),
-        "mal" | "myanimelist" => Some("mal"),
-        "xbox" => Some("xbox"),
-        "psn" | "playstation" | "playstation network" => Some("psn"),
-        _ => None,
-    }
+    crate::services::platform_id::PlatformId::parse(name).map(|id| id.slug())
 }
 
 pub fn core_platform_from_task(task: &tapp_scheduled_tasks::Model) -> Option<&str> {

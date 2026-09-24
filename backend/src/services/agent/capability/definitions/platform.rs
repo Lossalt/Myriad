@@ -1,11 +1,13 @@
 //! 平台数据能力定义
 
 use crate::services::agent::types::*;
+use crate::services::platform_id::PLATFORM_SLUGS;
 use serde_json::json;
 
 use super::super::CapabilityRegistry;
 
 pub fn register(registry: &mut CapabilityRegistry) {
+    let platform_or_all: Vec<&str> = PLATFORM_SLUGS.iter().copied().chain(["all"]).collect();
     // 平台数据读取
     registry.register(Capability {
         id: "platform.read".to_string(),
@@ -16,7 +18,7 @@ pub fn register(registry: &mut CapabilityRegistry) {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "platform": { "type": "string", "enum": ["bilibili", "bangumi", "steam", "github", "youtube", "netease", "x", "discord", "mal", "xbox", "psn"] },
+                "platform": { "type": "string", "enum": PLATFORM_SLUGS },
                 "limit": { "type": "integer", "default": 100 },
                 "offset": { "type": "integer", "default": 0 },
                 "filters": { "type": "object" }
@@ -104,7 +106,7 @@ pub fn register(registry: &mut CapabilityRegistry) {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "platform": { "type": "string", "enum": ["bilibili", "bangumi", "steam", "github", "youtube", "netease", "x", "discord", "mal", "xbox", "psn", "all"] }
+                "platform": { "type": "string", "enum": platform_or_all }
             },
             "required": ["platform"]
         }),

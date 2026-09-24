@@ -11,20 +11,7 @@ use crate::services::platform_refresh::humanize_platform_fetch_error_for;
 
 /// Map UI platform label → internal platform id for error humanization.
 fn test_platform_id(ui_label: &str) -> &'static str {
-    match ui_label {
-        "GitHub" => "github",
-        "Bilibili" => "bilibili",
-        "Steam" => "steam",
-        "YouTube" => "youtube",
-        "Netease Music" | "Netease" => "netease",
-        "Bangumi" => "bangumi",
-        "Discord" => "discord",
-        "X" => "x",
-        "MyAnimeList" => "mal",
-        "Xbox" => "xbox",
-        "PSN" | "PlayStation" => "psn",
-        _ => "platform",
-    }
+    crate::services::platform_id::PlatformId::parse(ui_label).map_or("platform", |id| id.slug())
 }
 
 fn test_fail_message(ui_label: &str, err: impl ToString, locale: &str) -> String {
