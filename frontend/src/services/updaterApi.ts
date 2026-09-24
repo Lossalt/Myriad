@@ -236,7 +236,8 @@ async function callOnce<T>(
   opts: CallOptions,
   forceCsrfRefresh: boolean,
 ): Promise<
-  { ok: true; data: T } | { ok: false; status: number; detail: string }
+  | { ok: true; data: T }
+  | { ok: false; status: number; detail: string; code?: string }
 > {
   const mode: TransportMode = opts.mode ?? 'backend'
   const base = mode === 'backend' ? BACKEND_BASE : DIRECT_BASE
@@ -276,9 +277,17 @@ async function callOnce<T>(
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
     let detail = text
+    let code: string | undefined
     try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string }
+      const parsed = JSON.parse(text) as {
+        error?: string
+        message?: string
+        code?: unknown
+      }
       detail = parsed.error ?? parsed.message ?? text
+      if (typeof parsed.code === 'string' && parsed.code.trim()) {
+        code = parsed.code.trim()
+      }
     } catch {
       /* keep raw */
     }
@@ -286,6 +295,7 @@ async function callOnce<T>(
       ok: false,
       status: resp.status,
       detail: detail || resp.statusText,
+      code,
     }
   }
   if (resp.status === 204) return { ok: true, data: undefined as T }
@@ -319,7 +329,7 @@ async function call<T>(
   }
 
   if (!result.ok) {
-    throw new UpdaterError(result.status, result.detail)
+    throw new UpdaterError(result.status, result.detail, result.code)
   }
   return result.data
 }
@@ -328,6 +338,8 @@ export class UpdaterError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Stable API code from the backend body, when it sent one. */
+    public code?: string,
   ) {
     super(message)
     this.name = 'UpdaterError'

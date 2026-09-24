@@ -27,11 +27,6 @@ import {
 } from '../../services/updaterApi'
 import { showToast } from '../../utils/toastManager'
 import {
-  httpStatusMessage,
-  isUselessErrorText,
-  userFacingError,
-} from '../../utils/userFacingError'
-import {
   ButtonItem,
   ManagedList,
   SettingGroup,
@@ -47,6 +42,7 @@ import {
   channelLabel,
   deriveMood,
   deriveSelection,
+  explainUpdaterError,
   format,
   formatBytes,
   infraCompatibility,
@@ -57,7 +53,6 @@ import {
   POLL_INTERVAL,
   rememberDismissedLastFailed,
   snapshotDeleteBlockReason,
-  upstreamDetail,
 } from './updater/helpers'
 import { SnapshotLimitPrefs } from './updater/SnapshotLimitPrefs'
 import { ProgressCard, StatusHero } from './updater/StatusHero'
@@ -162,48 +157,7 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
   const statusRef = useRef<UpdaterStatus | null>(null)
   statusRef.current = status
 
-  const explain = useCallback(
-    (e: unknown): string => {
-      if (e instanceof UpdaterError) {
-        if (e.status === 401) {
-          if (/admin|login|authorization|session/i.test(e.message)) {
-            return u.updaterErr401Admin
-          }
-          return u.updaterErr401
-        }
-        if (e.status === 403) {
-          // 403 is also CSRF / admin deny; not always manual-override
-          if (/csrf/i.test(e.message)) return u.updaterErr403Csrf
-          if (/admin|forbidden|permission/i.test(e.message)) {
-            return u.updaterErr403Admin
-          }
-          if (
-            /manual|override|exit-maintenance|forget-current|rescue/i.test(
-              e.message,
-            )
-          ) {
-            return u.updaterErr403
-          }
-          return userFacingError(e, u.updaterErr403Generic)
-        }
-        if (e.status === 409) return u.updaterErr409
-        if (e.status === 412) return userFacingError(e, u.updaterErr412)
-        if (e.status >= 500) {
-          if (/not configured/i.test(e.message))
-            return u.updaterErrNotConfigured
-          if (e.status === 502 || e.status === 503) return u.updaterErrUpstream
-          const detail = upstreamDetail(e.message)
-          if (detail && !isUselessErrorText(detail)) {
-            return format(u.updaterErrServer, { msg: detail })
-          }
-          return userFacingError(e, httpStatusMessage(e.status))
-        }
-        return userFacingError(e, httpStatusMessage(e.status))
-      }
-      return userFacingError(e)
-    },
-    [u],
-  )
+  const explain = useCallback((e: unknown): string => explainUpdaterError(e, u), [u])
 
   const stopMaintPoll = useCallback(() => {
     if (maintPollStopRef.current) {

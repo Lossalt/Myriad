@@ -1,7 +1,11 @@
 import type { UpdaterStatus } from '../../../services/updaterApi.ts'
+import type { U } from './helpers.ts'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { currentCopy } from '../../../i18n/localeCopy.ts'
+import { UpdaterError } from '../../../services/updaterApi.ts'
 import {
+  explainUpdaterError,
   infraCompatibility,
   isDismissedLastFailed,
   isFreshInfraOutcome,
@@ -129,5 +133,61 @@ describe('isDismissedLastFailed', () => {
   it('does not treat a missing job id as dismissed', () => {
     assert.equal(isDismissedLastFailed(undefined), false)
     assert.equal(isDismissedLastFailed(''), false)
+  })
+})
+
+describe('explainUpdaterError', () => {
+  const u = {
+    updaterErr401: 'TOKEN',
+    updaterErr401Admin: 'LOGIN',
+    updaterErr403: 'OVERRIDE',
+    updaterErr403Csrf: 'CSRF',
+    updaterErr403Admin: 'ADMIN',
+    updaterErr403Generic: 'FORBIDDEN',
+    updaterErr409: 'BUSY',
+    updaterErr412: 'PRECONDITION',
+    updaterErrServer: 'SERVER: {msg}',
+    updaterErrNotConfigured: 'NOT_CONFIGURED',
+    updaterErrUpstream: 'UPSTREAM',
+  } as unknown as U
+  const byCode = currentCopy().errors.byCode as Record<string, string>
+
+  it('keeps operator wording for a missing or unreachable updater', () => {
+    for (const label of [
+      'updater service is not configured on this backend',
+      'updater not configured (set MYRIAD_UPDATER_URL)',
+    ]) {
+      assert.equal(explainUpdaterError(new UpdaterError(503, label), u), 'NOT_CONFIGURED')
+    }
+    assert.equal(
+      explainUpdaterError(new UpdaterError(502, 'updater transport error', 'updater_unreachable'), u),
+      'UPSTREAM',
+    )
+  })
+
+  it('reads other coded failures from the shared table', () => {
+    assert.equal(
+      explainUpdaterError(
+        new UpdaterError(500, 'updater credentials are not a valid HTTP header value', 'updater_misconfigured'),
+        u,
+      ),
+      byCode.updater_misconfigured,
+    )
+    assert.equal(
+      explainUpdaterError(
+        new UpdaterError(400, 'allow_skip_versions is not supported', 'allow_skip_versions_unsupported'),
+        u,
+      ),
+      byCode.allow_skip_versions_unsupported,
+    )
+  })
+
+  it('keeps status wording for uncoded updater replies', () => {
+    assert.equal(explainUpdaterError(new UpdaterError(401, 'Please login'), u), 'LOGIN')
+    assert.equal(explainUpdaterError(new UpdaterError(401, 'bad token'), u), 'TOKEN')
+    assert.equal(explainUpdaterError(new UpdaterError(403, 'CSRF token missing'), u), 'CSRF')
+    assert.equal(explainUpdaterError(new UpdaterError(403, 'manual-override required'), u), 'OVERRIDE')
+    assert.equal(explainUpdaterError(new UpdaterError(409, 'updater upstream 409 Conflict'), u), 'BUSY')
+    assert.equal(explainUpdaterError(new UpdaterError(503, 'backend cannot authenticate'), u), 'UPSTREAM')
   })
 })
