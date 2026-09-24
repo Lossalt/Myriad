@@ -351,6 +351,7 @@ pub async fn oauth_start(
         provider_slug: PLATFORM_STATE_SLUG.to_string(),
         purpose: OAuthPurpose::PlatformData {
             user_id,
+            session_epoch: claims.tv,
             platform: "discord".to_string(),
         },
     })
@@ -495,7 +496,8 @@ pub async fn oauth_callback(
     }
     let purpose = verified.stored().purpose.clone();
     let OAuthPurpose::PlatformData {
-        user_id: _admin_id,
+        user_id: admin_id,
+        session_epoch,
         platform,
     } = purpose
     else {
@@ -513,6 +515,29 @@ pub async fn oauth_callback(
             "wrong_platform",
         ))
         .await);
+    }
+
+    // The token lands in site config: the admin who started this must still
+    // hold that same session and still be an admin.
+    match crate::middleware::auth::live_session_roles(&db, admin_id, session_epoch).await {
+        Ok(Some(roles)) if roles.is_admin => {}
+        Ok(_) => {
+            return Ok(discord_oauth_tx_cleared(config_redirect(
+                &frontend_base,
+                false,
+                "session_ended",
+            ))
+            .await);
+        }
+        Err(error) => {
+            tracing::error!(%error, "Discord OAuth callback could not verify the session");
+            return Ok(discord_oauth_tx_cleared(config_redirect(
+                &frontend_base,
+                false,
+                "session_unverified",
+            ))
+            .await);
+        }
     }
 
     // Cookie matched → burn nonce (Fresh or Replay).

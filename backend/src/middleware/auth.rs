@@ -809,6 +809,29 @@ async fn load_auth_snapshot(
     }
 }
 
+/// Current roles of a session that is still live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveSessionRoles {
+    pub is_admin: bool,
+}
+
+/// Roles of `user_id`'s session at epoch `tv`, or `None` once that session
+/// was revoked (logout, password change) or the user is gone. For flows that
+/// act later on behalf of the session that started them, such as OAuth
+/// callbacks, which carry no session credential of their own.
+pub(crate) async fn live_session_roles(
+    db: &DatabaseConnection,
+    user_id: i32,
+    tv: i64,
+) -> Result<Option<LiveSessionRoles>, sea_orm::DbErr> {
+    Ok(load_auth_snapshot(db, user_id)
+        .await?
+        .filter(|snapshot| session_epoch_matches(tv, Some(snapshot.token_version)))
+        .map(|snapshot| LiveSessionRoles {
+            is_admin: snapshot.is_admin,
+        }))
+}
+
 /// Pure session-epoch check used by auth middleware and unit tests.
 ///
 /// - Missing user (`None`) → revoked (deleted account)
