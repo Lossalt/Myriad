@@ -100,6 +100,7 @@ pub mod tripo; // Tripo v3 3D generation + Web GLB persistence
 pub mod updater_client;
 
 pub(crate) mod bot_ingress;
+pub(crate) mod bot_supervisor; // One reconnect loop for every chat bot worker
 pub mod channel_pairing;
 pub mod channel_platform; // Shared pairing mint/consume/unbind
 pub mod channel_work; // Shared private-chat Work: session, pending, delivery

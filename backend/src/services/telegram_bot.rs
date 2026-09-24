@@ -18,9 +18,9 @@ use tracing::{info, warn};
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::config::DynamicConfig;
+use crate::services::bot_supervisor::{BotWorker, SessionResult, SupervisorPhase, supervise};
 use crate::services::http_client;
 
-const POLL: Duration = Duration::from_secs(2);
 const LONG_POLL_SECS: u64 = 25;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const LONG_POLL_HTTP_TIMEOUT: Duration = Duration::from_secs(35);
@@ -133,73 +133,44 @@ impl CredentialFingerprint {
 
 /// Owned by the persona supervisor; dropping this future stops channel admission.
 pub(crate) async fn run_worker() {
-    run_loop().await;
+    supervise::<TelegramWorker>().await;
 }
 
-async fn run_loop() {
-    let mut last_permanent: Option<CredentialFingerprint> = None;
-    let mut reconnect_attempts: u32 = 0;
-    loop {
-        let fingerprint = {
-            let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-            CredentialFingerprint::from_config(&config)
+struct TelegramWorker;
+
+impl BotWorker for TelegramWorker {
+    const NAME: &'static str = "Telegram bot";
+    type Fingerprint = CredentialFingerprint;
+    type Resume = ();
+
+    fn fingerprint(config: &DynamicConfig) -> CredentialFingerprint {
+        CredentialFingerprint::from_config(config)
+    }
+
+    fn intent(fingerprint: &CredentialFingerprint) -> WorkerIntent {
+        fingerprint.intent()
+    }
+
+    async fn publish(phase: SupervisorPhase, fingerprint: &CredentialFingerprint) {
+        let phase = match phase {
+            SupervisorPhase::Offline => TelegramBotPhase::Offline,
+            SupervisorPhase::Rejected => TelegramBotPhase::Rejected,
+            SupervisorPhase::Connecting => TelegramBotPhase::Connecting,
+            SupervisorPhase::Reconnecting => TelegramBotPhase::Reconnecting,
         };
+        publish_status(phase, fingerprint).await;
+    }
 
-        if fingerprint.intent() != WorkerIntent::Run {
-            last_permanent = None;
-            publish_status(TelegramBotPhase::Offline, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        if last_permanent.as_ref() == Some(&fingerprint) {
-            publish_status(TelegramBotPhase::Rejected, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let watched = fingerprint.clone();
-        let watch_task = crate::services::channel_work::AbortTask(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(POLL).await;
-                let current = {
-                    let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-                    CredentialFingerprint::from_config(&config)
-                };
-                if current != watched {
-                    let _ = cancel_tx.send(true);
-                    break;
-                }
-            }
-        }));
-
-        publish_status(TelegramBotPhase::Connecting, &fingerprint).await;
-        let result = run_session(&fingerprint, cancel_rx).await;
-        drop(watch_task);
-        match result {
-            Ok(()) => {
-                last_permanent = None;
-                reconnect_attempts = 0;
-                publish_status(TelegramBotPhase::Offline, &fingerprint).await;
-            }
-            Err(ConnectFailureKind::Permanent) => {
-                warn!("Telegram bot stopped: credentials rejected");
-                last_permanent = Some(fingerprint.clone());
-                reconnect_attempts = 0;
-                publish_status(TelegramBotPhase::Rejected, &fingerprint).await;
-            }
-            Err(_) => {
-                reconnect_attempts = reconnect_attempts.saturating_add(1);
-                let delay = crate::services::bot_ingress::reconnect_backoff(reconnect_attempts);
-                warn!(
-                    attempt = reconnect_attempts,
-                    retry_in_secs = delay.as_secs(),
-                    "Telegram bot transient failure; will reconnect"
-                );
-                publish_status(TelegramBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(delay).await;
-            }
+    fn run_session(
+        fingerprint: &CredentialFingerprint,
+        _resume: Option<()>,
+        cancel: watch::Receiver<bool>,
+    ) -> impl Future<Output = SessionResult<()>> + Send {
+        async move {
+            run_session(fingerprint, cancel)
+                .await
+                .map(|()| None)
+                .map_err(|kind| (kind, None))
         }
     }
 }

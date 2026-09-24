@@ -25,9 +25,9 @@ use chrono::Utc;
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::config::DynamicConfig;
+use crate::services::bot_supervisor::{BotWorker, SessionResult, SupervisorPhase, supervise};
 use crate::services::http_client;
 
-const POLL: Duration = Duration::from_secs(2);
 const AUTH_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
 const API_BASE: &str = "https://api.bot.qq.com";
 const TOKEN_MARGIN: Duration = Duration::from_secs(60);
@@ -174,74 +174,44 @@ impl AccessToken {
 
 /// Owned by the persona supervisor; dropping this future stops channel admission.
 pub(crate) async fn run_worker() {
-    run_loop().await;
+    supervise::<QqWorker>().await;
 }
 
-async fn run_loop() {
-    let mut last_permanent: Option<CredentialFingerprint> = None;
-    let mut reconnect_attempts: u32 = 0;
-    loop {
-        let fingerprint = {
-            let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-            CredentialFingerprint::from_config(&config)
+struct QqWorker;
+
+impl BotWorker for QqWorker {
+    const NAME: &'static str = "QQ bot Gateway";
+    type Fingerprint = CredentialFingerprint;
+    type Resume = ();
+
+    fn fingerprint(config: &DynamicConfig) -> CredentialFingerprint {
+        CredentialFingerprint::from_config(config)
+    }
+
+    fn intent(fingerprint: &CredentialFingerprint) -> WorkerIntent {
+        fingerprint.intent()
+    }
+
+    async fn publish(phase: SupervisorPhase, fingerprint: &CredentialFingerprint) {
+        let phase = match phase {
+            SupervisorPhase::Offline => QqBotPhase::Offline,
+            SupervisorPhase::Rejected => QqBotPhase::Rejected,
+            SupervisorPhase::Connecting => QqBotPhase::Connecting,
+            SupervisorPhase::Reconnecting => QqBotPhase::Reconnecting,
         };
+        publish_status(phase, fingerprint).await;
+    }
 
-        if fingerprint.intent() != WorkerIntent::Run {
-            last_permanent = None;
-            reconnect_attempts = 0;
-            publish_status(QqBotPhase::Offline, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        if last_permanent.as_ref() == Some(&fingerprint) {
-            publish_status(QqBotPhase::Rejected, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let watched = fingerprint.clone();
-        let watch_task = crate::services::channel_work::AbortTask(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(POLL).await;
-                let current = {
-                    let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-                    CredentialFingerprint::from_config(&config)
-                };
-                if current != watched {
-                    let _ = cancel_tx.send(true);
-                    break;
-                }
-            }
-        }));
-
-        publish_status(QqBotPhase::Connecting, &fingerprint).await;
-        let result = run_gateway(&fingerprint, cancel_rx).await;
-        drop(watch_task);
-        match result {
-            Ok(()) => {
-                last_permanent = None;
-                reconnect_attempts = 0;
-                publish_status(QqBotPhase::Offline, &fingerprint).await;
-            }
-            Err(ConnectFailureKind::Permanent) => {
-                warn!("QQ bot Gateway stopped: credentials rejected");
-                last_permanent = Some(fingerprint.clone());
-                reconnect_attempts = 0;
-                publish_status(QqBotPhase::Rejected, &fingerprint).await;
-            }
-            Err(_) => {
-                reconnect_attempts = reconnect_attempts.saturating_add(1);
-                let delay = crate::services::bot_ingress::reconnect_backoff(reconnect_attempts);
-                warn!(
-                    attempt = reconnect_attempts,
-                    retry_in_secs = delay.as_secs(),
-                    "QQ bot Gateway transient failure; will reconnect"
-                );
-                publish_status(QqBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(delay).await;
-            }
+    fn run_session(
+        fingerprint: &CredentialFingerprint,
+        _resume: Option<()>,
+        cancel: watch::Receiver<bool>,
+    ) -> impl Future<Output = SessionResult<()>> + Send {
+        async move {
+            run_gateway(fingerprint, cancel)
+                .await
+                .map(|()| None)
+                .map_err(|kind| (kind, None))
         }
     }
 }
