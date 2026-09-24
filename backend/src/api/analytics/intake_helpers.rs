@@ -1094,7 +1094,7 @@ async fn maybe_prune(db: &DatabaseConnection) {
 
 // ── Shared intake ──────────────────────────────────────────────────────────
 
-struct IntakeCtx {
+pub(super) struct IntakeCtx {
     db: DatabaseConnection,
     visitor: String,
     day: NaiveDate,
@@ -1235,74 +1235,132 @@ pub(crate) fn analytics_collection_enabled(config: &DynamicConfig) -> bool {
     config.analytics_enabled
 }
 
-/// POST /api/analytics/collect — preferred batch endpoint.
-pub async fn collect(
-    axum::extract::State(dynamic_config): axum::extract::State<Arc<RwLock<DynamicConfig>>>,
-    crate::extract::Db(db): crate::extract::Db,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    request: Request,
-) -> (StatusCode, Json<Value>) {
-    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
-    let (ip, ua, is_staff, body) = match parse_json_body::<CollectRequest>(&db, request).await {
-        Ok(v) => v,
-        Err(e) => {
-            let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
-            return (status, Json(e.0.to_json()));
+type IntakeResponse = (StatusCode, Json<Value>);
+
+/// Body of one intake endpoint: where its `vid` is and how it flattens into
+/// [`CollectItem`]s. Validation runs inside [`admit_intake`], after the
+/// disabled / staff / bot / rate-limit gates and before the salt.
+pub(super) trait IntakeBody: for<'de> Deserialize<'de> {
+    fn vid(&self) -> Option<&str>;
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse>;
+}
+
+impl IntakeBody for CollectRequest {
+    fn vid(&self) -> Option<&str> {
+        self.vid.as_deref()
+    }
+
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse> {
+        if self.items.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, Json(AppError::fail_json("empty"))));
         }
-    };
+        Ok(self.items)
+    }
+}
+
+impl IntakeBody for PageviewRequest {
+    fn vid(&self) -> Option<&str> {
+        self.vid.as_deref()
+    }
+
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse> {
+        let Some(path) = normalize_path(&self.path) else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(AppError::fail_json("invalid_path")),
+            ));
+        };
+        Ok(vec![CollectItem {
+            kind: "pageview".into(),
+            path: Some(path),
+            referrer: self.referrer,
+            ms: None,
+            name: None,
+            target: None,
+        }])
+    }
+}
+
+fn intake_skipped(reason: &'static str) -> IntakeResponse {
+    (
+        StatusCode::OK,
+        Json(json!({ "success": true, "skipped": reason, "accepted": 0 })),
+    )
+}
+
+/// The one gate chain for every intake endpoint, in order: body parse (with
+/// staff detection) → collection disabled → staff → bot UA → per-IP rate
+/// limit → body validation → visitor salt → country. `Err` is the response
+/// to send as-is.
+pub(super) async fn admit_intake<T: IntakeBody>(
+    dynamic_config: &RwLock<DynamicConfig>,
+    db: &DatabaseConnection,
+    peer: SocketAddr,
+    request: Request,
+) -> Result<(IntakeCtx, Vec<CollectItem>), IntakeResponse> {
+    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
+    let (ip, ua, is_staff, body) = parse_json_body::<T>(db, request).await.map_err(|e| {
+        let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
+        (status, Json(e.0.to_json()))
+    })?;
 
     if !analytics_collection_enabled(&*dynamic_config.read().await) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "disabled", "accepted": 0 })),
-        );
+        return Err(intake_skipped("disabled"));
     }
-
     if is_staff {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "staff", "accepted": 0 })),
-        );
+        return Err(intake_skipped("staff"));
     }
-
     if is_bot_ua(&ua) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "bot", "accepted": 0 })),
-        );
+        return Err(intake_skipped("bot"));
     }
 
     let ip_key = ip
         .map(|i| i.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     if rate_limited(&ip_key).await {
-        return (
+        return Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(AppError::fail_json("rate_limited")),
-        );
+        ));
     }
 
-    if body.items.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(AppError::fail_json("empty")));
-    }
-
-    let Some(visitor) = resolve_visitor_hash(body.vid.as_deref(), ip, &ua) else {
-        return salt_unavailable_response();
+    let vid = body.vid().map(str::to_owned);
+    let items = body.into_items()?;
+    let Some(visitor) = resolve_visitor_hash(vid.as_deref(), ip, &ua) else {
+        return Err(salt_unavailable_response());
     };
-    let day = analytics_today();
-    let country = resolve_country(ip, header_country).await;
     let ctx = IntakeCtx {
         db: db.clone(),
         visitor,
-        day,
-        country,
+        day: analytics_today(),
+        country: resolve_country(ip, header_country).await,
     };
-    let accepted = process_items(&ctx, &body.items).await;
+    Ok((ctx, items))
+}
+
+/// Write the admitted items, then invalidate caches and maybe prune.
+async fn run_intake(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
+    let accepted = process_items(ctx, items).await;
     if accepted > 0 {
         invalidate_summary_cache().await;
     }
-    maybe_prune(&db).await;
+    maybe_prune(&ctx.db).await;
+    accepted
+}
 
+/// POST /api/analytics/collect — preferred batch endpoint.
+pub async fn collect(
+    axum::extract::State(dynamic_config): axum::extract::State<Arc<RwLock<DynamicConfig>>>,
+    crate::extract::Db(db): crate::extract::Db,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+) -> IntakeResponse {
+    let (ctx, items) =
+        match admit_intake::<CollectRequest>(&dynamic_config, &db, peer, request).await {
+            Ok(admitted) => admitted,
+            Err(response) => return response,
+        };
+    let accepted = run_intake(&ctx, &items).await;
     (
         StatusCode::OK,
         Json(json!({
@@ -1318,79 +1376,14 @@ pub async fn record_pageview(
     crate::extract::Db(db): crate::extract::Db,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
-) -> (StatusCode, Json<Value>) {
-    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
-    let (ip, ua, is_staff, body) = match parse_json_body::<PageviewRequest>(&db, request).await {
-        Ok(v) => v,
-        Err(e) => {
-            let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
-            return (status, Json(e.0.to_json()));
-        }
-    };
-
-    if !analytics_collection_enabled(&*dynamic_config.read().await) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "disabled" })),
-        );
-    }
-
-    if is_staff {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "staff" })),
-        );
-    }
-
-    if is_bot_ua(&ua) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "bot" })),
-        );
-    }
-
-    let ip_key = ip
-        .map(|i| i.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    if rate_limited(&ip_key).await {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(AppError::fail_json("rate_limited")),
-        );
-    }
-
-    let Some(path) = normalize_path(&body.path) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(AppError::fail_json("invalid_path")),
-        );
-    };
-
-    let Some(visitor) = resolve_visitor_hash(body.vid.as_deref(), ip, &ua) else {
-        return salt_unavailable_response();
-    };
-    let day = analytics_today();
-    let country = resolve_country(ip, header_country).await;
-    let items = vec![CollectItem {
-        kind: "pageview".into(),
-        path: Some(path.clone()),
-        referrer: body.referrer,
-        ms: None,
-        name: None,
-        target: None,
-    }];
-    let ctx = IntakeCtx {
-        db: db.clone(),
-        visitor,
-        day,
-        country,
-    };
-    let accepted = process_items(&ctx, &items).await;
-    if accepted > 0 {
-        invalidate_summary_cache().await;
-    }
-    maybe_prune(&db).await;
-
+) -> IntakeResponse {
+    let (ctx, items) =
+        match admit_intake::<PageviewRequest>(&dynamic_config, &db, peer, request).await {
+            Ok(admitted) => admitted,
+            Err(response) => return response,
+        };
+    let accepted = run_intake(&ctx, &items).await;
+    let path = items.first().and_then(|item| item.path.clone());
     (
         StatusCode::OK,
         Json(json!({

@@ -686,7 +686,73 @@ fn intake_items_log_every_write_failure() {
         .nth(1)
         .and_then(|rest| rest.split("async fn parse_json_body").next())
         .expect("process_items");
-    assert!(!body.contains("let _ ="), "a write error is silently dropped");
-    assert!(!body.contains(".is_ok()"), "a write error is silently dropped");
+    assert!(
+        !body.contains("let _ ="),
+        "a write error is silently dropped"
+    );
+    assert!(
+        !body.contains(".is_ok()"),
+        "a write error is silently dropped"
+    );
     assert_eq!(body.matches("intake_write_ok(").count(), 6);
+}
+
+/// Both endpoints go through `admit_intake`; neither re-implements a gate.
+#[test]
+fn intake_endpoints_share_one_gate_chain() {
+    let src = include_str!("intake_helpers.rs");
+    let handler = |name: &str| {
+        src.split(&format!("pub async fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("{name}"))
+            .to_string()
+    };
+    for (name, body) in [
+        ("collect", "CollectRequest"),
+        ("record_pageview", "PageviewRequest"),
+    ] {
+        let handler = handler(name);
+        assert!(
+            handler.contains(&format!("admit_intake::<{body}>(")),
+            "{name}"
+        );
+        assert!(handler.contains("run_intake(&ctx, &items)"), "{name}");
+        for gate in [
+            "analytics_collection_enabled",
+            "is_staff",
+            "is_bot_ua",
+            "rate_limited",
+            "resolve_visitor_hash",
+            "resolve_country",
+            "invalidate_summary_cache",
+            "maybe_prune",
+        ] {
+            assert!(!handler.contains(gate), "{name} re-implements {gate}");
+        }
+    }
+}
+
+#[test]
+fn intake_bodies_validate_into_items() {
+    let collect: CollectRequest = serde_json::from_value(json!({ "items": [] })).unwrap();
+    let (status, body) = collect.into_items().unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(body.0["error"], "empty");
+
+    let pageview: PageviewRequest =
+        serde_json::from_value(json!({ "path": "relative", "vid": "0123456789abcdef" })).unwrap();
+    assert_eq!(pageview.vid(), Some("0123456789abcdef"));
+    let (status, body) = pageview.into_items().unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(body.0["error"], "invalid_path");
+
+    let pageview: PageviewRequest =
+        serde_json::from_value(json!({ "path": "/tapp/abc?x=1", "referrer": "example.com" }))
+            .unwrap();
+    let items = pageview.into_items().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].kind, "pageview");
+    assert_eq!(items[0].path.as_deref(), Some("/tapp/:id"));
+    assert_eq!(items[0].referrer.as_deref(), Some("example.com"));
 }
