@@ -2337,3 +2337,30 @@ async fn postgres_share_image_and_favicon_are_published_and_bound() {
     }
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_unpublish_waits_for_reference_scan_like_delete() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    f.service.publish(&f.db, image.id).await.unwrap();
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET references_complete = FALSE WHERE id = {}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        f.service.unpublish(&f.db, image.id).await.unwrap_err(),
+        MediaError::PublicInUse
+    );
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET references_complete = TRUE WHERE id = {}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    f.service.unpublish(&f.db, image.id).await.unwrap();
+    f.close().await;
+}

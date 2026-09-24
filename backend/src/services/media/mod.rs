@@ -329,7 +329,9 @@ impl MediaService {
                 {
                     return Err(MediaError::NotReady);
                 }
-                if references::has_active(txn, id, true).await? {
+                // Same guard as delete: until the upgrade has scanned a legacy
+                // asset's citations, public pages may still link it.
+                if !row.references_complete || references::has_active(txn, id, true).await? {
                     return Err(MediaError::PublicInUse);
                 }
                 assets::mark_private(txn, id, &content_path(id)).await?;
