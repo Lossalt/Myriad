@@ -29,28 +29,12 @@ pub(super) async fn granted_for(
     state: &Checkpoint,
     db: &sea_orm::DatabaseConnection,
 ) -> std::collections::HashSet<String> {
-    let mut granted = super::super::get_user_permissions(db, state.user_id).await;
-    if let Some(cap) = state.context().autonomy_permission_cap {
-        granted.retain(|permission| cap.contains(permission));
-        let grant = super::super::consciousness::AutonomyGrantStore::new(db.clone())
-            .find(state.user_id)
-            .await
-            .ok()
-            .flatten();
-        if super::super::consciousness::autonomy_execute_permission_error(
-            state.user_id,
-            grant.as_ref(),
-            &granted.iter().cloned().collect::<Vec<_>>(),
-            Some(&cap),
-            "work.loop",
-            &[],
-        )
-        .is_some()
-        {
-            granted.clear();
-        }
-    }
-    granted
+    let cap = state.context().autonomy_permission_cap;
+    // Fail closed: an unreadable or revoked autonomy grant grants nothing.
+    super::super::consciousness::effective_granted(db, state.user_id, cap.as_deref())
+        .await
+        .map(|granted| granted.into_iter().collect())
+        .unwrap_or_default()
 }
 
 pub(super) async fn definitions(

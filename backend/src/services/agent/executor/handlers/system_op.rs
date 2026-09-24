@@ -158,6 +158,22 @@ async fn execute_scheduler_create(
     };
     let mut required_permissions = vec![TappPermission::SchedulerRegister];
     required_permissions.extend(backend_action_permissions_of(&wrappers));
+    if ctx.autonomy_permission_cap.is_some() {
+        // A task created under autonomy must not schedule actions beyond the
+        // turn's cap; the role check below alone would allow them.
+        let required: Vec<String> = required_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+        crate::services::agent::consciousness::authorize_capability(
+            ctx.db,
+            ctx.user_id,
+            ctx.autonomy_permission_cap.as_deref(),
+            "scheduler.create",
+            &required,
+        )
+        .await?;
+    }
     {
         let config = GLOBAL_DYNAMIC_CONFIG.read().await;
         for permission in required_permissions {

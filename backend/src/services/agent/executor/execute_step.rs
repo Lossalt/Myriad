@@ -63,37 +63,18 @@ impl Executor {
                 .await
                 .ok_or_else(|| format!("Unknown capability: {}", step.capability_id))?;
 
-        // 权限校验：授予权限（自主上限存在时一并重读 grant）对照 capability.required_permissions
+        // 权限校验：授予权限唯一来源（自主上限存在时重读 grant，读不到即拒绝）
         if !capability.required_permissions.is_empty()
             || handler_ctx.autonomy_permission_cap.is_some()
         {
-            let user_perms =
-                crate::services::agent::get_user_permissions(handler_ctx.db, handler_ctx.user_id)
-                    .await;
-            let granted: Vec<String> = user_perms.into_iter().collect();
-            let grant = if handler_ctx.autonomy_permission_cap.is_some() {
-                crate::services::agent::consciousness::AutonomyGrantStore::new(
-                    handler_ctx.db.clone(),
-                )
-                .find(handler_ctx.user_id)
-                .await
-                .ok()
-                .flatten()
-            } else {
-                None
-            };
-            if let Some(error) =
-                crate::services::agent::consciousness::autonomy_execute_permission_error(
-                    handler_ctx.user_id,
-                    grant.as_ref(),
-                    &granted,
-                    handler_ctx.autonomy_permission_cap.as_deref(),
-                    &step.capability_id,
-                    &capability.required_permissions,
-                )
-            {
-                return Err(error);
-            }
+            crate::services::agent::consciousness::authorize_capability(
+                handler_ctx.db,
+                handler_ctx.user_id,
+                handler_ctx.autonomy_permission_cap.as_deref(),
+                &step.capability_id,
+                &capability.required_permissions,
+            )
+            .await?;
         }
 
         // 动态步骤补检：`should_block_unconfirmed_dynamic_step` 为 true 时
@@ -265,8 +246,17 @@ impl Executor {
             "[Executor] Executing skill"
         );
 
-        let user_perms =
-            crate::services::agent::get_user_permissions(handler_ctx.db, handler_ctx.user_id).await;
+        // A skill runs within the same granted set as any other step,
+        // including the autonomy cap.
+        let user_perms: std::collections::HashSet<String> =
+            crate::services::agent::consciousness::effective_granted(
+                handler_ctx.db,
+                handler_ctx.user_id,
+                handler_ctx.autonomy_permission_cap.as_deref(),
+            )
+            .await?
+            .into_iter()
+            .collect();
         if !crate::services::agent::skill::skill_covered_by_grants(&skill, Some(&user_perms)).await
         {
             return Err(format!("Skill '{}' is not available", skill.name));

@@ -572,18 +572,17 @@ impl Agent {
         };
         let mut context = state.context();
         if context.autonomy_permission_cap.is_some() {
-            let grant = super::consciousness::AutonomyGrantStore::new(self.db.clone())
-                .find(state.user_id)
-                .await
-                .map_err(|_| "Unable to verify autonomy grant")?;
-            if let Some(error) = super::consciousness::autonomy_execute_permission_error(
+            // Re-read right before the effect: a revocation since the tool
+            // list was built must stop this call.
+            if let Err(error) = super::consciousness::authorize_capability(
+                &self.db,
                 state.user_id,
-                grant.as_ref(),
-                &granted.iter().cloned().collect::<Vec<_>>(),
                 context.autonomy_permission_cap.as_deref(),
                 id,
                 &capability.required_permissions,
-            ) {
+            )
+            .await
+            {
                 finish_call(state, &pending, Err(error), 0);
                 return Ok(false);
             }
