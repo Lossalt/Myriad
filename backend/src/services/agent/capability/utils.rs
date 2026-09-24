@@ -3,6 +3,7 @@
 //! 包含能力名称映射、步骤描述、风险评估等辅助函数
 
 use super::super::types::{Capability, RecipeStep};
+use crate::services::agent::capability::CapabilityRef;
 use serde_json::{Value, json};
 
 /// 获取能力的友好名称
@@ -38,7 +39,7 @@ pub fn get_capability_friendly_name(capability_id: &str) -> String {
         "report.generate" => "Generating a report".to_string(),
         _ => {
             // Skill 能力：从 ID 提取可读名称
-            if let Some(skill_id) = capability_id.strip_prefix("skill:") {
+            if let Some(skill_id) = CapabilityRef::parse(&capability_id).skill_id() {
                 let clean = skill_id.strip_prefix("_auto_").unwrap_or(skill_id);
                 // 将连字符和下划线替换为空格
                 let name: String = clean
@@ -52,7 +53,7 @@ pub fn get_capability_friendly_name(capability_id: &str) -> String {
                 return "Running skill".to_string();
             }
             // MCP 工具：提取工具名
-            if let Some(rest) = capability_id.strip_prefix("mcp.") {
+            if let Some(rest) = CapabilityRef::parse(&capability_id).mcp_tool() {
                 // mcp.server_id.tool_name → 取最后一段
                 if let Some(tool_name) = rest.rsplit('.').next() {
                     return format!("Calling tool: {}", tool_name);
@@ -81,7 +82,9 @@ pub fn get_capability_friendly_name(capability_id: &str) -> String {
 /// 返回类似 `Search {target}` / `Subscribe {target}` 的描述
 pub fn get_step_description(step: &RecipeStep) -> String {
     // Skill 和 MCP 步骤：使用 planner 提供的 action 描述（已是人类可读的）
-    if step.capability_id.starts_with("skill:") || step.capability_id.starts_with("mcp.") {
+    if CapabilityRef::parse(&step.capability_id).is_skill()
+        || CapabilityRef::parse(&step.capability_id).is_mcp()
+    {
         let action = step.action.trim();
         if !action.is_empty() {
             return truncate_str(action, 30);

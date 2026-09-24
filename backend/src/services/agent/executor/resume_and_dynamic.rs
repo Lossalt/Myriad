@@ -1,6 +1,7 @@
 // Executor resume and dynamic step paths
 
 use crate::config::ModelTier;
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::agent::tier_router::TierRouter;
 use crate::services::agent::types::{self, *};
 use myriad_agent_rules::extract_json_object_from_ai_response;
@@ -336,7 +337,7 @@ impl Executor {
                 continue;
             }
 
-            let is_skill_planning = step.capability_id.starts_with("skill:");
+            let is_skill_planning = CapabilityRef::parse(&step.capability_id).is_skill();
 
             task_state.current_step = step_index;
             let total_steps = all_steps.len() + context.pending_dynamic_steps.len();

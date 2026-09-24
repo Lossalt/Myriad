@@ -5,6 +5,7 @@
 use super::tier_router::TierRouter;
 use super::types::*;
 use crate::config::ModelTier;
+use crate::services::agent::capability::CapabilityRef;
 /// 步骤数量上限。提示词、Planner schema 和这里的截断必须是同一个数。
 use myriad_agent_rules::MAX_PLAN_STEPS as MAX_STEPS;
 use std::collections::HashMap;
@@ -42,7 +43,7 @@ pub fn validate_and_convert_steps(
         let mut seen_skills: HashMap<String, usize> = HashMap::new();
         let mut deduped: Vec<AiRecipeStep> = Vec::new();
         for step in ai_steps {
-            if step.capability_id.starts_with("skill:") {
+            if CapabilityRef::parse(&step.capability_id).is_skill() {
                 if let Some(&first_idx) = seen_skills.get(&step.capability_id) {
                     // 合并到第一个同 skill 步骤：将此步骤的 action 追加到 variations
                     tracing::warn!(
@@ -100,8 +101,8 @@ pub fn validate_and_convert_steps(
 
     for (idx, ai_step) in ai_steps.into_iter().enumerate() {
         // capability_id 验证（允许 skill: 和 mcp. 前缀通过）
-        let is_skill = ai_step.capability_id.starts_with("skill:");
-        let is_mcp = ai_step.capability_id.starts_with("mcp.");
+        let is_skill = CapabilityRef::parse(&ai_step.capability_id).is_skill();
+        let is_mcp = CapabilityRef::parse(&ai_step.capability_id).is_mcp();
         if !is_skill && !is_mcp && !cap_ids.contains(ai_step.capability_id.as_str()) {
             tracing::warn!(
                 capability_id = %ai_step.capability_id,

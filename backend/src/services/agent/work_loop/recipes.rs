@@ -1,6 +1,7 @@
 //! Fixed workflows are resumable frames, with each effect crossing work_tool.
 use super::*;
 use crate::models::entities::agent_task_presets as presets;
+use crate::services::agent::capability::CapabilityRef;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -95,7 +96,7 @@ pub(super) async fn start(
         if capability::get_capability_by_id(&step.capability_id)
             .await
             .is_none()
-            || step.capability_id.starts_with("skill:")
+            || CapabilityRef::parse(&step.capability_id).is_skill()
         {
             return Err(format!(
                 "Unsupported recipe capability: {}",

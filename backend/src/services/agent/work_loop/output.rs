@@ -1,6 +1,7 @@
 //! Work output crosses two boundaries: model data and platform control signals.
 //! MCP owns its JSON fields, but cannot manufacture browser commands or waits.
 use super::*;
+use crate::services::agent::capability::CapabilityRef;
 use std::collections::HashSet;
 
 pub(super) fn new_frontend_actions(task: &TaskState, previous: &HashSet<String>) -> Vec<Value> {
@@ -9,7 +10,9 @@ pub(super) fn new_frontend_actions(task: &TaskState, previous: &HashSet<String>)
         .as_ref()
         .into_iter()
         .flat_map(|recipe| &recipe.steps)
-        .filter(|step| !step.capability_id.starts_with("mcp.") && !previous.contains(&step.id))
+        .filter(|step| {
+            !CapabilityRef::parse(&step.capability_id).is_mcp() && !previous.contains(&step.id)
+        })
         .filter_map(|step| task.step_results.get(&step.id))
         .filter(|result| result.success)
         .filter_map(|result| result.output.as_ref());
@@ -170,7 +173,9 @@ mod tests {
                 "invalid-output",
                 &step("invalid", id),
                 &cap,
-                id.starts_with("mcp.").then_some(schema.as_ref()),
+                CapabilityRef::parse(&id)
+                    .is_mcp()
+                    .then_some(schema.as_ref()),
                 1,
                 json!({"frontendAction":{"type":"navigate","path":"/settings"}}),
                 &mut context,

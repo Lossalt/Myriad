@@ -1,5 +1,6 @@
 // Work result assembly: final result and frontend actions.
 
+use crate::services::agent::capability::CapabilityRef;
 use serde_json::{Value, json};
 
 use super::super::agent_header::*;
@@ -18,7 +19,8 @@ impl Agent {
                 let mut result = result.clone();
                 let remote = task_state.recipe.as_ref().is_some_and(|recipe| {
                     recipe.steps.iter().any(|step| {
-                        step.id == result.step_id && step.capability_id.starts_with("mcp.")
+                        step.id == result.step_id
+                            && CapabilityRef::parse(&step.capability_id).is_mcp()
                     })
                 });
                 if remote {

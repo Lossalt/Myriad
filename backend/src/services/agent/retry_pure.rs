@@ -8,6 +8,7 @@
 //! - prepend step id formatting
 //! - multi-attempt error message assembly
 
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::agent::types::{RecipeStep, RetryConfig as StepRetryConfig};
 
 pub use myriad_agent_rules::{
@@ -40,7 +41,7 @@ pub fn default_max_retries(step: &RecipeStep) -> u32 {
         .map(|r| r.max_attempts.min(3))
         .unwrap_or_else(|| {
             if step.capability_id.starts_with("ai.")
-                || step.capability_id.starts_with("skill:")
+                || CapabilityRef::parse(&step.capability_id).is_skill()
                 || step.capability_id == "prompt.generate"
             {
                 2

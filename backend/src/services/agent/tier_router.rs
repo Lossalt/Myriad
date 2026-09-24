@@ -4,6 +4,7 @@
 //! Pro 用于 Complex/Critical；Standard 用于 Medium。Simple（数据读取等）不调用模型。
 
 use crate::config::ModelTier;
+use crate::services::agent::capability::CapabilityRef;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -142,9 +143,9 @@ impl TierRouter {
             "seo.generate" => TaskComplexity::Medium,
 
             // Skill 执行会先跑一次 AI 把 instructions 翻译成调用序列
-            id if id.starts_with("skill:") => TaskComplexity::Medium,
+            id if CapabilityRef::parse(&id).is_skill() => TaskComplexity::Medium,
             // MCP 工具是外部进程调用，不消耗本地模型预算
-            id if id.starts_with("mcp.") => TaskComplexity::Simple,
+            id if CapabilityRef::parse(&id).is_mcp() => TaskComplexity::Simple,
 
             _ => return None,
         };

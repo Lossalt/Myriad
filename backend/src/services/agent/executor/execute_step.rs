@@ -1,6 +1,7 @@
 // Executor single-step execution
 
 use crate::services::agent::ai_process_pure::USER_TEXT_MAX_CHARS;
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::agent::capability::get_registry;
 use crate::services::agent::error_analyzer_pure::StepError;
 use crate::services::agent::executor_utils_pure::{
@@ -52,7 +53,7 @@ impl Executor {
         }
 
         // Skill 执行：以 "skill:" 开头的 capability_id 由 Skill 系统处理
-        if let Some(skill_id) = step.capability_id.strip_prefix("skill:") {
+        if let Some(skill_id) = CapabilityRef::parse(&step.capability_id).skill_id() {
             // A skill step only plans; its sub-steps run as steps of their own.
             return self
                 .execute_skill_step(skill_id, step, context, handler_ctx)
@@ -199,7 +200,7 @@ impl Executor {
         capability: &Capability,
         output: &Value,
     ) -> Result<(), String> {
-        if step.capability_id.starts_with("mcp.") {
+        if CapabilityRef::parse(&step.capability_id).is_mcp() {
             return Ok(());
         }
 
@@ -600,8 +601,8 @@ impl Executor {
 
             // 验证 capability_id
             if cap_id.is_empty()
-                || (!cap_id.starts_with("skill:")
-                    && !cap_id.starts_with("mcp.")
+                || (!CapabilityRef::parse(&cap_id).is_skill()
+                    && !CapabilityRef::parse(&cap_id).is_mcp()
                     && cap_registry.get(cap_id).is_none())
             {
                 tracing::warn!(
@@ -629,8 +630,8 @@ impl Executor {
             // Gating 校验
             if !skill.gating.capabilities.is_empty()
                 && !cap_id.starts_with("ai.")
-                && !cap_id.starts_with("skill:")
-                && !cap_id.starts_with("mcp.")
+                && !CapabilityRef::parse(&cap_id).is_skill()
+                && !CapabilityRef::parse(&cap_id).is_mcp()
                 && !skill.gating.capabilities.contains(&cap_id.to_string())
             {
                 tracing::warn!(

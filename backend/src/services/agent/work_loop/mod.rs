@@ -18,6 +18,7 @@ mod tool_schema;
 mod tools;
 
 use super::{Agent, capability, executor, types::*};
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::analyzer::tool_calling::{ToolCall, ToolDefinition, ToolMessage};
 use serde_json::{Value, json};
 pub(crate) use state::is_work_recipe;
@@ -564,17 +565,18 @@ impl Agent {
             finish_call(state, &pending, Err(error), 0);
             return Ok(false);
         }
-        let mcp_output_schema = if id.starts_with("mcp.") && capability.output_schema != json!({}) {
-            match tool_schema::prepare(&capability.output_schema) {
-                Ok(schema) => Some(schema),
-                Err(error) => {
-                    finish_call(state, &pending, Err(error), 0);
-                    return Ok(false);
+        let mcp_output_schema =
+            if CapabilityRef::parse(&id).is_mcp() && capability.output_schema != json!({}) {
+                match tool_schema::prepare(&capability.output_schema) {
+                    Ok(schema) => Some(schema),
+                    Err(error) => {
+                        finish_call(state, &pending, Err(error), 0);
+                        return Ok(false);
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let mut context = state.context();
         if context.autonomy_permission_cap.is_some() {
             // Re-read right before the effect: a revocation since the tool
@@ -936,7 +938,7 @@ fn checkpoint_response(state: Checkpoint) -> AgentResponse {
     let mut data = outputs
         .last()
         .map(|(step, output)| {
-            if step.capability_id.starts_with("mcp.") {
+            if CapabilityRef::parse(&step.capability_id).is_mcp() {
                 json!({"result":output})
             } else {
                 (*output).clone()

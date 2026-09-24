@@ -4,6 +4,7 @@
 //! 纯参数/体积分/MCP 过滤见 [`crate::services::agent::external_pure`]。
 
 use super::HandlerContext;
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::agent::external_pure::{
     classify_outbound_fetch, compress_and_truncate_text, first_i64_param, first_string_param,
     hitokoto_type, http_body_size_error, http_fetch_method, match_mcp_capability_id, mcp_arguments,
@@ -108,7 +109,7 @@ pub async fn execute(
         "netease.song" => execute_netease_song(params).await,
         "netease.playlist.detail" => execute_netease_playlist_detail(params).await,
         "web.scrape" => execute_web_scrape(params).await,
-        cap_id if cap_id.starts_with("mcp.") => execute_mcp_tool(cap_id, params).await,
+        cap_id if CapabilityRef::parse(&cap_id).is_mcp() => execute_mcp_tool(cap_id, params).await,
         _ => Err(format!("Unknown external capability: {}", capability_id)),
     }
 }

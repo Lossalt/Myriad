@@ -4,9 +4,11 @@
 
 pub mod definitions;
 mod output_contract;
+mod reference;
 mod utils;
 
 pub use output_contract::{ContractViolation, check_output_contract, declared_output_fields};
+pub use reference::{CapabilityRef, mcp_capability_id, skill_capability_id};
 pub use utils::*;
 
 use super::types::*;
@@ -217,7 +219,7 @@ pub async fn get_compact_index_for_grants(granted: Option<&HashSet<String>>) -> 
             let allowed = match entry
                 .get("id")
                 .and_then(Value::as_str)
-                .and_then(|id| id.strip_prefix("skill:"))
+                .and_then(|id| CapabilityRef::parse(&id).skill_id())
             {
                 Some(skill_id) => match skill_registry.get(skill_id).await {
                     Some(skill) => super::skill::skill_covered_by_grants(&skill, granted).await,
@@ -288,7 +290,7 @@ pub async fn get_capability_by_id(id: &str) -> Option<Capability> {
         return Some(capability.clone());
     }
 
-    if !id.starts_with("mcp.") {
+    if !CapabilityRef::parse(&id).is_mcp() {
         return None;
     }
 
@@ -297,7 +299,7 @@ pub async fn get_capability_by_id(id: &str) -> Option<Capability> {
         .list_tools()
         .await
         .into_iter()
-        .filter(|(server_id, tool)| id == format!("mcp.{}.{}", server_id, tool.name))
+        .filter(|(server_id, tool)| id == mcp_capability_id(server_id, &tool.name))
         .max_by_key(|(server_id, _)| server_id.len())?;
     let trusted = manager.server_trusts_annotations(&server_id).await;
     Some(mcp_capability(&server_id, &tool, trusted))
@@ -334,7 +336,7 @@ fn mcp_tool_risk(
 /// Compact-index row for an MCP tool. Planner rules key off `p` (required params).
 fn mcp_compact_entry(server_id: &str, tool: &super::mcp::protocol::McpToolDef) -> Value {
     let mut entry = json!({
-        "id": format!("mcp.{}.{}", server_id, tool.name),
+        "id": mcp_capability_id(server_id, &tool.name),
         "h": if tool.description.is_empty() {
             format!("MCP tool from {}", server_id)
         } else {
@@ -361,7 +363,7 @@ fn mcp_capability(
     let (risk_level, requires_confirmation) =
         mcp_tool_risk(tool.annotations.as_ref(), trust_annotations);
     Capability {
-        id: format!("mcp.{}.{}", server_id, tool.name),
+        id: mcp_capability_id(server_id, &tool.name),
         name: format!("MCP: {}", tool.name),
         description: tool.description.clone(),
         category: CapabilityCategory::ExternalIntegration,
@@ -515,7 +517,7 @@ mod tests {
             "speech.tts requires speech:tts: {ids:?}"
         );
         assert!(
-            !ids.iter().any(|id| id.starts_with("mcp.")),
+            !ids.iter().any(|id| CapabilityRef::parse(&id).is_mcp()),
             "mcp tools require mcp:execute: {ids:?}"
         );
     }

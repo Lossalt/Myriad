@@ -11,6 +11,7 @@
 //! - 自动创建的 Skill 需要通过 gating 校验
 //! - 每日自动创建上限 10 个
 
+use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -248,8 +249,8 @@ impl SkillEvolution {
     ) {
         // Normalize stats key: strip "skill:" prefix so stats keys are consistent
         // with improve_skill / prune_skills which use bare skill IDs.
-        let stats_key = capability_id
-            .strip_prefix("skill:")
+        let stats_key = CapabilityRef::parse(capability_id)
+            .skill_id()
             .unwrap_or(capability_id);
 
         let (should_improve, should_prune) = {
@@ -562,7 +563,9 @@ impl SkillEvolution {
         let mut pruned = Vec::new();
         for skill_id in to_prune {
             if let Some(registry) = get_skill_registry() {
-                let lookup_id = skill_id.strip_prefix("skill:").unwrap_or(&skill_id);
+                let lookup_id = CapabilityRef::parse(&skill_id)
+                    .skill_id()
+                    .unwrap_or(&skill_id);
                 if let Some(skill) = registry.get(lookup_id).await {
                     if skill.origin == SkillOrigin::Manual {
                         continue;

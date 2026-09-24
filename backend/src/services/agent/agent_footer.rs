@@ -1,3 +1,4 @@
+use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
 use serde_json::{Value, json};
@@ -819,7 +820,7 @@ pub(crate) async fn collect_missing_required_params(recipe: &Recipe) -> Vec<Miss
     let mut missing = Vec::new();
 
     for step in &recipe.steps {
-        if let Some(skill_id) = step.capability_id.strip_prefix("skill:") {
+        if let Some(skill_id) = CapabilityRef::parse(&step.capability_id).skill_id() {
             if let Some(skill_reg) = skill_registry {
                 if let Some(sk) = skill_reg.get(skill_id).await {
                     for param_name in &sk.parameters {
@@ -842,7 +843,7 @@ pub(crate) async fn collect_missing_required_params(recipe: &Recipe) -> Vec<Miss
         }
 
         // 动态 MCP 工具：不在静态 registry 中，从 MCP manager 读 schema
-        if step.capability_id.starts_with("mcp.") {
+        if CapabilityRef::parse(&step.capability_id).is_mcp() {
             if let Some(schema) = mcp_schemas.get(&step.capability_id) {
                 push_missing_from_schema(&mut missing, step, schema);
             }
@@ -859,7 +860,7 @@ async fn load_mcp_tool_schemas() -> HashMap<String, Value> {
         return map;
     };
     for (server_id, tool) in manager.list_tools().await {
-        let cap_id = format!("mcp.{}.{}", server_id, tool.name);
+        let cap_id = crate::services::agent::capability::mcp_capability_id(&server_id, &tool.name);
         map.insert(cap_id, tool.input_schema);
     }
     map

@@ -1,6 +1,7 @@
 // Executor core: run recipe / process entry
 
 use crate::config::ModelTier;
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::agent::error_analyzer_pure::StepError;
 use crate::services::agent::tier_router::{self, TierRouter};
 use crate::services::agent::types::{self, *};
@@ -1071,7 +1072,7 @@ impl Executor {
             };
 
             // Skill 编排步骤（skill: 前缀）：只是生成子步骤，不直接面向用户，跳过前端进度
-            let is_skill_planning = step.capability_id.starts_with("skill:");
+            let is_skill_planning = CapabilityRef::parse(&step.capability_id).is_skill();
 
             // 计算前端显示用的总步骤数和当前序号
             let effective_total =
