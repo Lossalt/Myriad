@@ -69,16 +69,6 @@ impl AgentMemory {
         text
     }
 
-    /// 该用户召回时要查的分片 key。
-    ///
-    /// 只查 `Some(user_id)`。用户 0 不跨分片；遗留 `None` 分片不进任何人的候选池。
-    fn visible_shards(
-        user_id: i32,
-        _indexes: &HashMap<Option<i32>, TfIdfIndex>,
-    ) -> Vec<Option<i32>> {
-        vec![Some(user_id)]
-    }
-
     // 写入
 
     /// 记住一条记忆
@@ -886,16 +876,15 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             return Vec::new();
         };
 
-        // TF-IDF 搜索 — 只在调用者可见的分片里取候选，`limit * 3` 余量留给层级和类型过滤。
+        // TF-IDF 搜索 — 只查调用者自己的分片 `Some(uid)`：用户 0 不跨分片，遗留 `None`
+        // 分片不进任何人的候选池。`limit * 3` 余量留给层级和类型过滤。
         // 读锁：IDF 已由写入方在写锁内重建。
         let tfidf_results = {
             let indexes = self.indexes.read().await;
-            let shards = Self::visible_shards(uid, &indexes);
-            let mut merged: Vec<(String, f32)> = shards
-                .iter()
-                .filter_map(|shard| indexes.get(shard))
-                .flat_map(|shard| shard.search(&params.query, params.limit * 3))
-                .collect();
+            let mut merged: Vec<(String, f32)> = indexes
+                .get(&Some(uid))
+                .map(|shard| shard.search(&params.query, params.limit * 3))
+                .unwrap_or_default();
             merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             merged.truncate(params.limit * 3);
             merged
