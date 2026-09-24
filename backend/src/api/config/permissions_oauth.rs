@@ -76,38 +76,11 @@ pub async fn get_permissions(
 /// 更新 Tapp 权限下放配置（仅管理员）
 #[derive(Debug, Deserialize)]
 pub struct UpdatePermissionsPayload {
-    // 普通用户下放字段（含 elevated；media:control 为 basic，授予路径不读此字段）
-    pub user_perm_ai_generate: Option<bool>,
-    pub user_perm_ai_analyze: Option<bool>,
-    pub user_perm_ai_chat: Option<bool>,
-    pub user_perm_ai_image: Option<bool>,
-    pub user_perm_ai_search: Option<bool>,
-    pub user_perm_3d_generate: Option<bool>,
-    pub user_perm_network_fetch: Option<bool>,
-    pub user_perm_media_control: Option<bool>,
-    pub user_perm_component_theme: Option<bool>,
-    pub user_perm_shortcut_register: Option<bool>,
-    pub user_perm_event_publish: Option<bool>,
-    pub user_perm_scheduler_register: Option<bool>,
-    pub user_perm_speech_tts: Option<bool>,
-    pub user_perm_speech_asr: Option<bool>,
-    pub user_perm_storage_write: Option<bool>,
-    pub user_perm_federation_post: Option<bool>,
-    pub user_perm_federation_channel: Option<bool>,
-    pub user_perm_federation_room: Option<bool>,
-    /// phantasi:commentWrite - 写 Phantasi 评论（Elevated，需登录主体）
-    pub user_perm_phantasi_comment_write: Option<bool>,
-    // 游客 elevated 配置（需持久登录主体的能力不在请求体里，保存时强制关闭）
-    pub guest_perm_ai_generate: Option<bool>,
-    pub guest_perm_ai_analyze: Option<bool>,
-    pub guest_perm_ai_chat: Option<bool>,
-    pub guest_perm_ai_image: Option<bool>,
-    pub guest_perm_ai_search: Option<bool>,
-    pub guest_perm_3d_generate: Option<bool>,
-    pub guest_perm_network_fetch: Option<bool>,
-    pub guest_perm_media_control: Option<bool>,
-    pub guest_perm_event_publish: Option<bool>,
-    pub guest_perm_storage_write: Option<bool>,
+    /// Delegation flags by configuration key. Only keys in
+    /// `permission_service::DELEGATIONS` are stored; a guest flag for a
+    /// capability that needs a signed-in subject has no key and is ignored.
+    #[serde(flatten)]
+    pub delegations: std::collections::HashMap<String, serde_json::Value>,
     // AI 使用限额配置
     pub user_ai_daily_calls: Option<i32>,
     pub user_ai_daily_tokens: Option<i32>,
@@ -154,14 +127,31 @@ mod tapp_permission_payload_tests {
         }))
         .unwrap();
 
-        assert_eq!(payload.user_perm_speech_tts, Some(true));
-        assert_eq!(payload.user_perm_speech_asr, Some(false));
-        assert_eq!(payload.user_perm_storage_write, Some(true));
-        assert_eq!(payload.guest_perm_storage_write, Some(false));
-        assert_eq!(payload.user_perm_federation_post, Some(true));
-        assert_eq!(payload.user_perm_federation_channel, Some(false));
-        assert_eq!(payload.user_perm_federation_room, Some(true));
-        assert_eq!(payload.user_perm_phantasi_comment_write, Some(true));
+        let updates = super::delegation_updates(&payload.delegations);
+        for (key, value) in [
+            ("user_perm_speech_tts", true),
+            ("user_perm_speech_asr", false),
+            ("user_perm_storage_write", true),
+            ("guest_perm_storage_write", false),
+            ("user_perm_federation_post", true),
+            ("user_perm_federation_channel", false),
+            ("user_perm_federation_room", true),
+            ("user_perm_phantasi_comment_write", true),
+        ] {
+            assert_eq!(updates.get(key), Some(&serde_json::json!(value)), "{key}");
+        }
+        for ignored in [
+            "user_perm_report_write",
+            "guest_perm_federation_post",
+            "guest_perm_federation_channel",
+            "guest_perm_federation_room",
+            "guest_perm_phantasi_comment_write",
+        ] {
+            assert!(
+                !updates.contains_key(ignored),
+                "{ignored} must not be stored"
+            );
+        }
     }
 
     #[test]
@@ -175,6 +165,21 @@ mod tapp_permission_payload_tests {
         assert!(!update.contains("json!(false)"));
         assert!(src.contains("No permission settings provided"));
     }
+}
+
+/// 下放开关只从下放表取键：表外的键（含对游客永不开放的能力）一律不写。
+fn delegation_updates(
+    body: &std::collections::HashMap<String, Value>,
+) -> std::collections::HashMap<String, Value> {
+    let mut updates = std::collections::HashMap::new();
+    for row in crate::services::permission_service::DELEGATIONS {
+        for key in std::iter::once(row.user_key).chain(row.guest_key) {
+            if let Some(Value::Bool(value)) = body.get(key) {
+                updates.insert(key.to_string(), json!(value));
+            }
+        }
+    }
+    updates
 }
 
 pub async fn update_permissions(
@@ -192,96 +197,7 @@ pub async fn update_permissions(
     let config_service = crate::services::config_service::ConfigService::new(db);
     let mut updates = std::collections::HashMap::new();
 
-    // 普通用户权限字段（含 elevated 与 media:control 占位）
-    if let Some(v) = payload.user_perm_ai_generate {
-        updates.insert("user_perm_ai_generate".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_ai_analyze {
-        updates.insert("user_perm_ai_analyze".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_ai_chat {
-        updates.insert("user_perm_ai_chat".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_ai_image {
-        updates.insert("user_perm_ai_image".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_ai_search {
-        updates.insert("user_perm_ai_search".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_3d_generate {
-        updates.insert("user_perm_3d_generate".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_network_fetch {
-        updates.insert("user_perm_network_fetch".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_media_control {
-        updates.insert("user_perm_media_control".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_component_theme {
-        updates.insert("user_perm_component_theme".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_shortcut_register {
-        updates.insert("user_perm_shortcut_register".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_event_publish {
-        updates.insert("user_perm_event_publish".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_scheduler_register {
-        updates.insert("user_perm_scheduler_register".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_speech_tts {
-        updates.insert("user_perm_speech_tts".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_speech_asr {
-        updates.insert("user_perm_speech_asr".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_storage_write {
-        updates.insert("user_perm_storage_write".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_federation_post {
-        updates.insert("user_perm_federation_post".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_federation_channel {
-        updates.insert("user_perm_federation_channel".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_federation_room {
-        updates.insert("user_perm_federation_room".to_string(), json!(v));
-    }
-    if let Some(v) = payload.user_perm_phantasi_comment_write {
-        updates.insert("user_perm_phantasi_comment_write".to_string(), json!(v));
-    }
-
-    // 游客权限。需要持久登录主体的能力不接收请求字段；授予路径硬拒绝，GET 输出只读派生为 false。
-    if let Some(v) = payload.guest_perm_ai_generate {
-        updates.insert("guest_perm_ai_generate".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_ai_analyze {
-        updates.insert("guest_perm_ai_analyze".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_ai_chat {
-        updates.insert("guest_perm_ai_chat".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_ai_image {
-        updates.insert("guest_perm_ai_image".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_ai_search {
-        updates.insert("guest_perm_ai_search".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_3d_generate {
-        updates.insert("guest_perm_3d_generate".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_network_fetch {
-        updates.insert("guest_perm_network_fetch".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_media_control {
-        updates.insert("guest_perm_media_control".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_event_publish {
-        updates.insert("guest_perm_event_publish".to_string(), json!(v));
-    }
-    if let Some(v) = payload.guest_perm_storage_write {
-        updates.insert("guest_perm_storage_write".to_string(), json!(v));
-    }
+    updates.extend(delegation_updates(&payload.delegations));
 
     // AI 使用限额配置
     if let Some(v) = payload.user_ai_daily_calls {

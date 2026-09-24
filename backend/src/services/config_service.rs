@@ -1432,6 +1432,29 @@ async fn upsert_configuration(
 
 #[cfg(test)]
 mod tests {
+    /// CLAUDE.md: a new configuration field needs its database read-back
+    /// branch. For delegation flags the table is the source: every key it
+    /// names must round-trip through `parse_config`.
+    #[test]
+    fn every_delegation_flag_reads_back_from_the_database() {
+        use crate::services::permission_service::DELEGATIONS;
+        for row in DELEGATIONS {
+            let parsed = super::ConfigService::parse_config(std::collections::HashMap::from([(
+                row.user_key.to_string(),
+                serde_json::json!(true),
+            )]));
+            assert!((row.user)(&parsed), "{} is not read back", row.user_key);
+            if let (Some(key), Some(guest)) = (row.guest_key, row.guest) {
+                let parsed =
+                    super::ConfigService::parse_config(std::collections::HashMap::from([(
+                        key.to_string(),
+                        serde_json::json!(true),
+                    )]));
+                assert!(guest(&parsed), "{key} is not read back");
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
     async fn permission_policy_observes_commits_without_worker_cache_refresh() {
