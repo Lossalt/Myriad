@@ -722,21 +722,34 @@ pub async fn init_skill_evolution(skills_dir: PathBuf) {
     let evolution = Arc::new(SkillEvolution::new(skills_dir).await);
     let _ = SKILL_EVOLUTION.set(evolution.clone());
 
-    // 后台定时任务：定期 flush + 每日 prune
-    tokio::spawn(async move {
-        let flush_interval = tokio::time::Duration::from_secs(5 * 60); // 5 min
-        let prune_interval_ticks = 288; // 288 * 5min = 24h
-        let mut tick_count: u64 = 0;
+    start_maintenance(crate::services::jobs::jobs(), evolution, FLUSH_INTERVAL);
+}
 
-        loop {
-            tokio::time::sleep(flush_interval).await;
-            tick_count += 1;
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// 288 * 5min = 24h
+const PRUNE_EVERY_TICKS: u64 = 288;
 
+/// 后台定时任务：定期 flush + 每日 prune。挂在进程 job runner 上，
+/// 停机时随其他后台任务一起停；每轮结束后再等满一个间隔，与原先的 sleep 循环一致。
+fn start_maintenance(
+    runner: &crate::services::jobs::JobRunner,
+    evolution: Arc<SkillEvolution>,
+    flush_interval: std::time::Duration,
+) -> crate::services::jobs::JobHandle {
+    let every = crate::services::jobs::Every::new(flush_interval)
+        .after(flush_interval)
+        .spaced();
+    let mut tick_count: u64 = 0;
+    runner.periodic("skill evolution maintenance", every, move || {
+        tick_count += 1;
+        let prune = tick_count.is_multiple_of(PRUNE_EVERY_TICKS);
+        let evolution = evolution.clone();
+        async move {
             // 每 5 分钟 flush
             evolution.flush().await;
 
             // 每 24 小时 prune
-            if tick_count.is_multiple_of(prune_interval_ticks) {
+            if prune {
                 let pruned = evolution.prune_skills().await;
                 if !pruned.is_empty() {
                     tracing::info!(
@@ -747,10 +760,41 @@ pub async fn init_skill_evolution(skills_dir: PathBuf) {
                 }
             }
         }
-    });
+    })
 }
 
 /// 获取全局 SkillEvolution
 pub fn get_skill_evolution() -> Option<&'static Arc<SkillEvolution>> {
     SKILL_EVOLUTION.get()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn maintenance_runs_on_the_job_runner_and_stops_with_it() {
+        let dir = std::env::temp_dir().join(format!(
+            "myriad-skill-evolution-job-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let evolution = Arc::new(SkillEvolution::new(dir.clone()).await);
+        evolution
+            .stats_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = start_maintenance(&runner, evolution, Duration::from_millis(1));
+        let stats = dir.join(STATS_FILE);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !stats.exists() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not flush dirty stats");
+        runner.shutdown(Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

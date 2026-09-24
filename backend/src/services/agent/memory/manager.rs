@@ -1346,11 +1346,27 @@ pub async fn init_memory(memory_dir: PathBuf) {
     let memory = Arc::new(AgentMemory::new(memory_dir).await);
     let _ = AGENT_MEMORY.set(memory.clone());
 
-    // 后台维护：每 10 分钟清理过期短期记忆 + 提升高频记忆 + 批量落盘访问计数
-    tokio::spawn(async move {
-        let interval = tokio::time::Duration::from_secs(10 * 60);
-        loop {
-            tokio::time::sleep(interval).await;
+    start_maintenance(
+        crate::services::jobs::jobs(),
+        memory,
+        std::time::Duration::from_secs(10 * 60),
+    );
+}
+
+/// 后台维护：每 10 分钟清理过期短期记忆 + 提升高频记忆 + 批量落盘访问计数。
+/// 挂在进程 job runner 上，停机时随其他后台任务一起停；每轮结束后再等满一个
+/// 间隔，与原先的 sleep 循环一致。
+fn start_maintenance(
+    runner: &crate::services::jobs::JobRunner,
+    memory: Arc<AgentMemory>,
+    interval: std::time::Duration,
+) -> crate::services::jobs::JobHandle {
+    let every = crate::services::jobs::Every::new(interval)
+        .after(interval)
+        .spaced();
+    runner.periodic("agent memory maintenance", every, move || {
+        let memory = memory.clone();
+        async move {
             let cleaned = memory.cleanup_short_term().await;
             let promoted = memory.promote_memories().await;
             memory.flush_if_dirty().await;
@@ -1362,7 +1378,7 @@ pub async fn init_memory(memory_dir: PathBuf) {
                 );
             }
         }
-    });
+    })
 }
 
 /// 获取全局记忆管理器
@@ -1373,6 +1389,30 @@ pub fn get_memory() -> Option<&'static Arc<AgentMemory>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn maintenance_runs_on_the_job_runner_and_stops_with_it() {
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!(
+            "myriad-agent-memory-job-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let memory = Arc::new(AgentMemory::new(dir.clone()).await);
+        memory.dirty.store(true, Ordering::Relaxed);
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = start_maintenance(&runner, memory.clone(), Duration::from_millis(1));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while memory.dirty.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not flush dirty memory");
+        runner.shutdown(Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // TF-IDF 分词测试
 

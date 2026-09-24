@@ -926,17 +926,25 @@ pub async fn init_notifications(db: DatabaseConnection) {
     let _ = NOTIFICATION_MANAGER.set(manager.clone());
     bridge::spawn(manager.clone());
 
-    // 每日清理 30 天前的通知
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            manager.cleanup_old(30).await;
-        }
-    });
+    start_cleanup(
+        crate::services::jobs::jobs(),
+        manager,
+        crate::services::jobs::Every::new(std::time::Duration::from_secs(86400)),
+    );
 
     tracing::info!("[Notifications] Manager initialized (persistent)");
+}
+
+/// 每日清理 30 天前的通知。挂在进程 job runner 上，停机时随其他后台任务一起停。
+fn start_cleanup(
+    runner: &crate::services::jobs::JobRunner,
+    manager: Arc<NotificationManager>,
+    every: crate::services::jobs::Every,
+) -> crate::services::jobs::JobHandle {
+    runner.periodic("notification cleanup", every, move || {
+        let manager = manager.clone();
+        async move { manager.cleanup_old(30).await }
+    })
 }
 
 /// 获取全局通知管理器
@@ -1012,6 +1020,42 @@ mod tests {
             max_history: 10,
             db: None,
         }
+    }
+
+    #[tokio::test]
+    async fn cleanup_runs_on_the_job_runner_and_stops_with_it() {
+        use crate::services::jobs::{Every, JobRunner};
+        let manager = Arc::new(test_manager());
+        let old = || {
+            let mut notification = Notification::new(
+                9,
+                NotificationType::TaskCompleted,
+                NotificationPriority::Normal,
+                "old",
+                "old",
+            );
+            notification.created_at = Utc::now() - chrono::Duration::days(31);
+            notification
+        };
+        manager.history.write().await.push_back(old());
+        let runner = JobRunner::new();
+        let handle = super::start_cleanup(
+            &runner,
+            manager.clone(),
+            Every::new(std::time::Duration::from_millis(1)),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !manager.history.read().await.is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not clean expired notifications");
+        runner.shutdown(std::time::Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        manager.history.write().await.push_back(old());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(manager.history.read().await.len(), 1);
     }
 
     #[tokio::test]
