@@ -3,14 +3,16 @@ import { expect, test } from '@playwright/test'
 
 test.use({ locale: 'en-US' })
 
-async function setup(page: Page) {
+async function setup(page: Page, overrides: Record<string, unknown> = {}) {
   let reads = 0
   let posts = 0
-  const status = {
+  const updates: Record<string, unknown>[] = []
+  const status: Record<string, unknown> = {
     schema_version: 1, current_version: 'v0.5.3', updater_version: 'v0.5.3',
     channel: 'stable', update_mode: 'release', maintenance_active: false, maintenance_phase: 'idle',
     job_in_flight: null, latest_available: null, requires_self_update: false, last_checked_at: new Date().toISOString(),
     self_update_last: { status: 'succeeded', queued: false, error: '', target_tag: 'v0.5.3', previous_tag: 'v0.5.2', at: 'before' },
+    ...overrides,
   }
   await page.addInitScript(() => {
     sessionStorage.setItem('csrf_token', `v1.${'a'.repeat(16)}.${'b'.repeat(43)}`)
@@ -25,6 +27,9 @@ async function setup(page: Page) {
       posts++
       status.self_update_last = { status: 'pending', queued: true, error: '', target_tag: '', previous_tag: 'v0.5.3', at: 'queued' }
       await route.fulfill({ json: { scheduled: true, helper_container_id: 'docker-guard', new_updater_tag: '', previous_updater_tag: 'v0.5.3' } })
+    } else if (path.endsWith('/update')) {
+      updates.push(route.request().postDataJSON())
+      await route.fulfill({ json: { job_id: 'retry-job' } })
     } else if (path.endsWith('/snapshots')) {
       await route.fulfill({ json: { schema_version: 1, items: [] } })
     } else {
@@ -34,7 +39,7 @@ async function setup(page: Page) {
   await page.route('**/health', route => route.fulfill({ json: { version: 'v0.5.3' } }))
   page.on('dialog', dialog => dialog.accept())
   await page.goto('/updater.html')
-  return { status, reads: () => reads, posts: () => posts }
+  return { status, updates, reads: () => reads, posts: () => posts }
 }
 
 test('self-update discovery failure ends waiting and allows retry without reloading', async ({ page }) => {
@@ -65,4 +70,29 @@ test('self-update recovery stays pending until Guard publishes the result', asyn
   await page.clock.runFor(4100)
   await expect(button).toBeEnabled()
   await expect(page.getByText('Updater upgrade failed: Previous image restored', { exact: true })).toBeVisible()
+})
+
+test('reverse proxy card shows the running proxy tag', async ({ page }) => {
+  await setup(page, { proxy_version: 'v0.5.1' })
+  const card = page.locator('.updater-infra-card', { hasText: 'Reverse proxy' })
+  await expect(card.locator('code')).toHaveText('v0.5.1')
+})
+
+test('compose-override preflight failure can be confirmed and retried from the banner', async ({ page }) => {
+  const app = await setup(page, {
+    current_version: 'v0.5.5',
+    last_failed_update: {
+      from_version: 'v0.5.5', to_version: 'v0.5.7', at: new Date().toISOString(), job_id: 'failed-job',
+      reason: 'preflight: precondition failed: the deployment compose will be overwritten',
+      code: 'compose_override_required',
+    },
+  })
+  const banner = page.locator('.updater-last-failed')
+  await expect(banner).toContainText('differs from the last version the updater wrote')
+  await banner.getByRole('button', { name: 'Overwrite and retry' }).click()
+  await expect.poll(() => app.updates.length).toBe(1)
+  expect(app.updates[0]).toMatchObject({
+    target_version: 'v0.5.7', mode: 'release', allow_compose_override: true, confirm_risk: true,
+    allow_risk: false, allow_downgrade: false,
+  })
 })

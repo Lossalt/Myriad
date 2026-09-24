@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "Inclut docker-guard / updater-gateway. Chemin séparé ; quelques secondes, sans arrêter les conteneurs de l'appli.",
   "updaterInfraCurrent": "Version actuelle",
   "updaterInfraRequired": "requis d'abord",
+  "updaterInfraProxyTitle": "Reverse proxy",
+  "updaterInfraProxyDesc": "Point d’entrée edge. Mis à jour avec l’application : il ne change que si la version cible fournit une nouvelle image proxy, et peut donc être en retard sur la version du site.",
   "updaterInfraSelfLastFailed": "Dernière mise à jour de l'updater échouée : cible {target} (était {previous}). {error}",
   "updaterSelfUpdateWaiting": "Mise à jour de l'updater planifiée ; confirmation du résultat…",
   "updaterSelfUpdateReconnecting": "L'updater redémarre — la connexion peut couper un instant ; reconnexion…",

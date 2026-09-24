@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "docker-guard / updater-gateway 포함. 별도 경로. 몇 초면 끝나고 앱 컨테이너는 멈추지 않습니다.",
   "updaterInfraCurrent": "현재 버전",
   "updaterInfraRequired": "먼저 필요",
+  "updaterInfraProxyTitle": "리버스 프록시",
+  "updaterInfraProxyDesc": "엣지 입구. 앱 업데이트와 함께 올라갑니다. 대상 버전에 새 proxy 이미지가 포함될 때만 바뀌고, 그렇지 않으면 그대로라서 사이트 버전보다 낮을 수 있습니다.",
   "updaterInfraSelfLastFailed": "마지막 업데이터 올리기 실패: 대상 {target}(이전 {previous}). {error}",
   "updaterSelfUpdateWaiting": "업데이터 올리기를 예약했습니다. 결과 확인 중…",
   "updaterSelfUpdateReconnecting": "업데이터가 다시 시작 중 — 연결이 잠깐 끊길 수 있습니다. 다시 연결 중…",

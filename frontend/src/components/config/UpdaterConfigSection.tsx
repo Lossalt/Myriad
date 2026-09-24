@@ -1110,6 +1110,20 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
                 </div>
               </div>
             </SettingGroup>
+
+            <SettingGroup
+              title={u.updaterInfraProxyTitle}
+              description={u.updaterInfraProxyDesc}
+              icon={<FaServer />}
+              className="updater-infra-card"
+            >
+              <div className="updater-infra-card-body">
+                <p className="updater-infra-current">
+                  {u.updaterInfraCurrent}{' '}
+                  <code>{status?.proxy_version ?? '—'}</code>
+                </p>
+              </div>
+            </SettingGroup>
           </SettingGroupGrid>
         </SettingGroup>
       )}

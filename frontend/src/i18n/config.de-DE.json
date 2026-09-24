@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "Enthält docker-guard / updater-gateway. Eigener Pfad; fertig in Sekunden, ohne App-Container zu stoppen.",
   "updaterInfraCurrent": "Aktuelle Version",
   "updaterInfraRequired": "zuerst erforderlich",
+  "updaterInfraProxyTitle": "Reverse-Proxy",
+  "updaterInfraProxyDesc": "Edge-Einstieg. Wird mit dem App-Update aktualisiert: Er wechselt nur, wenn die Zielversion ein neues Proxy-Image mitbringt, und kann daher hinter der Seitenversion liegen.",
   "updaterInfraSelfLastFailed": "Letztes Updater-Upgrade fehlgeschlagen: Ziel {target} (war {previous}). {error}",
   "updaterSelfUpdateWaiting": "Updater-Upgrade geplant; Ergebnis wird bestätigt…",
   "updaterSelfUpdateReconnecting": "Updater startet neu — Verbindung kann kurz abreißen; wird neu verbunden…",

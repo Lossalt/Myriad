@@ -73,6 +73,8 @@ export interface CompareResult {
 export interface UpdaterStatus {
   schema_version: number
   updater_version: string
+  /** Running `PROXY_TAG`; follows business updates only when a release ships a proxy image. */
+  proxy_version?: string | null
   current_version: string | null
   current_commit_sha?: string | null
   channel: string

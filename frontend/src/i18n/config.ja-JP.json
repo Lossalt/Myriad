@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "docker-guard / updater-gateway を含む。独立経路で数秒、業務コンテナは止めません。",
   "updaterInfraCurrent": "現在のバージョン",
   "updaterInfraRequired": "先に更新が必要",
+  "updaterInfraProxyTitle": "リバースプロキシ（proxy）",
+  "updaterInfraProxyDesc": "エッジ入口。業務更新と一緒に更新されます。対象バージョンに新しい proxy イメージが含まれる場合のみ切り替わり、それ以外は据え置きのため、サイトのバージョンより古いことがあります。",
   "updaterInfraSelfLastFailed": "前回のアップデーター更新に失敗: 目標 {target}（以前: {previous}）。{error}",
   "updaterSelfUpdateWaiting": "アップデーター更新をスケジュール済み。結果を確認中…",
   "updaterSelfUpdateReconnecting": "アップデーター再起動中です。接続が一時的に切れます。自動再接続中…",

@@ -72,6 +72,10 @@ pub fn build(state: ApiState) -> Router {
 struct StatusResp {
     schema_version: u32,
     updater_version: String,
+    /// Running `PROXY_TAG` from `.env`. The proxy moves with business updates only
+    /// when the target release ships `images.proxy`, so it can lag the app version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proxy_version: Option<String>,
     current_version: Option<DeployTag>,
     current_commit_sha: Option<String>,
     channel: String,
@@ -156,10 +160,16 @@ async fn status(State(st): State<ApiState>) -> Result<Json<StatusResp>, ApiError
             None
         });
 
+    let proxy_version = crate::env_file::EnvFile::load(&st.worker.cli().env_file)
+        .ok()
+        .and_then(|env| env.get("PROXY_TAG").map(str::to_owned))
+        .filter(|s| !s.trim().is_empty());
+
     let db_mode = st.worker.cli().db_mode;
     Ok(Json(StatusResp {
         schema_version: 1,
         updater_version: crate::self_version().to_string(),
+        proxy_version,
         current_version: u.current_version,
         current_commit_sha: u.current_commit_sha,
         channel,

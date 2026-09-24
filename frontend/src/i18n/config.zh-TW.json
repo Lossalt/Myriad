@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "含 docker-guard / updater-gateway。升級走獨立路徑，幾秒完成，不影響業務容器。",
   "updaterInfraCurrent": "當前版本",
   "updaterInfraRequired": "需先升級",
+  "updaterInfraProxyTitle": "反向代理（proxy）",
+  "updaterInfraProxyDesc": "邊緣入口。隨業務更新一起升級：目標版本附帶新的 proxy 映像時自動切換，否則維持原版本，因此可能落後於站點版本。",
   "updaterInfraSelfLastFailed": "上次更新器升級失敗：目標 {target}（原 {previous}）。{error}",
   "updaterSelfUpdateWaiting": "更新器升級已排程，正在確認結果…",
   "updaterSelfUpdateReconnecting": "更新器正在重啟，連線會短暫中斷，正在自動重連…",

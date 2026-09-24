@@ -630,6 +630,8 @@
   "updaterInfraUpdaterDesc": "Includes docker-guard / updater-gateway. Uses a separate path; finishes in seconds without stopping app containers.",
   "updaterInfraCurrent": "Current version",
   "updaterInfraRequired": "required first",
+  "updaterInfraProxyTitle": "Reverse proxy",
+  "updaterInfraProxyDesc": "Edge entrypoint. Upgraded together with the app: it switches when the target release ships a new proxy image and otherwise stays put, so it can lag the site version.",
   "updaterInfraSelfLastFailed": "Last updater upgrade failed: target {target} (was {previous}). {error}",
   "updaterSelfUpdateWaiting": "Updater upgrade scheduled; confirming result…",
   "updaterSelfUpdateReconnecting": "Updater is restarting — connection may drop briefly; reconnecting…",
