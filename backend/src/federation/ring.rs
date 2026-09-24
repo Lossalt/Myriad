@@ -801,76 +801,27 @@ pub async fn trigger_sync(
     }))
 }
 
-/// 最近 20 条 federated phantasi-article Create（手发）。
+/// 最近 20 条公开发布的 phantasi-article（手发）。
 async fn collect_legacy_phantasi_activities(db: &impl ConnectionTrait) -> Vec<serde_json::Value> {
-    // 优先 federation_published_content.content_type = phantasi-article；
-    // 空则查 federation_activities（object_type 存 MFP content_type）。
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"SELECT fpc.activity_id, fa.object_json
-               FROM federation_published_content fpc
-               LEFT JOIN federation_activities fa ON fa.activity_id = fpc.activity_id
-               WHERE fpc.content_type = 'phantasi-article'
-               ORDER BY fpc.published_at DESC
-               LIMIT 20"#,
-            [],
-        ))
-        .await
-        .unwrap_or_default();
+    ring_objects(db, "phantasi-article", "phantasi").await
+}
 
-    if !rows.is_empty() {
-        return rows
-            .iter()
-            .filter_map(|r| {
-                let activity_id = r.try_get::<String>("", "activity_id").ok()?;
-                let obj: serde_json::Value = r
-                    .try_get("", "object_json")
-                    .unwrap_or(json!({ "type": "Article" }));
-                Some(json!({
-                    "type": "phantasi",
-                    "activity_id": activity_id,
-                    "data": obj
-                }))
-            })
-            .collect();
-    }
-
-    // `federation_published_content` 为空时查 `federation_activities`
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"SELECT activity_id, object_json, object_type
-               FROM federation_activities
-               WHERE activity_type = 'Create'
-                 AND is_local = true
-                 AND (
-                   object_type = 'phantasi-article'
-                   OR object_json::text LIKE '%phantasi-article%'
-                 )
-               ORDER BY published_at DESC LIMIT 20"#,
-            [],
-        ))
+/// Public local objects of one content type, as ring entries. Only what the
+/// outbox would serve publicly may be gossiped.
+async fn ring_objects(
+    db: &impl ConnectionTrait,
+    content_type: &str,
+    entry_type: &str,
+) -> Vec<serde_json::Value> {
+    crate::federation::outbox::public_local_objects(db, content_type, 20)
         .await
-        .unwrap_or_default();
-    rows.iter()
-        .filter_map(|r| {
-            let obj: serde_json::Value = r.try_get("", "object_json").ok()?;
-            let object_type = r.try_get::<String>("", "object_type").unwrap_or_default();
-            let is_phantasi = object_type == "phantasi-article"
-                || obj.get("mfp:contentType").and_then(|v| v.as_str()) == Some("phantasi-article")
-                || obj
-                    .pointer("/object/mfp:contentType")
-                    .and_then(|v| v.as_str())
-                    == Some("phantasi-article");
-            if !is_phantasi {
-                return None;
-            }
-            Some(json!({
-                "type": "phantasi",
-                "activity_id": r.try_get::<String>("", "activity_id").unwrap_or_default(),
-                "data": obj
-            }))
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, content_type, "ring: public objects query failed");
+            Vec::new()
+        })
+        .into_iter()
+        .map(|(activity_id, object)| {
+            json!({ "type": entry_type, "activity_id": activity_id, "data": object })
         })
         .collect()
 }
@@ -1153,55 +1104,11 @@ async fn collect_sync_entries(
         "phantasi-recommend" => {
             collect_phantasi_recommend_entries(db, user_id, username, category_filter).await
         }
-        "tapp-store" => {
-            // 收集已发布的 Tapp 内容
-            let rows = db
-                .query_all_raw(Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT activity_id, object_json
-                       FROM federation_activities
-                       WHERE activity_type = 'Create' AND object_type = 'tapp' AND is_local = true
-                       ORDER BY published_at DESC LIMIT 20"#,
-                    [],
-                ))
-                .await
-                .unwrap_or_default();
-            rows.iter()
-                .filter_map(|r| {
-                    let obj: serde_json::Value = r.try_get("", "object_json").ok()?;
-                    Some(json!({
-                        "type": "tapp",
-                        "activity_id": r.try_get::<String>("", "activity_id").unwrap_or_default(),
-                        "data": obj
-                    }))
-                })
-                .collect()
-        }
+        "tapp-store" => ring_objects(db, "tapp", "tapp").await,
         "library-exchange" => {
             // Prefer federated Create(library) publishes; fall back to local platform_metadata snapshots
             // so rings have something to gossip even before users explicitly publish.
-            let rows = db
-                .query_all_raw(Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT activity_id, object_json
-                       FROM federation_activities
-                       WHERE activity_type = 'Create' AND object_type = 'library' AND is_local = true
-                       ORDER BY published_at DESC LIMIT 20"#,
-                    [],
-                ))
-                .await
-                .unwrap_or_default();
-            let mut entries: Vec<serde_json::Value> = rows
-                .iter()
-                .filter_map(|r| {
-                    let obj: serde_json::Value = r.try_get("", "object_json").ok()?;
-                    Some(json!({
-                        "type": "library",
-                        "activity_id": r.try_get::<String>("", "activity_id").unwrap_or_default(),
-                        "data": obj
-                    }))
-                })
-                .collect();
+            let mut entries = ring_objects(db, "library", "library").await;
             if entries.is_empty() {
                 let meta_rows = db
                     .query_all_raw(Statement::from_sql_and_values(
@@ -1626,6 +1533,16 @@ pub async fn handle_ring_leave(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring_gossips_only_what_the_outbox_serves_publicly() {
+        let src = include_str!("ring.rs");
+        let body = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!body.contains("LIKE '%phantasi-article%'"));
+        assert!(!body.contains("object_type = 'tapp'"));
+        assert!(!body.contains("object_type = 'library'"));
+        assert!(body.contains("outbox::public_local_objects("));
+    }
 
     #[test]
     fn source_category_matches_exact() {

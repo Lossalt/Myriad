@@ -14,7 +14,7 @@ use myriad_error::AppError;
 use myriad_phantasi::ARTICLE_OBJECT_PREFIX;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::federation::types::*;
 
@@ -40,6 +40,37 @@ const PUBLIC_CONTENT_PROJECTION: &str = r#"
       AND a.activity_type IN ('Create', 'Announce')
       AND p.visibility = 'public'
 "#;
+
+/// Newest public local objects of one MFP content type (`tapp`, `library`,
+/// `phantasi-article`, ...), as `(activity_id, object_json)`. Ring gossip and
+/// every other re-publisher go through here so that withdrawn or
+/// followers-only content never leaves through a side door.
+pub(crate) async fn public_local_objects(
+    db: &impl ConnectionTrait,
+    content_type: &str,
+    limit: i64,
+) -> Result<Vec<(String, Value)>, sea_orm::DbErr> {
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT a.activity_id, a.object_json {PUBLIC_CONTENT_PROJECTION} \
+                   AND a.activity_type = 'Create' AND p.content_type = $1 \
+                 ORDER BY a.published_at DESC LIMIT $2"
+            ),
+            [content_type.into(), limit.into()],
+        ))
+        .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            Some((
+                row.try_get::<String>("", "activity_id").ok()?,
+                row.try_get::<Value>("", "object_json").ok()?,
+            ))
+        })
+        .collect())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct OutboxQuery {
