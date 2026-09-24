@@ -4,22 +4,22 @@
 //! 纯 prompt/steering/image 规则见 [`crate::services::agent::ai_process_pure`]。
 
 use super::HandlerContext;
-use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::models::entities::phantasi_items;
 use crate::services::agent::ai_process_pure::{
-    IMAGE_PROMPT_MAX_CHARS, USER_TEXT_MAX_CHARS, agent_image_producer_key,
-    append_memory_to_system_prompt, capability_needs_conversation_context, capability_needs_memory,
-    extract_semantic_text, inject_directive_to_params, inject_steering_to_params,
-    merge_system_prompt, resolve_image_dimensions, resolve_image_prompt, sanitize_prompt_input,
+    agent_image_producer_key, append_memory_to_system_prompt,
+    capability_needs_conversation_context, capability_needs_memory, extract_semantic_text,
+    inject_directive_to_params, inject_steering_to_params, merge_system_prompt,
+    resolve_image_dimensions, resolve_image_prompt, sanitize_prompt_input,
     take_recent_conversation_messages, task_image_envelope, task_json_envelope, task_text_envelope,
-    with_system_guidance,
+    with_system_guidance, IMAGE_PROMPT_MAX_CHARS, USER_TEXT_MAX_CHARS,
 };
 use crate::services::agent::data_read_pure::extract_json_array_from_ai_response;
 use crate::services::agent::external_pure::classify_outbound_fetch;
 use crate::services::data_paths::platform_filtered_file;
+use crate::GLOBAL_DYNAMIC_CONFIG;
 use myriad_agent_rules::untrusted_block;
 use sea_orm::EntityTrait;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 fn ai_step_failed(label: &str, error: impl std::fmt::Display) -> String {
@@ -59,7 +59,8 @@ fn inject_role_identity(
         }
     }
 
-    // 2. 注入记忆上下文（`capability_needs_memory`）
+    // 2. 记忆是不可信数据。工具循环写入的 memory_context 也走这里，
+    //    必须包在 <untrusted_memory> 里，不能当系统指令。
     if capability_needs_memory(capability_id) {
         if let Some(ref mem_ctx) = exec_ctx.memory_context {
             let existing = params
@@ -581,7 +582,7 @@ async fn execute_phantasiai_podcast(
 // 其他 AI 能力
 
 async fn execute_speech_tts(params: &HashMap<String, Value>) -> Result<Value, String> {
-    use crate::services::standalone_tts::{TtsApiRequest, synthesize_standalone_tts};
+    use crate::services::standalone_tts::{synthesize_standalone_tts, TtsApiRequest};
 
     let text = params
         .get("text")
