@@ -2161,3 +2161,48 @@ async fn postgres_producer_key_is_released_after_delete_and_missing() {
     assert_ne!(third.id, second.id);
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_publishing_ids_requires_managing_private_assets() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let foreign = f
+        .service
+        .create_from_bytes(
+            &f.db,
+            MediaContext::user(MediaActor::user(2).unwrap(), MediaSource::Upload).unwrap(),
+            NewMediaBytes {
+                bytes: png().into(),
+                claimed_mime: "image/png".into(),
+                filename: "private.png".into(),
+                max_bytes: 1024 * 1024,
+                derived_from_id: None,
+                exposure: MediaExposure::Private,
+            },
+        )
+        .await
+        .unwrap();
+    let user = MediaActor::user(1).unwrap();
+    assert_eq!(
+        cite::ensure_publishable(&f.db, &user, &[foreign.id])
+            .await
+            .unwrap_err(),
+        MediaError::Missing
+    );
+    let owner = MediaActor::user(2).unwrap();
+    cite::ensure_publishable(&f.db, &owner, &[foreign.id])
+        .await
+        .unwrap();
+    cite::ensure_publishable(&f.db, &MediaActor::admin(1).unwrap(), &[foreign.id])
+        .await
+        .unwrap();
+    f.service.publish(&f.db, foreign.id).await.unwrap();
+    cite::ensure_publishable(&f.db, &user, &[foreign.id])
+        .await
+        .unwrap();
+    f.close().await;
+}

@@ -6,10 +6,11 @@ use uuid::Uuid;
 
 use crate::models::entities::{media_assets, media_url_aliases};
 
+use super::access::can_manage;
 use super::assets;
 use super::error::MediaError;
 use super::references::{NewReference, replace_for_consumer};
-use super::types::MediaState;
+use super::types::{MediaActor, MediaExposure, MediaState};
 use super::urls::{
     cite_local_path, compatible_url, content_path, filename_for_mime, media_shaped_path,
 };
@@ -672,6 +673,26 @@ pub(crate) async fn bind_restored_dashboard_layout(
     let stored =
         bind_and_publish_dashboard_layout_except(txn, layout_json, origins, &dead_paths).await?;
     Ok((stored, dead_urls))
+}
+
+/// Callers that publish ids taken from user input must prove the actor may
+/// manage each private asset; already-public assets need no further right.
+/// Unmanageable private assets read as missing so ids cannot be probed.
+pub async fn ensure_publishable(
+    txn: &impl ConnectionTrait,
+    actor: &MediaActor,
+    ids: &[i32],
+) -> Result<(), MediaError> {
+    for &id in ids {
+        let row = assets::find_by_id(txn, id)
+            .await?
+            .ok_or(MediaError::Missing)?;
+        let asset = assets::to_domain(row, 0)?;
+        if asset.exposure != MediaExposure::Public && !can_manage(actor, &asset) {
+            return Err(MediaError::Missing);
+        }
+    }
+    Ok(())
 }
 
 pub async fn publish_asset_ids(

@@ -24,6 +24,7 @@ use crate::federation::types::*;
 /// 6. 按 visibility fan-out（Direct/mentioned 不投 followers；Public 另投群邻）
 pub async fn publish_content(
     user_id: i32,
+    is_admin: bool,
     username: &str,
     db: &DatabaseConnection,
     req: &PublishRequest,
@@ -163,6 +164,22 @@ pub async fn publish_content(
             asset_ids.push(id);
         }
     }
+    // Attachment ids come from the request; never publish another user's draft.
+    let actor = if is_admin {
+        crate::services::media::MediaActor::admin(user_id)
+    } else {
+        crate::services::media::MediaActor::user(user_id)
+    }
+    .map_err(media_ref_err)?;
+    crate::services::media::ensure_publishable(&txn, &actor, &asset_ids)
+        .await
+        .map_err(|error| match error {
+            crate::services::media::MediaError::Missing => (
+                StatusCode::BAD_REQUEST,
+                Json(AppError::public_json("Invalid attachment URL")),
+            ),
+            other => media_ref_err(other),
+        })?;
     let published_paths = crate::services::media::publish_asset_ids(&txn, &asset_ids)
         .await
         .map_err(media_ref_err)?;
@@ -262,6 +279,7 @@ pub async fn publish_content(
 /// 创建 freeform Note（Aro 发帖）
 pub async fn create_note(
     user_id: i32,
+    is_admin: bool,
     username: &str,
     db: &DatabaseConnection,
     req: &CreateNoteRequest,
@@ -274,7 +292,7 @@ pub async fn create_note(
         attachments: req.attachments.clone(),
         in_reply_to: req.in_reply_to.clone(),
     };
-    publish_content(user_id, username, db, &publish_req).await
+    publish_content(user_id, is_admin, username, db, &publish_req).await
 }
 
 /// Normalize a content_id that may be a bare id, object URL, or path.

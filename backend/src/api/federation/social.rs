@@ -286,7 +286,15 @@ pub(crate) async fn federation_publish(
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::content::PublishRequest>,
 ) -> Response {
-    match federation::content::publish_content(user_id, &claims.username, &db, &payload).await {
+    match federation::content::publish_content(
+        user_id,
+        claims.is_admin,
+        &claims.username,
+        &db,
+        &payload,
+    )
+    .await
+    {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
     }
@@ -425,7 +433,15 @@ pub(crate) async fn federation_create_note(
     extract::Db(db): extract::Db,
     Json(payload): Json<federation::content::CreateNoteRequest>,
 ) -> Response {
-    match federation::content::create_note(user_id, &claims.username, &db, &payload).await {
+    match federation::content::create_note(
+        user_id,
+        claims.is_admin,
+        &claims.username,
+        &db,
+        &payload,
+    )
+    .await
+    {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
     }
