@@ -1006,7 +1006,15 @@ SELECT EXISTS (
         let mut required = vec![TappPermission::SchedulerRegister];
         required.extend(backend_action_permissions_of(wrappers));
 
-        let config = GLOBAL_DYNAMIC_CONFIG.read().await;
+        // Same source as runtime-grant rebinds: the committed delegation
+        // policy, not this worker's cached config. A revoked delegation must
+        // stop the next run, and an unreadable policy fails closed.
+        let config = crate::services::config_service::ConfigService::load_permission_config_on(db)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "scheduled task could not read permission policy");
+                "Permission policy unavailable before scheduled execution".to_string()
+            })?;
         for permission in &required {
             if !TappPermissionService::check(&config, role, *permission) {
                 return Err(format!(
@@ -1015,7 +1023,6 @@ SELECT EXISTS (
                 ));
             }
         }
-        drop(config);
 
         let tapp = crate::services::tapp_ownership::resolve_accessible_tapp(
             db,

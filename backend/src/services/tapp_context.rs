@@ -10,31 +10,19 @@ use serde_json::{Value, json};
 use crate::services::permission_service::UserRole;
 
 /// Resolve the capability role for an authenticated or soft-guest subject id.
-///
-/// - Current admin → [`UserRole::Admin`]
-/// - `user_id <= 0` (guest tokens / anonymous) → [`UserRole::Guest`]
-/// - otherwise → [`UserRole::User`]
+/// The one rule lives in [`crate::services::permission_service::role_from_user_id`]:
+/// current admin → Admin, positive id → User, anything else (guests, the
+/// system subject 0) → Guest.
 pub fn role_for_subject(user_id: i32, is_current_admin: bool) -> UserRole {
-    if is_current_admin {
-        UserRole::Admin
-    } else if user_id <= 0 {
-        UserRole::Guest
-    } else {
-        UserRole::User
-    }
+    crate::services::permission_service::role_from_user_id(user_id, is_current_admin)
 }
 
-/// Catalog-path role for optional JWT subjects.
-///
-/// Missing or negative ids are guests; `Some(id)` with `id >= 0` is User
-/// (including `Some(0)`). [`role_for_subject`] treats `0` as Guest.
+/// Catalog-path role for optional JWT subjects; no subject is a guest.
 pub fn role_for_optional_subject(user_id: Option<i32>, is_current_admin: bool) -> UserRole {
-    if is_current_admin {
-        UserRole::Admin
-    } else if user_id.is_some_and(|id| id >= 0) {
-        UserRole::User
-    } else {
-        UserRole::Guest
+    match user_id {
+        Some(id) => role_for_subject(id, is_current_admin),
+        None if is_current_admin => UserRole::Admin,
+        None => UserRole::Guest,
     }
 }
 
@@ -158,7 +146,7 @@ mod tests {
     #[test]
     fn role_for_optional_subject_matches_catalog_rules() {
         assert_eq!(role_for_optional_subject(Some(42), false), UserRole::User);
-        assert_eq!(role_for_optional_subject(Some(0), false), UserRole::User);
+        assert_eq!(role_for_optional_subject(Some(0), false), UserRole::Guest);
         assert_eq!(role_for_optional_subject(None, false), UserRole::Guest);
         assert_eq!(role_for_optional_subject(Some(-5), false), UserRole::Guest);
         assert_eq!(role_for_optional_subject(Some(42), true), UserRole::Admin);
