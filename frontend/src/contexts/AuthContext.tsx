@@ -16,13 +16,12 @@ import { setKnownAuthState } from '../utils/authState'
 import { authSubjectKey } from '../utils/authSubject'
 import { clearCSRFToken } from '../utils/csrf'
 import { HOST_SESSION_RECHECK_EVENT } from '../utils/hostSessionFailure'
-import { beginIdentityChange, settleIdentity } from '../utils/identity'
+import { beginIdentityChange, finishIdentityChange, settleIdentity } from '../utils/identity'
 import {
   clearSessionHint,
   hasSessionHint,
   setSessionHint,
 } from '../utils/sessionDetection'
-import { beginTappSubjectChange, finishTappSubjectChange } from '../utils/tappSubject'
 
 export interface AuthIdentity {
   id: number
@@ -130,8 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const cleanupQueue = useRef<Promise<void>>(Promise.resolve())
   const pendingSubject = useRef<{ epoch: number; cleanup: Promise<void> } | null>(null)
   const beginSubjectChange = useCallback(() => {
-    beginIdentityChange()
-    const epoch = beginTappSubjectChange()
+    const epoch = beginIdentityChange()
     const cleanup = cleanupQueue.current.catch(() => {}).then(resetTappSubjectState)
     cleanupQueue.current = cleanup
     pendingSubject.current = { epoch, cleanup }
@@ -151,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     confirmedSubject.current = key
     const transition = pendingSubject.current
     pendingSubject.current = null
-    if (transition) finishTappSubjectChange(transition.epoch, authenticated)
+    if (transition) finishIdentityChange(transition.epoch, authenticated)
   }, [])
 
   const checkAuth = useCallback(async (): Promise<boolean> => {
