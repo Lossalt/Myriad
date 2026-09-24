@@ -552,6 +552,8 @@
   "updaterLastFailedBody": "De {from} vers {to} a échoué. Motif : {reason}",
   "updaterLastFailedDismiss": "Ne plus afficher",
   "updaterLastFailedDismissAria": "Masquer définitivement cet avis d'échec",
+  "updaterLastFailedComposeReason": "Le fichier Compose de déploiement diffère de la dernière version écrite par l’updater, ou il s’agit de la première mise à jour sans référence enregistrée. Continuer le remplace par le modèle de la nouvelle version ; l’original est d’abord sauvegardé dans state/compose-backup/.",
+  "updaterLastFailedComposeRetry": "Écraser et réessayer",
   "updaterHintHealthy": "Aucune mise à jour sur ce canal.",
   "updaterHintUpdating": "Le système sera vérifié à la fin.",
   "updaterHintMaintenance": "Quittez le mode maintenance ci-dessous quand vous êtes prêt.",

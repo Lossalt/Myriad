@@ -142,6 +142,9 @@ pub struct FailedUpdate {
     pub at: DateTime<Utc>,
     pub reason: String,
     pub job_id: String,
+    /// Machine-readable failure code (see `UpdaterError::code`); absent for most failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

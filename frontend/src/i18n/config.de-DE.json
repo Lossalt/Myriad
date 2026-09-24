@@ -552,6 +552,8 @@
   "updaterLastFailedBody": "Von {from} nach {to} fehlgeschlagen. Grund: {reason}",
   "updaterLastFailedDismiss": "Nicht mehr anzeigen",
   "updaterLastFailedDismissAria": "Diesen fehlgeschlagenen Update-Hinweis dauerhaft ausblenden",
+  "updaterLastFailedComposeReason": "Die Compose-Datei weicht von der zuletzt vom Updater geschriebenen Version ab, oder es ist das erste Update und noch nichts erfasst. Beim Fortfahren wird sie durch die Vorlage der neuen Version ersetzt; das Original wird vorher unter state/compose-backup/ gesichert.",
+  "updaterLastFailedComposeRetry": "Überschreiben und erneut versuchen",
   "updaterHintHealthy": "Auf diesem Kanal sind keine Updates verfügbar.",
   "updaterHintUpdating": "Das System wird nach Abschluss geprüft.",
   "updaterHintMaintenance": "Beenden Sie den Wartungsmodus unten, wenn Sie bereit sind.",

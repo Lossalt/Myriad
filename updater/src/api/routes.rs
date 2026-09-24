@@ -1099,7 +1099,9 @@ impl<E: Into<UpdaterError>> From<E> for ApiError {
             UpdaterError::Conflict => StatusCode::CONFLICT,
             UpdaterError::NotFound(_) => StatusCode::NOT_FOUND,
             UpdaterError::InvalidInput(_) => StatusCode::BAD_REQUEST,
-            UpdaterError::Precondition(_) => StatusCode::PRECONDITION_FAILED,
+            UpdaterError::Precondition(_) | UpdaterError::ComposeOverrideRequired => {
+                StatusCode::PRECONDITION_FAILED
+            }
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         ApiError(status, e.to_string())

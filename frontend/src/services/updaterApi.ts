@@ -109,6 +109,8 @@ export interface LastFailedUpdate {
   at: string
   reason: string
   job_id: string
+  /** Machine-readable failure code, e.g. `compose_override_required`. */
+  code?: string | null
 }
 
 export const SNAPSHOT_LIMIT_PRESETS = [1, 2, 3, 5, 10, 15, 20] as const
@@ -445,6 +447,7 @@ export function makeUpdaterApi(
         allowDiverged?: boolean
         allowUnknown?: boolean
         allowIrreversible?: boolean
+        allowComposeOverride?: boolean
       },
     ) => {
       const allowDowngrade = !!opts?.allowDowngrade
@@ -452,13 +455,15 @@ export function makeUpdaterApi(
       const allowDiverged = opts?.allowDiverged
       const allowUnknown = opts?.allowUnknown
       const allowIrreversible = opts?.allowIrreversible
+      const allowComposeOverride = opts?.allowComposeOverride
       // confirm_risk only when risk/downgrade flags are set.
       const needsConfirm =
         allowDowngrade ||
         allowRisk ||
         allowDiverged === true ||
         allowUnknown === true ||
-        allowIrreversible === true
+        allowIrreversible === true ||
+        allowComposeOverride === true
       return wrap<{ job_id: string; mode?: string }>(
         'POST',
         '/update',
@@ -474,6 +479,7 @@ export function makeUpdaterApi(
           allow_diverged: allowDiverged,
           allow_unknown: allowUnknown,
           allow_irreversible: allowIrreversible,
+          allow_compose_override: allowComposeOverride,
           ...(needsConfirm ? { confirm_risk: true } : {}),
         },
         opts?.idemKey,

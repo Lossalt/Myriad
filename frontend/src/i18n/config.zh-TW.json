@@ -552,6 +552,8 @@
   "updaterLastFailedBody": "從 {from} 到 {to} 失敗。原因：{reason}",
   "updaterLastFailedDismiss": "不再顯示",
   "updaterLastFailedDismissAria": "永久關閉這次失敗提示",
+  "updaterLastFailedComposeReason": "目前編排檔（compose）與更新器上次寫入的不一致，或是首次升級還沒有記錄。繼續會用新版本範本覆寫它，覆寫前原檔案備份到 state/compose-backup/。",
+  "updaterLastFailedComposeRetry": "確認覆寫並重試",
   "updaterHintHealthy": "當前通道沒有可用更新。",
   "updaterHintUpdating": "完成後將自動檢查執行狀態。",
   "updaterHintMaintenance": "可在下方退出維護模式。",

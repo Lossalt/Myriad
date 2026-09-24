@@ -31,6 +31,14 @@ pub enum UpdaterError {
     #[error("precondition failed: {0}")]
     Precondition(String),
 
+    /// The on-disk compose differs from the updater's baseline (or there is none)
+    /// and the operator has not acknowledged the overwrite.
+    #[error(
+        "precondition failed: the deployment compose will be overwritten; \
+         re-submit with allow_compose_override=true (or allow_risk=true)"
+    )]
+    ComposeOverrideRequired,
+
     #[error("unauthorized")]
     Unauthorized,
 
@@ -45,6 +53,16 @@ pub enum UpdaterError {
 
     #[error("internal: {0}")]
     Internal(#[from] anyhow::Error),
+}
+
+impl UpdaterError {
+    /// Stable machine-readable code for failures the UI can act on.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::ComposeOverrideRequired => Some("compose_override_required"),
+            _ => None,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, UpdaterError>;

@@ -365,28 +365,25 @@ pub async fn execute_preset(
             ))
         })?;
 
-    // 检查是否有保存的 recipe
-    let mut recipe: crate::services::agent::types::Recipe = preset
-        .parsed_steps
-        .as_ref()
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json(
-                    "Preset has no saved recipe, please run the task first",
-                )),
-            ))
-        })?;
-
-    // 清除保存的 page_context，跳过 `__page_context__` 注入
-    recipe.page_context = None;
+    // 检查是否有保存的 recipe；结构校验在工具循环的 run_recipe 里做。
+    if preset.parsed_steps.is_none() {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json(
+                "Preset has no saved recipe, please run the task first",
+            )),
+        )));
+    }
+    let preset_name = preset
+        .title
+        .clone()
+        .or_else(|| preset.intent_summary.clone())
+        .unwrap_or_else(|| format!("#{preset_id}"));
 
     tracing::info!(
         user_id = user_id,
         preset_id = preset_id,
-        recipe_id = %recipe.id,
-        "[Agent API] Executing preset with saved recipe"
+        "[Agent API] Executing preset through the Work loop"
     );
 
     // 更新使用时间
@@ -427,10 +424,16 @@ pub async fn execute_preset(
         };
 
         let agent = crate::services::agent::Agent::new(db_clone).await;
+        let request = crate::services::agent::UserRequest {
+            raw_input: format!("Run my saved recipe \"{preset_name}\" and report the result."),
+            timestamp: Utc::now(),
+            user_id,
+            context: None,
+        };
 
-        // TaskCreated 在 execute_saved_recipe 内 mint 新 run id 后发送，保证与 task_id 一致
+        // 预设的每一步都经 work_tool：授予权限、确认与检查点和普通办事一致。
         match agent
-            .execute_saved_recipe(&recipe, user_id, tx.clone())
+            .start_preset_work_loop(request, preset_id, Some(tx.clone()))
             .await
         {
             Ok(response) => {

@@ -15,6 +15,18 @@ pub(super) struct RecipeRun {
     pub active_call: Option<String>,
     pub outputs: HashMap<String, Value>,
     pub results: Vec<Value>,
+    /// Started by the preset API rather than a model `run_recipe` call.
+    #[serde(default)]
+    pub direct: bool,
+}
+
+/// Hand the aggregate back to whoever started the frame.
+fn finish_frame(state: &mut Checkpoint, frame: RecipeRun, output: &Value) {
+    if frame.direct {
+        state.direct_recipe_result(frame.call, output);
+    } else {
+        state.tool_result(frame.call, output);
+    }
 }
 
 pub(super) async fn list(db: &sea_orm::DatabaseConnection, user: i32) -> Result<Value, String> {
@@ -118,6 +130,7 @@ pub(super) async fn start(
         active_call: None,
         outputs: HashMap::new(),
         results: vec![],
+        direct: false,
     });
     Ok(())
 }
@@ -135,10 +148,8 @@ pub(super) fn abort(state: &mut Checkpoint, reason: &str) {
                 }
             }
         }
-        state.tool_result(
-            frame.call,
-            &json!({"recipeId":frame.preset_id,"steps":frame.results,"error":reason}),
-        );
+        let output = json!({"recipeId":frame.preset_id,"steps":frame.results,"error":reason});
+        finish_frame(state, frame, &output);
     }
 }
 
@@ -183,10 +194,8 @@ pub(super) fn advance(
     }
     if frame.cursor == frame.steps.len() {
         let frame = state.recipe_run.take().unwrap();
-        state.tool_result(
-            frame.call,
-            &json!({"recipeId":frame.preset_id,"steps":frame.results,"success":true}),
-        );
+        let output = json!({"recipeId":frame.preset_id,"steps":frame.results,"success":true});
+        finish_frame(state, frame, &output);
         return Ok(true);
     }
     let step = &frame.steps[frame.cursor];
@@ -248,6 +257,42 @@ mod tests {
         assert!(compile(recipe).is_err());
     }
 
+    /// A preset started by the API answers no assistant tool call: its
+    /// aggregate joins the user turn so no provider sees an orphan tool result.
+    #[test]
+    fn direct_recipe_results_join_the_user_turn() {
+        let mut state = checkpoint();
+        let before = state.history.len();
+        state.recipe_run = Some(RecipeRun {
+            call: ToolCall {
+                id: "preset_1".into(),
+                name: "run_recipe".into(),
+                arguments: "{}".into(),
+            },
+            preset_id: 1,
+            steps: vec![step("one", "time.info", json!({}))],
+            cursor: 0,
+            active_call: None,
+            outputs: HashMap::new(),
+            results: vec![],
+            direct: true,
+        });
+        abort(&mut state, "Interrupted");
+        assert!(state.task.step_results.contains_key("preset_1"));
+        assert!(
+            !state
+                .history
+                .iter()
+                .any(|message| matches!(message, ToolMessage::Tool { .. }))
+        );
+        let Some(ToolMessage::User { content }) = state.history.last() else {
+            panic!("aggregate must land in a user message");
+        };
+        assert!(content.contains("<untrusted_recipe_result>"));
+        assert!(content.contains("Interrupted"));
+        assert!(state.history.len() <= before + 1);
+    }
+
     #[test]
     fn internal_results_do_not_create_orphan_provider_messages() {
         let mut state = checkpoint();
@@ -264,6 +309,7 @@ mod tests {
             active_call: Some("child".into()),
             outputs: HashMap::new(),
             results: vec![],
+            direct: false,
         });
         state.tool_result(
             ToolCall {

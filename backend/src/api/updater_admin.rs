@@ -444,6 +444,8 @@ pub struct UpdateBody {
     #[serde(default)]
     pub allow_irreversible: Option<bool>,
     #[serde(default)]
+    pub allow_compose_override: Option<bool>,
+    #[serde(default)]
     pub allow_skip_versions: bool,
     /// Explicit confirm when any risk / downgrade flags are set. Required by updater
     /// soft gate; normal upgrades leave this false/omitted (no extra UX click).
@@ -457,6 +459,7 @@ fn update_requests_risk(body: &UpdateBody) -> bool {
         || body.allow_diverged == Some(true)
         || body.allow_unknown == Some(true)
         || body.allow_irreversible == Some(true)
+        || body.allow_compose_override == Some(true)
 }
 
 pub async fn trigger_update(
@@ -523,6 +526,9 @@ pub async fn trigger_update(
     }
     if let Some(v) = body.allow_irreversible {
         payload["allow_irreversible"] = json!(v);
+    }
+    if let Some(v) = body.allow_compose_override {
+        payload["allow_compose_override"] = json!(v);
     }
     match c
         .post_json_with_actor("/update", Some(&payload), idem.as_deref(), actor.as_deref())

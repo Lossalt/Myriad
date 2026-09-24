@@ -552,6 +552,8 @@
   "updaterLastFailedBody": "{from} から {to} への更新に失敗しました。理由: {reason}",
   "updaterLastFailedDismiss": "今後表示しない",
   "updaterLastFailedDismissAria": "この失敗通知を今後表示しない",
+  "updaterLastFailedComposeReason": "デプロイの Compose ファイルが更新側の最後の書き込みと異なるか、初回更新でまだ記録がありません。続行すると新バージョンのテンプレートで上書きされます。元のファイルは先に state/compose-backup/ にバックアップされます。",
+  "updaterLastFailedComposeRetry": "上書きして再試行",
   "updaterHintHealthy": "このチャネルに利用可能な更新はありません。",
   "updaterHintUpdating": "完了後に動作状態を自動確認します。",
   "updaterHintMaintenance": "準備ができたら下から解除できます。",

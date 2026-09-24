@@ -49,10 +49,45 @@ impl Agent {
         request: UserRequest,
         tx: Option<Sender<AgentProgressEvent>>,
     ) -> Result<AgentResponse, String> {
+        let state = self.new_work_checkpoint(&request).await;
+        self.launch_work_loop(state, tx).await
+    }
+
+    /// Run a saved preset as a Work task. Its steps run first, each through
+    /// `work_tool` (grants, confirmation, checkpoints); the model then answers
+    /// from the aggregate folded into the user turn.
+    pub(crate) async fn start_preset_work_loop(
+        &self,
+        request: UserRequest,
+        preset_id: i32,
+        tx: Option<Sender<AgentProgressEvent>>,
+    ) -> Result<AgentResponse, String> {
+        // A saved preset is an execution shortcut, not a way around her mood.
+        let refusal = super::merope::maybe_refuse_new_task(&self.db, request.user_id).await;
+        if let Some(response) = self
+            .mood_refuse_response(request.user_id, refusal, tx.as_ref())
+            .await
+        {
+            return Ok(response);
+        }
+        let mut state = self.new_work_checkpoint(&request).await;
+        let call = ToolCall {
+            id: format!("preset_{}", uuid::Uuid::new_v4().simple()),
+            name: "run_recipe".into(),
+            arguments: json!({"preset_id": preset_id}).to_string(),
+        };
+        recipes::start(&self.db, &mut state, call, preset_id).await?;
+        if let Some(frame) = state.recipe_run.as_mut() {
+            frame.direct = true;
+        }
+        self.launch_work_loop(state, tx).await
+    }
+
+    async fn new_work_checkpoint(&self, request: &UserRequest) -> Checkpoint {
         let mut recipe = Self::build_recipe_from_steps(
             vec![],
             request.raw_input.chars().take(120).collect(),
-            &request,
+            request,
         );
         recipe.engine = AgentEngine::WorkLoop;
         let mut task = TaskState::new(&recipe);
@@ -98,8 +133,8 @@ impl Agent {
             );
         }
         task.execution_context = Some(context);
-        let evidence = request_evidence(&request, &recipe, &task);
-        let mut state = Checkpoint {
+        let evidence = request_evidence(request, &recipe, &task);
+        Checkpoint {
             budget: Some(budget::Budget::default()),
             recipe_run: None,
             version: 1,
@@ -128,7 +163,14 @@ impl Agent {
             active_ms: 0,
             plan: json!([]),
             final_text: String::new(),
-        };
+        }
+    }
+
+    async fn launch_work_loop(
+        &self,
+        mut state: Checkpoint,
+        tx: Option<Sender<AgentProgressEvent>>,
+    ) -> Result<AgentResponse, String> {
         store::save(&self.db, &mut state).await?;
         if let Some(tx) = &tx {
             let _ = tx

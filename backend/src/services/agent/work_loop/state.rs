@@ -59,8 +59,24 @@ impl Checkpoint {
     }
 
     pub fn tool_result(&mut self, call: ToolCall, output: &Value) {
-        // Local questions, declined calls and recovery results must also be
-        // retrievable after their history text is compacted.
+        self.record_result(&call, output);
+        if self
+            .recipe_run
+            .as_ref()
+            .and_then(|frame| frame.active_call.as_ref())
+            == Some(&call.id)
+        {
+            return;
+        }
+        self.history.push(ToolMessage::Tool {
+            call,
+            content: preview(output, RESULT_CHARS),
+        });
+    }
+
+    /// Local questions, declined calls and recovery results must also be
+    /// retrievable after their history text is compacted.
+    fn record_result(&mut self, call: &ToolCall, output: &Value) {
         self.task
             .step_results
             .entry(call.id.clone())
@@ -75,18 +91,22 @@ impl Checkpoint {
                 duration_ms: 0,
                 retry_count: 0,
             });
-        if self
-            .recipe_run
-            .as_ref()
-            .and_then(|frame| frame.active_call.as_ref())
-            == Some(&call.id)
-        {
-            return;
+    }
+
+    /// A recipe started directly (preset API) answers no assistant tool call,
+    /// so its aggregate joins the user turn instead of a tool message. Every
+    /// provider then sees a well-formed history before the first model turn.
+    pub fn direct_recipe_result(&mut self, call: ToolCall, output: &Value) {
+        self.record_result(&call, output);
+        let text =
+            myriad_agent_rules::untrusted_block("recipe_result", &preview(output, RESULT_CHARS));
+        match self.history.last_mut() {
+            Some(ToolMessage::User { content }) => {
+                content.push_str("\n\n");
+                content.push_str(&text);
+            }
+            _ => self.history.push(ToolMessage::User { content: text }),
         }
-        self.history.push(ToolMessage::Tool {
-            call,
-            content: preview(output, RESULT_CHARS),
-        });
     }
 
     pub fn budget_error(&self) -> Option<&'static str> {

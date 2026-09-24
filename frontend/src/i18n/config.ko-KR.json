@@ -552,6 +552,8 @@
   "updaterLastFailedBody": "{from}에서 {to}(으)로 실패. 이유: {reason}",
   "updaterLastFailedDismiss": "다시 보지 않기",
   "updaterLastFailedDismissAria": "이 실패 알림을 더 이상 보지 않기",
+  "updaterLastFailedComposeReason": "배포 Compose 파일이 업데이터가 마지막으로 쓴 내용과 다르거나, 첫 업데이트라 아직 기록이 없습니다. 계속하면 새 버전 템플릿으로 덮어쓰며, 원본은 먼저 state/compose-backup/ 에 백업됩니다.",
+  "updaterLastFailedComposeRetry": "덮어쓰고 다시 시도",
   "updaterHintHealthy": "이 채널에 받을 업데이트가 없습니다.",
   "updaterHintUpdating": "끝나면 시스템을 확인합니다.",
   "updaterHintMaintenance": "준비되면 아래에서 유지보수를 끝내세요.",
