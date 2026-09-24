@@ -956,16 +956,21 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
                     }
                 } else {
                     match scheduler.refresh_all_enabled().await {
-                        Ok((attempted, refreshed, failed, new_items)) => Ok(json!({
-                            "success": failed == 0,
+                        Ok(summary) => Ok(json!({
+                            "success": summary.failed == 0,
                             "action": "refresh",
                             "status": "refreshed",
-                            "attempted": attempted,
-                            "refreshed": refreshed,
-                            "failed": failed,
-                            "newItems": new_items,
+                            "attempted": summary.attempted,
+                            "refreshed": summary.refreshed,
+                            "failed": summary.failed,
+                            "busy": summary.busy,
+                            "newItems": summary.new_items,
                             "message": format!(
-                                "Refreshed {refreshed} sources ({failed} failed), {new_items} new items"
+                                "Refreshed {} sources ({} failed, {} already refreshing), {} new items",
+                                summary.refreshed,
+                                summary.failed,
+                                summary.busy,
+                                summary.new_items
                             )
                         })),
                         Err(e) => {

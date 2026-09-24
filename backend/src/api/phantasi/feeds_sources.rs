@@ -21,7 +21,7 @@ use serde_json::json;
 use crate::models::entities::{phantasi_categories, phantasi_items, phantasi_sources};
 use crate::services::icon_service::IconService;
 use crate::services::phantasi_parser::{FeedParser, ParseError, ParsedFeed};
-use crate::services::phantasi_scheduler::get_phantasi_scheduler;
+use crate::services::phantasi_scheduler::{SOURCE_REFRESH_IN_PROGRESS, get_phantasi_scheduler};
 
 use super::helpers::{
     admin_user_id, build_feed_discovery_candidates, get_phantasi_viewer, materialize_source_icon,
@@ -924,7 +924,9 @@ pub(crate) async fn refresh_source(
                 Ok(new_count) => Ok(Json(json!({ "success": true, "new_items": new_count }))),
                 Err(error) => {
                     tracing::error!(%error, "Failed to refresh source");
-                    let status = if error.starts_with("Failed to fetch feed") {
+                    let status = if error == SOURCE_REFRESH_IN_PROGRESS {
+                        StatusCode::CONFLICT
+                    } else if error.starts_with("Failed to fetch feed") {
                         StatusCode::BAD_GATEWAY
                     } else if error.starts_with("Failed to parse feed") {
                         StatusCode::UNPROCESSABLE_ENTITY
