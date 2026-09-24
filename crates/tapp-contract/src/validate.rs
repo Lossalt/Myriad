@@ -162,6 +162,12 @@ pub fn validate_tapp_manifest(
     current_system_version: &semver::Version,
 ) -> Result<(), String> {
     validate_tapp_id(&manifest.id)?;
+    if crate::paths::is_reserved_tapp_id(&manifest.id) {
+        return Err(format!(
+            "Tapp ids starting with \"{}\" are reserved for the host",
+            crate::paths::RESERVED_TAPP_ID_PREFIX
+        ));
+    }
     if manifest.name.trim().is_empty() || manifest.name.len() > 255 {
         return Err("Tapp name must contain 1-255 characters".to_string());
     }

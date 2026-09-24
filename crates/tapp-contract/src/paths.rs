@@ -78,6 +78,16 @@ pub fn is_safe_path_component(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
 }
 
+/// Ids the host itself uses (e.g. core scheduled work). No package may take
+/// one, or it would inherit what the host grants to that id.
+pub const RESERVED_TAPP_ID_PREFIX: &str = "myriad.";
+
+pub fn is_reserved_tapp_id(tapp_id: &str) -> bool {
+    tapp_id
+        .get(..RESERVED_TAPP_ID_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(RESERVED_TAPP_ID_PREFIX))
+}
+
 pub fn validate_tapp_id(tapp_id: &str) -> Result<(), String> {
     if tapp_id.len() > MAX_TAPP_ID_LEN
         || !tapp_id
@@ -290,6 +300,14 @@ pub fn validate_asset_path(path: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::manifest::TappSettingOption;
+
+    #[test]
+    fn host_namespace_ids_are_reserved() {
+        assert!(is_reserved_tapp_id("myriad.core.platform-sync"));
+        assert!(is_reserved_tapp_id("Myriad.anything"));
+        assert!(!is_reserved_tapp_id("com.myriad.safe-app_2"));
+        assert!(!is_reserved_tapp_id("myriad"));
+    }
     use serde_json::json;
 
     #[test]

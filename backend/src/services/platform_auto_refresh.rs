@@ -15,6 +15,7 @@ use crate::models::entities::tapp_scheduled_tasks::{
     self, ExecutionTarget, MissedPolicy, ScheduleType, TaskScope,
 };
 
+/// In the host-reserved namespace, so no installed package can claim it.
 pub const CORE_PLATFORM_SYNC_TAPP_ID: &str = "myriad.core.platform-sync";
 const CORE_PLATFORM_SYNC_TASK_PREFIX: &str = "platform-sync:";
 const MIN_INTERVAL_HOURS: i32 = 1;
@@ -234,6 +235,13 @@ pub async fn reconcile_platform_auto_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_sync_id_cannot_be_claimed_by_a_package() {
+        assert!(myriad_tapp_contract::paths::is_reserved_tapp_id(
+            CORE_PLATFORM_SYNC_TAPP_ID
+        ));
+    }
 
     #[test]
     fn normalizes_config_and_api_platform_names() {
