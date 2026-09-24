@@ -12,9 +12,8 @@ use sea_orm::{
 use serde_json::json;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::RwLock;
 
 use crate::services::agent::ai_process_pure::USER_TEXT_MAX_CHARS;
 use crate::services::tapp_registry::{self as shared_registry};
@@ -61,51 +60,37 @@ impl TappSchedulerEngine {
     pub fn new(db: DatabaseConnection) -> Self {
         Self {
             db,
-            running: Arc::new(RwLock::new(false)),
+            job: std::sync::Mutex::new(None),
         }
     }
 
-    /// 启动调度引擎
-    pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
+    /// 启动调度引擎。主循环登记在进程 job runner 上，停机时由 runner 统一取消并
+    /// 等在途 tick 收尾；重复调用不会再起第二个循环。
+    pub fn start(&self) {
+        let mut job = self
+            .job
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if job.as_ref().is_some_and(|job| !job.is_cancelled()) {
             tracing::warn!("[TappScheduler] Already running");
             return;
         }
-        *running = true;
-        drop(running);
 
         tracing::info!("[TappScheduler] Starting scheduler engine");
 
-        // 启动主调度循环
         let db = self.db.clone();
-        let running = self.running.clone();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-
-            loop {
-                interval.tick().await;
-
-                // 检查是否停止
-                if !*running.read().await {
-                    tracing::info!("[TappScheduler] Scheduler stopped");
-                    break;
+        *job = Some(crate::services::jobs::jobs().periodic(
+            "tapp scheduler",
+            crate::services::jobs::Every::new(std::time::Duration::from_secs(60)),
+            move || {
+                let db = db.clone();
+                async move {
+                    if let Err(e) = Self::tick(&db).await {
+                        tracing::error!("[TappScheduler] Tick error: {}", e);
+                    }
                 }
-
-                // 执行调度
-                if let Err(e) = Self::tick(&db).await {
-                    tracing::error!("[TappScheduler] Tick error: {}", e);
-                }
-            }
-        });
-    }
-
-    /// 停止调度引擎
-    pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
-        tracing::info!("[TappScheduler] Stopping scheduler engine");
+            },
+        ));
     }
 
     /// 主调度循环 tick

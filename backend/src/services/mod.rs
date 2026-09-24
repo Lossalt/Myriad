@@ -31,6 +31,7 @@ pub mod governed_text; // Governed AI text sink (scheduler + declared-API builti
 pub mod http_client; // Shared HTTP client with proxy support
 pub mod image_generation; // OpenAI / OpenRouter / Volcengine / Gemini image providers
 pub mod image_proxy_urls; // Shared image proxy URL rewrite (profile/export/library)
+pub mod jobs; // Process-owned periodic background jobs and their shutdown
 pub mod json_schema_subset;
 pub mod kugou_service; // Kugou lyrics (KRC) supplement
 pub mod library_items; // Library item models, paging, Bangumi/MAL builders, preferences, assembly cache

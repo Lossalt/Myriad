@@ -918,7 +918,7 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
     match action {
         PhantasiScheduleAction::Start => match get_phantasi_scheduler() {
             Some(scheduler) => {
-                scheduler.start().await;
+                scheduler.start();
                 Ok(json!({
                     "success": true,
                     "action": "start",
@@ -930,7 +930,7 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
         },
         PhantasiScheduleAction::Stop => match get_phantasi_scheduler() {
             Some(scheduler) => {
-                scheduler.stop().await;
+                scheduler.stop();
                 Ok(json!({
                     "success": true,
                     "action": "stop",
@@ -983,11 +983,11 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
             _ => Err("Phantasi scheduler not initialized".to_string()),
         },
         PhantasiScheduleAction::Status => {
-            let scheduler_active = get_phantasi_scheduler().is_some();
+            let scheduler = get_phantasi_scheduler();
             Ok(json!({
                 "action": "status",
-                "running": scheduler_active,
-                "available": scheduler_active,
+                "running": scheduler.as_ref().is_some_and(|s| s.is_running()),
+                "available": scheduler.is_some(),
                 "checkedAt": chrono::Utc::now().to_rfc3339()
             }))
         }

@@ -16,18 +16,19 @@ pub fn scheduler_engine() -> Result<Arc<TappSchedulerEngine>, String> {
     try_scheduler_engine().ok_or_else(|| "Scheduler not initialized".to_string())
 }
 
-/// Initialize the process-wide scheduler engine.
-pub async fn init_scheduler(db: sea_orm::DatabaseConnection) {
-    let engine = TappSchedulerEngine::new(db);
-    engine.start().await;
-    let _ = SCHEDULER_ENGINE.set(Arc::new(engine));
-    tracing::info!("[TappScheduler] Scheduler initialized");
-}
-
-/// Shut down the process-wide scheduler engine.
-pub async fn shutdown_scheduler() {
-    if let Some(engine) = SCHEDULER_ENGINE.get() {
-        engine.stop().await;
-        tracing::info!("[TappScheduler] Scheduler shut down");
+/// Initialize the process-wide scheduler engine. The engine is published
+/// before it starts, so a second call finds it and starts nothing. Its loop is
+/// stopped by the process job runner's shutdown.
+pub fn init_scheduler(db: sea_orm::DatabaseConnection) {
+    if SCHEDULER_ENGINE
+        .set(Arc::new(TappSchedulerEngine::new(db)))
+        .is_err()
+    {
+        tracing::warn!("[TappScheduler] Scheduler already initialized");
+        return;
     }
+    if let Some(engine) = SCHEDULER_ENGINE.get() {
+        engine.start();
+    }
+    tracing::info!("[TappScheduler] Scheduler initialized");
 }

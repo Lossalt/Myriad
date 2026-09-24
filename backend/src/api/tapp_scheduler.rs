@@ -35,13 +35,9 @@ use crate::services::tapp_scheduler::{
 use uuid::Uuid;
 
 /// Initialize the process-wide scheduler engine (owned by services).
-pub async fn init_scheduler(db: DatabaseConnection) {
-    crate::services::tapp_scheduler::init_scheduler(db).await;
-}
-
-/// Shut down the process-wide scheduler engine.
-pub async fn shutdown_scheduler() {
-    crate::services::tapp_scheduler::shutdown_scheduler().await;
+/// Its loop stops with the process job runner (`services::jobs::shutdown`).
+pub fn init_scheduler(db: DatabaseConnection) {
+    crate::services::tapp_scheduler::init_scheduler(db);
 }
 
 /// HTTP-facing handle: 503 when the engine has not been started.

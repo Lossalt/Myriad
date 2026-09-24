@@ -467,7 +467,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 tracing::info!("✅ Agent notification system initialized");
 
                 // Initialize Tapp scheduler engine
-                api::tapp_scheduler::init_scheduler(db.clone()).await;
+                api::tapp_scheduler::init_scheduler(db.clone());
                 tracing::info!("✅ Tapp scheduler engine initialized");
 
                 // Reconcile Myriad Core platform refresh jobs after the shared
@@ -487,7 +487,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 }
 
                 // Initialize Phantasi scheduler engine (RSS/Atom feed updates)
-                services::phantasi_scheduler::init_phantasi_scheduler(db.clone()).await;
+                services::phantasi_scheduler::init_phantasi_scheduler(db.clone());
                 tracing::info!("✅ Phantasi scheduler engine initialized");
 
                 // Process-global DB must be wired before persona boot recovery.
@@ -772,9 +772,9 @@ async fn shutdown_signal() {
 
     tracing::info!("Starting graceful shutdown...");
 
-    // 停止调度器引擎
-    api::tapp_scheduler::shutdown_scheduler().await;
-    services::phantasi_scheduler::shutdown_phantasi_scheduler().await;
+    // 停止全部后台 job（含 Tapp / Phantasi 调度器）：先停发新 tick，
+    // 在期限内等在途 tick 收尾，超时中止。
+    services::jobs::shutdown(services::jobs::SHUTDOWN_DRAIN).await;
 
     persona::shutdown().await;
 }

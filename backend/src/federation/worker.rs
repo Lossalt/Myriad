@@ -169,6 +169,7 @@ pub async fn run() -> anyhow::Result<()> {
             http.abort();
         }
     }
+    crate::services::jobs::shutdown(crate::services::jobs::SHUTDOWN_DRAIN).await;
     result
 }
 

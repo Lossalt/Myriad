@@ -14,8 +14,11 @@ use sea_orm::{
     Statement, TransactionTrait, Value as SeaValue, sea_query::OnConflict,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
+use tokio::sync::broadcast;
+
+use crate::services::jobs::{Every, JobHandle, JobRunner};
 
 use crate::models::entities::{phantasi_items, phantasi_sources};
 use crate::services::notion_service::{NotionConfig, NotionService};
@@ -427,6 +430,8 @@ pub struct RefreshAllSummary {
 /// 调度器检查间隔（秒）
 const SCHEDULER_INTERVAL_SECS: u64 = 60;
 const NOTE_SCHEDULE_INTERVAL_SECS: u64 = 15;
+/// 抓取 tick 的随机延后上限，错开共享同一张租约表的副本。
+const FEED_TICK_JITTER_SECS: u64 = 5;
 
 /// 通知广播通道容量
 const NOTIFICATION_CHANNEL_SIZE: usize = 100;
@@ -457,8 +462,8 @@ pub struct PhantasiSchedulerEngine {
     rsshub_service: RsshubService,
     /// 前端通知通道
     notification_tx: broadcast::Sender<NewItemsNotification>,
-    /// 是否正在运行
-    running: Arc<RwLock<bool>>,
+    /// 抓取与定时发布两个循环在进程 job runner 里的句柄；空表示未运行。
+    jobs: std::sync::Mutex<Vec<JobHandle>>,
 }
 
 /// Result of one fetch attempt, after the source row was updated.
@@ -480,7 +485,7 @@ impl PhantasiSchedulerEngine {
             parser: FeedParser::new(),
             notion_service: NotionService::new(),
             notification_tx,
-            running: Arc::new(RwLock::new(false)),
+            jobs: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -489,61 +494,69 @@ impl PhantasiSchedulerEngine {
         self.notification_tx.subscribe()
     }
 
-    /// 启动调度引擎
-    pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
+    /// 启动调度引擎：订阅源抓取与手帐定时发布各是进程 job runner 上的一个循环，
+    /// 慢的抓取不再拖住定时发布。重复调用不会叠出第二组循环。
+    pub fn start(&self) {
+        self.start_on(crate::services::jobs::jobs());
+    }
+
+    fn start_on(&self, runner: &JobRunner) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        if jobs.iter().any(|job| !job.is_cancelled()) {
             tracing::warn!("[PhantasiScheduler] Already running");
             return;
         }
-        *running = true;
-        drop(running);
+        jobs.clear();
 
         tracing::info!("[PhantasiScheduler] 🍵 Starting Phantasi scheduler engine");
 
-        let db = self.db.clone();
-        let running = self.running.clone();
-        let notification_tx = self.notification_tx.clone();
-
-        tokio::spawn(async move {
-            let mut feeds =
-                tokio::time::interval(tokio::time::Duration::from_secs(SCHEDULER_INTERVAL_SECS));
-            let mut notes = tokio::time::interval(tokio::time::Duration::from_secs(
-                NOTE_SCHEDULE_INTERVAL_SECS,
-            ));
-            feeds.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            notes.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                tokio::select! {
-                    _ = notes.tick() => {
-                        if !*running.read().await {
-                            tracing::info!("[PhantasiScheduler] Scheduler stopped");
-                            break;
-                        }
-                        if let Err(e) = crate::services::note_publish::publish_due_note_docs(&db).await {
-                            tracing::error!("[PhantasiScheduler] Note schedule error: {}", e);
-                        }
+        let note_db = self.db.clone();
+        jobs.push(runner.periodic(
+            "phantasi note publish",
+            Every::new(Duration::from_secs(NOTE_SCHEDULE_INTERVAL_SECS)),
+            move || {
+                let db = note_db.clone();
+                async move {
+                    if let Err(e) = crate::services::note_publish::publish_due_note_docs(&db).await
+                    {
+                        tracing::error!("[PhantasiScheduler] Note schedule error: {}", e);
                     }
-                    _ = feeds.tick() => {
-                        if !*running.read().await {
-                            tracing::info!("[PhantasiScheduler] Scheduler stopped");
-                            break;
-                        }
+                }
+            },
+        ));
+        let feed_db = self.db.clone();
+        let notification_tx = self.notification_tx.clone();
+        jobs.push(
+            runner.periodic(
+                "phantasi feeds",
+                Every::new(Duration::from_secs(SCHEDULER_INTERVAL_SECS))
+                    .jitter(Duration::from_secs(FEED_TICK_JITTER_SECS)),
+                move || {
+                    let db = feed_db.clone();
+                    let notification_tx = notification_tx.clone();
+                    async move {
                         if let Err(e) = Self::tick(&db, &notification_tx).await {
                             tracing::error!("[PhantasiScheduler] Tick error: {}", e);
                         }
                     }
-                }
-            }
-        });
+                },
+            ),
+        );
     }
 
-    /// 停止调度引擎
-    pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+    /// 停止调度引擎：不再发起新 tick；在途的一轮抓取照常写完并释放租约。
+    pub fn stop(&self) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        for job in jobs.drain(..) {
+            job.cancel();
+        }
         tracing::info!("[PhantasiScheduler] 🍵 Stopping Phantasi scheduler engine");
+    }
+
+    /// 两个循环是否在跑（`stop` 之后为 false）。
+    pub fn is_running(&self) -> bool {
+        let jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        jobs.iter().any(|job| !job.is_cancelled())
     }
 
     /// 主调度循环 tick
@@ -1040,26 +1053,27 @@ impl PhantasiSchedulerEngine {
 static PHANTASI_SCHEDULER: once_cell::sync::OnceCell<Arc<PhantasiSchedulerEngine>> =
     once_cell::sync::OnceCell::new();
 
-/// 初始化 Phantasi 调度引擎
-pub async fn init_phantasi_scheduler(db: DatabaseConnection) {
-    let engine = Arc::new(PhantasiSchedulerEngine::new(db));
-    engine.start().await;
-
-    if PHANTASI_SCHEDULER.set(engine).is_err() {
+/// 初始化 Phantasi 调度引擎。
+///
+/// 先登记实例再启动：重复调用拿不到槽位就什么也不启动。反过来（先启动再
+/// `set`）会让落选的那个引擎循环照跑，却没有任何句柄能停掉它。
+/// 循环随进程 job runner 停机（`services::jobs::shutdown`）。
+pub fn init_phantasi_scheduler(db: DatabaseConnection) {
+    if PHANTASI_SCHEDULER
+        .set(Arc::new(PhantasiSchedulerEngine::new(db)))
+        .is_err()
+    {
         tracing::warn!("[PhantasiScheduler] Scheduler already initialized");
+        return;
+    }
+    if let Some(engine) = PHANTASI_SCHEDULER.get() {
+        engine.start();
     }
 }
 
 /// 获取 Phantasi 调度引擎实例
 pub fn get_phantasi_scheduler() -> Option<Arc<PhantasiSchedulerEngine>> {
     PHANTASI_SCHEDULER.get().cloned()
-}
-
-/// 停止 Phantasi 调度引擎
-pub async fn shutdown_phantasi_scheduler() {
-    if let Some(engine) = PHANTASI_SCHEDULER.get() {
-        engine.stop().await;
-    }
 }
 
 #[cfg(test)]
@@ -1086,6 +1100,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[tokio::test]
+    async fn repeated_start_does_not_stack_loops_and_stop_releases_them() {
+        let runner = JobRunner::new();
+        let engine = PhantasiSchedulerEngine::new(DatabaseConnection::default());
+        engine.start_on(&runner);
+        engine.start_on(&runner);
+        assert_eq!(engine.jobs.lock().unwrap().len(), 2);
+        assert!(engine.is_running());
+        engine.stop();
+        assert!(!engine.is_running());
+        // A stop/start cycle replaces the loops instead of adding to them.
+        engine.start_on(&runner);
+        assert_eq!(engine.jobs.lock().unwrap().len(), 2);
+        runner.shutdown(Duration::from_secs(5)).await;
+        assert!(!engine.is_running());
+    }
+
+    #[test]
+    fn init_publishes_the_engine_before_starting_it() {
+        let src = include_str!("phantasi_scheduler.rs");
+        let body = src
+            .split("pub fn init_phantasi_scheduler(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap();
+        let set = body.find("PHANTASI_SCHEDULER\n        .set(").unwrap();
+        let start = body.find("engine.start()").unwrap();
+        assert!(set < start, "a losing engine must never be started");
+    }
 
     #[test]
     fn healthy_and_briefly_failing_sources_keep_their_interval() {
