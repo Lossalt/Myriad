@@ -218,13 +218,12 @@ async fn require_merope_enabled() -> ApiResult<()> {
 
 async fn require_owner(claims: &Claims, db: &DatabaseConnection) -> ApiResult<i32> {
     let owner = site_owner_user_id(db).await.map_err(internal_error)?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(AppError::public_json("Invalid user")),
-            )
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AppError::public_json("Invalid user")),
+        )
+    })?;
     if user_id != owner {
         return Err((
             StatusCode::FORBIDDEN,

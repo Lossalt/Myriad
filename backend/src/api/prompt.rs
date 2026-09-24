@@ -50,7 +50,7 @@ Requirements:
 
     // 尝试使用 AI 生成高质量提示词
     if let Some(analyzer) = create_ai_analyzer().await {
-        let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+        let Some(user_id) = claims.durable_user_id() else {
             return Err(HttpError::from((
                 StatusCode::FORBIDDEN,
                 Json(AppError::public_json("A durable user account is required")),

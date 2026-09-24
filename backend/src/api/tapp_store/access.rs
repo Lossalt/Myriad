@@ -83,7 +83,7 @@ pub(super) async fn current_is_admin(claims: &Claims, db: &DatabaseConnection) -
 
 /// HTTP adapter: parse Claims.sub via domain subject rules.
 pub(super) fn optional_authenticated_user_id(claims: Option<&Claims>) -> Option<i32> {
-    claims.and_then(|claims| tapp_ownership::parse_authenticated_subject_id(&claims.sub))
+    claims.and_then(|claims| claims.subject_id().filter(|id| *id >= 0))
 }
 
 fn require_runtime_storage_grant(
@@ -105,7 +105,7 @@ pub(crate) use crate::services::tapp_storage::{
 /// (negative `sub`). Differs from [`optional_authenticated_user_id`], which
 /// drops guests for install-namespace lookups that only apply to durable users.
 fn actor_subject_id(claims: &Claims) -> Option<i32> {
-    claims.sub.parse::<i32>().ok().filter(|id| *id != 0)
+    claims.subject_id().filter(|id| *id != 0)
 }
 
 /// HTTP adapter: resolve [`TappStorageAccess`] from a Runtime Grant + Claims.

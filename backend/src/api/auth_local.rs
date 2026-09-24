@@ -509,13 +509,12 @@ pub async fn change_password(
             )
         })?;
 
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user ID")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user ID")),
+        ))
+    })?;
 
     tracing::info!("Password change request for user ID: {}", user_id);
 
@@ -964,13 +963,12 @@ pub async fn set_password(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user id")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user id")),
+        ))
+    })?;
 
     validate_password(&req.new_password)?;
 
@@ -1084,13 +1082,12 @@ pub async fn toggle_local_login(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user id")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user id")),
+        ))
+    })?;
 
     let txn = db
         .begin()
@@ -1242,13 +1239,12 @@ pub async fn admin_create_user(
         })?;
     ensure_current_admin_on(&claims, &db).await?;
 
-    let actor_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            ))
-        })?;
+    let actor_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        ))
+    })?;
     // 仅站点 owner 可创建带 is_admin=true 的账号。
     let actor_is_owner = crate::api::admin_users::actor_is_owner(&db, actor_id).await?;
     if let Some(msg) =

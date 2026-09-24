@@ -279,10 +279,10 @@ pub async fn provider_link(
             ))
         })?;
 
-    let user_id = match claims.sub.parse::<i32>() {
-        Ok(id) if id > 0 => id,
-        Ok(_) => return Err(err_400("Guest sessions cannot link OAuth providers")),
-        Err(_) => return Err(err_400("Invalid user id")),
+    let user_id = match claims.subject_id() {
+        Some(id) if id > 0 => id,
+        Some(_) => return Err(err_400("Guest sessions cannot link OAuth providers")),
+        None => return Err(err_400("Invalid user id")),
     };
     if is_pairing_provider(&slug) {
         return Err(err_400("Channel pairing is not an OAuth provider"));
@@ -1197,7 +1197,8 @@ pub async fn provider_unlink(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     if is_pairing_provider(&slug) {
@@ -1320,7 +1321,8 @@ pub async fn list_my_identities(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     let rows = db
@@ -1386,7 +1388,8 @@ pub async fn set_primary_identity(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     let row = db

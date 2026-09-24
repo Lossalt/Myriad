@@ -367,13 +367,12 @@ pub async fn update_user(
     AdminClaims(claims): AdminClaims,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let self_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            )
-        })?;
+    let self_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        )
+    })?;
     let actor_is_owner = load_is_owner(&db, self_id).await?;
 
     let target = db
@@ -647,13 +646,12 @@ pub async fn delete_user(
     Path(user_id): Path<i32>,
     AdminClaims(claims): AdminClaims,
 ) -> Result<Json<Value>, ApiError> {
-    let self_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            )
-        })?;
+    let self_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        )
+    })?;
     let actor_is_owner = load_is_owner(&db, self_id).await?;
 
     if user_id == self_id {
@@ -764,7 +762,7 @@ mod tests {
     fn admin_actor_id_is_not_decoded_to_zero() {
         let src = include_str!("admin_users.rs");
         let production = src.split("#[cfg(test)]").next().expect("production");
-        assert!(production.contains("positive_user_id"));
+        assert!(production.contains("durable_user_id()"));
         assert!(!production.contains("claims.sub.parse().unwrap_or(0)"));
     }
 

@@ -87,9 +87,8 @@ pub(crate) async fn write_storage_value(
 /// settings without a login 401.
 fn settings_subject_id(claims: &Claims) -> Result<i32, HttpError> {
     claims
-        .sub
-        .parse::<i32>()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))
 }
 
 async fn authorize_tapp_settings(
@@ -631,10 +630,9 @@ pub(super) async fn list_storage_keys(
     Path(tapp_id): Path<String>,
 ) -> Result<Json<ApiResponse<Vec<String>>>, HttpError> {
     let access = authorize_runtime_storage(&claims, &runtime_grant, &tapp_id)?;
-    let keys =
-        storage_svc::sandbox_storage_keys(&db, access.private_storage_namespace(), &tapp_id)
-            .await
-            .map_err(|error| HttpError::from(storage_status(error)))?;
+    let keys = storage_svc::sandbox_storage_keys(&db, access.private_storage_namespace(), &tapp_id)
+        .await
+        .map_err(|error| HttpError::from(storage_status(error)))?;
     Ok(Json(ApiResponse::success(keys)))
 }
 

@@ -206,23 +206,14 @@ pub async fn get_current_user(
 }
 
 /// `PUT /api/auth/me/locale` — durable users only; guests stay on localStorage.
+///
+/// Route sits behind `auth_middleware`; the subject comes from its claims.
 pub async fn set_current_user_locale(
     crate::extract::Db(db): crate::extract::Db,
-    headers: HeaderMap,
+    crate::extract::AuthedClaims(claims): crate::extract::AuthedClaims,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let claims = crate::middleware::auth::authenticate_request(&headers, &db)
-        .await
-        .map_err(|_| {
-            HttpError::from((
-                StatusCode::UNAUTHORIZED,
-                Json(AppError::public_json("Unauthorized")),
-            ))
-        })?;
-
-    let Some(user_id) =
-        crate::services::tapp_ownership::parse_authenticated_subject_id(&claims.sub)
-    else {
+    let Some(user_id) = claims.subject_id().filter(|id| *id >= 0) else {
         return Err(HttpError::from((
             StatusCode::FORBIDDEN,
             Json(json!({

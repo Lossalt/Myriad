@@ -79,9 +79,8 @@ pub async fn upload_media(
     multipart: axum::extract::Multipart,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
+        .subject_id()
+        .ok_or_else(|| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
     let (filename, mime, bytes) = read_file_field(multipart).await?;
     let actor = MediaActor::admin(user_id).map_err(|err| HttpError(err.into()))?;
     let created = MediaService::from_data_paths(paths())
@@ -189,9 +188,8 @@ pub async fn unpublish_media(
 
 pub(crate) fn actor_from_claims(claims: &Claims) -> Result<MediaActor, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
+        .subject_id()
+        .ok_or_else(|| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
     if claims.is_admin {
         MediaActor::admin(user_id).or_else(|_| Ok(MediaActor::site_operator(Some(user_id), true)))
     } else {

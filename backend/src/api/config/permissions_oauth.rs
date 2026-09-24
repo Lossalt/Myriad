@@ -44,9 +44,9 @@ pub async fn get_permissions(
         Some(c) if c.is_admin => UserRole::Admin,
         Some(c) => {
             // 检查是否为游客（负数 ID）
-            match c.sub.parse::<i32>() {
-                Ok(user_id) if user_id < 0 => UserRole::Guest,
-                Ok(user_id) if user_id > 0 => UserRole::User,
+            match c.subject_id() {
+                Some(user_id) if user_id < 0 => UserRole::Guest,
+                Some(user_id) if user_id > 0 => UserRole::User,
                 _ => UserRole::Guest,
             }
         }

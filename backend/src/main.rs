@@ -651,7 +651,7 @@ async fn export_settings(
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid authenticated user")),
@@ -694,7 +694,7 @@ async fn restore_settings(
     >,
     Json(payload): Json<api::config::SettingsBackup>,
 ) -> Response {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid authenticated user")),

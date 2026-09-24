@@ -11,7 +11,7 @@ use crate::services::agent::notification_preferences::{
 use crate::services::agent::notifications::get_notification_manager;
 
 fn user_id(claims: &Claims) -> Result<i32, HttpError> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
+    claims.durable_user_id().ok_or_else(|| {
         HttpError::from((
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid authenticated user")),
@@ -155,7 +155,10 @@ mod tests {
         // whenever a producer gains a new event, so compare against it directly.
         assert_eq!(first["catalog"]["sources"], json!(SOURCE_KEYS));
         // Compare whole definitions, so a changed `source` cannot slip through.
-        assert_eq!(first["catalog"]["events"], json!(EVENT_DEFINITIONS.as_slice()));
+        assert_eq!(
+            first["catalog"]["events"],
+            json!(EVENT_DEFINITIONS.as_slice())
+        );
         let catalog_keys: Vec<&str> = EVENT_DEFINITIONS.iter().map(|event| event.key).collect();
         assert_eq!(
             catalog_keys

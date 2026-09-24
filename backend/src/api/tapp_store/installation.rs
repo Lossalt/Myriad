@@ -145,9 +145,8 @@ pub(super) async fn install_tapp(
     Json(req): Json<InstallTappRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
     let role = current_user_role(&claims, &db).await;
     let is_current_admin = role == UserRole::Admin;
@@ -706,9 +705,8 @@ pub(super) async fn install_tapp_file(
     mut multipart: axum::extract::Multipart,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
     let role = current_user_role(&claims, &db).await;
     let is_current_admin = role == UserRole::Admin;
@@ -823,9 +821,8 @@ pub(super) async fn update_tapp(
     Json(req): Json<UpdateTappRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
     let role = current_user_role(&claims, &db).await;
     let _update_permit = acquire_install_permit().await?;

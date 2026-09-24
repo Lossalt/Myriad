@@ -325,13 +325,12 @@ pub async fn oauth_start(
         std::sync::Arc<tokio::sync::RwLock<crate::config::DynamicConfig>>,
     >,
 ) -> Result<Response, HttpError> {
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user id")),
-            )
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user id")),
+        )
+    })?;
 
     let config = dynamic_config.read().await;
     let (client_id, _client_secret) = resolve_discord_oauth_app(&config).map_err(|msg| {

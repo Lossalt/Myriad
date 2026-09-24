@@ -78,11 +78,10 @@ pub async fn generate_platform_reports(
     tracing::info!("   Platforms: {:?}", req.platforms);
     tracing::info!("   User: {} (ID: {})", claims.username, claims.sub);
 
-    let actor_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            tracing::error!("Failed to parse user_id from subject");
-            HttpError(AppError::unauthorized("Unauthorized"))
-        })?;
+    let actor_id = claims.durable_user_id().ok_or_else(|| {
+        tracing::error!("Failed to parse user_id from subject");
+        HttpError(AppError::unauthorized("Unauthorized"))
+    })?;
     let user_id = report_storage_user_id(&db, actor_id).await;
 
     let locale = match super::locale::locale_from_headers(&headers) {
@@ -160,9 +159,8 @@ pub async fn generate_all_reports(
     headers: HeaderMap,
 ) -> Result<Json<Value>, HttpError> {
     let actor_id = claims
-        .sub
-        .parse::<i32>()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     let user_id = report_storage_user_id(&db, actor_id).await;
 
     // 1. 获取用户启用的所有平台（AppState.dynamic_config，与 GLOBAL_* 同 Arc）

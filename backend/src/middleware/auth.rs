@@ -55,6 +55,13 @@ impl Claims {
         self.subject
     }
 
+    /// Raw subject id resolved at the auth boundary: durable users are
+    /// positive, signed guests negative. `None` for claims that never passed
+    /// the boundary. Prefer [`Self::durable_user_id`] unless guests are valid.
+    pub fn subject_id(&self) -> Option<i32> {
+        self.subject.map(AuthSubject::id)
+    }
+
     /// Durable user id (`sub > 0`) resolved at the auth boundary.
     pub fn durable_user_id(&self) -> Option<i32> {
         self.subject.and_then(AuthSubject::durable_user_id)
@@ -1433,7 +1440,7 @@ mod tests {
     /// Production source of every backend file except `middleware/auth.rs`,
     /// with test modules cut off and all whitespace removed so a pattern
     /// cannot hide behind a line break.
-    pub(crate) fn non_auth_production_sources() -> Vec<(String, String)> {
+    fn non_auth_production_sources() -> Vec<(String, String)> {
         fn visit(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -1447,11 +1454,10 @@ mod tests {
                     continue;
                 }
                 let source = std::fs::read_to_string(&path).unwrap();
-                let production = source
-                    .split("#[cfg(test)]\nmod ")
-                    .next()
-                    .unwrap_or_default();
-                let compact: String = production.chars().filter(|c| !c.is_whitespace()).collect();
+                let compact: String = strip_test_modules(&source)
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
                 out.push((path.display().to_string(), compact));
             }
         }
@@ -1461,6 +1467,85 @@ mod tests {
             &mut out,
         );
         out
+    }
+
+    /// Drop inline `#[cfg(test)] mod name { .. }` blocks (brace-matched, so a
+    /// test module at the top of a file does not hide the code after it).
+    fn strip_test_modules(source: &str) -> String {
+        const MARKER: &str = "#[cfg(test)]\nmod ";
+        let mut out = String::new();
+        let mut rest = source;
+        while let Some(start) = rest.find(MARKER) {
+            let body = &rest[start + MARKER.len()..];
+            let Some(open) = body.find(['{', ';']) else {
+                break;
+            };
+            if body.as_bytes()[open] == b';' {
+                // `mod name;`: the module lives in its own file.
+                let end = start + MARKER.len() + open + 1;
+                out.push_str(&rest[..end]);
+                rest = &rest[end..];
+                continue;
+            }
+            out.push_str(&rest[..start]);
+            let mut depth = 0usize;
+            let mut end = body.len();
+            for (index, ch) in body.char_indices().skip_while(|(index, _)| *index < open) {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = index + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &body[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Handlers read the subject the auth boundary parsed (`durable_user_id`,
+    /// `subject_id`, `DurableUserId`), never `claims.sub` again: one parse,
+    /// one semantics. `positive_user_id(&str)` stays for external input only.
+    #[test]
+    fn claims_sub_is_parsed_only_at_the_auth_boundary() {
+        let offenders: Vec<String> = non_auth_production_sources()
+            .into_iter()
+            .filter(|(path, _)| !path.ends_with("services/tapp_ownership.rs"))
+            .filter(|(_, source)| {
+                source.contains(".sub.parse")
+                    || ["positive_user_id(&", "parse_authenticated_subject_id(&"]
+                        .iter()
+                        .any(|call| {
+                            source.split(call).skip(1).any(|arg| {
+                                arg.split(')')
+                                    .next()
+                                    .is_some_and(|arg| arg.ends_with(".sub"))
+                            })
+                        })
+            })
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "read Claims::durable_user_id / subject_id instead of re-parsing claims.sub: \
+             {offenders:?}"
+        );
+    }
+
+    #[test]
+    fn strip_test_modules_keeps_code_around_inline_test_modules() {
+        let source = "#[cfg(test)]\nmod a;\nfn keep() {}\n#[cfg(test)]\nmod tests {\n    fn t() { if x { y } }\n}\nfn after() {}\n";
+        let stripped = strip_test_modules(source);
+        assert!(stripped.contains("mod a;"));
+        assert!(stripped.contains("fn keep()"));
+        assert!(stripped.contains("fn after()"));
+        assert!(!stripped.contains("fn t()"));
     }
 
     /// Session JWTs are decoded only by `verify_signed`; every other consumer
