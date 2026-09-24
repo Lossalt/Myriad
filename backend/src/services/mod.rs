@@ -123,6 +123,7 @@ pub mod notion_service;
 pub mod phantasi_parser;
 pub(crate) mod phantasi_reading;
 pub mod phantasi_scheduler;
+pub(crate) mod phantasi_subscribe;
 pub mod phantasi_topics;
 pub mod qq_bot; // QQ C2C Gateway worker
 pub mod qq_pairing; // QQ C2C pairing codes + user_identities

@@ -731,7 +731,11 @@ mod tests {
     #[test]
     fn import_opml_does_not_swallow_existing_url_lookup() {
         let body = impl_fn(include_str!("feeds_opml.rs"), "import_opml");
-        assert!(body.contains("phantasi_store_http(\"find existing sources\""));
+        assert!(body.contains("phantasi_store_http(\"import sources\""));
+        assert!(
+            body.contains("create_or_find_source("),
+            "import dedupes through the shared locked create path"
+        );
         assert!(!body.contains("unwrap_or_default"));
     }
 

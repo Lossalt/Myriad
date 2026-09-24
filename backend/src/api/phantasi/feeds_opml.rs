@@ -7,11 +7,13 @@ use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::models::entities::phantasi_sources;
+use crate::services::phantasi_subscribe::{NewSource, SourceCreation, create_or_find_source};
 
 use super::helpers::{
     admin_user_id, generate_opml, get_phantasi_viewer, parse_opml, phantasi_store_http,
@@ -42,29 +44,15 @@ pub(crate) async fn import_opml(
         )));
     }
 
-    // 批量查询已存在的源（避免 N+1）。按规范化 URL（`url_key`）比较，与手动添加、
-    // 友链申请同一规则；同一份 OPML 里的重复项也只收一次。
-    let feed_keys: Vec<String> = feeds
-        .iter()
-        .map(|f| phantasi_sources::url_match_key(&f.url))
-        .collect();
-    let mut existing_urls: std::collections::HashSet<String> = phantasi_sources::Entity::find()
-        .filter(phantasi_sources::Column::UrlKey.is_in(&feed_keys))
-        .all(&db)
-        .await
-        .map_err(|error| phantasi_store_http("find existing sources", error))?
-        .into_iter()
-        .filter_map(|s| s.url_key)
-        .collect();
-
+    // 逐条走共享的创建入口：与手动添加、友链审核、Agent 订阅同一去重规则与锁；
+    // 同一份 OPML 里的重复项在同一事务里也只收一次。整份导入同一事务，失败全回滚。
+    let total = feeds.len();
     let now = Utc::now();
-
-    // 收集需要插入的新订阅源
-    let new_sources: Vec<phantasi_sources::ActiveModel> = feeds
-        .into_iter()
-        .filter(|feed| existing_urls.insert(phantasi_sources::url_match_key(&feed.url)))
-        .map(|feed| {
-            let mut source = phantasi_sources::ActiveModel {
+    let imported = async {
+        let txn = db.begin().await?;
+        let mut imported = 0usize;
+        for feed in feeds {
+            let source = phantasi_sources::ActiveModel {
                 user_id: Set(user_id),
                 name: Set(feed.title),
                 url: Set(feed.url),
@@ -79,24 +67,18 @@ pub(crate) async fn import_opml(
                 updated_at: Set(now.into()),
                 ..Default::default()
             };
-            // insert_many 不经过 before_save 钩子
-            source.sync_url_keys();
-            source
-        })
-        .collect();
-
-    let imported = new_sources.len();
-    let skipped = feed_keys.len() - imported;
-
-    // 批量插入新订阅源
-    if !new_sources.is_empty() {
-        if let Err(e) = phantasi_sources::Entity::insert_many(new_sources)
-            .exec(&db)
-            .await
-        {
-            return Err(phantasi_store_http("import sources", e));
+            if let SourceCreation::Created(_) =
+                create_or_find_source(&txn, NewSource::new(source)).await?
+            {
+                imported += 1;
+            }
         }
+        txn.commit().await?;
+        Ok::<_, sea_orm::DbErr>(imported)
     }
+    .await
+    .map_err(|error| phantasi_store_http("import sources", error))?;
+    let skipped = total - imported;
 
     Ok(Json(json!({
         "success": true,
