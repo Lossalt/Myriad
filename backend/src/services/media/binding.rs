@@ -296,7 +296,15 @@ pub async fn bind(
         if matches!(authority, Authority::Anonymous) {
             break;
         }
-        let Some(asset_id) = resolve_cited(txn, &citation.path).await? else {
+        let mut asset_id = resolve_cited(txn, &citation.path).await?;
+        if asset_id.is_none() && unresolved == Unresolved::Reject {
+            // Authored content citing a cached image (an RSS picture, a
+            // proxied download) makes it durable instead of failing the save.
+            // Evictable caches themselves (RSS items) bind with Skip and are
+            // never imported wholesale.
+            asset_id = import_cached(txn, &citation.path).await?;
+        }
+        let Some(asset_id) = asset_id else {
             if unresolved == Unresolved::Reject {
                 return Err(MediaError::NotReady);
             }
@@ -347,6 +355,17 @@ pub async fn bind(
     publish_asset_ids(txn, &to_publish).await?;
     replace_for_consumer(txn, consumer.kind, &consumer.id, &refs).await?;
     Ok(bound)
+}
+
+async fn import_cached(txn: &impl ConnectionTrait, path: &str) -> Result<Option<i32>, MediaError> {
+    let data = crate::services::data_paths::paths();
+    super::migration::import_cached_citation(
+        txn,
+        &super::MediaStore::new(data.media.clone()),
+        &super::LegacyPaths::from_data_paths(data),
+        path,
+    )
+    .await
 }
 
 /// Resolve a cited path, including the brew/phantasi spelling of one cached file.

@@ -190,6 +190,43 @@ impl MediaService {
         Ok(())
     }
 
+    /// Promote a file from the evictable image cache into a durable asset
+    /// owned by `ctx`. Cache paths are not citable media; producers that hand
+    /// a cached download to content (channel inbound, agent tools) call this
+    /// instead. Keyed by the cache file, so repeating it is idempotent.
+    pub async fn persist_cached(
+        &self,
+        db: &DatabaseConnection,
+        ctx: MediaContext,
+        cached_url: &str,
+        claimed_mime: Option<&str>,
+        filename: &str,
+        exposure: MediaExposure,
+    ) -> Result<MediaAsset, MediaError> {
+        let (bytes, mime) = crate::services::image_cache::ImageCacheService::new()
+            .read_local_public_url(cached_url)
+            .await
+            .map_err(|_| MediaError::Missing)?;
+        let file = cached_url.rsplit('/').next().unwrap_or(cached_url);
+        let (asset, _) = self
+            .persist_ready_bytes(
+                db,
+                ctx.with_producer_key(format!("image-cache:{file}")),
+                NewMediaBytes {
+                    bytes: bytes.into(),
+                    claimed_mime: claimed_mime
+                        .filter(|value| value.starts_with("image/"))
+                        .map_or(mime, str::to_string),
+                    filename: filename.to_string(),
+                    max_bytes: crate::services::memory_profile::note_image_limit(),
+                    derived_from_id: None,
+                    exposure,
+                },
+            )
+            .await?;
+        Ok(asset)
+    }
+
     /// Persist bytes as a ready asset. `created` is false when `producer_key` hits.
     pub async fn persist_ready_bytes(
         &self,

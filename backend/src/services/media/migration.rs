@@ -54,6 +54,70 @@ pub struct CatalogPlan {
     pub kind: LegacyKind,
 }
 
+/// MIME of an importable legacy file, from its extension.
+pub(super) fn legacy_mime(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path).extension()?.to_str()?;
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        _ => return None,
+    })
+}
+
+/// Import a cached file that authored content cites into a durable public
+/// asset, aliased at the cached path, in the caller's transaction. From then
+/// on the asset's references are maintained transactionally like any new
+/// write. `None` when the path is not a cached file that still exists.
+pub(super) async fn import_cached_citation(
+    db: &impl ConnectionTrait,
+    store: &MediaStore,
+    paths: &LegacyPaths,
+    path: &str,
+) -> Result<Option<i32>, MediaError> {
+    if !(path.starts_with("/api/phantasi/image-cache/")
+        || path.starts_with("/api/brew/image-cache/"))
+    {
+        return Ok(None);
+    }
+    let Ok(plan) = plan_catalog_url(path, &[], paths) else {
+        return Ok(None);
+    };
+    let Some(mime) = legacy_mime(path) else {
+        return Ok(None);
+    };
+    if tokio::fs::metadata(&plan.disk).await.is_err() {
+        return Ok(None);
+    }
+    let row = media_assets::ActiveModel {
+        kind: Set("upload".into()),
+        url: Set(path.to_string()),
+        mime: Set(mime.into()),
+        name: Set(path.rsplit('/').next().unwrap_or("media").into()),
+        size: Set(0),
+        created_at: Set(Utc::now().fixed_offset()),
+        references_complete: Set(false),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+    match migrate_one(store, db, &row, &plan).await? {
+        Outcome::Copied { .. } | Outcome::Already { .. } => {}
+        Outcome::Missing | Outcome::Failed => return Ok(None),
+    }
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE media_assets SET references_complete = TRUE WHERE id = $1",
+        [row.id.into()],
+    ))
+    .await?;
+    Ok(Some(row.id))
+}
+
 pub fn plan_catalog_url(
     url: &str,
     allowed_origins: &[String],

@@ -680,28 +680,20 @@ async fn execute_rsshub_healthcheck(
 /// paths are no longer registered media and would fail those saves with
 /// MEDIA_NOT_READY, so promote the download to a public asset.
 async fn persist_cached_image(url: &str, ctx: &HandlerContext<'_>) -> Result<String, String> {
-    let cache = ImageCacheService::new();
-    let cached = cache.cache_image(url).await?;
-    let (bytes, mime) = cache.read_local_public_url(&cached).await?;
+    let cached = ImageCacheService::new().cache_image(url).await?;
     let file = cached.rsplit('/').next().unwrap_or(&cached).to_string();
-    let (asset, _) =
-        crate::services::media::MediaService::from_data_paths(crate::services::data_paths::paths())
-            .persist_ready_bytes(
-                ctx.db,
-                crate::services::media::task_media_context(ctx.user_id, ctx.user_id)
-                    .with_producer_key(format!("image-cache:{file}")),
-                crate::services::media::NewMediaBytes {
-                    bytes: bytes.into(),
-                    claimed_mime: mime,
-                    filename: file,
-                    max_bytes: crate::services::memory_profile::note_image_limit(),
-                    derived_from_id: None,
-                    exposure: crate::services::media::MediaExposure::Public,
-                },
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-    Ok(asset.catalog_url())
+    crate::services::media::MediaService::from_data_paths(crate::services::data_paths::paths())
+        .persist_cached(
+            ctx.db,
+            crate::services::media::task_media_context(ctx.user_id, ctx.user_id),
+            &cached,
+            None,
+            &file,
+            crate::services::media::MediaExposure::Public,
+        )
+        .await
+        .map(|asset| asset.url)
+        .map_err(|error| error.to_string())
 }
 
 async fn execute_image_cache(

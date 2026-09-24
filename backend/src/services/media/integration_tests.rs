@@ -2444,3 +2444,70 @@ async fn postgres_catalog_rows_move_to_the_permanent_address() {
     assert_eq!(row.url, image.url);
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_cited_cache_file_becomes_a_durable_aliased_asset() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let legacy_root = f.service.store().root().join("legacy");
+    let paths = LegacyPaths {
+        federation_root: legacy_root.join("federation"),
+        cache_images: legacy_root.join("cache"),
+    };
+    let hash = format!("cd{}", "0".repeat(62));
+    let url = format!("/api/phantasi/image-cache/cd/{hash}.png");
+    let source = paths.cache_images.join("cd").join(format!("{hash}.png"));
+    tokio::fs::create_dir_all(source.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&source, png()).await.unwrap();
+    let txn = f.db.begin().await.unwrap();
+    let id = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .expect("cached file imports");
+    txn.commit().await.unwrap();
+    // Both spellings of the cached file resolve to the one asset.
+    assert_eq!(resolve_asset_id(&f.db, &url).await.unwrap(), Some(id));
+    let brew = url.replace("/api/phantasi/", "/api/brew/");
+    assert_eq!(
+        binding_resolves(&f.db, &brew).await,
+        Some(id),
+        "brew spelling of the same cached file"
+    );
+    let row = assets::find_by_id(&f.db, id).await.unwrap().unwrap();
+    assert_eq!(row.state.as_deref(), Some("ready"));
+    assert_eq!(row.exposure.as_deref(), Some("public"));
+    assert!(row.references_complete, "new imports bind transactionally");
+    // Evicting the cache no longer matters.
+    tokio::fs::remove_file(&source).await.unwrap();
+    let asset = assets::to_domain(row, 0).unwrap();
+    let file = asset.url.rsplit('/').next().unwrap().to_string();
+    assert!(matches!(
+        resolve_public_asset(&f.db, f.service.store(), asset.public_id, &file)
+            .await
+            .unwrap(),
+        ServeOutcome::File(_)
+    ));
+    // A cache path whose file is gone is not importable.
+    let txn = f.db.begin().await.unwrap();
+    let gone = format!("/api/phantasi/image-cache/ef/ef{}.png", "0".repeat(62));
+    assert_eq!(
+        migration::import_cached_citation(&txn, f.service.store(), &paths, &gone)
+            .await
+            .unwrap(),
+        None
+    );
+    txn.rollback().await.unwrap();
+    f.close().await;
+}
+
+async fn binding_resolves(db: &sea_orm::DatabaseConnection, path: &str) -> Option<i32> {
+    match resolve_asset_id(db, path).await.unwrap() {
+        Some(id) => Some(id),
+        None => resolve_asset_id(db, &legacy::cache_equivalent_path(path)?)
+            .await
+            .unwrap(),
+    }
+}

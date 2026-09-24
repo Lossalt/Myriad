@@ -537,20 +537,8 @@ async fn import_cited(
         if copy {
             return Err(MediaError::NotReady);
         }
-        let ext = std::path::Path::new(url)
-            .extension()
-            .and_then(|v| v.to_str())
-            .unwrap_or("");
-        let mime = match ext.to_ascii_lowercase().as_str() {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "mp4" => "video/mp4",
-            "webm" => "video/webm",
-            "mov" => "video/quicktime",
-            _ => return Err(MediaError::invalid("Unsupported legacy media")),
-        };
+        let mime = migration::legacy_mime(url)
+            .ok_or_else(|| MediaError::invalid("Unsupported legacy media"))?;
         let asset = media_assets::ActiveModel {
             kind: Set("upload".into()),
             url: Set(url.clone()),
