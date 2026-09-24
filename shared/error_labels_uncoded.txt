@@ -36,7 +36,6 @@ Failed to load Tapp settings
 Failed to read media
 Failed to resolve site owner
 Failed to store media
-Failed to suggest a name
 Failed to write setup claim marker
 Federation feed is unavailable
 Guest session signing is unavailable
@@ -67,7 +66,6 @@ Login required
 MCP manager not initialized
 Media is not ready
 Memory not initialized
-Method not found
 Missing 'input' field
 Missing 'instruction' field
 Missing field: content
@@ -116,10 +114,8 @@ Work input does not match the accepted intention
 channel_id is required
 could not store font
 empty
-exists
 export_hash_failed
 export_integrity_failed
-gone
 invalid job id
 invalid snapshot id
 invalid_body
@@ -127,17 +123,12 @@ invalid_json
 invalid_mode
 invalid_path
 keyword required
-missing
 page must be >= 1
 pagination offset overflow
 site_title or hint is required
 sticker prompt must be 1 to 2000 characters
 too_many_rows
 updater credentials are not a valid HTTP header value
-updater down
 updater not configured (set MYRIAD_UPDATER_URL)
 updater service is not configured on this backend
 updater transport error
-upstream
-upstream failed
-x
