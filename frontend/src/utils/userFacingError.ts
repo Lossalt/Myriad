@@ -494,9 +494,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return classified(t.configFilePermission, raw, hint)
   }
-  if (
-    is('ai_response_invalid')
-  ) {
+  if (is('ai_response_invalid')) {
     return joinParts(t.aiResponseInvalid, usefulExtra(hint, t.aiResponseInvalid))
   }
   if (
@@ -1397,9 +1395,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     }
     return t.waitInputTimeout
   }
-  if (
-    is('text_rate_limited_wait_and_retry')
-  ) {
+  if (is('rate_limited')) {
     return t.rateLimited
   }
   if (
@@ -1423,9 +1419,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.forbidden
   }
-  if (
-    is('text_the_requested_resource_does_not_exist')
-  ) {
+  if (is('text_the_requested_resource_does_not_exist')) {
     return t.notFound
   }
   if (
@@ -1444,9 +1438,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (/^未知错误:|^Unknown error:/i.test(raw)) {
     return classified(t.unknown, raw, hint)
   }
-  if (
-    is('text_resume_exceeded_the_step_cap')
-  ) {
+  if (is('text_resume_exceeded_the_step_cap')) {
     return t.agentResumeOverCap
   }
   if (
@@ -1477,9 +1469,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (/^现在没在放歌|^Nothing is playing/i.test(raw)) {
     return currentCopy().music.noPlaying
   }
-  if (
-    is('text_task_submitted_waiting_to_run')
-  ) {
+  if (is('text_task_submitted_waiting_to_run')) {
     return t.agentSubmitted
   }
   const planFailed = raw.match(
@@ -1686,9 +1676,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       n: Number(mcpToolsLoaded[1] || mcpToolsLoaded[2] || '0'),
     })
   }
-  if (
-    is('text_maintenance_retry_succeeded')
-  ) {
+  if (is('text_maintenance_retry_succeeded')) {
     return t.noticeMcpMaintenanceRetry
   }
   if (is('text_auto_restart_succeeded')) {

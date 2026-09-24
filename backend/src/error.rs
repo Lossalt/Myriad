@@ -170,4 +170,96 @@ mod tests {
         assert_eq!(v["error"], "Setup already completed");
         assert_eq!(v["message"], "Admin exists");
     }
+
+    /// Public error labels written in code, as the scanner reads them.
+    fn literal_labels() -> std::collections::BTreeSet<String> {
+        const CONSTRUCTORS: &[&str] = &[
+            "bad_request",
+            "unauthorized",
+            "forbidden",
+            "not_found",
+            "conflict",
+            "service_unavailable",
+            "bad_gateway",
+            "internal",
+            "public_json",
+            "fail_json",
+        ];
+        fn visit(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name == "target") {
+                        continue;
+                    }
+                    visit(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                for constructor in CONSTRUCTORS {
+                    let needle = format!("AppError::{constructor}(");
+                    for rest in source.split(needle.as_str()).skip(1) {
+                        let Some(rest) = rest.trim_start().strip_prefix('"') else {
+                            continue;
+                        };
+                        let mut label = String::new();
+                        let mut chars = rest.chars();
+                        while let Some(c) = chars.next() {
+                            match c {
+                                '"' => break,
+                                '\\' => {
+                                    label.push('\\');
+                                    if let Some(next) = chars.next() {
+                                        label.push(next);
+                                    }
+                                }
+                                c => label.push(c),
+                            }
+                        }
+                        out.insert(label);
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut out = std::collections::BTreeSet::new();
+        visit(&root.join("src"), &mut out);
+        visit(&root.join("../crates"), &mut out);
+        out
+    }
+
+    /// Clients localize errors by code. A new public label must come with a
+    /// code in `shared/error_codes.json`; labels from before this rule are
+    /// listed in `shared/error_labels_uncoded.txt`, which may only shrink.
+    #[test]
+    fn every_public_error_label_has_a_code() {
+        let uncoded: std::collections::BTreeSet<&str> =
+            include_str!("../../shared/error_labels_uncoded.txt")
+                .lines()
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect();
+        let labels = literal_labels();
+        let missing: Vec<_> = labels
+            .iter()
+            .filter(|label| myriad_error::AppError::inferred_code(label).is_none())
+            .filter(|label| !uncoded.contains(label.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "give these labels a code in shared/error_codes.json: {missing:#?}"
+        );
+        let stale: Vec<_> = uncoded
+            .iter()
+            .filter(|label| {
+                !labels.contains(**label) || myriad_error::AppError::inferred_code(label).is_some()
+            })
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "remove from shared/error_labels_uncoded.txt: {stale:#?}"
+        );
+    }
 }

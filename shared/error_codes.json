@@ -122,7 +122,9 @@
     "Provider slug is required": "oauth_slug_required",
     "Invalid action": "media_action_invalid",
     "Invalid mode": "media_mode_invalid",
-    "Schema ensure failed": "schema_ensure_failed"
+    "Schema ensure failed": "schema_ensure_failed",
+    "db_error": "database_error",
+    "rate_limited": "rate_limited"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",
@@ -151,8 +153,8 @@
     "invalid audio data": "text_invalid_audio_data",
     "processing failed": "text_processing_failed",
     "confirmation failed": "text_confirmation_failed",
-    "API 速率限制，等待后重试": "text_rate_limited_wait_and_retry",
-    "Rate limited; wait and retry": "text_rate_limited_wait_and_retry",
+    "API 速率限制，等待后重试": "rate_limited",
+    "Rate limited; wait and retry": "rate_limited",
     "请求的资源不存在": "text_the_requested_resource_does_not_exist",
     "The requested resource does not exist": "text_the_requested_resource_does_not_exist",
     "恢复执行超出步骤上限": "text_resume_exceeded_the_step_cap",
