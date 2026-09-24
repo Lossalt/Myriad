@@ -34,6 +34,7 @@ export interface AppEventMap {
   'wallpaperChanged': { url: string, timestamp: number, fromCache: boolean }
   'wallpaperConfigChanged': void
   'footerConfigChanged': void
+  'islandContentChanged': void
 
   // Shell chrome
   'config-loaded': void

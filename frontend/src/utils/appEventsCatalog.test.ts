@@ -31,3 +31,11 @@ test('cataloged events are only built by emitAppEvent', () => {
   // A raw dispatch skips the payload type, which is how events drifted before.
   assert.deepEqual(offenders, [])
 })
+
+test('the public UI config cache is only invalidated through invalidateUIConfig', () => {
+  const offenders = sources(src)
+    .filter((file) => !file.endsWith('utils/requestDedup.ts'))
+    .filter((file) => readFileSync(file, 'utf8').includes(['clearDedupCache(`$', '{API_URL}/api/config/ui`)'].join('')))
+    .map((file) => file.slice(src.length))
+  assert.deepEqual(offenders, [])
+})

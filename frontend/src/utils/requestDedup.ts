@@ -1,5 +1,6 @@
 import { API_URL } from '../config'
 import { ApiError, apiService } from '../services/api'
+import { emitAppEvent } from './appEvents'
 import { authSubject } from './authSubject'
 import { httpStatusMessage } from './httpStatus'
 import { normalizeJsonMediaUrls } from './proxyImageUrl'
@@ -57,9 +58,24 @@ export function clearLibraryDataCache(): void {
   clearDedupCacheByPrefix(`${endpoint}?`)
 }
 
+const UI_CONFIG_KEY = `${API_URL}/api/config/ui`
+
+/** Events whose listeners re-read the public UI config. */
+export type UIConfigChange = 'wallpaperConfigChanged' | 'footerConfigChanged' | 'islandContentChanged'
+
+/**
+ * The one way to say "the public UI config changed": drop the cached copy
+ * and, when given, tell the surfaces that re-read it. Callers no longer
+ * rebuild the cache key or remember the paired event.
+ */
+export function invalidateUIConfig(change?: UIConfigChange): void {
+  clearDedupCache(UI_CONFIG_KEY)
+  if (change) emitAppEvent(change)
+}
+
 export async function getUIConfigDeduped(): Promise<any> {
   return dedupedFetch(
-    `${API_URL}/api/config/ui`,
+    UI_CONFIG_KEY,
     () => fetchDedupedJson('/config/ui'),
     { cacheTTL: 30 * 1000 },
   )

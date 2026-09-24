@@ -91,4 +91,4 @@ export function allowsIslandType(
   return true
 }
 
-export const ISLAND_CONTENT_CHANGED_EVENT = 'islandContentChanged'
+export const ISLAND_CONTENT_CHANGED_EVENT = 'islandContentChanged' as const
