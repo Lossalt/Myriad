@@ -11,7 +11,17 @@
     "DATABASE_ERROR": "database_error",
     "API_NOT_FOUND": "api_not_found",
     "INVALID_USER": "invalid_user",
-    "CONFIG_UNREADABLE": "config_load_failed"
+    "CONFIG_UNREADABLE": "config_load_failed",
+    "RATE_LIMIT_EXCEEDED": "rate_limited",
+    "NOTIFICATION_SYSTEM_UNAVAILABLE": "notification_unavailable",
+    "MEDIA_TOO_LARGE": "file_too_large",
+    "COMPONENT_DATABASE_ERROR": "database_error",
+    "REPORT_DATABASE_ERROR": "database_error",
+    "SHORTCUT_DATABASE_ERROR": "database_error",
+    "COMPONENT_NOT_FOUND": "not_found",
+    "REPORT_NOT_FOUND": "not_found",
+    "SHORTCUT_NOT_FOUND": "not_found",
+    "TAPP_STORAGE_UNAUTHENTICATED": "unauthorized"
   },
   "labels": {
     "Database error": "database_error",
