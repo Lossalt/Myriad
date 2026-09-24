@@ -842,7 +842,16 @@
     "Failed to drain scheduler mailbox": "scheduler_failed",
     "Failed to count scheduler subjects": "scheduler_failed",
     "Failed to count scheduler mailbox": "scheduler_failed",
-    "The scheduled task failed": "scheduler_failed"
+    "The scheduled task failed": "scheduler_failed",
+    "Failed to seal E2E key": "e2e_key_failed",
+    "Public config does not contain platforms": "public_config_invalid",
+    "Failed to start authorization": "oauth_authorize_failed",
+    "Failed to start Discord authorization": "oauth_authorize_failed",
+    "Failed to join room": "ROOM_MATERIALIZE_FAILED",
+    "Cannot resolve actor": "remote_actor_unresolved",
+    "Cannot resolve peer": "remote_actor_unresolved",
+    "Duplicate provider slug": "oauth_slug_duplicate",
+    "Unsupported provider kind": "oauth_kind_unsupported"
   },
   "prefixes": {
     "分享内容为空": "share_text_empty",
@@ -1146,7 +1155,33 @@
     "Model response failed output schema validation": "AI_OUTPUT_SCHEMA_MISMATCH",
     "Scheduled Tapp is no longer": "scheduler_failed",
     "Scheduled task failed": "scheduler_failed",
-    "Invalid backend action": "schedule_invalid"
+    "Invalid backend action": "schedule_invalid",
+    "Rate limited by upstream": "rate_limited",
+    "Failed to fetch Notion": "notion_fetch_failed",
+    "Notion API error": "notion_fetch_failed",
+    "Failed to reach Notion": "notion_fetch_failed",
+    "Failed to parse Notion": "notion_fetch_failed",
+    "Parse error: Failed to parse Notion": "notion_fetch_failed",
+    "Failed to fetch page content": "notion_fetch_failed",
+    "Failed to parse feed. Please provide a name": "feed_parse_failed",
+    "Failed to parse feed": "feed_unparseable",
+    "Invalid feed URL": "feed_url_invalid",
+    "Failed to update permissions": "permissions_save_failed",
+    "Failed to persist Tapp": "tapp_save_failed",
+    "Please provide audio": "text_invalid_audio_data",
+    "Please upload audio": "text_invalid_audio_data",
+    "No AI provider configured": "ai_not_configured",
+    "AI analyzer not configured": "ai_not_configured",
+    "Speech service is not configured": "speech_not_configured",
+    "Official speech requires OpenAI": "speech_tts_openai_required",
+    "Transcription is ready; official speech requires OpenAI": "speech_tts_openai_required",
+    "Speech service returned no audio": "speech_tts_no_audio",
+    "Speech text is too long": "speech_text_too_long",
+    "Speech text is empty": "speech_text_empty",
+    "Dialogue list is empty": "speech_batch_empty",
+    "Too many dialogues": "speech_batch_too_many",
+    "Speech service is unreachable": "speech_upstream_failed",
+    "Speech service request failed": "speech_upstream_failed"
   },
   "explicit": [
     "sticker_pack_full",
@@ -1518,6 +1553,7 @@
     "skill_file_failed",
     "AI_TASK_REGISTRY_UNAVAILABLE",
     "updater_upstream_failed",
-    "AI_OUTPUT_SCHEMA_MISMATCH"
+    "AI_OUTPUT_SCHEMA_MISMATCH",
+    "store_asset_fetch_failed"
   ]
 }

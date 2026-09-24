@@ -340,18 +340,18 @@ describe('userFacingError', () => {
     assert.notEqual(text, 'Could not load site face (HTTP 502)')
   })
 
-  it('maps leftover speech Chinese and dumps', () => {
+  it('maps speech labels sent without a code', () => {
     assert.equal(
-      /无效的音频数据|Invalid Audio/i.test(
-        userFacingError('无效的音频数据: Invalid byte 64'),
-      ),
-      false,
+      userFacingError('Please upload audio data'),
+      currentCopy().errors.asrInvalidAudio,
     )
     assert.equal(
-      /语音服务未配置/.test(
-        userFacingError('语音服务未配置，请在设置中配置腾讯云密钥'),
-      ),
-      false,
+      userFacingError('Speech text is too long'),
+      currentCopy().errors.speechTextTooLong,
+    )
+    assert.equal(
+      userFacingError('Dialogue list is empty'),
+      currentCopy().errors.speechBatchEmpty,
     )
     const notConfigured = userFacingError(
       new ApiError('Speech service is not configured', 503),
@@ -391,7 +391,11 @@ describe('userFacingError', () => {
 
   it('maps webfinger dumps away from URL and reqwest text', () => {
     const text = userFacingError(
-      'WebFinger lookup failed for https://x.example/.well-known/webfinger: error sending request for url',
+      new ApiError(
+        'WebFinger lookup failed for https://x.example/.well-known/webfinger: error sending request for url',
+        502,
+        'webfinger_failed',
+      ),
     )
     assert.equal(/error sending request/i.test(text), false)
     assert.equal(/well-known/i.test(text), false)
@@ -787,9 +791,11 @@ describe('userFacingError', () => {
     assert.equal(/GAME_MESSAGE_INVALID/.test(leftover), false)
   })
 
-  it('maps leftover e2e serialize dumps', () => {
-    const text = userFacingError('payload serialize: EOF while parsing a value at line 1')
-    assert.equal(/EOF|line 1/.test(text), false)
+  it('maps e2e encrypt failures without the serde dump', () => {
+    const text = userFacingError(
+      new ApiError('payload serialize failed', 400, 'e2e_required'),
+    )
+    assert.equal(/payload serialize/.test(text), false)
     assert.notEqual(text, currentCopy().errors.operationFailed)
     assert.match(text, /端到端|end-to-end|エンドツーエンド/)
   })
@@ -847,13 +853,15 @@ describe('userFacingError', () => {
     assert.notEqual(reminder, currentCopy().errors.operationFailed)
   })
 
-  it('maps leftover OAuth and Discord token dumps', () => {
-    const github = userFacingError('GitHub token exchange failed: RequestTokenError { .. }')
-    assert.equal(/RequestTokenError/.test(github), false)
-    const oidc = userFacingError('OIDC token endpoint returned 400: {"error":"invalid_grant"}')
-    assert.equal(/invalid_grant/.test(oidc), false)
-    const discord = userFacingError('token endpoint 401 — {"error":"invalid_client"}')
-    assert.equal(/invalid_client/.test(discord), false)
+  it('maps OAuth start failures sent with or without their code', () => {
+    const coded = userFacingError(
+      new ApiError('Failed to start Discord authorization', 500, 'oauth_authorize_failed'),
+    )
+    assert.equal(coded, currentCopy().errors.oauthStartFailed)
+    assert.equal(
+      userFacingError('Failed to start authorization'),
+      currentCopy().errors.oauthStartFailed,
+    )
   })
 
   it('maps game-presence upstream failures', () => {
@@ -863,12 +871,10 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover feed URL and Gemini JSON dumps', () => {
-    const url = userFacingError('Unsafe or invalid URL: Invalid URL')
-    assert.equal(/Invalid URL/.test(url) && url === 'Unsafe or invalid URL: Invalid URL', false)
+    const url = userFacingError('Invalid feed URL: Unsafe or invalid URL')
+    assert.equal(url === 'Invalid feed URL: Unsafe or invalid URL', false)
     const gemini = userFacingError('invalid Gemini JSON: expected value at line 1')
     assert.equal(/expected value|line 1/.test(gemini), false)
-    const key = userFacingError('Invalid remote E2E public key: invalid length')
-    assert.equal(/invalid length/.test(key), false)
   })
 
   it('maps leftover Tripo and scheduler-connection dumps', () => {
@@ -1146,10 +1152,6 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover MCP and Tapp persist dumps', () => {
-    const mcp = userFacingError(
-      'serialize mcp config: key must be a string at line 1 column 2',
-    )
-    assert.equal(/key must be a string|column 2/.test(mcp), false)
     const save = userFacingError(
       new ApiError('Failed to save MCP config', 503, 'mcp_config_save_failed'),
     )
@@ -1486,26 +1488,17 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover store download config phantasi leftovers without unifying them', () => {
-    const download = userFacingError(
-      'Failed to download manifest (apps/foo/manifest.json): HTTP 502',
-    )
-    const asset = userFacingError('Failed to fetch asset assets/icon.png: HTTP 404')
-    const mismatch = userFacingError(
-      'Store package version mismatch: catalog lists 1.0.0 but manifest.json is 1.0.1. Refresh the store and retry.',
+    const asset = userFacingError(
+      new ApiError(
+        'Failed to fetch asset assets/icon.png: remote returned 404 Not Found',
+        502,
+        'store_asset_fetch_failed',
+      ),
     )
     const config = userFacingError('Failed to save configuration')
-    const reload = userFacingError('Failed to reload configuration')
-    assert.match(download, /manifest/)
-    assert.match(download, /502/)
-    assert.equal(/Failed to download/i.test(download), false)
     assert.match(asset, /assets\/icon\.png/)
-    assert.match(asset, /404/)
-    assert.match(mismatch, /1\.0\.0/)
-    assert.match(mismatch, /1\.0\.1/)
-    assert.equal(/manifest\.json is/i.test(mismatch), false)
-    assert.notEqual(config, reload)
+    assert.equal(/Failed to fetch asset/i.test(asset), false)
     assert.equal(/Failed to save configuration/i.test(config), false)
-    assert.equal(/Failed to reload/i.test(reload), false)
   })
 
   it('maps leftover library and visitor leftovers without calling them empty', () => {
@@ -1791,12 +1784,11 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover public config and comment reply leftovers without unifying them', () => {
-    const pub = userFacingError('Failed to fetch public config: HTTP 502')
+    const pub = userFacingError(new TypeError('Public config does not contain platforms'))
     const replies = userFacingError('Failed to load comment replies')
     const comments = userFacingError('Failed to load comments')
     assert.match(pub, /配置|config|設定/i)
-    assert.match(pub, /502/)
-    assert.equal(/Failed to fetch public config/i.test(pub), false)
+    assert.equal(/Public config does not contain/i.test(pub), false)
     assert.notEqual(replies, comments)
     assert.equal(/Failed to load comment replies/i.test(replies), false)
     assert.notEqual(pub, currentCopy().errors.operationFailed)

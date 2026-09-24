@@ -448,12 +448,12 @@ async fn download_store_package_assets(
         })?;
 
         if !resp.status().is_success() {
-            return Err(api_http_error(
-                StatusCode::BAD_GATEWAY,
-                format!(
+            return Err(HttpError(
+                myriad_error::AppError::bad_gateway(format!(
                     "Failed to fetch asset {relative}: remote returned {}",
                     resp.status()
-                ),
+                ))
+                .with_code("store_asset_fetch_failed"),
             ));
         }
 

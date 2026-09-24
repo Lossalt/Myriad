@@ -717,9 +717,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('text_player_not_found')) {
     return t.notFound
   }
-  if (/^rate limited by upstream/i.test(raw)) {
-    return t.rateLimited
-  }
   if (code === 'youtube_upstream_failed') {
     return joinParts(
       t.youtubeUpstreamFailed,
@@ -727,13 +724,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, t.youtubeUpstreamFailed),
     )
   }
-  if (
-    code === 'e2e_key_failed' ||
-    /^failed to seal e2e key/i.test(raw) ||
-    /payload serialize|envelope (serialize|parse)|plaintext json parse|e2e (seal|unseal)|invalid remote e2e|e2e key wrap/i.test(
-      raw,
-    )
-  ) {
+  if (is('e2e_key_failed')) {
     return classified(t.e2eKeyFailed, raw, hint)
   }
   if (code === 'config_invalid') {
@@ -746,29 +737,15 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'config_save_failed') {
     return classified(t.configSaveFailed, raw, hint)
   }
-  if (/^failed to reload configuration/i.test(raw)) {
-    return classified(t.configReloadFailed, raw, hint)
-  }
-  if (
-    /^failed to fetch public config/i.test(raw) ||
-    /public config does not contain platforms/i.test(raw)
-  ) {
+  if (is('public_config_invalid')) {
     return joinParts(
       t.configFileReadFailed,
       status ? `HTTP ${status}` : '',
       usefulExtra(hint, t.configFileReadFailed),
     )
   }
-  if (
-    /failed to download |failed to fetch asset |store index is missing download path/i.test(
-      raw,
-    )
-  ) {
-    const name =
-      raw.match(/download ([^(]+)/i)?.[1]?.trim() ||
-      raw.match(/asset (\S+)/i)?.[1] ||
-      raw.match(/required (\S+)/i)?.[1] ||
-      ''
+  if (is('store_asset_fetch_failed')) {
+    const name = raw.match(/asset ([^\s:]+)/i)?.[1] || ''
     const http = raw.match(/HTTP\s+(\d{3})/i)
     const label = fill(currentCopy().tapp.storeDownloadFailed, {
       name: name || 'asset',
@@ -779,22 +756,8 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, label),
     )
   }
-  if (/store package version mismatch/i.test(raw)) {
-    const catalog = raw.match(/catalog lists (\S+)/i)?.[1] || '?'
-    const packed = raw.match(/manifest\.json is (\S+)/i)?.[1] || '?'
-    return fill(currentCopy().tapp.storeVersionMismatch, {
-      catalog,
-      manifest: packed,
-    })
-  }
   const phantasi = currentCopy().phantasi
-  if (
-    code === 'notion_fetch_failed' ||
-    /^failed to fetch notion/i.test(raw) ||
-    /notion api error|failed to reach notion|failed to parse notion|failed to fetch page content/i.test(
-      raw,
-    )
-  ) {
+  if (is('notion_fetch_failed')) {
     const status = raw.match(/\bHTTP\s+(\d{3})\b/i)
     const colon = raw.indexOf(':')
     const rest = colon >= 0 ? raw.slice(colon + 1).trim() : ''
@@ -811,61 +774,40 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, phantasi.errorNotionFetch, keep, http),
     )
   }
-  if (
-    code === 'feed_parse_failed' ||
-    /^failed to parse feed\. please provide a name/i.test(raw)
-  ) {
+  if (is('feed_parse_failed')) {
     return phantasi.errorFeedNeedName
   }
-  if (/^failed to parse feed/i.test(raw)) {
+  if (is('feed_unparseable')) {
     return classified(t.phantasiParseFailed, raw, hint)
   }
-  if (
-    code === 'feed_discover_failed' ||
-    /^unable to discover rss/i.test(raw)
-  ) {
+  if (code === 'feed_discover_failed') {
     return classified(phantasi.errorDiscoverFailed, raw, hint)
   }
-  if (/^invalid feed url/i.test(raw)) {
+  if (is('feed_url_invalid')) {
     return classified(t.phantasiInvalidUrl, raw, hint)
   }
-  if (
-    /^failed to load config(uration)?$/i.test(raw)
-  ) {
+  if (is('config_load_failed')) {
     return classified(currentCopy().config.loadConfigFailed, raw, hint)
   }
-  if (/^failed to (update|save) permissions/i.test(raw)) {
+  if (is('permissions_save_failed')) {
     return classified(currentCopy().config.permissionsSaveFailed, raw, hint)
   }
-  if (/^failed to persist tapp/i.test(raw)) {
+  if (is('tapp_save_failed')) {
     return classified(t.tappSaveFailed, raw, hint)
   }
-  if (
-    code === 'mcp_config_save_failed' ||
-    /^failed to save mcp config/i.test(raw) ||
-    /serialize mcp config|create mcp config|write mcp config|replace mcp config/i.test(
-      raw,
-    )
-  ) {
+  if (is('mcp_config_save_failed')) {
     return classified(currentCopy().config.mcpSaveFailed, raw, hint)
   }
   if (code === 'mcp_config_invalid') {
     return classified(currentCopy().config.mcpInvalidConfig, raw, hint)
   }
-  if (
-    is('text_invalid_audio_data') ||
-    /^please (provide|upload) audio/i.test(raw) ||
-    /无效的Base64|必须提供 audio_data|请上传音频|无效的音频数据/.test(raw)
-  ) {
+  if (is('text_invalid_audio_data')) {
     return t.asrInvalidAudio
   }
-  if (code === 'ai_not_configured' || code === 'AI_NOT_CONFIGURED' || /^(?:No AI provider configured|AI analyzer not configured)/i.test(raw)) {
+  if (code === 'ai_not_configured' || code === 'AI_NOT_CONFIGURED') {
     return t.aiNotConfigured
   }
-  if (
-    code === 'speech_not_configured' ||
-    /speech service is not configured|语音服务未配置|TTS 服务未配置/i.test(raw)
-  ) {
+  if (code === 'speech_not_configured') {
     return t.speechNotConfigured
   }
   if (
@@ -873,115 +815,64 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.realtimeSessionUnavailable
   }
-  if (
-    /official speech requires openai|speech tts openai|转写已配置|官方播报请选 OpenAI|OpenRouter 目前没有官方/i.test(
-      raw,
-    )
-  ) {
+  if (is('speech_tts_openai_required')) {
     return t.speechTtsOpenAiRequired
   }
-  if (
-    /speech service returned no audio|tts服务未返回音频|TTS 未返回音频/i.test(raw)
-  ) {
+  if (is('speech_tts_no_audio')) {
     return t.speechTtsNoAudio
   }
-  if (/speech text is too long|文本过长/.test(raw)) {
+  if (is('speech_text_too_long')) {
     return t.speechTextTooLong
   }
-  if (
-    /speech text is empty|dialogue list is empty|对话列表不能为空|文本不能为空/i.test(
-      raw,
-    )
-  ) {
-    return raw.toLowerCase().includes('list') || raw.includes('对话列表')
-      ? t.speechBatchEmpty
-      : t.emptyDialogueText
+  if (is('speech_batch_empty')) {
+    return t.speechBatchEmpty
   }
-  if (/too many dialogues|对话数量超过限制/i.test(raw)) {
+  if (is('speech_text_empty')) {
+    return t.emptyDialogueText
+  }
+  if (is('speech_batch_too_many')) {
     return t.speechBatchTooMany
   }
-  if (
-    code === 'speech_upstream_failed' ||
-    /speech service is unreachable|speech service request failed|invalid transcription json/i.test(
-      raw,
-    )
-  ) {
+  if (code === 'speech_upstream_failed') {
     return t.speechUpstreamFailed
   }
-  if (
-    code === 'domain_invalid' ||
-    /^invalid origin$/i.test(raw) ||
-    /^invalid url:/i.test(raw) ||
-    /^unsafe or invalid url/i.test(raw) ||
-    /^origin must /i.test(raw) ||
-    /wildcard origins are not allowed/i.test(raw) ||
-    /http is only allowed for localhost/i.test(raw) ||
-    /unsupported scheme/i.test(raw) ||
-    /cors_origins would be empty/i.test(raw)
-  ) {
+  if (code === 'domain_invalid') {
     return t.domainInvalid
   }
-  if (
-    code === 'oauth_authorize_failed' ||
-    /^failed to start (discord )?authorization/i.test(raw) ||
-    /^state serialize/i.test(raw) ||
-    /^HMAC key error/i.test(raw) ||
-    /github (token|api|\/user)/i.test(raw) ||
-    /^OIDC /i.test(raw) ||
-    /^token (request|endpoint|JSON parse)/i.test(raw)
-  ) {
+  if (is('oauth_authorize_failed')) {
     return t.oauthStartFailed
   }
-  if (
-    code === 'ROOM_MATERIALIZE_FAILED' ||
-    /failed to (join|materialize) room/i.test(raw)
-  ) {
+  if (is('ROOM_MATERIALIZE_FAILED')) {
     return t.roomJoinFailed
   }
   if (code === 'oauth_slug_required') {
     return t.oauthSlugRequired
   }
-  if (code === 'oauth_slug_invalid' || /invalid slug /i.test(raw)) {
+  if (code === 'oauth_slug_invalid') {
     return t.oauthSlugInvalid
   }
-  if (code === 'oauth_slug_duplicate' || /duplicate provider slug/i.test(raw)) {
+  if (code === 'oauth_slug_duplicate') {
     return t.oauthSlugDuplicate
   }
-  if (
-    code === 'oauth_client_id_required' ||
-    /requires client_id/i.test(raw)
-  ) {
+  if (code === 'oauth_client_id_required') {
     return t.oauthClientIdRequired
   }
-  if (
-    code === 'oauth_client_secret_required' ||
-    /requires client_secret/i.test(raw)
-  ) {
+  if (code === 'oauth_client_secret_required') {
     return t.oauthClientSecretRequired
   }
-  if (
-    code === 'oauth_discovery_required' ||
-    /requires discovery_url/i.test(raw)
-  ) {
+  if (code === 'oauth_discovery_required') {
     return t.oauthDiscoveryRequired
   }
-  if (
-    code === 'oauth_kind_unsupported' ||
-    /unsupported provider kind/i.test(raw)
-  ) {
+  if (code === 'oauth_kind_unsupported') {
     return t.oauthKindUnsupported
   }
-  if (
-    code === 'remote_actor_unresolved' ||
-    /cannot resolve (remote actor|actor|peer)/i.test(raw)
-  ) {
+  if (is('remote_actor_unresolved')) {
     return t.remoteActorUnresolved
   }
   if (
     code === 'webfinger_failed' ||
     code === 'webfinger_not_found' ||
-    code === 'webfinger_unavailable' ||
-    /webfinger/i.test(raw)
+    code === 'webfinger_unavailable'
   ) {
     return t.webfingerFailed
   }
