@@ -647,7 +647,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
   onBack,
 }) => {
   const { t, locale, format } = useI18n()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isAdmin } = useAuth()
   const animConfig = useAnimationLevel()
   const noAnimation = isExlight(animConfig)
   useTappSubject()
@@ -1624,7 +1624,8 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                       exit={{ opacity: 0, y: -8, scale: 0.95 }}
                       transition={{ duration: 0.15 }}
                     >
-                      {windows.length > 0 && (
+                      {/* Schemes are site-wide presets; only an admin curates them. */}
+                      {isAdmin && windows.length > 0 && (
                         <motion.button
                           onClick={saveCurrentScheme}
                           disabled={isSaving}
@@ -1654,7 +1655,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                         </motion.button>
                       )}
 
-                      {windows.length > 0 && savedSchemes.length > 0 && (
+                      {isAdmin && windows.length > 0 && savedSchemes.length > 0 && (
                         <div
                           className="mx-3 my-1 h-px"
                           style={{ backgroundColor: 'var(--border-color)' }}
@@ -1686,18 +1687,20 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                                   })}
                                 </span>
                               </motion.button>
-                              <motion.button
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation()
-                                  deleteScheme(scheme.id)
-                                }}
-                                className={`rounded p-1.5 opacity-0 transition-all group-hover:opacity-100 ${WINDOW_CONTROL_DANGER_HOVER_CLASS}`}
-                                style={WINDOW_CONTROL_DANGER_HOVER_STYLE}
-                                whileTap={{ scale: 0.9 }}
-                                title={t.tapp.deleteScheme}
-                              >
-                                <FaTrash className="h-3.5 w-3.5" />
-                              </motion.button>
+                              {isAdmin && (
+                                <motion.button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation()
+                                    deleteScheme(scheme.id)
+                                  }}
+                                  className={`rounded p-1.5 opacity-0 transition-all group-hover:opacity-100 ${WINDOW_CONTROL_DANGER_HOVER_CLASS}`}
+                                  style={WINDOW_CONTROL_DANGER_HOVER_STYLE}
+                                  whileTap={{ scale: 0.9 }}
+                                  title={t.tapp.deleteScheme}
+                                >
+                                  <FaTrash className="h-3.5 w-3.5" />
+                                </motion.button>
+                              )}
                             </div>
                           ))}
                         </div>
