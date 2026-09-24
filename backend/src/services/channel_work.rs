@@ -3,6 +3,7 @@
 //! Transport adapters only adapt send/receive. Rules stay in
 //! `myriad_agent_rules::channel`.
 
+use crate::services::channel_platform::ChannelPlatform;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,7 +78,7 @@ struct ChannelSink {
 }
 
 impl ChannelSink {
-    fn platform(&self) -> &'static str {
+    fn platform(&self) -> ChannelPlatform {
         self.transport.platform()
     }
     fn capabilities(&self) -> myriad_agent_rules::channel::ChannelCapabilities {
@@ -118,42 +119,6 @@ impl ChannelSink {
     }
 }
 
-fn session_ns(platform: &str) -> &'static str {
-    match platform {
-        "telegram" => "telegram_dm_session",
-        "discord" => "discord_dm_session",
-        "feishu" => "feishu_p2p_session",
-        _ => "qq_c2c_session",
-    }
-}
-
-fn pending_ns(platform: &str) -> &'static str {
-    match platform {
-        "telegram" => "telegram_dm_pending",
-        "discord" => "discord_dm_pending",
-        "feishu" => "feishu_p2p_pending",
-        _ => "qq_c2c_pending",
-    }
-}
-
-fn outbound_ns(platform: &str) -> &'static str {
-    match platform {
-        "telegram" => "telegram_dm_outbound",
-        "discord" => "discord_dm_outbound",
-        "feishu" => "feishu_p2p_outbound",
-        _ => "qq_c2c_outbound",
-    }
-}
-
-fn inbound_ns(platform: &str) -> &'static str {
-    match platform {
-        "telegram" => "telegram_dm_update",
-        "discord" => "discord_dm_msg",
-        "feishu" => "feishu_p2p_msg",
-        _ => "qq_c2c_msg",
-    }
-}
-
 fn identity(user_id: i32) -> RegistryIdentity<'static> {
     RegistryIdentity {
         subject_id: Some(user_id),
@@ -165,13 +130,13 @@ fn identity(user_id: i32) -> RegistryIdentity<'static> {
 
 async fn claim_inbound(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     user_id: i32,
     inbound_id: &str,
 ) -> bool {
     match shared_registry::put_if_absent(
         db,
-        inbound_ns(platform),
+        platform.inbound_ns(),
         inbound_id,
         identity(user_id),
         &Value::Bool(true),
@@ -181,11 +146,11 @@ async fn claim_inbound(
     {
         Ok(true) => true,
         Ok(false) => {
-            info!(inbound_id, platform, "channel duplicate inbound ignored");
+            info!(inbound_id, %platform, "channel duplicate inbound ignored");
             false
         }
         Err(error) => {
-            warn!(%error, platform, "channel duplicate check failed");
+            warn!(%error, %platform, "channel duplicate check failed");
             false
         }
     }
@@ -417,7 +382,7 @@ async fn continue_text(
 async fn handle_command(
     db: &DatabaseConnection,
     user_id: i32,
-    platform: &str,
+    platform: ChannelPlatform,
     session_key: &str,
     session_id: &str,
     command: ChannelCommand,
@@ -481,7 +446,7 @@ async fn handle_command(
 async fn status_reply(
     db: &DatabaseConnection,
     user_id: i32,
-    platform: &str,
+    platform: ChannelPlatform,
     session_key: &str,
     session_id: &str,
 ) -> String {
@@ -695,7 +660,7 @@ async fn resume_pending(
             if sink.authorized().await {
                 if let Err(error) = shared_registry::put(
                     &db,
-                    pending_ns(sink.platform()),
+                    sink.platform().pending_ns(),
                     session_key,
                     identity(user_id),
                     &parked,
@@ -753,12 +718,12 @@ async fn claims_for_user(db: &DatabaseConnection, user_id: i32) -> Result<Claims
 
 async fn bind_session(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     user_id: i32,
     session_key: &str,
 ) -> Result<StoredSession, DbErr> {
     if let Some(stored) =
-        shared_registry::get::<StoredSession>(db, session_ns(platform), session_key).await?
+        shared_registry::get::<StoredSession>(db, platform.session_ns(), session_key).await?
     {
         if !stored.session_id.is_empty() {
             return Ok(stored);
@@ -782,14 +747,14 @@ async fn bind_session(
 
 async fn put_session(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     user_id: i32,
     session_key: &str,
     stored: StoredSession,
 ) -> Result<(), DbErr> {
     shared_registry::put(
         db,
-        session_ns(platform),
+        platform.session_ns(),
         session_key,
         identity(user_id),
         &stored,
@@ -800,10 +765,10 @@ async fn put_session(
 
 async fn load_session(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     session_key: &str,
 ) -> Option<StoredSession> {
-    shared_registry::get::<StoredSession>(db, session_ns(platform), session_key)
+    shared_registry::get::<StoredSession>(db, platform.session_ns(), session_key)
         .await
         .ok()
         .flatten()
@@ -811,13 +776,13 @@ async fn load_session(
 
 async fn load_pending(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     session_key: &str,
 ) -> Option<StoredPending> {
     if session_key.is_empty() {
         return None;
     }
-    match shared_registry::get::<StoredPending>(db, pending_ns(platform), session_key).await {
+    match shared_registry::get::<StoredPending>(db, platform.pending_ns(), session_key).await {
         Ok(value) => value,
         Err(error) => {
             warn!(%error, "channel pending load failed");
@@ -828,25 +793,26 @@ async fn load_pending(
 
 async fn take_pending_if_id(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     session_key: &str,
     expected_id: &str,
 ) -> Option<StoredPending> {
-    let taken =
-        match shared_registry::take::<StoredPending>(db, pending_ns(platform), session_key).await {
-            Ok(value) => value,
-            Err(error) => {
-                warn!(%error, "channel pending take failed");
-                return None;
-            }
-        };
+    let taken = match shared_registry::take::<StoredPending>(db, platform.pending_ns(), session_key)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            warn!(%error, "channel pending take failed");
+            return None;
+        }
+    };
     let pending = taken?;
     let mut prompt = pending.prompt.clone();
     ensure_pending_id(&mut prompt);
     if !expected_id.is_empty() && prompt.id != expected_id {
         let _ = shared_registry::put(
             db,
-            pending_ns(platform),
+            platform.pending_ns(),
             session_key,
             RegistryIdentity {
                 subject_id: pending.expected_user_id,
@@ -863,12 +829,12 @@ async fn take_pending_if_id(
     Some(pending)
 }
 
-async fn clear_pending(db: &DatabaseConnection, platform: &str, session_key: &str) {
+async fn clear_pending(db: &DatabaseConnection, platform: ChannelPlatform, session_key: &str) {
     if session_key.is_empty() {
         return;
     }
     if let Err(error) =
-        shared_registry::take::<StoredPending>(db, pending_ns(platform), session_key).await
+        shared_registry::take::<StoredPending>(db, platform.pending_ns(), session_key).await
     {
         warn!(%error, "channel pending clear failed");
     }

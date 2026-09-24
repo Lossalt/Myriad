@@ -100,7 +100,8 @@ pub mod tripo; // Tripo v3 3D generation + Web GLB persistence
 pub mod updater_client;
 
 pub(crate) mod bot_ingress;
-pub mod channel_pairing; // Shared pairing mint/consume/unbind
+pub mod channel_pairing;
+pub mod channel_platform; // Shared pairing mint/consume/unbind
 pub mod channel_work; // Shared private-chat Work: session, pending, delivery
 pub mod discord_bot; // Discord DM Gateway worker
 pub mod discord_pairing; // Discord DM pairing codes + user_identities

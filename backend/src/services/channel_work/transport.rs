@@ -22,12 +22,12 @@ pub enum ChannelTransport {
 }
 
 impl ChannelTransport {
-    pub(super) fn platform(&self) -> &'static str {
+    pub(super) fn platform(&self) -> ChannelPlatform {
         match self {
-            Self::Telegram { .. } => "telegram",
-            Self::Discord { .. } => "discord",
-            Self::Qq { .. } => "qq",
-            Self::Feishu { .. } => "feishu",
+            Self::Telegram { .. } => ChannelPlatform::Telegram,
+            Self::Discord { .. } => ChannelPlatform::Discord,
+            Self::Qq { .. } => ChannelPlatform::Qq,
+            Self::Feishu { .. } => ChannelPlatform::Feishu,
         }
     }
 
@@ -386,7 +386,7 @@ async fn resolve_inbound_image(
 async fn persist_channel_asset(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
-    platform: &str,
+    platform: ChannelPlatform,
     producer: &str,
     bytes: Vec<u8>,
     mime: String,
