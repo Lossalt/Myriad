@@ -48,7 +48,8 @@ pub(super) async fn build_ap_object(
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({
-                        "error": format!("Note text too long (max {} chars)", MAX_NOTE_TEXT_CHARS)
+                        "error": format!("Note text too long (max {} chars)", MAX_NOTE_TEXT_CHARS),
+                        "code": "note_too_long",
                     })),
                 ));
             }
@@ -56,7 +57,8 @@ pub(super) async fn build_ap_object(
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({
-                        "error": format!("Too many attachments (max {})", MAX_NOTE_ATTACHMENTS)
+                        "error": format!("Too many attachments (max {})", MAX_NOTE_ATTACHMENTS),
+                        "code": "note_too_many_attachments",
                     })),
                 ));
             }

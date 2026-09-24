@@ -480,7 +480,8 @@ async fn live_body_limit_middleware(
             return (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 Json(json!({
-                    "error": format!("Request body too large: {cl} bytes (max {limit})")
+                    "error": format!("Request body too large: {cl} bytes (max {limit})"),
+                    "code": "request_too_large",
                 })),
             )
                 .into_response();
