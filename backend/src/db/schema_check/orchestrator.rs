@@ -23,8 +23,8 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `get_expected_schema` 通用 ADD。Support floor: product ≥ 0.3.10。
 /// Current: drop July CREATE heals; 003 source applications; 006 identities in TableDef;
 /// 时间线只放帖子（`ensure_timeline_posts_only`）；半撤回转发收尾
-/// （`ensure_repost_state_consistent`）。
-pub const SCHEMA_VERSION: &str = "2026.09.24.2";
+/// （`ensure_repost_state_consistent`）；已发布行的发布幂等键。
+pub const SCHEMA_VERSION: &str = "2026.09.24.3";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

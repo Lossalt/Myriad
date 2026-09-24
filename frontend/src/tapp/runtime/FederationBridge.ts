@@ -3,7 +3,7 @@ import type { TappInstance, TappMessage } from '../types'
 import type { TappBridge } from './TappBridge'
 import { currentCopy } from '../../i18n/localeCopy'
 import { ApiError } from '../../services/api'
-import { federationApi } from '../../services/federationApi'
+import { federationApi, newPublishIdempotencyKey } from '../../services/federationApi'
 import { xShareApi } from '../../services/xShareApi'
 import { isKnownGuest } from '../../utils/authState'
 import { userFacingError } from '../../utils/userFacingError'
@@ -430,7 +430,12 @@ export function registerFederationHandlers(
         }
       }
       const runtimeGrant = await bridge.getRuntimeGrant()
-      const data = await federationApi.publish(publishReq, runtimeGrant)
+      // 一次桥调用是一次用户动作：它的重试在 federationApi 里复用这个键。
+      const data = await federationApi.publish(
+        publishReq,
+        runtimeGrant,
+        newPublishIdempotencyKey(),
+      )
       if (!data || data.success === false) {
         console.error('[FederationBridge] publish returned unsuccessful', data)
         return {
@@ -491,7 +496,11 @@ export function registerFederationHandlers(
           }
         }
         const runtimeGrant = await bridge.getRuntimeGrant()
-        const data = await federationApi.createNote(noteReq, runtimeGrant)
+        const data = await federationApi.createNote(
+          noteReq,
+          runtimeGrant,
+          newPublishIdempotencyKey(),
+        )
         if (!data || data.success === false) {
           console.error('[FederationBridge] createNote returned unsuccessful', data)
           return {

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use myriad_error::AppError;
@@ -277,6 +277,13 @@ pub(crate) async fn federation_timeline(
 
 // Content Publishing Wrappers
 
+/// `Idempotency-Key` 请求头；不是合法 UTF-8 时当作空键，由发布拒绝为 400。
+fn idempotency_key(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("Idempotency-Key")
+        .map(|value| value.to_str().unwrap_or(""))
+}
+
 /// POST /api/federation/publish — 发布内容到联邦网络
 /// 路由已挂 auth_middleware；claims / body / db 走提取器。
 /// body 上限由路由的 `live_authenticated_body_limit`（默认 `AUTHENTICATED_BODY_LIMIT` 24 MiB）决定。
@@ -284,6 +291,7 @@ pub(crate) async fn federation_publish(
     extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
+    headers: HeaderMap,
     Json(payload): Json<federation::content::PublishRequest>,
 ) -> Response {
     match federation::content::publish_content(
@@ -292,6 +300,7 @@ pub(crate) async fn federation_publish(
         &claims.username,
         &db,
         &payload,
+        idempotency_key(&headers),
     )
     .await
     {
@@ -431,6 +440,7 @@ pub(crate) async fn federation_create_note(
     extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
+    headers: HeaderMap,
     Json(payload): Json<federation::content::CreateNoteRequest>,
 ) -> Response {
     match federation::content::create_note(
@@ -439,6 +449,7 @@ pub(crate) async fn federation_create_note(
         &claims.username,
         &db,
         &payload,
+        idempotency_key(&headers),
     )
     .await
     {

@@ -23,6 +23,12 @@ pub struct Model {
     pub visibility: String,
     pub published_at: DateTimeWithTimeZone,
     pub updated_at: Option<DateTimeWithTimeZone>,
+    /// Client `Idempotency-Key`, unique per user; NULL for unkeyed publishes.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub idempotency_key: Option<String>,
+    /// Hash of the first keyed request; a different payload under the key is 409.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub idempotency_fingerprint: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

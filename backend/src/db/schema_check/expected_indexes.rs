@@ -768,6 +768,12 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             is_unique: true,
         },
         IndexDef {
+            name: "idx_published_content_idempotency".into(),
+            table: "federation_published_content".into(),
+            columns: vec!["user_id".into(), "idempotency_key".into()],
+            is_unique: true,
+        },
+        IndexDef {
             name: "idx_timeline_user_received".into(),
             table: "federation_timeline".into(),
             columns: vec!["user_id".into(), "received_at".into()],

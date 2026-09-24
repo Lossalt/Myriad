@@ -1164,6 +1164,18 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     default_value: None,
                     not_null: false,
                 },
+                ColumnDef {
+                    name: "idempotency_key".into(),
+                    data_type: "text".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "idempotency_fingerprint".into(),
+                    data_type: "text".into(),
+                    default_value: None,
+                    not_null: false,
+                },
             ],
         },
         TableDef {

@@ -390,7 +390,9 @@
     "Selected text too long (max 5000 chars)": "phantasi_selection_too_long",
     "No feeds found in OPML": "phantasi_opml_no_feeds",
     "Notion source requires extra_config with token": "phantasi_notion_token_required",
-    "This note is edited through its document; reopen it": "phantasi_note_has_document"
+    "This note is edited through its document; reopen it": "phantasi_note_has_document",
+    "Invalid Idempotency-Key": "idempotency_key_invalid",
+    "Idempotency-Key was already used for a different request": "idempotency_key_reused"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",

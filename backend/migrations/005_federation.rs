@@ -1047,6 +1047,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
                         ColumnDef::new(FederationPublishedContent::UpdatedAt)
                             .timestamp_with_time_zone(),
                     )
+                    // 客户端幂等键（按用户）与首次请求的指纹；重试回放原结果。
+                    .col(ColumnDef::new(FederationPublishedContent::IdempotencyKey).text())
+                    .col(ColumnDef::new(FederationPublishedContent::IdempotencyFingerprint).text())
                     .to_owned(),
             )
             .await?;
@@ -1071,6 +1074,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
                     .table(FederationPublishedContent::Table)
                     .col(FederationPublishedContent::ContentType)
                     .col(FederationPublishedContent::ContentId)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+
+        // NULL 互不冲突：不带键的发布不受约束。
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_published_content_idempotency")
+                    .table(FederationPublishedContent::Table)
+                    .col(FederationPublishedContent::UserId)
+                    .col(FederationPublishedContent::IdempotencyKey)
                     .unique()
                     .to_owned(),
             )
@@ -1632,6 +1649,8 @@ pub enum FederationPublishedContent {
     Visibility,
     PublishedAt,
     UpdatedAt,
+    IdempotencyKey,
+    IdempotencyFingerprint,
 }
 
 #[derive(Iden)]

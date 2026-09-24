@@ -24,12 +24,18 @@ use crate::federation::types::*;
 /// 4. 存入 federation_published_content
 /// 5. 写入作者时间线（不限 Note）
 /// 6. 按 visibility fan-out（Direct/mentioned 不投 followers；Public 另投群邻）
+///
+/// `idempotency_key`（请求头 `Idempotency-Key`）按用户生效，随已发布行一起存：
+/// 提交后响应丢了、客户端带同一个键重试时返回原来那次发布，不再生成第二条
+/// `note_{uuid}`；同一个键换了内容是 409。重放不排新的投递，`delivered_queued`
+/// 为 0。撤回发布删掉已发布行，键随之失效。
 pub async fn publish_content(
     user_id: i32,
     is_admin: bool,
     username: &str,
     db: &DatabaseConnection,
     req: &PublishRequest,
+    idempotency_key: Option<&str>,
 ) -> Result<PublishResponse, (StatusCode, Json<serde_json::Value>)> {
     let base_url = get_base_url().await;
 
@@ -67,6 +73,24 @@ pub async fn publish_content(
         )
     })?;
     let content_type = kind.as_str();
+
+    let idempotency = match idempotency_key {
+        None => None,
+        Some(key) if crate::services::ai_task_prepare::validate_idempotency_key(key) => {
+            Some((key, publish_fingerprint(content_type, visibility, req)))
+        }
+        Some(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(AppError::public_json("Invalid Idempotency-Key")),
+            ));
+        }
+    };
+    if let Some((key, fingerprint)) = &idempotency {
+        if let Some(original) = replay_publish(db, user_id, key, fingerprint).await? {
+            return Ok(original);
+        }
+    }
 
     let content_id = if kind == ContentKind::Note {
         match req
@@ -131,26 +155,42 @@ pub async fn publish_content(
     let object_type = content_type.to_string();
 
     let txn = db.begin().await.map_err(db_err)?;
-    // Unique (content_type, content_id) is the concurrency boundary. Insert the
-    // published row first so a conflict cannot leave an orphan Create activity.
+    // Unique (content_type, content_id) and (user_id, idempotency_key) are the
+    // concurrency boundary. Insert the published row first so a conflict
+    // cannot leave an orphan Create activity.
+    let (stored_key, stored_fingerprint) = match &idempotency {
+        Some((key, fingerprint)) => (Some(key.to_string()), Some(fingerprint.clone())),
+        None => (None, None),
+    };
     match txn
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"INSERT INTO federation_published_content
-                   (user_id, content_type, content_id, activity_id, visibility, published_at)
-               VALUES ($1, $2, $3, $4, $5, NOW())"#,
+                   (user_id, content_type, content_id, activity_id, visibility, published_at,
+                    idempotency_key, idempotency_fingerprint)
+               VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)"#,
             [
                 user_id.into(),
                 content_type.into(),
                 content_id.clone().into(),
                 activity_id.clone().into(),
                 visibility.into(),
+                stored_key.into(),
+                stored_fingerprint.into(),
             ],
         ))
         .await
     {
         Ok(_) => {}
         Err(error) if is_unique_violation(&error) => {
+            txn.rollback().await.map_err(db_err)?;
+            // A concurrent request with the same key committed first: answer
+            // with its result (or 409 for a different payload).
+            if let Some((key, fingerprint)) = &idempotency {
+                if let Some(original) = replay_publish(db, user_id, key, fingerprint).await? {
+                    return Ok(original);
+                }
+            }
             return Err((
                 StatusCode::CONFLICT,
                 Json(AppError::public_json("Content already published")),
@@ -246,6 +286,61 @@ pub async fn publish_content(
     })
 }
 
+/// 同一个幂等键下「同一次发布」的指纹：规范化后的类型与可见性加上请求里决定
+/// 发布内容的字段。服务端生成的 note id 不在里面，重试才会得到同一个指纹。
+fn publish_fingerprint(content_type: &str, visibility: &str, req: &PublishRequest) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = json!({
+        "content_type": content_type,
+        "content_id": req.content_id.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        "visibility": visibility,
+        "text": req.text,
+        "attachments": req.attachments,
+        "in_reply_to": req.in_reply_to,
+    });
+    hex::encode(Sha256::digest(canonical.to_string().as_bytes()))
+}
+
+/// 这个用户用 `key` 发布过的结果；换了内容是 409。
+async fn replay_publish(
+    db: &DatabaseConnection,
+    user_id: i32,
+    key: &str,
+    fingerprint: &str,
+) -> Result<Option<PublishResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(row) = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"SELECT content_type, content_id, activity_id, visibility, idempotency_fingerprint
+               FROM federation_published_content
+               WHERE user_id = $1 AND idempotency_key = $2"#,
+            [user_id.into(), key.into()],
+        ))
+        .await
+        .map_err(db_err)?
+    else {
+        return Ok(None);
+    };
+    let stored: Option<String> = row.try_get("", "idempotency_fingerprint").map_err(db_err)?;
+    if stored.as_deref() != Some(fingerprint) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(AppError::public_json(
+                "Idempotency-Key was already used for a different request",
+            )),
+        ));
+    }
+    Ok(Some(PublishResponse {
+        success: true,
+        activity_id: row.try_get("", "activity_id").map_err(db_err)?,
+        content_type: row.try_get("", "content_type").map_err(db_err)?,
+        content_id: row.try_get("", "content_id").map_err(db_err)?,
+        visibility: row.try_get("", "visibility").map_err(db_err)?,
+        delivered_queued: 0,
+        author_timeline: true,
+    }))
+}
+
 /// 在调用方事务内按 visibility 排队扇出：Direct 不投粉丝，Public 另投群邻。
 async fn stage_fan_out(
     txn: &impl ConnectionTrait,
@@ -292,6 +387,7 @@ pub async fn create_note(
     username: &str,
     db: &DatabaseConnection,
     req: &CreateNoteRequest,
+    idempotency_key: Option<&str>,
 ) -> Result<PublishResponse, (StatusCode, Json<serde_json::Value>)> {
     let publish_req = PublishRequest {
         content_type: ContentKind::Note.as_str().to_string(),
@@ -301,7 +397,15 @@ pub async fn create_note(
         attachments: req.attachments.clone(),
         in_reply_to: req.in_reply_to.clone(),
     };
-    publish_content(user_id, is_admin, username, db, &publish_req).await
+    publish_content(
+        user_id,
+        is_admin,
+        username,
+        db,
+        &publish_req,
+        idempotency_key,
+    )
+    .await
 }
 
 /// Normalize a content_id that may be a bare id, object URL, or path.
@@ -909,7 +1013,7 @@ mod tests {
         let db = &fixture.db;
         seed_followers(db).await;
 
-        let published = publish_content(1, false, "alice", db, &note("public"))
+        let published = publish_content(1, false, "alice", db, &note("public"), None)
             .await
             .expect("one bad follower must not fail the publish");
         // 1 条远端排队 + bob 的本地时间线；空 inbox 与 ghost 被跳过。
@@ -949,7 +1053,7 @@ mod tests {
         );
 
         // Direct 不投任何粉丝。
-        let direct = publish_content(1, false, "alice", db, &note("direct"))
+        let direct = publish_content(1, false, "alice", db, &note("direct"), None)
             .await
             .unwrap();
         assert_eq!(direct.delivered_queued, 0);
@@ -1028,7 +1132,7 @@ mod tests {
         let db = &fixture.db;
         let base = seed_followers(db).await;
 
-        let published = publish_content(1, false, "alice", db, &note("followers"))
+        let published = publish_content(1, false, "alice", db, &note("followers"), None)
             .await
             .unwrap();
         let aid = published.activity_id.clone();
@@ -1096,7 +1200,7 @@ mod tests {
         assert_eq!(again.0, StatusCode::NOT_FOUND);
 
         // 并发撤回同一条：恰好一方成功，另一方 404，只有一条 Delete。
-        let second = publish_content(1, false, "alice", db, &note("public"))
+        let second = publish_content(1, false, "alice", db, &note("public"), None)
             .await
             .unwrap();
         let sid = second.activity_id.clone();
@@ -1119,6 +1223,98 @@ mod tests {
             q("SELECT COUNT(*) FROM federation_activities WHERE activity_type = 'Delete'".into())
                 .await,
             2
+        );
+
+        fixture.close().await;
+    }
+
+    /// 同一个键的重试（含并发重试）拿到原来那次发布，只有一条 Note、一条活动、
+    /// 一份投递；同一个键换内容是 409；键按用户隔离；非法键 400。
+    #[tokio::test]
+    async fn publish_with_idempotency_key_replays_the_original() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        seed_followers(db).await;
+        db.execute_unprepared("INSERT INTO users (id, username) VALUES (3, 'carol')")
+            .await
+            .unwrap();
+
+        let first = publish_content(1, false, "alice", db, &note("public"), Some("act-1"))
+            .await
+            .expect("first publish");
+        assert!(first.content_id.starts_with("note_"));
+        assert_eq!(first.delivered_queued, 2);
+        let retry = publish_content(1, false, "alice", db, &note("public"), Some("act-1"))
+            .await
+            .expect("retry replays");
+        assert_eq!(retry.activity_id, first.activity_id);
+        assert_eq!(retry.content_id, first.content_id);
+        assert_eq!(retry.visibility, "public");
+        assert_eq!(retry.delivered_queued, 0);
+
+        let mut edited = note("public");
+        edited.text = Some("hello again".into());
+        let reused = publish_content(1, false, "alice", db, &edited, Some("act-1"))
+            .await
+            .expect_err("same key, different payload");
+        assert_eq!(reused.0, StatusCode::CONFLICT);
+        let other_visibility =
+            publish_content(1, false, "alice", db, &note("followers"), Some("act-1"))
+                .await
+                .expect_err("visibility is part of the payload");
+        assert_eq!(other_visibility.0, StatusCode::CONFLICT);
+
+        let bad = publish_content(1, false, "alice", db, &note("public"), Some("has space"))
+            .await
+            .expect_err("unsafe key");
+        assert_eq!(bad.0, StatusCode::BAD_REQUEST);
+
+        // 另一个用户用同一个键是另一件事。
+        let carol = publish_content(3, false, "carol", db, &note("public"), Some("act-1"))
+            .await
+            .expect("keys are per user");
+        assert_ne!(carol.activity_id, first.activity_id);
+
+        // 并发的两次重试：唯一约束挡住后到的，它回放先提交的那次。
+        let racer = note("public");
+        let (a, b) = tokio::join!(
+            publish_content(1, false, "alice", db, &racer, Some("act-2")),
+            publish_content(1, false, "alice", db, &racer, Some("act-2")),
+        );
+        let (a, b) = (a.expect("racer a"), b.expect("racer b"));
+        assert_eq!(a.activity_id, b.activity_id);
+
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_published_content WHERE user_id = 1"
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_activities \
+                 WHERE user_id = 1 AND activity_type = 'Create'"
+            )
+            .await,
+            2
+        );
+        let first_id = &first.activity_id;
+        assert_eq!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM federation_delivery_queue q \
+                     JOIN federation_activities a ON a.id = q.activity_id \
+                     WHERE a.activity_id = '{first_id}'"
+                )
+            )
+            .await,
+            1
         );
 
         fixture.close().await;

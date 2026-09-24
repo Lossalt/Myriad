@@ -41,6 +41,8 @@ pub(crate) fn http_cors_layer() -> tower_http::cors::CorsLayer {
         axum::http::header::HeaderName::from_static("x-csrf-token"),
         axum::http::header::HeaderName::from_static("x-tapp-runtime-grant"),
         axum::http::header::HeaderName::from_static("x-requested-with"),
+        // Publish / updater retries reuse one key per user action.
+        axum::http::header::HeaderName::from_static("idempotency-key"),
         // Setup wizard passphrase + host locale/TZ for Tapp context.
         axum::http::header::HeaderName::from_static("x-setup-secret"),
         axum::http::header::HeaderName::from_static("x-myriad-locale"),
