@@ -38,6 +38,10 @@ pub(crate) async fn generate_platform_reports_internal(
             let db_for_task = db_clone.clone();
             let locale_override = locale_override.clone();
             async move {
+            let Some(_generation) = super::ReportGeneration::claim(user_id, &platform) else {
+                tracing::info!("⏭️ Report for {} is already being generated", platform);
+                return Err((platform.clone(), "Report is already being generated".to_string()));
+            };
             tracing::info!("🔄 Processing platform: {}", platform);
             let locale = match locale_override.as_deref() {
                 Some(explicit) => explicit.to_string(),

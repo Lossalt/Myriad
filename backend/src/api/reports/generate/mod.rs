@@ -190,10 +190,41 @@ pub async fn generate_all_reports(
     })))
 }
 
-/// In-flight regen set (key `{user_id}:{platform}`); Mutex not held across await.
-pub(crate) static REPORT_REGEN_IN_FLIGHT: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashSet<String>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+/// Reports being generated right now, by `(user_id, platform)`. Every entry
+/// point (manual, generate-all, auto-regeneration) goes through
+/// [`ReportGeneration::claim`], so one report is never generated (and paid
+/// for) twice at once. The Mutex is never held across an await.
+static REPORT_GENERATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashSet<(i32, String)>>,
+> = once_cell::sync::Lazy::new(Default::default);
+
+/// Ownership of one in-flight report generation; released on drop, including
+/// when the generating task panics or is cancelled.
+pub(crate) struct ReportGeneration {
+    key: (i32, String),
+}
+
+impl ReportGeneration {
+    pub(crate) fn claim(user_id: i32, platform: &str) -> Option<Self> {
+        let key = (user_id, platform.to_string());
+        let claimed = REPORT_GENERATIONS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.clone());
+        // Build the guard only on success and only after the lock is released:
+        // a guard dropped on the failure path would release someone else's claim.
+        claimed.then(|| Self { key })
+    }
+}
+
+impl Drop for ReportGeneration {
+    fn drop(&mut self) {
+        REPORT_GENERATIONS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
+}
 
 /// Public latest owner: `site_owner_user_id` (lowest admin) then user_id 1.
 /// Viewer credentials never select public report ownership. Used by `get_latest_report` + catalog, not authed `/api/reports/list`.
@@ -248,4 +279,33 @@ pub(crate) async fn resolve_report_user_id_for_public_read(
         return Ok(row.user_id);
     }
     Ok(preferred)
+}
+
+#[cfg(test)]
+mod report_generation_tests {
+    use super::ReportGeneration;
+
+    #[test]
+    fn one_generation_per_report_released_even_on_panic() {
+        let user = -73_001;
+        let first = ReportGeneration::claim(user, "steam").expect("free");
+        assert!(ReportGeneration::claim(user, "steam").is_none());
+        assert!(ReportGeneration::claim(user, "github").is_some());
+        drop(first);
+
+        let task = std::thread::spawn(move || {
+            let _held = ReportGeneration::claim(user, "steam").expect("free again");
+            panic!("generation failed");
+        });
+        assert!(task.join().is_err());
+        assert!(ReportGeneration::claim(user, "steam").is_some());
+    }
+
+    #[test]
+    fn every_entry_point_generates_through_the_claim() {
+        let internal = include_str!("generate_internal.rs");
+        assert!(internal.contains("ReportGeneration::claim(user_id, &platform)"));
+        let auto = include_str!("../latest_and_list.rs");
+        assert!(!auto.contains("IN_FLIGHT"));
+    }
 }
