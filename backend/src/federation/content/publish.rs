@@ -467,6 +467,36 @@ pub async fn unpublish_content(
         .try_get::<String>("", "content_id")
         .unwrap_or_else(|_| content_id_raw.unwrap_or("").to_string());
     let stored_visibility: Option<String> = row.try_get("", "visibility").ok().flatten();
+
+    // 撤回转发就是取消转发：转发标记、已发布行、时间线一起清，只写一条 Delete。
+    if content_type == REPOST_CONTENT_TYPE {
+        let withdrawn = crate::federation::interactions::withdraw_repost(
+            &txn,
+            &base_url,
+            user_id,
+            username,
+            &original_activity_id,
+        )
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(AppError::public_json("Content not published")),
+            )
+        })?;
+        txn.commit().await.map_err(db_err)?;
+        let delete_activity_id = withdrawn.activity_id.clone();
+        crate::federation::interactions::deliver_withdrawn_repost(db, withdrawn).await;
+        return Ok(json!({
+            "success": true,
+            "delete_activity_id": delete_activity_id,
+            "content_type": content_type,
+            "content_id": content_id,
+            "activity_id": original_activity_id,
+        }));
+    }
+
     let audience = unpublish_audience(stored_visibility.as_deref(), &content_type);
 
     // 创建 Delete Activity —— 寻址与原 Create 一致
@@ -957,8 +987,19 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("struct UnpublishAudience").next())
             .expect("unpublish_content");
-        let pos = |needle: &str| body.find(needle).unwrap_or_else(|| panic!("{needle}"));
-        let begin = pos("db.begin()");
+        // 转发走共用的撤回函数，在同一个事务里提交之后再投递。
+        let (lookup, rest) = body
+            .split_once("if content_type == REPOST_CONTENT_TYPE {")
+            .expect("repost branch");
+        let (repost, generic) = rest.split_once("let audience").expect("generic path");
+        let at = |s: &str, needle: &str| s.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(
+            at(repost, "interactions::withdraw_repost(") < at(repost, "txn.commit()")
+                && at(repost, "txn.commit()") < at(repost, "deliver_withdrawn_repost(db")
+        );
+        assert!(at(lookup, "db.begin()") < at(lookup, "FOR UPDATE"));
+        let pos = |needle: &str| at(generic, needle);
+        let begin = 0;
         let delete = pos("\"Delete\",");
         let drop_row = pos("DELETE FROM federation_published_content");
         let drop_timeline = pos("DELETE FROM federation_timeline");

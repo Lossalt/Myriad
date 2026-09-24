@@ -1145,6 +1145,8 @@ pub async fn announce_object(
 }
 
 /// POST /api/federation/unannounce — undo quote-repost
+///
+/// 与从「已发布」撤回转发是同一件事，都交给 [`withdraw_repost`]。
 pub async fn unannounce_object(
     user_id: i32,
     username: &str,
@@ -1153,122 +1155,49 @@ pub async fn unannounce_object(
 ) -> Result<InteractionResponse, (StatusCode, Json<serde_json::Value>)> {
     let object_id = require_object_id(object_id_raw)?;
     let base_url = get_base_url().await;
-    let local_actor = actor_url(&base_url, username);
 
-    // 删转发标记、撤时间线、写 Undo / Delete 与远端投递行同一事务。
-    // DELETE … RETURNING 让并发的两次取消只有一次拿到原活动 id。
+    // 这里只按对象查出转发的活动 id，不加锁：删除由 withdraw_repost 按固定顺序
+    // 加锁完成，与撤回发布并发时不会互相等成死锁。
     let txn = db.begin().await.map_err(db_err)?;
-    let row = txn
+    let marker = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"DELETE FROM federation_object_interactions
-               WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'
-               RETURNING activity_id"#,
+            r#"SELECT activity_id FROM federation_object_interactions
+               WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'"#,
             [user_id.into(), object_id.clone().into()],
         ))
         .await
         .map_err(db_err)?;
+    let repost_activity_id: Option<String> = marker
+        .and_then(|r| {
+            r.try_get::<Option<String>>("", "activity_id")
+                .ok()
+                .flatten()
+        })
+        .filter(|s| !s.is_empty());
 
-    let original_id: Option<String> = row.and_then(|r| {
-        r.try_get::<Option<String>>("", "activity_id")
-            .ok()
-            .flatten()
-    });
-
-    let mut withdrawn = None;
-    if let Some(ann_id) = original_id.filter(|s| !s.is_empty()) {
-        // Remove from local timelines
-        txn.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "DELETE FROM federation_timeline WHERE activity_id = $1",
-            [ann_id.clone().into()],
-        ))
-        .await
-        .map_err(db_err)?;
-
-        // Load original activity to decide Undo(Announce) vs Delete(Create Note).
-        let orig_act = txn
-            .query_one_raw(Statement::from_sql_and_values(
+    let withdrawn = match repost_activity_id {
+        Some(activity_id) => withdraw_repost(&txn, &base_url, user_id, username, &activity_id)
+            .await
+            .map_err(db_err)?,
+        None => {
+            // 没记活动 id 的历史标记：没有可撤回的活动，只删标记。
+            txn.execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT activity_type, object_json FROM federation_activities
-                   WHERE activity_id = $1 LIMIT 1"#,
-                [ann_id.clone().into()],
+                r#"DELETE FROM federation_object_interactions
+                   WHERE user_id = $1 AND object_id = $2 AND kind = 'announce'
+                     AND COALESCE(activity_id, '') = ''"#,
+                [user_id.into(), object_id.clone().into()],
             ))
             .await
             .map_err(db_err)?;
-
-        let (act_type, object_json): (String, Option<serde_json::Value>) = if let Some(r) = orig_act
-        {
-            (
-                r.try_get::<String>("", "activity_type")
-                    .unwrap_or_else(|_| "Announce".into()),
-                r.try_get::<Option<serde_json::Value>>("", "object_json")
-                    .ok()
-                    .flatten(),
-            )
-        } else {
-            ("Announce".into(), None)
-        };
-
-        let undo_id = generate_activity_id(&base_url);
-        let undo_json = if act_type == "Create" {
-            // Quote-repost path: Delete the Note we created.
-            let note_id = object_json
-                .as_ref()
-                .and_then(|v| v.pointer("/object/id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(ann_id.as_str())
-                .to_string();
-            json!({
-                "@context": build_ap_context(),
-                "type": "Delete",
-                "id": &undo_id,
-                "actor": &local_actor,
-                "object": &note_id,
-                "published": now_iso8601(),
-                "to": [AP_PUBLIC],
-            })
-        } else {
-            // Announce：Undo 包一层 Announce
-            json!({
-                "@context": build_ap_context(),
-                "type": "Undo",
-                "id": &undo_id,
-                "actor": &local_actor,
-                "object": {
-                    "type": "Announce",
-                    "id": &ann_id,
-                    "actor": &local_actor,
-                    "object": &object_id,
-                },
-                "published": now_iso8601(),
-            })
-        };
-
-        let undo_type = undo_json
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Undo");
-        let act_db_id = crate::federation::types::insert_local_activity(
-            &txn,
-            user_id,
-            &undo_id,
-            undo_type,
-            None,
-            undo_json.clone(),
-        )
-        .await
-        .map_err(db_err)?;
-        let staged = content::stage_follower_fan_out(&txn, &base_url, user_id, act_db_id)
-            .await
-            .map_err(db_err)?;
-        withdrawn = Some((act_db_id, undo_json, staged.local_followers));
-    }
+            None
+        }
+    };
     txn.commit().await.map_err(db_err)?;
 
-    if let Some((act_db_id, undo_json, local_followers)) = withdrawn {
-        content::deliver_to_local_followers(db, &local_followers, &undo_json).await;
-        deliver_to_object_author(db, act_db_id, &undo_json, &object_id).await;
+    if let Some(withdrawn) = withdrawn {
+        deliver_withdrawn_repost(db, withdrawn).await;
     }
 
     let st = stats_for_one(db, user_id, &object_id).await?;
@@ -1285,6 +1214,172 @@ pub async fn unannounce_object(
         announce_count: Some(st.announce_count),
         reply_count: Some(st.reply_count),
     })
+}
+
+/// 一次撤回转发在事务提交之后还要做的投递。
+pub(crate) struct WithdrawnRepost {
+    /// 撤回活动的 id：Delete，历史上的纯 Announce 为 Undo。
+    pub activity_id: String,
+    activity_db_id: i32,
+    activity_json: serde_json::Value,
+    local_followers: Vec<String>,
+    /// 被转发的对象，撤回要同样通知它的作者。
+    quoted_object_id: Option<String>,
+}
+
+/// 撤回一条转发。「已转发」只有一个事实，取消转发与从「已发布」撤回都走这里。
+///
+/// 一条转发落在三处：转发标记（「已转发」状态与计数）、已发布行（「已发布」
+/// 列表）、作者与同实例粉丝的时间线行。在调用方事务里一起删掉，只写一条撤回
+/// 活动并排队远端粉丝投递；其中某处已经不在（修复之前留下的半撤回状态）照样
+/// 清掉其余的。标记与已发布行都已不在：别人先撤回了，返回 `None`，不再写活动。
+///
+/// 加锁顺序固定为先已发布行、后标记，与撤回发布先锁已发布行一致。
+pub(crate) async fn withdraw_repost(
+    txn: &impl ConnectionTrait,
+    base_url: &str,
+    user_id: i32,
+    username: &str,
+    activity_id: &str,
+) -> Result<Option<WithdrawnRepost>, sea_orm::DbErr> {
+    let published = txn
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"DELETE FROM federation_published_content
+               WHERE user_id = $1 AND activity_id = $2 AND content_type = $3
+               RETURNING id"#,
+            [
+                user_id.into(),
+                activity_id.into(),
+                content::REPOST_CONTENT_TYPE.into(),
+            ],
+        ))
+        .await?;
+    let marker = txn
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"DELETE FROM federation_object_interactions
+               WHERE user_id = $1 AND kind = 'announce' AND activity_id = $2
+               RETURNING object_id"#,
+            [user_id.into(), activity_id.into()],
+        ))
+        .await?;
+    if published.is_empty() && marker.is_empty() {
+        return Ok(None);
+    }
+
+    // 作者与同实例粉丝的时间线行
+    txn.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "DELETE FROM federation_timeline WHERE activity_id = $1",
+        [activity_id.into()],
+    ))
+    .await?;
+
+    // 原活动决定撤回的形态：转发（Create Note）发 Delete，历史纯 Announce 发 Undo。
+    let orig_act = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"SELECT activity_type, object_json FROM federation_activities
+               WHERE activity_id = $1 AND user_id = $2 LIMIT 1"#,
+            [activity_id.into(), user_id.into()],
+        ))
+        .await?;
+    let (act_type, object_json): (String, Option<serde_json::Value>) = match orig_act {
+        Some(r) => (
+            r.try_get::<String>("", "activity_type")
+                .unwrap_or_else(|_| "Announce".into()),
+            r.try_get::<Option<serde_json::Value>>("", "object_json")
+                .ok()
+                .flatten(),
+        ),
+        None => ("Announce".into(), None),
+    };
+
+    let quoted_object_id = marker
+        .first()
+        .and_then(|r| r.try_get::<String>("", "object_id").ok())
+        .or_else(|| {
+            let obj = object_json.as_ref()?.get("object")?;
+            obj.as_str()
+                .or_else(|| obj.get("mfp:quotedObjectId").and_then(|v| v.as_str()))
+                .or_else(|| obj.get("quoteUrl").and_then(|v| v.as_str()))
+                .map(str::to_string)
+        })
+        .filter(|s| !s.is_empty());
+
+    let local_actor = actor_url(base_url, username);
+    let undo_id = generate_activity_id(base_url);
+    let undo_json = if act_type == "Create" {
+        // 转发的 Note：Delete 它，寻址与原 Create 一致（只有 Public）。
+        let note_id = object_json
+            .as_ref()
+            .and_then(|v| v.pointer("/object/id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(activity_id)
+            .to_string();
+        json!({
+            "@context": build_ap_context(),
+            "type": "Delete",
+            "id": &undo_id,
+            "actor": &local_actor,
+            "object": &note_id,
+            "published": now_iso8601(),
+            "to": [AP_PUBLIC],
+        })
+    } else {
+        // Announce：Undo 包一层 Announce
+        json!({
+            "@context": build_ap_context(),
+            "type": "Undo",
+            "id": &undo_id,
+            "actor": &local_actor,
+            "object": {
+                "type": "Announce",
+                "id": activity_id,
+                "actor": &local_actor,
+                "object": quoted_object_id.as_deref(),
+            },
+            "published": now_iso8601(),
+        })
+    };
+    let undo_type = undo_json
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Undo");
+
+    let activity_db_id = crate::federation::types::insert_local_activity(
+        txn,
+        user_id,
+        &undo_id,
+        undo_type,
+        Some(content::REPOST_CONTENT_TYPE),
+        undo_json.clone(),
+    )
+    .await?;
+    let staged = content::stage_follower_fan_out(txn, base_url, user_id, activity_db_id).await?;
+    Ok(Some(WithdrawnRepost {
+        activity_id: undo_id,
+        activity_db_id,
+        activity_json: undo_json,
+        local_followers: staged.local_followers,
+        quoted_object_id,
+    }))
+}
+
+/// 提交之后：同实例粉丝进程内投递、通知被转发对象的作者，都逐个尽力而为。
+pub(crate) async fn deliver_withdrawn_repost(db: &DatabaseConnection, withdrawn: WithdrawnRepost) {
+    content::deliver_to_local_followers(db, &withdrawn.local_followers, &withdrawn.activity_json)
+        .await;
+    if let Some(object_id) = withdrawn.quoted_object_id.as_deref() {
+        deliver_to_object_author(
+            db,
+            withdrawn.activity_db_id,
+            &withdrawn.activity_json,
+            object_id,
+        )
+        .await;
+    }
 }
 
 // Delivery helpers
@@ -1712,7 +1807,6 @@ mod tests {
                 "pub async fn announce_object(",
                 "pub async fn unannounce_object(",
             ),
-            ("pub async fn unannounce_object(", "// Delivery helpers"),
         ] {
             let f = body(start, end);
             let pos = |needle: &str| f.find(needle).unwrap_or_else(|| panic!("{start} {needle}"));
@@ -1728,16 +1822,38 @@ mod tests {
             assert!(!f.contains("let _ = db"), "{start}");
             assert!(!f.contains("fan_out_to_followers"), "{start}");
         }
-        for start in [
+        let f = body(
             "pub async fn announce_object(",
             "pub async fn unannounce_object(",
-        ] {
-            let f = body(start, "// Delivery helpers");
-            let stage = f.find("stage_follower_fan_out(&txn").expect(start);
-            let commit = f.find("txn.commit()").expect(start);
-            let local = f.find("deliver_to_local_followers(db").expect(start);
-            assert!(stage < commit && commit < local, "{start}");
-        }
+        );
+        let stage = f.find("stage_follower_fan_out(&txn").unwrap();
+        let commit = f.find("txn.commit()").unwrap();
+        let local = f.find("deliver_to_local_followers(db").unwrap();
+        assert!(stage < commit && commit < local);
+
+        // 取消转发：撤回在调用方事务里写活动、排队扇出，提交之后才投递。
+        let f = body(
+            "pub async fn unannounce_object(",
+            "pub(crate) struct WithdrawnRepost",
+        );
+        let pos = |needle: &str| f.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(pos("db.begin()") < pos("withdraw_repost(&txn"));
+        assert!(pos("withdraw_repost(&txn") < pos("txn.commit()"));
+        assert!(pos("txn.commit()") < pos("deliver_withdrawn_repost(db"));
+        let f = body(
+            "pub(crate) async fn withdraw_repost(",
+            "pub(crate) async fn deliver_withdrawn_repost(",
+        );
+        assert!(f.contains("insert_local_activity("));
+        assert!(f.contains("stage_follower_fan_out(txn"));
+        assert!(!f.contains("begin()") && !f.contains("commit()"));
+        assert!(!f.contains("let _ =") && !f.contains(".ok();"));
+        let f = body(
+            "pub(crate) async fn deliver_withdrawn_repost(",
+            "// Delivery helpers",
+        );
+        assert!(f.contains("deliver_to_local_followers(db"));
+        assert!(f.contains("deliver_to_object_author("));
     }
 
     /// 转发的作者时间线行与普通发布同一个插行函数，预览不再自己截断。
@@ -1849,6 +1965,159 @@ mod tests {
             .await,
             0
         );
+
+        fixture.close().await;
+    }
+
+    /// 「已转发」只有一个事实：取消转发与从「已发布」撤回都把标记、已发布行、
+    /// 时间线一起清掉，各只写一条 Delete；修复前留下的半撤回状态也能收尾。
+    #[tokio::test]
+    async fn repost_state_is_one_fact_across_unannounce_and_unpublish() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = get_base_url().await;
+        db.execute_unprepared(&format!(
+            r#"
+            INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+            INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+                (11, 'https://good.example/users/g', 'good.example', 'https://good.example/users/g/inbox'),
+                (13, '{base}/users/bob', 'local', '{base}/users/bob/inbox');
+            INSERT INTO federation_follows (user_id, remote_actor_id, direction, status) VALUES
+                (1, 11, 'incoming', 'accepted'), (1, 13, 'incoming', 'accepted');
+            "#
+        ))
+        .await
+        .unwrap();
+        let target = "https://remote.example/notes/1";
+        let markers = "SELECT COUNT(*) FROM federation_object_interactions \
+                       WHERE user_id = 1 AND kind = 'announce'";
+        let published = "SELECT COUNT(*) FROM federation_published_content \
+                         WHERE user_id = 1 AND content_type = 'repost'";
+        let timeline = "SELECT COUNT(*) FROM federation_timeline";
+        let deletes = "SELECT COUNT(*) FROM federation_activities WHERE activity_type = 'Delete'";
+
+        // 取消转发：「已发布」里的那一行也随之消失。
+        let first = announce_object(1, "alice", db, target, "  <b>look</b>  ")
+            .await
+            .unwrap();
+        let first_id = first.activity_id.expect("reposted");
+        let preview: Option<String> = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                format!(
+                    "SELECT content_preview FROM federation_timeline \
+                     WHERE user_id = 1 AND activity_id = '{first_id}'"
+                ),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "content_preview")
+            .unwrap();
+        assert_eq!(preview.as_deref(), Some("look"), "shared preview builder");
+        assert_eq!(count(db, published).await, 1);
+        assert_eq!(count(db, timeline).await, 2, "alice and bob");
+        let undone = unannounce_object(1, "alice", db, target).await.unwrap();
+        assert_eq!(undone.announced_by_me, Some(false));
+        assert_eq!(count(db, markers).await, 0);
+        assert_eq!(count(db, published).await, 0, "gone from 已发布");
+        assert_eq!(count(db, timeline).await, 0);
+        assert_eq!(count(db, deletes).await, 1);
+        let delete_object: String = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT object_json->>'object' AS o FROM federation_activities \
+                 WHERE activity_type = 'Delete'",
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "o")
+            .unwrap();
+        assert!(delete_object.contains("/notes/repost_"), "{delete_object}");
+
+        // 从「已发布」撤回：转发标记一并清掉，之后可以再转发。
+        let second = announce_object(1, "alice", db, target, "again")
+            .await
+            .unwrap();
+        let second_id = second.activity_id.expect("repost again after undo");
+        let content_id: String = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                format!(
+                    "SELECT content_id FROM federation_published_content \
+                     WHERE activity_id = '{second_id}'"
+                ),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "content_id")
+            .unwrap();
+        let out = crate::federation::content::unpublish_content(
+            1,
+            "alice",
+            db,
+            Some("repost"),
+            Some(&content_id),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["activity_id"], json!(second_id));
+        assert_eq!(count(db, markers).await, 0, "no longer 已转发");
+        assert_eq!(count(db, published).await, 0);
+        assert_eq!(count(db, timeline).await, 0);
+        assert_eq!(count(db, deletes).await, 2);
+        let st = stats_for_one(db, 1, target).await.unwrap();
+        assert!(!st.announced_by_me);
+        assert_eq!(st.announce_count, 0);
+        // 已经撤回过：取消转发什么也不写。
+        unannounce_object(1, "alice", db, target).await.unwrap();
+        assert_eq!(count(db, deletes).await, 2);
+        // 远端粉丝每次撤回各排一次队。
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_delivery_queue q \
+                 JOIN federation_activities a ON a.id = q.activity_id \
+                 WHERE a.activity_type = 'Delete' \
+                   AND q.target_inbox = 'https://good.example/users/g/inbox'"
+            )
+            .await,
+            2
+        );
+
+        // 修复前留下的半撤回状态：只剩已发布行，或只剩标记，都能撤干净。
+        let third = announce_object(1, "alice", db, target, "third")
+            .await
+            .unwrap()
+            .activity_id
+            .expect("repost again after unpublish");
+        db.execute_unprepared("DELETE FROM federation_object_interactions WHERE kind = 'announce'")
+            .await
+            .unwrap();
+        crate::federation::content::unpublish_content(1, "alice", db, None, None, Some(&third))
+            .await
+            .unwrap();
+        assert_eq!(count(db, published).await, 0);
+        assert_eq!(count(db, deletes).await, 3);
+        let fourth = announce_object(1, "alice", db, target, "fourth")
+            .await
+            .unwrap()
+            .activity_id
+            .expect("marker was already gone");
+        db.execute_unprepared(&format!(
+            "DELETE FROM federation_published_content WHERE activity_id = '{fourth}'"
+        ))
+        .await
+        .unwrap();
+        unannounce_object(1, "alice", db, target).await.unwrap();
+        assert_eq!(count(db, markers).await, 0);
+        assert_eq!(count(db, timeline).await, 0);
+        assert_eq!(count(db, deletes).await, 4);
 
         fixture.close().await;
     }
