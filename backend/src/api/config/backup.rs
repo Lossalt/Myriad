@@ -327,7 +327,15 @@ pub async fn export_settings(
     State(db): State<DatabaseConnection>,
     user_id: i32,
 ) -> (StatusCode, Json<Value>) {
-    let effective_config = build_config(&db, true).await;
+    let effective_config = match build_config(&db, true).await {
+        Ok(config) => config,
+        Err(message) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": message, "code": "CONFIG_UNREADABLE" })),
+            );
+        }
+    };
     let rows = match db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
@@ -1836,6 +1844,11 @@ mod settings_backup_tests {
         assert!(should_write_env_field("token", "ghp_real_token"));
         assert!(should_write_env_field("username", "octocat"));
         assert!(should_write_env_field("username", ""));
+        // One rule with what storage seals: certificates are secrets, token
+        // quotas are not (an empty quota must not be written as a cleared secret).
+        assert!(!should_write_env_field("agora_app_certificate", ""));
+        assert!(should_write_env_field("user_ai_daily_tokens", ""));
+        assert!(should_write_env_field("openai_max_tokens", ""));
     }
 
     #[test]

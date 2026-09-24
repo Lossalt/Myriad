@@ -13,14 +13,20 @@ use super::types::{
     TripoConfig, UiConfig,
 };
 
+/// Fails when stored configuration cannot be read (database or decryption).
+/// Falling back to env here would hand the admin form empty secrets, and
+/// saving that form writes every secret field as cleared.
 pub(crate) async fn build_config(
     db: &DatabaseConnection,
     reveal_sensitive: bool,
-) -> ConfigResponse {
+) -> Result<ConfigResponse, String> {
     let db = db.clone();
     // 优先从数据库读取配置
     let config_service = crate::services::config_service::ConfigService::new(db.clone());
-    let db_config = config_service.load_config().await.ok();
+    let db_config = Some(config_service.load_config().await.map_err(|error| {
+        tracing::error!(error = %error, "stored configuration could not be read");
+        "Stored configuration could not be read".to_string()
+    })?);
 
     // Prefer DB when present (including intentional empty clear); else process env.
     // Same clearable semantics as SEO/analytics (`db_or_env_clearable`).
@@ -2012,12 +2018,17 @@ pub(crate) async fn build_config(
         db_config.as_ref().and_then(|c| c.platform_order.as_ref()),
     );
 
-    config
+    Ok(config)
 }
 
 pub async fn get_config(crate::extract::Db(db): crate::extract::Db) -> (StatusCode, Json<Value>) {
-    let config = build_config(&db, false).await;
-    (StatusCode::OK, Json(json!(config)))
+    match build_config(&db, false).await {
+        Ok(config) => (StatusCode::OK, Json(json!(config))),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": message, "code": "CONFIG_UNREADABLE" })),
+        ),
+    }
 }
 
 pub(crate) async fn reconcile_platform_auto_refresh_with_config(
@@ -2049,6 +2060,6 @@ pub(crate) async fn reconcile_platform_auto_refresh_with_config(
 pub async fn reconcile_platform_auto_refresh(
     db: &DatabaseConnection,
 ) -> Result<crate::services::platform_auto_refresh::PlatformAutoRefreshSummary, String> {
-    let config = build_config(db, false).await;
+    let config = build_config(db, false).await?;
     reconcile_platform_auto_refresh_with_config(db, &config).await
 }

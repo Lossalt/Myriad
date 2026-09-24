@@ -958,15 +958,13 @@ pub(crate) fn collect_database_updates_with_vendor(
 }
 
 /// Whether a config form field key holds a secret (must not write mask/empty to .env).
+///
+/// The storage rule (`data_key::is_sensitive_config_key`, which decides what is
+/// sealed) is authoritative, so certificates count and quota fields such as
+/// `*_tokens` do not. Form fields additionally use bare `key` / `*_key` names.
 fn is_secret_config_field_key(field_key: &str) -> bool {
     let k = field_key.to_ascii_lowercase();
-    k.contains("token")
-        || k.contains("secret")
-        || k.contains("api_key")
-        || k.contains("npsso")
-        || k.contains("password")
-        || k.ends_with("_key")
-        || k == "key"
+    crate::services::data_key::is_sensitive_config_key(&k) || k.ends_with("_key") || k == "key"
 }
 
 /// Skip empty or masked secrets so save does not clobber real .env/DB values with ••••.
