@@ -397,5 +397,8 @@
   "configurationMode": "サーバーはまだセットアップ中です。先にデータベース設定を完了してください。",
   "setupCompleted": "セットアップは完了しています。管理者でログインして運用してください。",
   "fileTooLarge": "ファイルが大きすぎます。",
-  "payloadTooLarge": "メッセージが大きすぎます。"
+  "payloadTooLarge": "メッセージが大きすぎます。",
+  "byCode": {
+    "source_refresh_in_progress": "このフィードはすでに更新中です。"
+  }
 }

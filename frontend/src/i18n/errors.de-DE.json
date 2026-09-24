@@ -397,5 +397,8 @@
   "configurationMode": "Der Server ist noch in der Einrichtung. Schließen Sie zuerst die Datenbankkonfiguration ab.",
   "setupCompleted": "Die Einrichtung ist bereits abgeschlossen. Melden Sie sich als Administrator zur Wartung an.",
   "fileTooLarge": "Diese Datei ist zu groß.",
-  "payloadTooLarge": "Diese Nachricht ist zu groß."
+  "payloadTooLarge": "Diese Nachricht ist zu groß.",
+  "byCode": {
+    "source_refresh_in_progress": "Dieser Feed wird bereits aktualisiert."
+  }
 }

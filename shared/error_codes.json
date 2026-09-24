@@ -1,5 +1,5 @@
 {
-  "$comment": "Stable HTTP error codes. Backend AppError.inferred_code uses `labels` (exact public English). Frontend leftover fallback uses labels + leftovers + prefixes. Parameterized dumps stay out of this file.",
+  "$comment": "Stable HTTP error codes. Backend AppError.inferred_code uses `labels` (exact public English). Frontend leftover fallback uses labels + leftovers + prefixes. Parameterized dumps stay out of this file. `explicit` lists codes the backend sets directly (not inferred from a label).",
   "aliases": {
     "UNAUTHORIZED": "unauthorized",
     "FORBIDDEN": "forbidden",
@@ -315,5 +315,6 @@
     "Failed to create configuration": "config_file_permission",
     "setup passphrase does not match": "setup_secret_mismatch",
     "Setup secret required": "setup_secret_mismatch"
-  }
+  },
+  "explicit": []
 }

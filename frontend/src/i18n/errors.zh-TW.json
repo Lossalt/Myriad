@@ -397,5 +397,8 @@
   "configurationMode": "伺服器仍在配置模式，請先完成資料庫配置和初始化。",
   "setupCompleted": "安裝已經完成。請用管理員賬號登入後做維護。",
   "fileTooLarge": "這個檔案太大了。",
-  "payloadTooLarge": "這條訊息太大了。"
+  "payloadTooLarge": "這條訊息太大了。",
+  "byCode": {
+    "source_refresh_in_progress": "這個訂閱源正在重新整理中。"
+  }
 }

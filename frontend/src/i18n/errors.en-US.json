@@ -397,5 +397,8 @@
   "configurationMode": "The server is still in setup. Finish database configuration first.",
   "setupCompleted": "Setup is already complete. Sign in as an administrator for maintenance.",
   "fileTooLarge": "That file is too large.",
-  "payloadTooLarge": "That message is too large."
+  "payloadTooLarge": "That message is too large.",
+  "byCode": {
+    "source_refresh_in_progress": "This feed is already being refreshed."
+  }
 }

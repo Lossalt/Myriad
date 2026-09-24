@@ -397,5 +397,8 @@
   "configurationMode": "Le serveur est encore en installation. Terminez d’abord la configuration de la base.",
   "setupCompleted": "L’installation est déjà terminée. Connectez-vous en administrateur pour la maintenance.",
   "fileTooLarge": "Ce fichier est trop grand.",
-  "payloadTooLarge": "Ce message est trop grand."
+  "payloadTooLarge": "Ce message est trop grand.",
+  "byCode": {
+    "source_refresh_in_progress": "Ce flux est déjà en cours d’actualisation."
+  }
 }

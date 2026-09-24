@@ -397,5 +397,8 @@
   "configurationMode": "服务器仍在配置模式，请先完成数据库配置和初始化。",
   "setupCompleted": "安装已经完成。请用管理员账号登录后做维护。",
   "fileTooLarge": "这个文件太大了。",
-  "payloadTooLarge": "这条消息太大了。"
+  "payloadTooLarge": "这条消息太大了。",
+  "byCode": {
+    "source_refresh_in_progress": "这个订阅源正在刷新中。"
+  }
 }

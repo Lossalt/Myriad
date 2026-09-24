@@ -91,6 +91,11 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   const rawCode = exactErrorCode(raw)
   const is = (candidate: string) => code === candidate || rawCode === candidate
 
+  // The code → copy table: a code with an entry needs no branch below.
+  const byCode: Readonly<Record<string, string | undefined>> = t.byCode
+  const tableCopy = (code && byCode[code]) || (rawCode && byCode[rawCode])
+  if (tableCopy) return classified(tableCopy, raw, hint)
+
   if (code === 'unauthorized') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
   }

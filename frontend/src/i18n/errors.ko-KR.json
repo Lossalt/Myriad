@@ -397,5 +397,8 @@
   "configurationMode": "서버가 아직 설치 중이에요. 먼저 데이터베이스 설정을 마치세요.",
   "setupCompleted": "설치는 이미 끝났어요. 유지보수는 관리자로 로그인하세요.",
   "fileTooLarge": "그 파일이 너무 커요.",
-  "payloadTooLarge": "그 메시지가 너무 커요."
+  "payloadTooLarge": "그 메시지가 너무 커요.",
+  "byCode": {
+    "source_refresh_in_progress": "이 피드는 이미 새로 고치는 중입니다."
+  }
 }

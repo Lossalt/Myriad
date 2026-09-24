@@ -1927,6 +1927,26 @@ describe('userFacingError is driven by codes', () => {
     assert.deepEqual(bare, [])
   })
 
+  it('maps codes through the byCode table', () => {
+    const copy = currentCopy().errors.byCode.source_refresh_in_progress
+    assert.equal(
+      userFacingError(new ApiError('Source is already being refreshed', 409, 'source_refresh_in_progress')),
+      copy,
+    )
+  })
+
+  it('only lists codes the backend or the leftover table can produce', () => {
+    const known = new Set<string>([
+      ...Object.values(errorCodeSpec.labels),
+      ...Object.values(errorCodeSpec.leftovers),
+      ...Object.values(errorCodeSpec.prefixes),
+      ...Object.values(errorCodeSpec.aliases),
+      ...errorCodeSpec.explicit,
+    ])
+    const unknown = Object.keys(currentCopy().errors.byCode).filter(code => !known.has(code))
+    assert.deepEqual(unknown, [])
+  })
+
   it('does not grow the text-matching compatibility layer', () => {
     // Regexes over backend prose are a shrinking fallback: new faults get a
     // code and a copy entry instead. Lower this bound as rules are removed.
