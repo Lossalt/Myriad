@@ -161,17 +161,15 @@ impl BotWorker for TelegramWorker {
         publish_status(phase, fingerprint).await;
     }
 
-    fn run_session(
+    async fn run_session(
         fingerprint: &CredentialFingerprint,
         _resume: Option<()>,
         cancel: watch::Receiver<bool>,
-    ) -> impl Future<Output = SessionResult<()>> + Send {
-        async move {
-            run_session(fingerprint, cancel)
-                .await
-                .map(|()| None)
-                .map_err(|kind| (kind, None))
-        }
+    ) -> SessionResult<()> {
+        run_session(fingerprint, cancel)
+            .await
+            .map(|()| None)
+            .map_err(|kind| (kind, None))
     }
 }
 

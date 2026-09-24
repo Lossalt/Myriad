@@ -202,17 +202,15 @@ impl BotWorker for QqWorker {
         publish_status(phase, fingerprint).await;
     }
 
-    fn run_session(
+    async fn run_session(
         fingerprint: &CredentialFingerprint,
         _resume: Option<()>,
         cancel: watch::Receiver<bool>,
-    ) -> impl Future<Output = SessionResult<()>> + Send {
-        async move {
-            run_gateway(fingerprint, cancel)
-                .await
-                .map(|()| None)
-                .map_err(|kind| (kind, None))
-        }
+    ) -> SessionResult<()> {
+        run_gateway(fingerprint, cancel)
+            .await
+            .map(|()| None)
+            .map_err(|kind| (kind, None))
     }
 }
 

@@ -201,7 +201,7 @@ pub struct PhantasiSchedulerEngine {
 enum FetchOutcome {
     Fetched {
         new_count: i32,
-        source: phantasi_sources::Model,
+        source: Box<phantasi_sources::Model>,
     },
     Failed(String),
 }
@@ -481,7 +481,7 @@ impl PhantasiSchedulerEngine {
                 }
                 Ok(FetchOutcome::Fetched {
                     new_count,
-                    source: updated_source,
+                    source: Box::new(updated_source),
                 })
             }
             Err(e) => {

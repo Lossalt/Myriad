@@ -1629,17 +1629,9 @@ mod tests {
     #[test]
     fn publish_and_write_run_in_a_transaction() {
         let src = include_str!("note_publish.rs");
-        for signature in ["pub async fn write_note_with_doc"] {
-            let body = body_of(src, signature);
-            assert!(
-                body.contains(".begin()"),
-                "{signature} must open a transaction"
-            );
-            assert!(body.contains("commit()"), "{signature} must commit");
-            assert!(
-                body.contains("rollback()"),
-                "{signature} must roll back on error"
-            );
-        }
+        let body = body_of(src, "pub async fn write_note_with_doc");
+        assert!(body.contains(".begin()"), "must open a transaction");
+        assert!(body.contains("commit()"), "must commit");
+        assert!(body.contains("rollback()"), "must roll back on error");
     }
 }
