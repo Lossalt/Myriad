@@ -67,10 +67,14 @@ impl ConfigService {
 
     /// 从数据库加载所有配置
     pub async fn load_config(&self) -> Result<DynamicConfig> {
-        // 使用 ConnectionTrait 的方法进行查询
+        Self::load_config_on(&self.db).await
+    }
+
+    /// Full configuration as seen by `db`, which may be an open transaction:
+    /// a writer can prove what it wrote still loads before committing it.
+    pub async fn load_config_on(db: &impl ConnectionTrait) -> Result<DynamicConfig> {
         let sql = "SELECT key, value FROM configurations";
-        let rows = self
-            .db
+        let rows = db
             .query_all_raw(Statement::from_string(
                 sea_orm::DatabaseBackend::Postgres,
                 sql.to_string(),
