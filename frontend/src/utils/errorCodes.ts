@@ -16,17 +16,25 @@ for (const [label, code] of Object.entries(CODES.labels)) {
 }
 for (const [label, code] of Object.entries(CODES.leftovers)) {
   EXACT.set(label, code)
+  EXACT.set(label.toLowerCase(), code)
 }
 
 const PREFIXES = Object.entries(CODES.prefixes).toSorted(
   (a, b) => b[0].length - a[0].length,
 )
 
+/** Code of a text that is exactly one known label or leftover (any case). */
+export function exactErrorCode(raw: string): string | undefined {
+  const text = raw.trim()
+  if (!text) return undefined
+  return EXACT.get(text) ?? EXACT.get(text.toLowerCase())
+}
+
 /** Map a public label or leftover string onto a stable machine code. */
 export function inferErrorCode(raw: string): string | undefined {
   const text = raw.trim()
   if (!text) return undefined
-  const exact = EXACT.get(text) ?? EXACT.get(text.toLowerCase())
+  const exact = exactErrorCode(text)
   if (exact) return exact
   const lower = text.toLowerCase()
   for (const [prefix, code] of PREFIXES) {

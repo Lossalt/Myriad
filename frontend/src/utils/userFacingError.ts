@@ -1,6 +1,6 @@
 import { currentCopy, formatCurrent } from '../i18n/localeCopy'
 import { ApiError } from '../services/api'
-import { resolveErrorCode } from './errorCodes'
+import { exactErrorCode, resolveErrorCode } from './errorCodes'
 import { httpStatusMessage, statusFromErrorText } from './httpStatus'
 import { isInternalDump, isUselessErrorText } from './uselessErrorText'
 
@@ -87,6 +87,9 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   const status = readStatus(reason) || statusFromErrorText(raw)
   const code = resolveErrorCode(readCode(reason), raw)
   const hint = readHint(reason)
+  // Code from the transport, or from matching a known fixed text exactly.
+  const rawCode = exactErrorCode(raw)
+  const is = (candidate: string) => code === candidate || rawCode === candidate
 
   if (code === 'unauthorized') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
@@ -100,7 +103,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     /federation is disabled because this server['’]s egress location is mainland china/i.test(
       raw,
     ) ||
-    /^federation disabled in this region$/i.test(raw) ||
+    is('text_federation_disabled_in_this_region') ||
     /^federation is disabled on this instance$/i.test(raw) ||
     /federation apps cannot be downloaded or installed/i.test(raw)
   ) {
@@ -338,7 +341,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     code === 'database_error' ||
-    /^database is not connected$/i.test(raw) ||
+    is('text_database_is_not_connected') ||
     /数据库连接未初始化|数据库未连接/.test(raw)
   ) {
     return joinParts(t.database, usefulExtra(hint, t.database))
@@ -492,8 +495,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return classified(t.configFilePermission, raw, hint)
   }
   if (
-    code === 'ai_response_invalid' ||
-    /^failed to parse ai response$/i.test(raw)
+    is('ai_response_invalid')
   ) {
     return joinParts(t.aiResponseInvalid, usefulExtra(hint, t.aiResponseInvalid))
   }
@@ -523,10 +525,8 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     )
   }
   if (
-    code === 'ai_generation_failed' ||
+    is('ai_generation_failed') ||
     /^ai error:/i.test(raw) ||
-    /^ai generation failed$/i.test(raw) ||
-    /^ai (analysis|search) failed$/i.test(raw) ||
     /^gemini api /i.test(raw) ||
     /invalid gemini json/i.test(raw)
   ) {
@@ -615,7 +615,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'song_fetch_failed') {
     return classified(currentCopy().music.loadSongFailed, raw, hint)
   }
-  if (code === 'hitokoto_fetch_failed' || /^hitokoto api failed$/i.test(raw)) {
+  if (is('hitokoto_fetch_failed')) {
     return currentCopy().config.hitokotoLoadFailed
   }
   if (
@@ -655,7 +655,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (
     /^no cached \w+ data/i.test(raw) ||
     /^no data available for platform:/i.test(raw) ||
-    /^platform data not found$/i.test(raw)
+    is('text_platform_data_not_found')
   ) {
     const found =
       raw.match(/^no cached (\w+) data/i)?.[1] ||
@@ -974,7 +974,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       hint,
     )
   }
-  if (/^player not found$/i.test(raw)) {
+  if (is('text_player_not_found')) {
     return t.notFound
   }
   if (/^rate limited by upstream/i.test(raw)) {
@@ -1113,7 +1113,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return classified(currentCopy().config.mcpInvalidConfig, raw, hint)
   }
   if (
-    /^invalid audio data$/i.test(raw) ||
+    is('text_invalid_audio_data') ||
     /^please (provide|upload) audio/i.test(raw) ||
     /无效的Base64|必须提供 audio_data|请上传音频|无效的音频数据/.test(raw)
   ) {
@@ -1317,7 +1317,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     code === 'agent_processing_failed' ||
-    /^processing failed$/i.test(raw) ||
+    is('text_processing_failed') ||
     raw.startsWith('处理失败')
   ) {
     return classified(t.agentProcessingFailed, raw, hint)
@@ -1349,7 +1349,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.agentStepRetrying
   }
-  if (/^confirmation failed$/i.test(raw) || raw.startsWith('确认执行失败')) {
+  if (is('text_confirmation_failed') || raw.startsWith('确认执行失败')) {
     return t.agentConfirmFailed
   }
   if (
@@ -1398,7 +1398,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return t.waitInputTimeout
   }
   if (
-    /^API 速率限制，等待后重试$|^Rate limited; wait and retry$/i.test(raw)
+    is('text_rate_limited_wait_and_retry')
   ) {
     return t.rateLimited
   }
@@ -1424,7 +1424,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return t.forbidden
   }
   if (
-    /^请求的资源不存在$|^The requested resource does not exist$/i.test(raw)
+    is('text_the_requested_resource_does_not_exist')
   ) {
     return t.notFound
   }
@@ -1445,7 +1445,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return classified(t.unknown, raw, hint)
   }
   if (
-    /^恢复执行超出步骤上限$|^Resume exceeded the step cap$/i.test(raw)
+    is('text_resume_exceeded_the_step_cap')
   ) {
     return t.agentResumeOverCap
   }
@@ -1478,7 +1478,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return currentCopy().music.noPlaying
   }
   if (
-    /^任务已提交，等待执行$|^Task submitted, waiting to run$/i.test(raw)
+    is('text_task_submitted_waiting_to_run')
   ) {
     return t.agentSubmitted
   }
@@ -1502,85 +1502,85 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       : t.agentPlanningFailedBare
   }
   const music = currentCopy().music
-  if (/^正在播放音乐$|^Playing music$/i.test(raw)) return music.playingNow
-  if (/^已暂停播放$|^Paused$/i.test(raw)) return music.pausedPlayback
-  if (/^切换播放状态$|^Toggled playback$/i.test(raw)) return music.toggledPlayback
-  if (/^切换到下一首$|^Skipped to next track$/i.test(raw)) return music.skippedNext
-  if (/^切换到上一首$|^Skipped to previous track$/i.test(raw)) {
+  if (is('text_playing_music')) return music.playingNow
+  if (is('text_paused')) return music.pausedPlayback
+  if (is('text_toggled_playback')) return music.toggledPlayback
+  if (is('text_skipped_to_next_track')) return music.skippedNext
+  if (is('text_skipped_to_previous_track')) {
     return music.skippedPrevious
   }
-  if (/^已调节音量$|^Volume adjusted$/i.test(raw)) return music.volumeAdjusted
-  if (/^已静音$|^Muted$/i.test(raw)) return music.muted
-  if (/^已取消静音$|^Unmuted$/i.test(raw)) return music.unmuted
-  if (/^已跳转播放位置$|^Seeked$/i.test(raw)) return music.seeked
-  if (/^获取 B 站数据$|^Loading Bilibili data$/i.test(raw)) {
+  if (is('text_volume_adjusted')) return music.volumeAdjusted
+  if (is('text_muted')) return music.muted
+  if (is('text_unmuted')) return music.unmuted
+  if (is('text_seeked')) return music.seeked
+  if (is('text_loading_bilibili_data')) {
     return fill(t.loadingNamedData, { name: 'Bilibili' })
   }
-  if (/^获取 Steam 数据$|^Loading Steam data$/i.test(raw)) {
+  if (is('text_loading_steam_data')) {
     return fill(t.loadingNamedData, { name: 'Steam' })
   }
-  if (/^获取 GitHub 数据$|^Loading GitHub data$/i.test(raw)) {
+  if (is('text_loading_github_data')) {
     return fill(t.loadingNamedData, { name: 'GitHub' })
   }
-  if (/^获取网易云数据$|^Loading NetEase data$/i.test(raw)) {
+  if (is('text_loading_netease_data')) {
     return fill(t.loadingNamedData, { name: 'NetEase' })
   }
-  if (/^获取 Bangumi 数据$|^Loading Bangumi data$/i.test(raw)) {
+  if (is('text_loading_bangumi_data')) {
     return fill(t.loadingNamedData, { name: 'Bangumi' })
   }
-  if (/^获取 X 数据$|^Loading X data$/i.test(raw)) {
+  if (is('text_loading_x_data')) {
     return fill(t.loadingNamedData, { name: 'X' })
   }
-  if (/^获取 Discord 数据$|^Loading Discord data$/i.test(raw)) {
+  if (is('text_loading_discord_data')) {
     return fill(t.loadingNamedData, { name: 'Discord' })
   }
-  if (/^获取 MyAnimeList 数据$|^Loading MyAnimeList data$/i.test(raw)) {
+  if (is('text_loading_myanimelist_data')) {
     return fill(t.loadingNamedData, { name: 'MyAnimeList' })
   }
-  if (/^AI 总结$|^Summarizing$/i.test(raw)) return t.agentSummarizing
-  if (/^AI 分析$|^Analyzing$/i.test(raw)) return t.agentAnalyzing
-  if (/^网络搜索$|^Searching the web$/i.test(raw)) return t.agentWebSearch
-  if (/^发现 RSS 源$|^Discovering feeds$/i.test(raw)) return t.agentDiscoverFeeds
-  if (/^订阅 RSS 源$|^Subscribing to a feed$/i.test(raw)) {
+  if (is('text_summarizing')) return t.agentSummarizing
+  if (is('text_analyzing')) return t.agentAnalyzing
+  if (is('text_searching_the_web')) return t.agentWebSearch
+  if (is('text_discovering_feeds')) return t.agentDiscoverFeeds
+  if (is('text_subscribing_to_a_feed')) {
     return t.agentSubscribeFeed
   }
-  if (/^获取平台数据$|^Loading platform data$/i.test(raw)) {
+  if (is('text_loading_platform_data')) {
     return fill(t.loadingNamedData, { name: 'platform' })
   }
-  if (/^AI 对话$|^Chatting$/i.test(raw)) return t.agentChat
-  if (/^生成图片$|^Generating an image$/i.test(raw)) return t.agentGenerateImage
-  if (/^生成提示词$|^Generating a prompt$/i.test(raw)) return t.agentGeneratePrompt
-  if (/^内容对比$|^Comparing content$/i.test(raw)) return t.agentCompareContent
-  if (/^文字转语音$|^Reading aloud$/i.test(raw)) return t.agentReadingAloud
-  if (/^全局搜索$|^Searching$/i.test(raw)) return t.agentSearching
-  if (/^生成报告$|^Generating a report$/i.test(raw)) return t.agentGenerateReport
-  if (/^清除缓存$|^Clearing cache$/i.test(raw)) return t.agentClearCache
-  if (/^获取 Tapp 列表$|^Listing apps$/i.test(raw)) return t.agentListingApps
-  if (/^打开 Tapp$|^Opening an app$/i.test(raw)) return t.agentOpeningApp
-  if (/^获取文章列表$|^Loading articles$/i.test(raw)) return t.agentLoadingArticles
-  if (/^获取文章内容$|^Loading article$/i.test(raw)) return t.agentLoadingArticle
-  if (/^获取订阅源$|^Loading feeds$/i.test(raw)) return t.agentLoadingFeeds
-  if (/^获取订阅内容$|^Loading feed content$/i.test(raw)) {
+  if (is('text_chatting')) return t.agentChat
+  if (is('text_generating_an_image')) return t.agentGenerateImage
+  if (is('text_generating_a_prompt')) return t.agentGeneratePrompt
+  if (is('text_comparing_content')) return t.agentCompareContent
+  if (is('text_reading_aloud')) return t.agentReadingAloud
+  if (is('text_searching')) return t.agentSearching
+  if (is('text_generating_a_report')) return t.agentGenerateReport
+  if (is('text_clearing_cache')) return t.agentClearCache
+  if (is('text_listing_apps')) return t.agentListingApps
+  if (is('text_opening_an_app')) return t.agentOpeningApp
+  if (is('text_loading_articles')) return t.agentLoadingArticles
+  if (is('text_loading_article')) return t.agentLoadingArticle
+  if (is('text_loading_feeds')) return t.agentLoadingFeeds
+  if (is('text_loading_feed_content')) {
     return t.agentLoadingFeedContent
   }
-  if (/^阅读统计$|^Reading stats$/i.test(raw)) return t.agentReadingStats
-  if (/^执行技能$|^Running skill$/i.test(raw)) return t.agentRunningSkill
-  if (/^调用外部工具$|^Calling a tool$/i.test(raw)) return t.agentCallingTool
-  if (/^Tapp 应用$|^Tapp apps$/i.test(raw)) return currentCopy().tapp.apps
+  if (is('text_reading_stats')) return t.agentReadingStats
+  if (is('text_running_skill')) return t.agentRunningSkill
+  if (is('text_calling_a_tool')) return t.agentCallingTool
+  if (is('text_tapp_apps')) return currentCopy().tapp.apps
   if (/^组件列表$/.test(raw)) return t.tappWidgets
   if (/^存储数据$/.test(raw)) return t.tappStorage
-  if (/^定时任务$|^Scheduled tasks$/i.test(raw)) return t.tappScheduledTasks
+  if (is('text_scheduled_tasks')) return t.tappScheduledTasks
   if (/^执行记录$/.test(raw)) return t.tappExecutions
-  if (/^未知应用$|^Unknown app$/i.test(raw)) return t.unknownApp
-  if (/^未命名报告$|^Untitled report$/i.test(raw)) return t.unnamedReport
+  if (is('text_unknown_app')) return t.unknownApp
+  if (is('text_untitled_report')) return t.unnamedReport
   if (/^未知标题$/.test(raw)) return t.unknownTitle
   if (/^未命名内容$/.test(raw)) return t.untitledContent
   if (/^未知用户$/.test(raw)) return currentCopy().userModal.unknownUser
   if (/^未分类$/.test(raw)) return currentCopy().phantasi.uncategorized
-  if (/^最新文章$|^Latest articles$/i.test(raw)) {
+  if (is('text_latest_articles')) {
     return currentCopy().phantasi.latestArticles
   }
-  if (/^标题不能为空$|^A title is required$/i.test(raw)) {
+  if (is('text_a_title_is_required')) {
     return currentCopy().phantasi.noteTitleRequired
   }
   const titleTooLong = raw.match(
@@ -1601,13 +1601,13 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       chars: bodyTooLong[2] || bodyTooLong[4] || '',
     })
   }
-  if (/^Note draft was updated elsewhere$/i.test(raw)) {
+  if (is('text_note_draft_was_updated_elsewhere')) {
     return currentCopy().phantasi.noteRevisionConflict
   }
-  if (/^That time has already passed$/i.test(raw)) {
+  if (is('text_that_time_has_already_passed')) {
     return currentCopy().phantasi.noteSchedulePast
   }
-  if (/^A schedule time is required$/i.test(raw)) {
+  if (is('text_a_schedule_time_is_required')) {
     return currentCopy().phantasi.noteScheduleNeedTime
   }
   if (/^游客$/.test(raw)) return t.guestLabel
@@ -1687,11 +1687,11 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     })
   }
   if (
-    /^维护重试成功$|^Maintenance retry succeeded$/i.test(raw)
+    is('text_maintenance_retry_succeeded')
   ) {
     return t.noticeMcpMaintenanceRetry
   }
-  if (/^自动重启成功$|^Auto-restart succeeded$/i.test(raw)) {
+  if (is('text_auto_restart_succeeded')) {
     return t.noticeMcpAutoRestart
   }
   if (
@@ -1795,7 +1795,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return fill(t.loadingNamedPlaylist, { name })
   }
   if (/^好了，都处理完|^All done\.?$/i.test(raw)) return t.agentAllDone
-  if (/^你好！有什么我可以帮你的吗？$|^Hi! How can I help\?$/i.test(raw)) {
+  if (is('text_hi_how_can_i_help')) {
     return t.agentGreeting
   }
   if (/^正在理解你的请求|^Understanding your request/i.test(raw)) {
@@ -1824,7 +1824,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (/^需要更多信息$|^More information is needed\.?$/i.test(raw)) {
     return t.agentNeedMoreInfo
   }
-  if (/^任务已进入更新队列$|^Update queued$/i.test(raw)) {
+  if (is('text_update_queued')) {
     return t.noticeUpdaterSubmitted
   }
   if (
@@ -1907,7 +1907,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (/^article not found$|未找到文章/.test(raw)) {
     return t.notFound
   }
-  if (/^comment not found$/i.test(raw)) {
+  if (is('text_comment_not_found')) {
     return t.notFound
   }
   if (/^failed to load comment replies/i.test(raw)) {
@@ -1957,11 +1957,11 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     /^only admins can /i.test(raw) ||
-    /^cannot delete the default global instance$/i.test(raw)
+    is('text_cannot_delete_the_default_global_instanc')
   ) {
     return joinParts(t.forbidden, clip(raw), usefulExtra(hint, t.forbidden))
   }
-  if (/^instance not found$/i.test(raw)) {
+  if (is('text_instance_not_found')) {
     return t.notFound
   }
   if (
@@ -2044,7 +2044,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return currentCopy().agentPersona.onboarding.imageProviderInvalidResponse
   }
   if (
-    /^invalid tappid$/i.test(raw) ||
+    is('text_invalid_tappid') ||
     raw.includes('无效的 tappId')
   ) {
     return currentCopy().tapp.invalidId
@@ -2056,7 +2056,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return classified(t.mediaModeInvalid, raw, hint)
   }
   if (
-    /^invalid url$/i.test(raw) ||
+    is('text_invalid_url') ||
     raw.startsWith('无效的 URL')
   ) {
     return t.invalidUrl
@@ -2249,7 +2249,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (/^task ['"]?[^'"]+['"]? not found$/i.test(raw)) {
     return t.notFound
   }
-  if (/^no library data available$/i.test(raw)) {
+  if (is('text_no_library_data_available')) {
     return currentCopy().library.loadFailed
   }
   if (/unable to load analytics/i.test(raw)) {
