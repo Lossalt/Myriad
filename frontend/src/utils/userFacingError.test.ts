@@ -1902,7 +1902,7 @@ describe('userFacingError', () => {
   })
 })
 
-const RULE_BUDGET = 409
+const RULE_BUDGET = 404
 
 describe('userFacingError is driven by codes', () => {
   before(async () => {

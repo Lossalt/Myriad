@@ -789,12 +789,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, t.widgetThemeSaveFailed),
     )
   }
-  if (/^failed to (load|save) tapp settings/i.test(raw)) {
-    const label = /load/i.test(raw)
-      ? currentCopy().tapp.settingsLoadFailed
-      : currentCopy().tapp.settingSaveFailed
-    return joinParts(label, status ? `HTTP ${status}` : '', usefulExtra(hint, label))
-  }
   if (
     /^failed to list agent reports/i.test(raw) ||
     /^failed to (load|fetch) reports?/i.test(raw)
@@ -813,9 +807,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (code === 'tapp_not_found') {
     return classified(t.tappFindFailed, raw, hint)
-  }
-  if (/^failed to check tapp install permission/i.test(raw)) {
-    return classified(t.tappInstallCheckFailed, raw, hint)
   }
   if (
     code === 'TAPP_CREDENTIAL_LOAD_FAILED' ||
@@ -925,7 +916,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     code === 'cache_clear_failed' ||
-    /^failed to resolve site owner/i.test(raw) ||
     /^ai[_ ]task[_ ]registry/i.test(raw)
   ) {
     return classified(t.database, raw, hint)
@@ -2298,12 +2288,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     /failed to upload (federation )?media/i.test(raw)
   ) {
     return classified(t.federationMediaUploadFailed, raw, hint)
-  }
-  if (
-    code === 'MEDIA_IN_USE' ||
-    /still in use and cannot be deleted/i.test(raw)
-  ) {
-    return t.mediaInUse
   }
   const merope = currentCopy().merope
   if (
