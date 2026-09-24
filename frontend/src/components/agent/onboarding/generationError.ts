@@ -1,4 +1,6 @@
+import { currentCopy } from '../../../i18n/localeCopy'
 import { ApiError } from '../../../services/api'
+import { resolveErrorCode } from '../../../utils/errorCodes'
 import { isUselessErrorText } from '../../../utils/userFacingError'
 
 const HOST_GENERATION_CODES = new Set([
@@ -100,16 +102,34 @@ function joinParts(...parts: string[]): string {
   return parts.filter(Boolean).join(' ')
 }
 
+/** Copy from the shared `errors.byCode` table, the same one `userFacingError` reads. */
+function sharedCodeCopy(code: string | undefined, raw: string): string {
+  const resolved = resolveErrorCode(code, raw)
+  if (!resolved) return ''
+  const table: Readonly<Record<string, string | undefined>> =
+    currentCopy().errors.byCode
+  return table[resolved] ?? ''
+}
+
+/**
+ * Generation failures: code copy + useful detail/hint.
+ *
+ * `overrides` is only for phrasing that is specific to the calling step (a
+ * `*_failed` code that should read as that step's own failure, or a generic
+ * code whose shared copy would be wrong there). Everything else comes from the
+ * shared `errors.byCode` table so every surface shows the same copy.
+ */
 export function generationFailureMessage(
   reason: unknown,
   fallback: string,
   timeoutMessage: string,
-  byCode?: Record<string, string>,
+  overrides?: Record<string, string>,
 ): string {
   if (isGenerationTimeout(reason)) return timeoutMessage
   const code = errorCode(reason)
-  const mapped = (code && byCode?.[code]) || ''
   const rawDetail = apiErrorDetail(reason)
+  const mapped =
+    (code && overrides?.[code]) || sharedCodeCopy(code, rawDetail)
   const stripped =
     code && rawDetail === code
       ? ''

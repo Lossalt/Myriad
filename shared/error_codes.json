@@ -959,6 +959,15 @@
     "youtube_api_key_required",
     "youtube_upstream_failed",
     "pagination_invalid",
-    "setup_required"
+    "setup_required",
+    "portrait_generation_in_progress",
+    "pro_unavailable",
+    "lite_unavailable",
+    "visual_design_language",
+    "name_unusable",
+    "persona_unusable",
+    "visual_design_unusable",
+    "AI_QUOTA_EXCEEDED",
+    "QUEUE_FULL"
   ]
 }

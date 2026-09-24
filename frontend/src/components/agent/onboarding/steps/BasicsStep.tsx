@@ -75,9 +75,7 @@ export default function BasicsStep({
             o.randomNameFailed,
             o.generationTimeout,
             {
-              lite_unavailable: o.liteUnavailable,
               name_suggest_failed: o.randomNameFailed,
-              name_unusable: o.nameUnusable,
             },
           ),
         )
@@ -164,7 +162,6 @@ export default function BasicsStep({
                   reason,
                   o.createFailed,
                   o.generationTimeout,
-                  { pro_unavailable: o.proUnavailable },
                 ),
               )
             })

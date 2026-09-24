@@ -124,7 +124,6 @@ export default function ImportStep({
                   o.createFailed,
                   o.generationTimeout,
                   {
-                    pro_unavailable: o.proUnavailable,
                     portrait_required: o.importPortraitHint,
                     visual_design_unusable: o.importVisualFailed,
                   },

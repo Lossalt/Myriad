@@ -48,7 +48,6 @@ export default function PersonaImportPanel({
     } catch (reason) {
       setError(
         generationFailureMessage(reason, o.importPersonaFailed, o.generationTimeout, {
-          pro_unavailable: o.proUnavailable,
           import_source_required: o.importPersonaEmpty,
         }),
       )
