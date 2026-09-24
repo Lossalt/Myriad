@@ -23,8 +23,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `get_expected_schema` 通用 ADD。Support floor: product ≥ 0.3.10。
 /// Current: drop July CREATE heals; 003 source applications; 006 identities in TableDef;
 /// 时间线只放帖子（`ensure_timeline_posts_only`）；半撤回转发收尾
-/// （`ensure_repost_state_consistent`）；已发布行的发布幂等键。
-pub const SCHEMA_VERSION: &str = "2026.09.24.3";
+/// （`ensure_repost_state_consistent`）；已发布行的发布幂等键；旧自治授权收窄
+/// （`narrow_legacy_autonomy_grants`）。
+pub const SCHEMA_VERSION: &str = "2026.09.24.4";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -287,6 +288,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_platform_metadata_unique(db).await?;
     ensure_agent_intentions_table(db).await?;
     ensure_agent_autonomy_grants_table(db).await?;
+    narrow_legacy_autonomy_grants(db).await?;
     ensure_agent_merope_tables(db).await?;
     ensure_phantasi_item_topic_index(db).await?;
     ensure_phantasi_state_revision(db).await?;

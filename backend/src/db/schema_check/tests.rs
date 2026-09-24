@@ -2004,3 +2004,67 @@ async fn repost_heal_reconciles_half_withdrawn_reposts() {
 
     fixture.close().await;
 }
+
+/// 修复前写入的自治授权去掉管理员专属权限，保持顺序；修复后写入的行、
+/// 本来就只含候选权限的行都不动；重复运行不再改任何行。
+#[tokio::test]
+async fn legacy_autonomy_grants_lose_admin_only_permissions_once() {
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let mut options = sea_orm::ConnectOptions::new(url);
+    options.max_connections(1).sqlx_logging(false);
+    let db = sea_orm::Database::connect(options).await.unwrap();
+    db.execute_unprepared(&format!(
+        r#"CREATE TEMP TABLE agent_autonomy_grants (
+            user_id INTEGER PRIMARY KEY, allowed_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            revoked BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+        INSERT INTO agent_autonomy_grants VALUES
+            (1, '["http:fetch","system:admin","scheduler:write","phantasi:admin"]', false,
+             '{cutoff}'::timestamptz - INTERVAL '1 day', '{cutoff}'::timestamptz - INTERVAL '1 day'),
+            (2, '["http:fetch"]', false,
+             '{cutoff}'::timestamptz - INTERVAL '1 day', '{cutoff}'::timestamptz - INTERVAL '1 day'),
+            (3, '["system:admin"]', false,
+             '{cutoff}'::timestamptz + INTERVAL '1 hour', '{cutoff}'::timestamptz + INTERVAL '1 hour');"#,
+        cutoff = super::ensure_heals::AUTONOMY_EMPTY_GRANT_FIX_AT
+    ))
+    .await
+    .unwrap();
+
+    let read = |user_id: i32| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one_raw(Statement::from_string(
+                    DatabaseBackend::Postgres,
+                    format!(
+                        "SELECT allowed_permissions::text AS p, updated_at::text AS u \
+                         FROM agent_autonomy_grants WHERE user_id = {user_id}"
+                    ),
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            (
+                row.try_get::<String>("", "p").unwrap(),
+                row.try_get::<String>("", "u").unwrap(),
+            )
+        }
+    };
+    let untouched_before = read(2).await;
+
+    super::ensure_heals::narrow_legacy_autonomy_grants(&db)
+        .await
+        .unwrap();
+    let narrowed = read(1).await;
+    assert_eq!(narrowed.0, r#"["http:fetch", "scheduler:write"]"#);
+    assert_eq!(read(2).await, untouched_before);
+    assert_eq!(read(3).await.0, r#"["system:admin"]"#);
+
+    super::ensure_heals::narrow_legacy_autonomy_grants(&db)
+        .await
+        .unwrap();
+    assert_eq!(read(1).await, narrowed, "a second run changes nothing");
+}

@@ -208,6 +208,57 @@ CREATE TABLE IF NOT EXISTS agent_autonomy_grants (
     Ok(())
 }
 
+/// `02c8d2ddc` 之前，面板开关发来的空列表被当成「当前全部授予权限」，管理员的
+/// 自治授权因此带上了 `system:admin` 这类管理员专属权限。
+pub(crate) const AUTONOMY_EMPTY_GRANT_FIX_AT: &str = "2026-09-24T20:14:25+09:00";
+
+/// 把 [`AUTONOMY_EMPTY_GRANT_FIX_AT`] 之前写入的自治授权收窄到非管理员候选集。
+///
+/// 被收窄的行刷新 `updated_at`，之后不再满足条件，所以重复运行什么也不做；
+/// 修复之后显式列出的管理员权限不受影响。这里只动存下来的自治上限，不动
+/// 授予权限本身。
+pub(crate) async fn narrow_legacy_autonomy_grants(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let mut candidates: Vec<String> = crate::services::agent::max_user_agent_permissions()
+        .into_iter()
+        .collect();
+    candidates.sort();
+    let candidates = candidates
+        .iter()
+        .map(|name| format!("'{}'", name.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let result = db
+        .execute_unprepared(&format!(
+            r#"
+UPDATE agent_autonomy_grants
+SET allowed_permissions = COALESCE((
+        SELECT jsonb_agg(name ORDER BY position)
+        FROM jsonb_array_elements_text(allowed_permissions) WITH ORDINALITY AS t(name, position)
+        WHERE name = ANY(ARRAY[{candidates}]::text[])
+    ), '[]'::jsonb),
+    updated_at = NOW()
+WHERE updated_at < '{AUTONOMY_EMPTY_GRANT_FIX_AT}'::timestamptz
+  AND jsonb_typeof(allowed_permissions) = 'array'
+  AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(allowed_permissions) = 'array'
+                 THEN allowed_permissions ELSE '[]'::jsonb END
+        ) AS t(name)
+        WHERE NOT (name = ANY(ARRAY[{candidates}]::text[]))
+    )
+"#
+        ))
+        .await?;
+    if result.rows_affected() > 0 {
+        tracing::info!(
+            "Narrowed {} legacy autonomy grant(s) to the non-admin candidate set",
+            result.rows_affected()
+        );
+    }
+    Ok(())
+}
+
 /// One active channel relationship per (user, remote actor, type).
 pub(crate) async fn ensure_channels_active_relationship_unique(
     db: &DatabaseConnection,
