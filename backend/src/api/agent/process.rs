@@ -241,7 +241,6 @@ pub async fn process(
         .task
         .as_ref()
         .is_some_and(|task| task.status == crate::services::agent::TaskStatus::WaitingForInput)
-        || response.confirmation.is_some()
     {
         crate::services::agent::consciousness::IntentStatus::Waiting
     } else {
@@ -769,32 +768,17 @@ pub(crate) async fn start_process_run(
                     let _ = lane_guard.take();
                     // 非 waiting：先落会话元数据，再发 TaskCompleted
 
-                    let is_confirmation = api_response.confirmation.is_some()
-                        || api_response.response_type == "confirmation_required";
-                    let parked_task_id = api_response
-                        .confirmation
-                        .as_ref()
-                        .map(|c| format!("confirmation:{}", c.confirmation_id))
-                        .filter(|_| is_confirmation)
-                        .unwrap_or_else(|| task_id.clone());
+                    let parked_task_id = task_id.clone();
                     if !session_id_clone.is_empty() {
-                        let metadata = if is_confirmation {
-                            work_turn_session_metadata(
-                                &api_response,
-                                &run_id_for_meta,
-                                &parked_task_id,
-                            )
-                        } else {
-                            json!({
-                                "suggestions": &api_response.suggestions,
-                                "dataDisplay": &api_response.data_display,
-                                "frontendAction": &api_response.frontend_action,
-                                "data": &api_response.data,
-                                "runId": run_id_for_meta,
-                                "taskId": if task_id.is_empty() { Value::Null } else { json!(task_id) },
-                                "task": &api_response.task,
-                            })
-                        };
+                        let metadata = json!({
+                            "suggestions": &api_response.suggestions,
+                            "dataDisplay": &api_response.data_display,
+                            "frontendAction": &api_response.frontend_action,
+                            "data": &api_response.data,
+                            "runId": run_id_for_meta,
+                            "taskId": if task_id.is_empty() { Value::Null } else { json!(task_id) },
+                            "task": &api_response.task,
+                        });
                         if let Err(e) = persist_assistant_message(
                             &db_clone,
                             &session_id_clone,
@@ -814,12 +798,8 @@ pub(crate) async fn start_process_run(
                             );
                         }
                     }
-                    let response_value = if is_confirmation {
-                        park_confirmation_run(&api_response, &parked_task_id)
-                    } else {
-                        serde_json::to_value(&api_response)
-                            .unwrap_or_else(|_| AppError::public_json("serialization failed"))
-                    };
+                    let response_value = serde_json::to_value(&api_response)
+                        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
                     advance_intention_work(
                         &db_clone,
                         source_intent_id_for_work.as_deref(),
@@ -1551,7 +1531,6 @@ mod quota_error_tests {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance: None,
             session_id: None,

@@ -249,20 +249,12 @@ async fn finish_autonomy_turn(
         .as_ref()
         .map(|task| task.task_id.clone())
         .filter(|id| !id.is_empty())
-        .or_else(|| {
-            api_response
-                .confirmation
-                .as_ref()
-                .map(|confirmation| format!("confirmation:{}", confirmation.confirmation_id))
-        })
         .unwrap_or_default();
     let is_waiting = api_response
         .task
         .as_ref()
         .is_some_and(|task| task.status == "waiting_for_input")
         && !task_id.is_empty();
-    let is_confirmation = api_response.confirmation.is_some()
-        || api_response.response_type == "confirmation_required";
     let metadata = work_turn_session_metadata(&api_response, run_id, &task_id);
     let _ = persist_assistant_message(
         db,
@@ -317,12 +309,8 @@ async fn finish_autonomy_turn(
         Some(api_response.message.clone()),
     )
     .await;
-    let response_value = if is_confirmation {
-        park_confirmation_run(&api_response, &task_id)
-    } else {
-        serde_json::to_value(&api_response)
-            .unwrap_or_else(|_| AppError::public_json("serialization failed"))
-    };
+    let response_value = serde_json::to_value(&api_response)
+        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
     let _ = progress_tx
         .send(AgentProgressEvent::TaskCompleted {
             task_id,
@@ -332,76 +320,21 @@ async fn finish_autonomy_turn(
         .await;
 }
 
-pub(crate) fn park_confirmation_run(api_response: &ApiResponse, task_id: &str) -> Value {
-    let mut value = serde_json::to_value(api_response)
-        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
-    if let Some(object) = value.as_object_mut() {
-        object.insert("streamTerminal".into(), json!(false));
-        let mut task = object.get("task").cloned().unwrap_or_else(|| json!({}));
-        if !task.is_object() {
-            task = json!({});
-        }
-        if let Some(task_object) = task.as_object_mut() {
-            if !task_id.is_empty() {
-                task_object.insert("taskId".into(), json!(task_id));
-            }
-            task_object.insert("status".into(), json!("waiting_for_input"));
-        }
-        object.insert("task".into(), task);
-    }
-    value
-}
-
 pub(crate) fn work_turn_session_metadata(
     api_response: &ApiResponse,
     run_id: &str,
     task_id: &str,
 ) -> Value {
-    let mut base = serde_json::to_value(api_response).unwrap_or_else(|_| json!({}));
-    if let Some(confirmation) = &api_response.confirmation {
-        if let Some(obj) = base.as_object_mut() {
-            let details = confirmation
-                .pending_steps
-                .iter()
-                .map(|step| {
-                    let impact = if step.impact.is_empty() {
-                        String::new()
-                    } else {
-                        format!("\n{}", step.impact.join("\n"))
-                    };
-                    format!("{}: {}{impact}", step.capability_name, step.message)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            obj.insert(
-                "pendingQuestion".into(),
-                json!({
-                    "questionId": format!("confirmation:{}", confirmation.confirmation_id),
-                    "confirmationId": confirmation.confirmation_id,
-                    "questionType": "confirmation",
-                    "question": api_response.message,
-                    "context": details,
-                    "required": true,
-                    "riskLevel": confirmation.risk_level,
-                    "expiresInSeconds": confirmation.expires_in_seconds,
-                    "pendingSteps": confirmation.pending_steps,
-                }),
-            );
-        }
-    }
+    let base = serde_json::to_value(api_response).unwrap_or_else(|_| json!({}));
     session_metadata_with_run_identity(Some(base), run_id, task_id)
 }
 
 #[cfg(test)]
 fn intention_status_from_response(response: &AgentResponse) -> IntentStatus {
-    if matches!(
-        response.response_type,
-        AgentResponseType::ConfirmationRequired
-    ) || response.confirmation.is_some()
-        || response
-            .task
-            .as_ref()
-            .is_some_and(|task| task.status == TaskStatus::WaitingForInput)
+    if response
+        .task
+        .as_ref()
+        .is_some_and(|task| task.status == TaskStatus::WaitingForInput)
     {
         return IntentStatus::Waiting;
     }
@@ -576,25 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_stays_waiting() {
-        let response = AgentResponse {
-            response_type: AgentResponseType::ConfirmationRequired,
-            message: "confirm".into(),
-            data: None,
-            data_display: None,
-            suggestions: vec![],
-            task: None,
-            confirmation: None,
-            frontend_action: None,
-            performance: None,
-        };
-        assert_eq!(
-            intention_status_from_response(&response),
-            IntentStatus::Waiting
-        );
-    }
-
-    #[test]
     fn waiting_for_input_stays_waiting() {
         let response = AgentResponse {
             response_type: AgentResponseType::Answer,
@@ -618,7 +532,6 @@ mod tests {
                 execution_trace: None,
                 recipe: None,
             }),
-            confirmation: None,
             frontend_action: None,
             performance: None,
         };
@@ -658,7 +571,6 @@ mod tests {
                 step_history: vec![],
                 execution_trace: None,
             }),
-            confirmation: None,
             frontend_action: None,
             performance: None,
             session_id: None,
@@ -667,33 +579,6 @@ mod tests {
         assert_eq!(meta["runId"], "run_1");
         assert_eq!(meta["taskId"], "t1");
         assert_eq!(meta["task"]["pendingQuestion"]["questionId"], "q1");
-
-        response.task = None;
-        response.response_type = "confirmation_required".into();
-        response.confirmation = Some(ConfirmationInfo {
-            confirmation_id: "c1".into(),
-            risk_level: "high".into(),
-            expires_in_seconds: 300,
-            pending_steps: vec![PendingStepInfo {
-                step_id: "s1".into(),
-                capability_name: "mail.send".into(),
-                message: "Send the note".into(),
-                impact: vec!["Writes mail".into()],
-            }],
-        });
-        let meta = work_turn_session_metadata(&response, "run_2", "confirmation:c1");
-        assert_eq!(meta["pendingQuestion"]["confirmationId"], "c1");
-        assert_eq!(meta["pendingQuestion"]["questionType"], "confirmation");
-        assert_eq!(meta["taskId"], "confirmation:c1");
-        assert!(
-            meta["pendingQuestion"]["context"]
-                .as_str()
-                .unwrap()
-                .contains("mail.send")
-        );
-        let parked = park_confirmation_run(&response, "confirmation:c1");
-        assert_eq!(parked["task"]["status"], "waiting_for_input");
-        assert_eq!(parked["streamTerminal"], false);
 
         response.task = Some(TaskInfo {
             task_id: "t2".into(),
@@ -716,7 +601,6 @@ mod tests {
             step_history: vec![],
             execution_trace: None,
         });
-        response.confirmation = None;
         response.response_type = "answer".into();
         let mut resume = work_turn_session_metadata(&response, "run_3", "t2");
         resume

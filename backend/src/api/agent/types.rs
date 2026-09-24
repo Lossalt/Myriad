@@ -65,9 +65,6 @@ pub struct ApiResponse {
     pub suggestions: Vec<String>,
     /// 任务信息
     pub task: Option<TaskInfo>,
-    /// 敏感操作确认请求
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confirmation: Option<ConfirmationInfo>,
     /// 前端操作指令（路由导航、音乐控制等）
     #[serde(rename = "frontendAction", skip_serializing_if = "Option::is_none")]
     pub frontend_action: Option<Value>,
@@ -127,38 +124,6 @@ pub struct ColumnDefApi {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     pub sortable: bool,
-}
-
-/// 敏感操作确认信息
-#[derive(Debug, Clone, Serialize)]
-pub struct ConfirmationInfo {
-    /// 确认 ID
-    #[serde(rename = "confirmationId")]
-    pub confirmation_id: String,
-    /// 风险等级
-    #[serde(rename = "riskLevel")]
-    pub risk_level: String,
-    /// 过期时间（秒）
-    #[serde(rename = "expiresInSeconds")]
-    pub expires_in_seconds: i64,
-    /// 待确认的步骤
-    #[serde(rename = "pendingSteps")]
-    pub pending_steps: Vec<PendingStepInfo>,
-}
-
-/// 待确认步骤信息
-#[derive(Debug, Clone, Serialize)]
-pub struct PendingStepInfo {
-    /// 步骤 ID
-    #[serde(rename = "stepId")]
-    pub step_id: String,
-    /// 能力名称
-    #[serde(rename = "capabilityName")]
-    pub capability_name: String,
-    /// 确认消息
-    pub message: String,
-    /// 影响说明
-    pub impact: Vec<String>,
 }
 
 /// 任务信息
@@ -581,38 +546,6 @@ impl From<AgentResponse> for ApiResponse {
     fn from(response: AgentResponse) -> Self {
         let data_display = response.data_display.map(convert_data_display_hint);
 
-        // 转换确认请求
-        let confirmation = response.confirmation.map(|req| {
-            let expires_in = (req.expires_at - chrono::Utc::now()).num_seconds();
-            ConfirmationInfo {
-                confirmation_id: req.confirmation_id,
-                risk_level: req
-                    .pending_steps
-                    .iter()
-                    .map(|s| &s.risk_level)
-                    .max_by_key(|r| match r {
-                        crate::services::agent::RiskLevel::Critical => 4,
-                        crate::services::agent::RiskLevel::High => 3,
-                        crate::services::agent::RiskLevel::Medium => 2,
-                        crate::services::agent::RiskLevel::Low => 1,
-                        crate::services::agent::RiskLevel::None => 0,
-                    })
-                    .map(|r| format!("{:?}", r).to_lowercase())
-                    .unwrap_or_else(|| "none".to_string()),
-                expires_in_seconds: expires_in.max(0),
-                pending_steps: req
-                    .pending_steps
-                    .into_iter()
-                    .map(|s| PendingStepInfo {
-                        step_id: s.step_id,
-                        capability_name: s.capability_name,
-                        message: s.confirmation_message,
-                        impact: s.impact,
-                    })
-                    .collect(),
-            }
-        });
-
         let frontend_action = response.frontend_action;
         let performance = response.performance;
 
@@ -624,7 +557,6 @@ impl From<AgentResponse> for ApiResponse {
             data_display,
             suggestions: response.suggestions,
             task: response.task.as_ref().map(TaskInfo::from),
-            confirmation,
             frontend_action,
             performance,
             session_id: None,
@@ -638,7 +570,6 @@ pub(crate) fn agent_response_type_name(response_type: &AgentResponseType) -> &'s
     match response_type {
         AgentResponseType::Answer => "answer",
         AgentResponseType::Clarification => "clarification",
-        AgentResponseType::ConfirmationRequired => "confirmation_required",
         AgentResponseType::TaskCreated => "task_created",
         AgentResponseType::TaskProgress => "task_progress",
         AgentResponseType::TaskCompleted => "task_completed",
@@ -700,10 +631,6 @@ mod api_contract_tests {
         let cases = [
             (AgentResponseType::Answer, "answer"),
             (AgentResponseType::Clarification, "clarification"),
-            (
-                AgentResponseType::ConfirmationRequired,
-                "confirmation_required",
-            ),
             (AgentResponseType::TaskCreated, "task_created"),
             (AgentResponseType::TaskProgress, "task_progress"),
             (AgentResponseType::TaskCompleted, "task_completed"),
@@ -725,35 +652,6 @@ mod api_contract_tests {
             })),
         };
         assert!(agent_run_event_is_terminal(&event));
-    }
-
-    #[test]
-    fn parked_confirmation_keeps_the_run_open() {
-        let response = ApiResponse {
-            success: true,
-            response_type: "confirmation_required".into(),
-            message: "confirm".into(),
-            data: None,
-            data_display: None,
-            suggestions: vec![],
-            task: None,
-            confirmation: Some(ConfirmationInfo {
-                confirmation_id: "c1".into(),
-                risk_level: "high".into(),
-                expires_in_seconds: 300,
-                pending_steps: vec![],
-            }),
-            frontend_action: None,
-            performance: None,
-            session_id: None,
-        };
-        let parked = park_confirmation_run(&response, "confirmation:c1");
-        let event = AgentProgressEvent::TaskCompleted {
-            task_id: "confirmation:c1".into(),
-            success: true,
-            response: Box::new(parked),
-        };
-        assert!(!agent_run_event_is_terminal(&event));
     }
 
     #[test]
@@ -839,7 +737,6 @@ mod api_contract_tests {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: Some(action.clone()),
             performance: None,
         };

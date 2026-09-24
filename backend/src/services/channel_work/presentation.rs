@@ -128,21 +128,6 @@ pub(crate) fn map_completed(
         .get("responseType")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if response_type == "confirmation_required" || response.get("confirmation").is_some() {
-        if !caps.interactive {
-            return (ChannelEvent::ConfirmationRequired, None);
-        }
-        if let Some(prompt) = confirmation_prompt(response) {
-            return (
-                ChannelEvent::Answer {
-                    message: format_pending_prompt(&prompt),
-                    image_urls: Vec::new(),
-                },
-                Some(prompt),
-            );
-        }
-        return (ChannelEvent::ConfirmationRequired, None);
-    }
     if response_type == "clarification" {
         if !caps.interactive {
             return (ChannelEvent::ConfirmationRequired, None);
@@ -252,49 +237,6 @@ fn task_pending_prompt(response: &Value) -> Option<PendingPrompt> {
     {
         prompt.question.push_str(&format!("\n\n{context}"));
     }
-    ensure_pending_id(&mut prompt);
-    Some(prompt)
-}
-
-fn confirmation_prompt(response: &Value) -> Option<PendingPrompt> {
-    let confirmation = response.get("confirmation")?;
-    let confirmation_id = confirmation
-        .get("confirmationId")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())?;
-    let question = response
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let step = confirmation
-        .get("pendingSteps")
-        .and_then(Value::as_array)
-        .and_then(|steps| steps.first())
-        .and_then(|step| step.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let question = if question.is_empty() {
-        step.to_string()
-    } else if step.is_empty() || question.contains(step) {
-        question.to_string()
-    } else {
-        format!("{question}\n{step}")
-    };
-    let expires_in = confirmation
-        .get("expiresInSeconds")
-        .and_then(Value::as_i64)
-        .filter(|secs| *secs > 0);
-    let mut prompt = PendingPrompt {
-        id: String::new(),
-        kind: PendingKind::Confirm {
-            confirmation_id: confirmation_id.to_string(),
-        },
-        question,
-        options: Vec::new(),
-        expires_at_unix: expires_in.map(|secs| Utc::now().timestamp().saturating_add(secs)),
-    };
     ensure_pending_id(&mut prompt);
     Some(prompt)
 }
@@ -534,38 +476,6 @@ mod tests {
         assert!(message.contains("名称"));
         assert!(message.contains("A"));
         assert!(parked.is_none());
-    }
-
-    #[test]
-    fn confirmation_asks_yes_or_no() {
-        let (event, parked) = map_completed(
-            &serde_json::json!({
-                "success": true,
-                "responseType": "confirmation_required",
-                "message": "要删掉这篇文章吗？",
-                "confirmation": {
-                    "confirmationId": "c1",
-                    "expiresInSeconds": 60
-                }
-            }),
-            "删除文章",
-            &telegram_caps(),
-        );
-        let ChannelEvent::Answer {
-            message,
-            image_urls,
-        } = event
-        else {
-            panic!("{event:?}");
-        };
-        assert!(image_urls.is_empty());
-        assert!(message.contains("要删掉这篇文章吗？"));
-        let prompt = parked.expect("confirmation parks");
-        assert!(!prompt.id.is_empty());
-        assert!(matches!(
-            prompt.kind,
-            PendingKind::Confirm { confirmation_id } if confirmation_id == "c1"
-        ));
     }
 
     #[test]

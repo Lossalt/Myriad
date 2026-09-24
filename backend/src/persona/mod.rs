@@ -103,12 +103,6 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
             }
         }
     });
-    drivers.periodic(
-        "confirmation cleanup",
-        Duration::from_secs(300),
-        Duration::ZERO,
-        agent::cleanup_expired_confirmations,
-    );
     let mut ticks = 0u64;
     drivers.periodic(
         "heartbeat",

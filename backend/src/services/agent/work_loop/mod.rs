@@ -1096,7 +1096,6 @@ fn checkpoint_response(state: Checkpoint) -> AgentResponse {
         data_display: None,
         suggestions: vec![],
         task: Some(state.task),
-        confirmation: None,
         frontend_action: None,
         performance: None,
     }

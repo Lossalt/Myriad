@@ -322,120 +322,6 @@ pub struct RecipeStep {
 
 pub use myriad_agent_rules::{FailureStrategy, RetryConfig};
 
-// AI Recipe 生成相关类型
-
-/// LLM 生成的单个 recipe 步骤
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiRecipeStep {
-    /// 步骤 ID（如 "step_1"）
-    pub id: String,
-    /// 能力 ID（如 "ai.summarize"）
-    pub capability_id: String,
-    /// 动作（如 "summarize"）
-    pub action: String,
-    /// 参数（AI 根据 schema 生成）
-    #[serde(default)]
-    pub params: HashMap<String, Value>,
-    /// 依赖的步骤 ID 列表
-    #[serde(default)]
-    pub depends_on: Vec<String>,
-    /// 失败策略：`"skip"` → Skip，其余（含 `"abort"`）→ Abort
-    #[serde(default = "default_on_failure")]
-    pub on_failure: String,
-    /// 重试配置
-    #[serde(default)]
-    pub retry: Option<RetryConfig>,
-    /// 超时时间（毫秒）
-    #[serde(default)]
-    pub timeout_ms: Option<u64>,
-}
-
-fn default_on_failure() -> String {
-    "abort".to_string()
-}
-
-impl AiRecipeStep {
-    /// 转为 `RecipeStep`：写入 `order` / `model_tier`；`on_failure` 仅 `"skip"`→Skip，其余 Abort；`timeout_ms` 缺省 30000。
-    #[cfg(test)]
-    pub fn into_recipe_step(self, order: u32, tier: Option<ModelTier>) -> RecipeStep {
-        let failure_strategy = match self.on_failure.as_str() {
-            "skip" => FailureStrategy::Skip,
-            _ => FailureStrategy::Abort,
-        };
-
-        RecipeStep {
-            id: self.id,
-            order,
-            capability_id: self.capability_id,
-            action: self.action,
-            params: self.params,
-            depends_on: self.depends_on,
-            on_failure: failure_strategy,
-            retry: self.retry,
-            timeout_ms: self.timeout_ms.or(Some(30000)),
-            model_tier: tier,
-            generator: None,
-        }
-    }
-}
-
-// Planner 输出类型
-
-/// Planner 输出（合并意图分析 + Recipe 生成为单次 Pro AI 调用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlannerOutput {
-    /// 输出状态
-    pub status: PlannerStatus,
-    /// 置信度（缺省 0.8）
-    #[serde(default = "default_confidence")]
-    pub confidence: f32,
-    /// AI 推理说明
-    #[serde(default)]
-    pub reasoning: Option<String>,
-    /// 执行步骤（status=plan 时使用）
-    #[serde(default)]
-    pub steps: Vec<AiRecipeStep>,
-    /// 澄清信息（status=clarify 时使用）
-    #[serde(default)]
-    pub clarification: Option<PlannerClarification>,
-    /// 不支持原因（status=unsupported 时使用）
-    #[serde(default)]
-    pub unsupported_reason: Option<String>,
-    /// 直接回复（status=chat 时使用）
-    #[serde(default)]
-    pub chat_reply: Option<String>,
-}
-
-fn default_confidence() -> f32 {
-    0.8
-}
-
-/// Planner 状态
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum PlannerStatus {
-    /// 生成执行计划
-    Plan,
-    /// 需要用户澄清
-    Clarify,
-    /// 不支持的请求
-    Unsupported,
-    /// 直接对话回复（无需调用能力）
-    Chat,
-}
-
-/// Planner 澄清信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlannerClarification {
-    /// 澄清消息
-    pub message: String,
-    /// 可选的选项
-    #[serde(default)]
-    pub options: Vec<String>,
-}
-
-// 执行状态相关类型
-
 /// 任务执行状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskState {
@@ -662,9 +548,6 @@ pub struct AgentResponse {
     pub suggestions: Vec<String>,
     /// 任务状态
     pub task: Option<TaskState>,
-    /// 确认请求信息（当 response_type 为 ConfirmationRequired 时）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confirmation: Option<ConfirmationRequest>,
     /// 前端操作指令（路由导航、页面元素交互等）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend_action: Option<Value>,
@@ -777,8 +660,6 @@ pub enum AgentResponseType {
     Answer,
     /// 需要澄清
     Clarification,
-    /// 需要确认（敏感操作）
-    ConfirmationRequired,
     /// 任务已创建
     TaskCreated,
     /// 任务进度更新
@@ -787,37 +668,6 @@ pub enum AgentResponseType {
     TaskCompleted,
     /// 错误
     Error,
-}
-
-/// 确认请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfirmationRequest {
-    /// 确认 ID（用于后续确认/取消）
-    pub confirmation_id: String,
-    /// 待确认的配方 ID
-    pub recipe_id: String,
-    /// 需要确认的步骤
-    pub pending_steps: Vec<PendingConfirmation>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// 待确认的步骤
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingConfirmation {
-    /// 步骤 ID
-    pub step_id: String,
-    /// 能力 ID
-    pub capability_id: String,
-    /// 能力名称
-    pub capability_name: String,
-    /// 操作描述
-    pub description: String,
-    /// 风险等级
-    pub risk_level: RiskLevel,
-    /// 确认提示
-    pub confirmation_message: String,
-    /// 操作影响说明
-    pub impact: Vec<String>,
 }
 
 impl Default for Capability {

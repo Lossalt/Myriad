@@ -702,23 +702,6 @@ pub async fn init_task_store(db: DatabaseConnection) {
     executor::init_task_store_db(db).await;
 }
 
-/// 清理过期的确认请求
-pub async fn cleanup_expired_confirmations() {
-    let now = Utc::now();
-    let mut store = PENDING_CONFIRMATIONS.write().await;
-
-    let expired: Vec<String> = store
-        .iter()
-        .filter(|(_, v)| v.request.expires_at < now)
-        .map(|(k, _)| k.clone())
-        .collect();
-
-    for id in expired {
-        tracing::debug!(confirmation_id = %id, "[Agent] Cleaning up expired confirmation");
-        store.remove(&id);
-    }
-}
-
 // 预执行参数收集 / 写回
 
 #[cfg(test)]
@@ -979,30 +962,20 @@ mod tests {
     #[test]
     fn saved_recipe_validation_rejects_dependency_cycles() {
         let mut recipe = Recipe::new("cycle", "cycle", ExecutionType::Instant);
-        recipe.steps = vec![
-            AiRecipeStep {
-                id: "a".to_string(),
-                capability_id: "ai.summarize".to_string(),
-                action: "a".to_string(),
-                params: HashMap::new(),
-                depends_on: vec!["b".to_string()],
-                on_failure: "abort".to_string(),
-                retry: None,
-                timeout_ms: None,
-            }
-            .into_recipe_step(0, None),
-            AiRecipeStep {
-                id: "b".to_string(),
-                capability_id: "ai.summarize".to_string(),
-                action: "b".to_string(),
-                params: HashMap::new(),
-                depends_on: vec!["a".to_string()],
-                on_failure: "abort".to_string(),
-                retry: None,
-                timeout_ms: None,
-            }
-            .into_recipe_step(1, None),
-        ];
+        let step = |id: &str, dependency: &str, order| RecipeStep {
+            id: id.to_string(),
+            order,
+            capability_id: "ai.summarize".to_string(),
+            action: id.to_string(),
+            params: HashMap::new(),
+            depends_on: vec![dependency.to_string()],
+            on_failure: FailureStrategy::Abort,
+            retry: None,
+            timeout_ms: None,
+            model_tier: None,
+            generator: None,
+        };
+        recipe.steps = vec![step("a", "b", 0), step("b", "a", 1)];
 
         let error = Agent::validate_saved_recipe(&recipe).expect_err("cycle must be rejected");
         assert!(error.contains("dependency cycle"));
@@ -1017,7 +990,6 @@ mod tests {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance: None,
         };
@@ -1027,7 +999,6 @@ mod tests {
             !response(AgentResponseType::Answer, Some(json!({"blocked": true})))
                 .is_successful_outcome()
         );
-        assert!(!response(AgentResponseType::ConfirmationRequired, None).is_successful_outcome());
         assert!(!response(AgentResponseType::Clarification, None).is_successful_outcome());
 
         for status in [

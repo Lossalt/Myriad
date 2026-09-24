@@ -43,7 +43,6 @@ impl Agent {
                 data_display: None,
                 suggestions: vec![],
                 task: None,
-                confirmation: None,
                 frontend_action: music.map(chat_music_frontend_action),
                 performance: None,
             }),
@@ -201,7 +200,6 @@ impl Agent {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance,
         });
