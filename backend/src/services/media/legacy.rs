@@ -124,9 +124,23 @@ pub fn legacy_disk_path(paths: &LegacyPaths, local_path: &str) -> Option<PathBuf
         .strip_prefix("/api/phantasi/image-cache/")
         .or_else(|| path.strip_prefix("/api/brew/image-cache/"))
     {
-        return image_cache_file(&paths.cache_images, rest);
+        return image_cache_file(&paths.cache_images, rest, false);
     }
     None
+}
+
+/// Like [`legacy_disk_path`], for serving only. The image cache still writes
+/// AVIF and SVG, which the old static route served; they are not importable
+/// assets, so migration keeps using the strict form above.
+pub fn legacy_serve_path(paths: &LegacyPaths, local_path: &str) -> Option<PathBuf> {
+    let path = registered_local_path(local_path)?;
+    if let Some(rest) = path
+        .strip_prefix("/api/phantasi/image-cache/")
+        .or_else(|| path.strip_prefix("/api/brew/image-cache/"))
+    {
+        return image_cache_file(&paths.cache_images, rest, true);
+    }
+    legacy_disk_path(paths, &path)
 }
 
 fn federation_file(root: &Path, rest: &str) -> Option<PathBuf> {
@@ -148,7 +162,7 @@ fn federation_file(root: &Path, rest: &str) -> Option<PathBuf> {
     Some(root.join(user).join(file))
 }
 
-fn image_cache_file(root: &Path, rest: &str) -> Option<PathBuf> {
+fn image_cache_file(root: &Path, rest: &str, display_only: bool) -> Option<PathBuf> {
     let (subdir, file) = rest.split_once('/')?;
     if file.contains('/') || file.contains('\\') || file.contains("..") {
         return None;
@@ -161,7 +175,8 @@ fn image_cache_file(root: &Path, rest: &str) -> Option<PathBuf> {
         return None;
     }
     let ext = ext.to_ascii_lowercase();
-    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp") {
+    let importable = matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp");
+    if !importable && !(display_only && matches!(ext.as_str(), "avif" | "svg")) {
         return None;
     }
     let stem = stem.to_ascii_lowercase();
@@ -181,6 +196,21 @@ mod tests {
             federation_root: PathBuf::from("/data/federation_media"),
             cache_images: PathBuf::from("/cache/images"),
         }
+    }
+
+    #[test]
+    fn cached_avif_and_svg_are_servable_but_not_importable() {
+        let stem = format!("ab{}", "0".repeat(62));
+        for ext in ["avif", "svg"] {
+            let url = format!("/api/phantasi/image-cache/ab/{stem}.{ext}");
+            assert!(legacy_disk_path(&paths(), &url).is_none());
+            assert_eq!(
+                legacy_serve_path(&paths(), &url),
+                Some(PathBuf::from(format!("/cache/images/ab/{stem}.{ext}")))
+            );
+        }
+        let html = format!("/api/phantasi/image-cache/ab/{stem}.html");
+        assert!(legacy_serve_path(&paths(), &html).is_none());
     }
 
     #[test]

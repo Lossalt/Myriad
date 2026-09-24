@@ -162,6 +162,14 @@ fn apply_headers(res: &mut Response, file: &FileServe) {
     if let Ok(value) = HeaderValue::from_str(&file.mime) {
         headers.insert(header::CONTENT_TYPE, value);
     }
+    // Cached SVG comes from arbitrary feeds and is same-origin: opened as a
+    // document it must not run script. Images embedded via <img> are unaffected.
+    if file.mime == "image/svg+xml" {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; sandbox"),
+        );
+    }
     if let Some(etag) = file.etag.as_deref() {
         if let Ok(value) = HeaderValue::from_str(&format!("\"{etag}\"")) {
             headers.insert(header::ETAG, value);

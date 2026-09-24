@@ -11,7 +11,7 @@ use crate::models::entities::{media_assets, media_url_aliases};
 use super::access::can_read;
 use super::assets;
 use super::error::MediaError;
-use super::legacy::{LegacyPaths, legacy_disk_path};
+use super::legacy::{LegacyPaths, legacy_serve_path};
 use super::store::MediaStore;
 use super::types::{MediaActor, MediaExposure, MediaState};
 use super::urls::{filename_for_mime, registered_local_path};
@@ -121,7 +121,7 @@ pub async fn resolve_alias_or_legacy(
     if !allow_unmigrated {
         return Ok(ServeOutcome::NotFound { no_store: true });
     }
-    let Some(disk) = legacy_disk_path(paths, &local_path) else {
+    let Some(disk) = legacy_serve_path(paths, &local_path) else {
         return Ok(ServeOutcome::NotFound { no_store: true });
     };
     if tokio::fs::metadata(&disk).await.is_err() {
@@ -174,6 +174,8 @@ fn mime_from_path(path: &std::path::Path) -> &'static str {
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
         "mov" => "video/quicktime",
