@@ -987,6 +987,16 @@ async fn remote_update_edits_existing_rows_in_place() {
         .unwrap();
     assert_eq!(scalar_i64(db, rows).await, 2, "Update must not add rows");
     assert_eq!(scalar_i64(db, edited).await, 2);
+    // 原 Create 活动里存的对象也是新版本：收藏回退读与对象详情读的是它。
+    let stored_create = "SELECT COUNT(*) FROM federation_activities \
+                         WHERE activity_type = 'Create' \
+                         AND object_json->>'content' = '<p>second</p>'";
+    assert_eq!(scalar_i64(db, stored_create).await, 1);
+    let detail =
+        crate::federation::interactions::resolve_local_object(db, "https://r.example/notes/1")
+            .await
+            .expect("object detail");
+    assert_eq!(detail["content"], json!("<p>second</p>"));
 
     // 乱序重投的旧版本不回退（走共享收件箱路径）。
     let stale = update(
@@ -998,6 +1008,11 @@ async fn remote_update_edits_existing_rows_in_place() {
         .await
         .unwrap();
     assert_eq!(scalar_i64(db, edited).await, 2, "older version is ignored");
+    assert_eq!(
+        scalar_i64(db, stored_create).await,
+        1,
+        "stored Create keeps the newer version"
+    );
 
     // 本地没有的对象：忽略，不插行。
     let mut unknown = update("https://r.example/activities/u3", "<p>new</p>", None);
@@ -1028,6 +1043,11 @@ async fn remote_update_edits_existing_rows_in_place() {
         scalar_i64(db, edited).await,
         2,
         "rows are scoped to the author"
+    );
+    assert_eq!(
+        scalar_i64(db, stored_create).await,
+        1,
+        "stored Create is scoped to the author"
     );
 
     fixture.close().await;

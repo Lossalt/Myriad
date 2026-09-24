@@ -979,6 +979,8 @@ async fn check_and_record_content_activity<'a>(
 /// - 只改这个 Actor 自己投来的 Create 行（`remote_actor_id` 收口，与 Delete 同理；
 ///   历史上按 Update 插进来的行也一并更新）。所有本地用户的副本一起改：同一个
 ///   对象只有一个当前版本。`received_at` 不动，编辑不把旧帖顶到最前。
+/// - 这个 Actor 投来的原 Create 活动里存的对象同样改成新版本：收藏在没有时间线
+///   行时回退读它，对象详情与转发引用也读它。
 /// - 本地没有这个对象：忽略，不插新行。时间线按关注投递 Create / Announce，
 ///   Update 是对已有帖子的修改；乱序到达的 Update 若插行，会让已经 Delete 掉
 ///   的帖子复活。
@@ -1005,25 +1007,36 @@ async fn apply_remote_update(
     let object_type = object.get("type").and_then(|v| v.as_str());
     let preview = crate::federation::content::preview_from_ap_object(object);
 
-    let result = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"UPDATE federation_timeline t
+    // 时间线行与原 Create 活动里存的对象在一条语句里一起改：收藏回退读、
+    // 对象详情读的是后者，只改时间线会让它们停在旧版本。
+    let sql = format!(
+        r#"WITH activities AS (
+               UPDATE federation_activities a
+               SET object_json = $3
+               WHERE a.remote_actor_id = $1
+                 AND a.activity_type = 'Create'
+                 AND a.object_json->>'id' = $2
+                 AND NOT {activity_is_newer}
+               RETURNING 1
+           ), timeline AS (
+               UPDATE federation_timeline t
                SET content_json = $3,
                    content_preview = $4,
                    object_type = COALESCE($5, t.object_type)
                WHERE t.remote_actor_id = $1
                  AND t.activity_type IN ('Create', 'Update')
                  AND t.content_json->>'id' = $2
-                 AND NOT (
-                   $6::timestamptz IS NOT NULL
-                   AND CASE
-                         WHEN t.content_json->>'updated'
-                              ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$'
-                         THEN (t.content_json->>'updated')::timestamptz > $6::timestamptz
-                         ELSE false
-                       END
-                 )"#,
+                 AND NOT {timeline_is_newer}
+               RETURNING 1
+           )
+           SELECT (SELECT COUNT(*) FROM activities) + (SELECT COUNT(*) FROM timeline) AS n"#,
+        activity_is_newer = stored_version_is_newer("a.object_json"),
+        timeline_is_newer = stored_version_is_newer("t.content_json"),
+    );
+    let updated_rows = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            sql,
             [
                 remote_actor_id.into(),
                 object_id.clone().into(),
@@ -1034,8 +1047,10 @@ async fn apply_remote_update(
             ],
         ))
         .await
-        .map_err(db_err)?;
-    if result.rows_affected() == 0 {
+        .map_err(db_err)?
+        .and_then(|row| row.try_get::<i64>("", "n").ok())
+        .unwrap_or(0);
+    if updated_rows == 0 {
         tracing::debug!(
             actor = %actor_url_str,
             object = %object_id,
@@ -1043,6 +1058,23 @@ async fn apply_remote_update(
         );
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+/// 防回退条件：对象带 `updated`（`$6`）且库里 `column` 存的版本更新。
+///
+/// 库里的 `updated` 不是合法时间戳就当作不比新版本新。
+fn stored_version_is_newer(column: &str) -> String {
+    format!(
+        r#"(
+             $6::timestamptz IS NOT NULL
+             AND CASE
+                   WHEN {column}->>'updated'
+                        ~ '^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}(\.\d+)?(Z|[+-]\d{{2}}:\d{{2}})$'
+                   THEN ({column}->>'updated')::timestamptz > $6::timestamptz
+                   ELSE false
+                 END
+           )"#
+    )
 }
 
 /// 留存群邻实例的公开帖，即使本地没有任何人关注作者。
