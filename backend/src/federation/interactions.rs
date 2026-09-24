@@ -1065,7 +1065,8 @@ pub async fn announce_object(
         "attachment": [],
     });
     // Keep a plain content_preview for timeline list UIs (commentary only — not the quote body).
-    note["content_preview"] = json!(content.chars().take(200).collect::<String>());
+    // 与时间线行的 content_preview 同一个构建器：`source.content` 就是评论本身。
+    note["content_preview"] = json!(content::preview_from_ap_object(&note));
 
     let create_json = json!({
         "@context": build_context(),
@@ -1106,24 +1107,16 @@ pub async fn announce_object(
     .map_err(db_err)?;
 
     // Author timeline: show the quote-repost as a Create Note (user's commentary).
-    let preview: Option<String> = Some(content.chars().take(200).collect::<String>());
-    let content_for_tl = create_json.get("object").cloned().unwrap_or(json!({}));
-
-    txn.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"INSERT INTO federation_timeline
-               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
-           VALUES ($1, $2, NULL, 'Create', 'repost', $3, $4, NOW())
-           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
-        [
-            user_id.into(),
-            activity_id.clone().into(),
-            preview.clone().into(),
-            content_for_tl.into(),
-        ],
-    ))
-    .await
-    .map_err(db_err)?;
+    // 与普通发布同一个插行函数，预览走共用构建器。
+    content::insert_author_timeline(
+        &txn,
+        user_id,
+        &activity_id,
+        "Create",
+        "repost",
+        &create_json,
+    )
+    .await?;
 
     // 远端粉丝的投递行随转发一起提交；坏粉丝只跳过自己。
     let staged = content::stage_follower_fan_out(&txn, &base_url, user_id, act_db_id)
@@ -1745,6 +1738,21 @@ mod tests {
             let local = f.find("deliver_to_local_followers(db").expect(start);
             assert!(stage < commit && commit < local, "{start}");
         }
+    }
+
+    /// 转发的作者时间线行与普通发布同一个插行函数，预览不再自己截断。
+    #[test]
+    fn repost_timeline_preview_uses_the_shared_builder() {
+        let src = include_str!("interactions.rs");
+        let f = src
+            .split("pub async fn announce_object(")
+            .nth(1)
+            .and_then(|rest| rest.split("pub async fn unannounce_object(").next())
+            .expect("announce_object");
+        assert!(f.contains("content::insert_author_timeline("));
+        assert!(f.contains("content::preview_from_ap_object(&note)"));
+        assert!(!f.contains("take(200)"));
+        assert!(!f.contains("INSERT INTO federation_timeline"));
     }
 
     async fn count(db: &DatabaseConnection, sql: &str) -> i64 {

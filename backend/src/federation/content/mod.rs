@@ -22,4 +22,4 @@ pub(crate) use ap_object::{
     FollowerRoute, StagedFanOut, deliver_to_local_followers, fan_out_to_followers, route_follower,
     stage_follower_fan_out,
 };
-pub(crate) use timeline::preview_from_ap_object;
+pub(crate) use timeline::{insert_author_timeline, preview_from_ap_object};
