@@ -7,7 +7,6 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::json;
 
 use super::media::{attachment_url_rejection_reason, classify_media_mime};
-use super::timeline::preview_from_ap_object;
 use super::types::NoteAttachmentInput;
 use crate::federation::audience::Visibility;
 use crate::federation::limits::NOTE_ATTACHMENT_COUNT_LIMIT as MAX_NOTE_ATTACHMENTS;
@@ -393,10 +392,11 @@ pub(super) async fn build_ap_object(
 /// transaction via [`stage_follower_fan_out`]. Returns how many follower inboxes
 /// were queued **or** delivered locally.
 ///
-/// Same-instance followers (inbox under our `base_url`) are written directly to
-/// their local timeline — HTTP delivery to localhost / private hosts is refused
-/// by the delivery worker, so without this shortcut multi-user and local-dev
-/// follows never see posts.
+/// Same-instance followers (inbox under our `base_url`) get the activity through
+/// [`deliver_activity_locally`](crate::federation::inbox::deliver_activity_locally),
+/// the same dispatch a remote inbox runs — HTTP delivery to localhost / private
+/// hosts is refused by the delivery worker, so without this shortcut
+/// multi-user and local-dev follows never see posts.
 ///
 /// Actual HTTP delivery for remote followers is performed by
 /// `delivery::process_delivery_queue_detailed`, started via
@@ -454,38 +454,15 @@ pub(crate) async fn fan_out_to_followers(
                 }
             })
         {
-            if activity_json.get("type").and_then(|v| v.as_str()) == Some("Move") {
-                crate::federation::inbox::deliver_activity_locally(
-                    db,
-                    &local_username,
-                    activity_json,
-                )
+            crate::federation::inbox::deliver_activity_locally(db, &local_username, activity_json)
                 .await
                 .map_err(|e| {
                     format!(
-                        "Fan-out local Move failed username={local_username} activity_db_id={activity_db_id}: {e}"
+                        "Fan-out local delivery failed username={local_username} activity_db_id={activity_db_id}: {e}"
                     )
                 })?;
-                local_delivered += 1;
-                queued += 1;
-                continue;
-            }
-            match deliver_create_to_local_follower(db, &local_username, activity_json).await {
-                Ok(true) => {
-                    local_delivered += 1;
-                    queued += 1;
-                }
-                Ok(false) => {
-                    return Err(format!(
-                        "Fan-out local: no user for username={local_username} activity_db_id={activity_db_id}"
-                    ));
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "Fan-out local timeline failed username={local_username} activity_db_id={activity_db_id}: {e}"
-                    ));
-                }
-            }
+            local_delivered += 1;
+            queued += 1;
             continue;
         }
 
@@ -524,7 +501,7 @@ pub(crate) async fn fan_out_to_followers(
 }
 
 /// 在发布事务内落下的扇出意图：远端投递行已写进 `federation_delivery_queue`，
-/// 同实例粉丝留给提交后的本地捷径。
+/// 同实例粉丝留给提交后的进程内投递。
 ///
 /// 投递队列本身就是持久化的扇出意图 —— 与内容、Create/Delete 活动同一个事务
 /// 提交，提交成功即由投递 worker 负责送达；提交失败则一行都不留，客户端重试
@@ -533,7 +510,7 @@ pub(crate) async fn fan_out_to_followers(
 pub(super) struct StagedFanOut {
     /// 本事务写入的远端投递行数。
     pub queued: u32,
-    /// 需要在提交后写本地时间线的同实例粉丝用户名。
+    /// 需要在提交后进程内投递的同实例粉丝用户名。
     pub local_followers: Vec<String>,
     /// 因数据坏掉而跳过的粉丝数（空 inbox、列解码失败）。
     pub skipped: u32,
@@ -680,11 +657,12 @@ async fn enqueue_delivery(
     Ok(result.rows_affected() as u32)
 }
 
-/// 提交后把活动写进同实例粉丝的时间线，逐个尽力而为。
+/// 提交后把活动进程内投给同实例粉丝，逐个尽力而为。
 ///
-/// 投递 worker 拒绝往本机 / 私网发 HTTP，所以同实例粉丝只能走这条捷径；
+/// 投递 worker 拒绝往本机 / 私网发 HTTP，所以同实例粉丝只能走进程内投递；
+/// 它与远端收件箱走同一套分发（回执、事务、Delete / Undo 语义都一致）。
 /// 某个粉丝失败只记日志，不影响其他粉丝，也不影响已经提交的发布结果。
-/// 返回成功写入的人数。
+/// 返回成功投递的人数。
 pub(super) async fn deliver_to_local_followers(
     db: &DatabaseConnection,
     usernames: &[String],
@@ -692,13 +670,9 @@ pub(super) async fn deliver_to_local_followers(
 ) -> u32 {
     let mut delivered = 0u32;
     for username in usernames {
-        match deliver_create_to_local_follower(db, username, activity_json).await {
-            Ok(true) => delivered += 1,
-            Ok(false) => tracing::warn!(
-                username = %username,
-                activity = activity_json["id"].as_str().unwrap_or(""),
-                "Local fan-out skipped: follower user no longer exists"
-            ),
+        match crate::federation::inbox::deliver_activity_locally(db, username, activity_json).await
+        {
+            Ok(()) => delivered += 1,
             Err(error) => tracing::error!(
                 username = %username,
                 activity = activity_json["id"].as_str().unwrap_or(""),
@@ -715,178 +689,6 @@ fn local_username_from_inbox_url(base_url: &str, inbox_url: &str) -> Option<Stri
     let trimmed = inbox_url.trim().trim_end_matches('/');
     let actor = trimmed.strip_suffix("/inbox")?;
     local_username_from_actor_url(base_url, actor)
-}
-
-/// Deliver a non-Move activity into a same-instance follower's timeline.
-/// Like returns Ok(true) without insert. Ok(false) if the user is missing.
-async fn deliver_create_to_local_follower(
-    db: &DatabaseConnection,
-    follower_username: &str,
-    activity_json: &serde_json::Value,
-) -> Result<bool, String> {
-    let user_row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT id FROM users WHERE username = $1",
-            [follower_username.into()],
-        ))
-        .await
-        .map_err(|e| {
-            tracing::error!("DB error: {}", e);
-            "Database error".to_string()
-        })?;
-    let Some(user_row) = user_row else {
-        return Ok(false);
-    };
-    let follower_user_id = crate::federation::types::row_positive_id(&user_row, "id")?;
-
-    let publisher_actor = activity_json["actor"].as_str().unwrap_or("").to_string();
-    if publisher_actor.is_empty() {
-        return Err("Create activity missing actor".into());
-    }
-
-    let remote_actor_id = ensure_remote_actor_stub(db, &publisher_actor).await?;
-
-    let activity_id = activity_json["id"].as_str().unwrap_or("").to_string();
-    if activity_id.is_empty() {
-        return Err("Create activity missing id".into());
-    }
-    let activity_type = activity_json["type"]
-        .as_str()
-        .unwrap_or("Create")
-        .to_string();
-    // Likes are not home-timeline items (counts come from interactions / activities).
-    if activity_type == "Like" {
-        return Ok(true);
-    }
-    let object = &activity_json["object"];
-    let object_type = object["type"].as_str().map(|s| s.to_string());
-    let preview = preview_from_ap_object(object);
-    // Store `object` as-is (string id or embedded object).
-    let content_json = object.clone();
-
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"INSERT INTO federation_timeline
-               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
-        [
-            follower_user_id.into(),
-            activity_id.into(),
-            remote_actor_id.into(),
-            activity_type.into(),
-            object_type.into(),
-            preview.into(),
-            content_json.into(),
-        ],
-    ))
-    .await
-    .map_err(|e| format!("timeline insert: {}", e))?;
-
-    Ok(true)
-}
-
-/// Ensure a federation_remote_actors row exists for a local (or already-known) actor
-/// without HTTP fetch — used when fan-out short-circuits same-instance delivery.
-///
-/// For same-instance publishers, fill display_name + avatar proxy so followers'
-/// personal feeds attribute posts to the author (not the viewer).
-async fn ensure_remote_actor_stub(
-    db: &DatabaseConnection,
-    actor_url_str: &str,
-) -> Result<i32, String> {
-    let domain = extract_domain(actor_url_str).unwrap_or_default();
-    let username = actor_url_str
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let inbox = format!("{}/inbox", actor_url_str.trim_end_matches('/'));
-
-    // Prefer local profile when this actor_url is on our instance.
-    let base_url = get_base_url().await;
-    let base = base_url.trim_end_matches('/');
-    let is_local = actor_url_str
-        .trim_end_matches('/')
-        .starts_with(&format!("{}/users/", base));
-    let mut display_name: Option<String> = None;
-    let mut avatar_url: Option<String> = None;
-    if is_local {
-        if let Some(ref uname) = username {
-            if let Ok(Some(row)) = db
-                .query_one_raw(Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    format!(
-                        r#"SELECT display_name,
-                              {avatar} AS avatar_url
-                       FROM users
-                       WHERE username = $1
-                       LIMIT 1"#,
-                        avatar = crate::services::avatar::avatar_snapshot_expr("users")
-                    ),
-                    [uname.clone().into()],
-                ))
-                .await
-            {
-                display_name = row
-                    .try_get::<Option<String>>("", "display_name")
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.is_empty());
-                let has_avatar = row
-                    .try_get::<Option<String>>("", "avatar_url")
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.is_empty())
-                    .is_some();
-                if has_avatar {
-                    avatar_url = Some(format!(
-                        "{}/users/{}/avatar",
-                        base,
-                        urlencoding::encode(uname)
-                    ));
-                }
-            }
-        }
-    }
-
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_remote_actors
-                   (actor_url, username, domain, display_name, avatar_url, inbox_url, last_fetched_at, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-               ON CONFLICT (actor_url) DO UPDATE SET
-                   username = COALESCE(EXCLUDED.username, federation_remote_actors.username),
-                   domain = COALESCE(NULLIF(EXCLUDED.domain, ''), federation_remote_actors.domain),
-                   display_name = COALESCE(
-                       NULLIF(EXCLUDED.display_name, ''),
-                       federation_remote_actors.display_name
-                   ),
-                   avatar_url = COALESCE(
-                       NULLIF(EXCLUDED.avatar_url, ''),
-                       federation_remote_actors.avatar_url
-                   ),
-                   inbox_url = COALESCE(NULLIF(EXCLUDED.inbox_url, ''), federation_remote_actors.inbox_url)
-               RETURNING id"#,
-            [
-                actor_url_str.into(),
-                username.into(),
-                domain.into(),
-                display_name.into(),
-                avatar_url.into(),
-                inbox.into(),
-            ],
-        ))
-        .await
-        .map_err(|e| { tracing::error!("DB error: {}", e); "Database error".to_string() })?;
-
-    returning_id(row).map_err(|error| {
-        tracing::error!(%error, "remote actor stub RETURNING id decode failed");
-        "Failed to upsert remote actor stub".into()
-    })
 }
 
 // 辅助函数

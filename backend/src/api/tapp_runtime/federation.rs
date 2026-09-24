@@ -192,7 +192,9 @@ async fn load_personal_feed(
                    OR ra.domain = $3
                )
            WHERE t.user_id = $1
-             AND (t.activity_type IS NULL OR t.activity_type <> 'Like')
+             -- Posts only: Like / Delete / Undo change state, they are not feed items
+             -- (older same-instance delivery stored some of them as empty rows).
+             AND (t.activity_type IS NULL OR t.activity_type IN ('Create', 'Announce', 'Update'))
            ORDER BY t.received_at DESC
            LIMIT 100"#,
         peer_avatar = peer_avatar,

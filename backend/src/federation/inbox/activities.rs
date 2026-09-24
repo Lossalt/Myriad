@@ -8,8 +8,8 @@ use serde_json::json;
 use crate::federation::actor::RemoteActorInfo;
 use crate::federation::types::*;
 
-use super::inbox_err;
-use super::local_deliver::{DeliveryMode, enqueue_delivery, enqueue_delivery_queue};
+use super::local_deliver::{enqueue_delivery_queue, local_username_from_inbox_url};
+use super::{PostCommit, inbox_err};
 
 // Activity 处理器
 
@@ -76,29 +76,6 @@ pub(crate) async fn handle_verified_move(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Handle a Move delivered in-process (`local_deliver`, no HTTP signature):
-/// the same preflight and database phase as the HTTP inboxes, the latter in
-/// its own transaction.
-pub(crate) async fn handle_move(
-    db: &DatabaseConnection,
-    signed_actor: &str,
-    activity: &serde_json::Value,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let verified = crate::federation::move_actor::preflight_move(db, signed_actor, activity)
-        .await
-        .map_err(move_preflight_error)?;
-    let txn = db
-        .begin()
-        .await
-        .map_err(|e| inbox_err("begin Move transaction", e.to_string()))?;
-    // Dropping `txn` on the error path rolls it back.
-    let status = handle_verified_move(&txn, Some(&verified), activity).await?;
-    txn.commit()
-        .await
-        .map_err(|e| inbox_err("commit Move transaction", e.to_string()))?;
-    Ok(status)
-}
-
 /// 处理 Follow 请求
 pub(crate) async fn handle_follow(
     db: &impl ConnectionTrait,
@@ -106,7 +83,7 @@ pub(crate) async fn handle_follow(
     actor_url_str: &str,
     activity: &serde_json::Value,
     follow_remote: Option<&RemoteActorInfo>,
-    delivery_mode: DeliveryMode<'_>,
+    post_commit: &mut PostCommit,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     // Follow.object 必须就是本次要记录的本地 Actor，不能只靠投递路径上的 local_user_id。
     let base_url = get_base_url().await;
@@ -206,16 +183,14 @@ pub(crate) async fn handle_follow(
         target: None,
     };
 
-    // In a receipt transaction, queue the outbound Accept in the same DB
-    // transaction.  Trusted in-process delivery is retained for the local
-    // helper path, where no inbound receipt transaction is open.
-    match delivery_mode {
-        DeliveryMode::QueueOnly => {
-            enqueue_delivery_queue(db, local_user_id, &accept, &remote.inbox_url).await?;
-        }
-        DeliveryMode::InProcess(local_db) => {
-            enqueue_delivery(local_db, local_user_id, &accept, &remote.inbox_url).await?;
-        }
+    // A remote follower gets the Accept through the delivery queue, in the
+    // same transaction as the follow row. The delivery worker refuses
+    // same-instance inboxes, so a local follower's Accept is delivered
+    // in-process once this transaction has committed.
+    if local_username_from_inbox_url(&base_url, &remote.inbox_url).is_some() {
+        post_commit.reply_locally(local_user_id, accept, remote.inbox_url.clone());
+    } else {
+        enqueue_delivery_queue(db, local_user_id, &accept, &remote.inbox_url).await?;
     }
 
     // 新粉丝通知
@@ -933,6 +908,15 @@ pub(crate) async fn handle_content_activity(
             activity,
         )
         .await;
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    // Update 的对象就是 Actor 自己（改资料）：资料从 Actor 文档读，不是一条帖子，
+    // 进时间线只会留下一条没有正文的空条目。
+    if activity_type == "Update"
+        && crate::federation::audience::object_id(&activity["object"])
+            .is_some_and(|id| same_actor_url(&id, actor_url_str))
+    {
         return Ok(StatusCode::ACCEPTED);
     }
 

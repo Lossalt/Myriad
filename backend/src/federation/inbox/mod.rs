@@ -26,19 +26,67 @@ use serde_json::json;
 
 use crate::federation::errors::{is_permanent_federation_error, map_inbox_handler_error};
 
-/// Local side effects (live-UI broadcasts) that must only run after the inbox
-/// transaction that produced them has committed. Dropped on rollback.
+/// Local side effects that must only run after the inbox transaction that
+/// produced them has committed. Dropped on rollback.
+///
+/// - live-UI broadcasts (FileTransfer progress);
+/// - replies addressed to a same-instance inbox (the Accept for a local
+///   Follow): the delivery worker refuses localhost / private targets, so they
+///   are handed to the in-process path once the triggering activity is durable.
 #[derive(Default)]
-pub(crate) struct PostCommit(Vec<crate::federation::file_transfer::TransferNotice>);
+pub(crate) struct PostCommit {
+    notices: Vec<crate::federation::file_transfer::TransferNotice>,
+    local_replies: Vec<LocalReply>,
+}
+
+struct LocalReply {
+    user_id: i32,
+    activity: crate::federation::types::Activity,
+    target_inbox: String,
+}
 
 impl PostCommit {
     pub(crate) fn push(&mut self, notice: Option<crate::federation::file_transfer::TransferNotice>) {
-        self.0.extend(notice);
+        self.notices.extend(notice);
     }
 
-    pub(crate) async fn run(self) {
-        for notice in self.0 {
+    pub(crate) fn reply_locally(
+        &mut self,
+        user_id: i32,
+        activity: crate::federation::types::Activity,
+        target_inbox: String,
+    ) {
+        self.local_replies.push(LocalReply {
+            user_id,
+            activity,
+            target_inbox,
+        });
+    }
+
+    pub(crate) async fn run(self, db: &sea_orm::DatabaseConnection) {
+        for notice in self.notices {
             notice.broadcast().await;
+        }
+        for reply in self.local_replies {
+            // `enqueue_delivery` records the reply, delivers it in-process and
+            // falls back to the HTTP queue itself; the inbound activity is
+            // already committed, so a failure here only leaves the reply queued.
+            let delivered = local_deliver::enqueue_delivery(
+                db,
+                reply.user_id,
+                &reply.activity,
+                &reply.target_inbox,
+            )
+            .await;
+            if let Err((status, body)) = delivered {
+                tracing::error!(
+                    %status,
+                    error = %body.0,
+                    activity_type = %reply.activity.activity_type,
+                    target = %reply.target_inbox,
+                    "Failed to record a same-instance inbox reply"
+                );
+            }
         }
     }
 }

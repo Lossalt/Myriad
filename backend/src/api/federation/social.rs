@@ -1723,7 +1723,9 @@ pub(crate) async fn get_federation_timeline(
                        OR ra.domain = $3
                    )
                WHERE t.user_id = $1
-                 AND (t.activity_type IS NULL OR t.activity_type <> 'Like')
+                 -- Posts only: Like / Delete / Undo change state, they are not feed items
+                 -- (older same-instance delivery stored some of them as empty rows).
+                 AND (t.activity_type IS NULL OR t.activity_type IN ('Create', 'Announce', 'Update'))
                ORDER BY t.received_at DESC
                LIMIT 50"#,
                 peer_has_avatar = crate::services::avatar::avatar_presence_expr("peer"),

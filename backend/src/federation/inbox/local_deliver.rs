@@ -1,27 +1,17 @@
 //! Same-instance inbox delivery and outbound delivery-queue enqueue.
 
 use axum::{Json, http::StatusCode};
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
-use serde_json::json;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use crate::federation::actor::fetch_remote_actor;
 use crate::federation::types::*;
 
-use super::activities::{
-    extract_activity_actor_id, handle_accept, handle_content_activity, handle_follow, handle_move,
-    handle_reject, handle_undo,
+use super::activities::{extract_activity_actor_id, move_preflight_error};
+use super::inbox_err;
+use super::receipt::receipt_key;
+use super::receive::{
+    execute_personal_activity, get_local_user, personal_inbox_scope, preflight_room_join_member,
 };
-use super::{PostCommit, inbox_err};
-use super::mfp::handle_mfp_activity;
-use super::receive::get_local_user;
-
-/// Receipt HTTP path uses `QueueOnly`. `InProcess` is the trusted local helper
-/// (no nested receipt txn).
-#[derive(Clone, Copy)]
-pub(crate) enum DeliveryMode<'a> {
-    QueueOnly,
-    InProcess(&'a DatabaseConnection),
-}
 
 /// 将 Activity 入库；同实例 inbox 当场处理，否则入 pending 队列。
 ///
@@ -64,7 +54,7 @@ pub(crate) async fn enqueue_delivery(
 
     // Same-instance inbox → handle directly (Follow / Accept / Undo / …).
     // Box::pin breaks the async recursion cycle:
-    // deliver_activity_locally → handle_follow → enqueue_delivery → …
+    // deliver_activity_locally → handle_follow → PostCommit → enqueue_delivery → …
     if let Some(local_username) = local_username_from_inbox_url(&base_url, target_inbox) {
         match Box::pin(deliver_activity_locally(
             db,
@@ -178,127 +168,100 @@ fn validate_delivery_activity_id(activity_id: i32) -> Result<i32, String> {
 }
 
 /// If inbox is `{base}/users/{username}/inbox`, return username.
-fn local_username_from_inbox_url(base_url: &str, inbox_url: &str) -> Option<String> {
+pub(super) fn local_username_from_inbox_url(base_url: &str, inbox_url: &str) -> Option<String> {
     let trimmed = inbox_url.trim().trim_end_matches('/');
     let actor = trimmed.strip_suffix("/inbox")?;
     local_username_from_actor_url(base_url, actor)
 }
 
-/// Process an Activity for a local user as if it arrived at their personal inbox
-/// (skips HTTP Signature — caller is trusted in-process).
+/// Process an Activity for a local user exactly as if it had arrived at their
+/// personal inbox, minus the HTTP transport.
 ///
-/// Used for same-instance Follow/Accept so initiator outgoing status flips to
-/// `accepted` without waiting on the delivery worker (which refuses internal URLs).
+/// Only the transport-level checks are skipped: the signer must be one of this
+/// instance's own actors (it signed nothing because it never left the
+/// process), so there is no HTTP Signature to verify and no trust policy to
+/// apply to our own domain. Everything after that is the remote path —
+/// the same actor / Move / RoomJoin preflight, the same durable receipt, the
+/// same transaction and the same [`execute_personal_activity`] dispatch. A
+/// same-instance follower therefore sees a Delete or Undo exactly as a remote
+/// follower's instance would process it.
+///
+/// Used where the delivery worker cannot help (it refuses localhost / private
+/// inboxes): same-instance Follow / Accept and follower fan-out.
 pub async fn deliver_activity_locally(
     db: &DatabaseConnection,
     username: &str,
     activity: &serde_json::Value,
 ) -> Result<(), String> {
-    let (user_id, _) = get_local_user(db, username).await.map_err(|(_, j)| {
-        j.0.get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("user not found")
-            .to_string()
-    })?;
+    let (user_id, _) = get_local_user(db, username)
+        .await
+        .map_err(|error| error_message(error, "user not found"))?;
 
     let activity_type = activity["type"].as_str().unwrap_or("");
-    let actor_url_owned = extract_activity_actor_id(activity);
-    if activity_type.is_empty() || actor_url_owned.is_empty() {
+    let signer = extract_activity_actor_id(activity);
+    if activity_type.is_empty() || signer.is_empty() {
         return Err("Missing actor or type in activity".into());
     }
-    let actor_url_str = actor_url_owned.as_str();
-    let follow_remote = if activity_type == "Follow" {
-        Some(fetch_remote_actor(db, actor_url_str).await?)
-    } else {
-        None
-    };
-    let content_remote = if matches!(
+    let base_url = get_base_url().await;
+    if local_username_from_actor_url(&base_url, &signer).is_none() {
+        return Err(format!(
+            "In-process delivery requires a local signer, got {signer}"
+        ));
+    }
+
+    // Same preflight as `post_inbox`, resolved before the receipt transaction.
+    // Local actors resolve from the users table, never over HTTP.
+    let signer_actor = if matches!(
         activity_type,
-        "Create" | "Update" | "Delete" | "Announce" | "Like"
+        "Follow" | "Create" | "Update" | "Delete" | "Announce" | "Like"
     ) {
-        Some(fetch_remote_actor(db, actor_url_str).await?)
+        Some(fetch_remote_actor(db, &signer).await?)
+    } else {
+        None
+    };
+    preflight_room_join_member(db, activity_type, &signer, activity)
+        .await
+        .map_err(|error| error_message(error, "RoomJoin preflight failed"))?;
+    let move_verified = if activity_type == "Move" {
+        let verified = crate::federation::move_actor::preflight_move(db, &signer, activity)
+            .await
+            .map_err(|error| error_message(move_preflight_error(error), "Move rejected"))?;
+        Some(verified)
     } else {
         None
     };
 
-    let result = match activity_type {
-        "Follow" => {
-            handle_follow(
-                db,
-                user_id,
-                actor_url_str,
-                activity,
-                follow_remote.as_ref(),
-                DeliveryMode::InProcess(db),
-            )
-            .await
-        }
-        "Accept" => handle_accept(db, user_id, activity).await,
-        "Reject" => handle_reject(db, user_id, actor_url_str, activity).await,
-        "Undo" => handle_undo(db, user_id, actor_url_str, activity).await,
-        "Move" => handle_move(db, actor_url_str, activity).await,
-        "Create" | "Update" | "Delete" | "Announce" | "Like" => {
-            handle_content_activity(
-                db,
-                user_id,
-                actor_url_str,
-                activity_type,
-                activity,
-                content_remote.as_ref(),
-            )
-            .await
-        }
-        // FileTransfer's advisory lock and progress must share one transaction;
-        // its live-UI notices run only after that transaction commits.
-        "myriad:FileTransfer" => {
-            let txn = db.begin().await.map_err(|e| e.to_string())?;
-            let mut post_commit = PostCommit::default();
-            let result = handle_mfp_activity(
-                &txn,
-                Some(user_id),
-                actor_url_str,
-                activity_type,
-                activity,
-                db,
-                &mut post_commit,
-            )
-            .await;
-            if result.is_ok() {
-                txn.commit().await.map_err(|e| e.to_string())?;
-                post_commit.run().await;
-            }
-            result
-        }
-        other if other.starts_with("myriad:") => {
-            let mut post_commit = PostCommit::default();
-            let result = handle_mfp_activity(
-                db,
-                Some(user_id),
-                actor_url_str,
-                other,
-                activity,
-                db,
-                &mut post_commit,
-            )
-            .await;
-            post_commit.run().await;
-            result
-        }
-        other => {
-            tracing::debug!(
-                activity_type = other,
-                "Local delivery: unsupported type, ignoring"
-            );
-            Ok(StatusCode::ACCEPTED)
-        }
-    };
+    let body = serde_json::to_vec(activity).map_err(|e| format!("encode activity: {e}"))?;
+    let key = receipt_key(
+        &signer,
+        activity["id"].as_str().unwrap_or(""),
+        &personal_inbox_scope(user_id),
+        &body,
+    );
+    execute_personal_activity(
+        db,
+        user_id,
+        &key,
+        &signer,
+        activity_type,
+        activity,
+        signer_actor.as_ref(),
+        signer_actor.as_ref(),
+        move_verified.as_ref(),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| error_message(error, "local delivery failed"))
+}
 
-    result.map(|_| ()).map_err(|(_, j)| {
-        j.0.get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("local delivery failed")
-            .to_string()
-    })
+fn error_message(error: (StatusCode, Json<serde_json::Value>), fallback: &str) -> String {
+    error
+        .1
+        .0
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 #[cfg(test)]
@@ -308,5 +271,124 @@ mod tests {
         assert!(super::validate_delivery_activity_id(0).is_err());
         assert!(super::validate_delivery_activity_id(-1).is_err());
         assert_eq!(super::validate_delivery_activity_id(1), Ok(1));
+    }
+
+    use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+    use serde_json::json;
+
+    use super::deliver_activity_locally;
+    use crate::federation::types::get_base_url;
+
+    async fn count(db: &DatabaseConnection, sql: &str) -> i64 {
+        db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    }
+
+    /// 同实例投递与远端收件箱同一套分发：Delete / Undo 撤掉时间线上的状态，
+    /// 而不是各留一条空条目；回执去重；非本地签名者与未知 MFP 类型被拒。
+    #[tokio::test]
+    async fn same_instance_delivery_matches_the_remote_inbox() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = get_base_url().await;
+        let alice = format!("{base}/users/alice");
+        db.execute_unprepared("INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob')")
+            .await
+            .unwrap();
+        let bob_rows = "SELECT COUNT(*) FROM federation_timeline WHERE user_id = 2";
+
+        // Create 进时间线，Delete（对象是原活动 id）把它删掉，且不留 Delete 条目。
+        let create = json!({
+            "type": "Create",
+            "id": format!("{base}/activities/c1"),
+            "actor": &alice,
+            "to": [crate::federation::types::AP_PUBLIC],
+            "object": {
+                "type": "Note",
+                "id": format!("{base}/notes/n1"),
+                "attributedTo": &alice,
+                "content": "<p>hello &amp; bye</p>",
+            },
+        });
+        deliver_activity_locally(db, "bob", &create).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 1);
+        let delete = json!({
+            "type": "Delete",
+            "id": format!("{base}/activities/d1"),
+            "actor": &alice,
+            "object": format!("{base}/activities/c1"),
+        });
+        deliver_activity_locally(db, "bob", &delete).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 0);
+
+        // Announce 进时间线，Undo(Announce) 撤掉它，不留 Undo 条目。
+        let announce = json!({
+            "type": "Announce",
+            "id": format!("{base}/activities/a1"),
+            "actor": &alice,
+            "to": [crate::federation::types::AP_PUBLIC],
+            "object": "https://remote.example/notes/9",
+        });
+        deliver_activity_locally(db, "bob", &announce).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 1);
+        let undo = json!({
+            "type": "Undo",
+            "id": format!("{base}/activities/u1"),
+            "actor": &alice,
+            "object": {
+                "type": "Announce",
+                "id": format!("{base}/activities/a1"),
+                "actor": &alice,
+                "object": "https://remote.example/notes/9",
+            },
+        });
+        deliver_activity_locally(db, "bob", &undo).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 0);
+
+        // 同一活动再投一次：回执已接受，不再执行，撤掉的转发不会回来。
+        deliver_activity_locally(db, "bob", &announce).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 0);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_inbox_receipts WHERE inbox_scope = 'user:2'"
+            )
+            .await,
+            4
+        );
+
+        // 改资料的 Update 不是帖子。
+        let update = json!({
+            "type": "Update",
+            "id": format!("{base}/activities/p1"),
+            "actor": &alice,
+            "object": {"type": "Person", "id": &alice, "name": "Alice"},
+        });
+        deliver_activity_locally(db, "bob", &update).await.unwrap();
+        assert_eq!(count(db, bob_rows).await, 0);
+
+        // 远端签名者只能走 HTTP 验签；未知 MFP 类型与远端路径一样被拒。
+        let forged = json!({
+            "type": "Create",
+            "id": "https://evil.example/activities/x",
+            "actor": "https://evil.example/users/x",
+            "object": {"type": "Note", "id": "https://evil.example/notes/x"},
+        });
+        assert!(deliver_activity_locally(db, "bob", &forged).await.is_err());
+        let bogus = json!({
+            "type": "myriad:NotAThing",
+            "id": format!("{base}/activities/m1"),
+            "actor": &alice,
+        });
+        assert!(deliver_activity_locally(db, "bob", &bogus).await.is_err());
+        assert_eq!(count(db, bob_rows).await, 0);
+
+        fixture.close().await;
     }
 }
