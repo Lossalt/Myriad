@@ -5,7 +5,6 @@ import { API_URL } from '../config'
 const CSRF_TOKEN_KEY = 'csrf_token'
 const CSRF_TOKEN_STORED_AT_KEY = 'csrf_token_stored_at'
 const CSRF_TOKEN_EXPIRES_AT_KEY = 'csrf_token_expires_at'
-const CSRF_TOKEN_HEADER = 'X-CSRF-Token'
 export const CSRF_TOKEN_VERSION = 'v1'
 /** Max length 1024. */
 export const CSRF_TOKEN_MAX_LENGTH = 1024
@@ -182,8 +181,4 @@ export function clearCSRFToken(): void {
   sessionStorage.removeItem(CSRF_TOKEN_STORED_AT_KEY)
   sessionStorage.removeItem(CSRF_TOKEN_EXPIRES_AT_KEY)
   inflight = null
-}
-
-export function getCSRFHeaderName(): string {
-  return CSRF_TOKEN_HEADER
 }

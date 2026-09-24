@@ -16,7 +16,6 @@ import {
 } from './logic/board'
 import {
   coverFeedIndices,
-  expandFeedCover,
   FEEDS_ARTICLE_MAX,
   isAggregateFeedId,
   isTopicFeedId,
@@ -129,7 +128,6 @@ export function useFeedStories(
 ): {
   stories: FeedStory[]
   onStar: (item: PhantasiItemPreview) => void
-  expand: (direction: 1 | -1) => void
   jump: (sourceId: number) => void
   holdStories: () => void
   releaseStories: () => void
@@ -219,12 +217,6 @@ export function useFeedStories(
   useEffect(() => {
     setCover(coverFeedIndices([], 0, lastIndex, 3))
   }, [board, lastIndex, idKey])
-
-  const expand = useCallback((direction: 1 | -1) => {
-    setCover((current) =>
-      expandFeedCover(current, direction, sourcesRef.current.length - 1),
-    )
-  }, [])
 
   const jump = useCallback((sourceId: number) => {
     const list = sourcesRef.current
@@ -360,7 +352,6 @@ export function useFeedStories(
   return {
     stories,
     onStar,
-    expand,
     jump,
     holdStories,
     releaseStories,

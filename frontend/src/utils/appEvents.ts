@@ -98,13 +98,3 @@ export function emitAppEvent<K extends AppEventName>(type: K, ...[detail]: Detai
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent(type, { detail }))
 }
-
-/** Subscribes to a cataloged event; resolves the unsubscribe. */
-export function onAppEvent<K extends AppEventName>(
-  type: K,
-  handler: (detail: AppEventMap[K]) => void,
-): () => void {
-  const listener = (event: Event) => handler((event as AppEvent<K>).detail)
-  window.addEventListener(type, listener)
-  return () => window.removeEventListener(type, listener)
-}

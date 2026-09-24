@@ -125,14 +125,6 @@ export function PageContentProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export function usePageContent() {
-  const context = useContext(PageContentContext)
-  if (!context) {
-    throw new Error('usePageContent must be used within a PageContentProvider')
-  }
-  return context
-}
-
 /** Returns null outside the provider. */
 export function usePageContentOptional() {
   return useContext(PageContentContext)

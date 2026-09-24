@@ -557,20 +557,8 @@ pub async fn bind_and_publish_site_image(
         .unwrap_or_else(|| url.to_string()))
 }
 
-/// Settings restore of the wallpaper. Binds like saving it, except that local
-/// media that definitely does not exist on this instance (a media volume that
-/// did not come along) is kept as stored and left unbound instead of failing.
-/// Returns the value to store and the dead URLs as cited.
-pub(crate) async fn bind_restored_wallpaper(
-    txn: &impl ConnectionTrait,
-    url: &str,
-    origins: &[String],
-    paths: &super::LegacyPaths,
-) -> Result<(String, Vec<String>), MediaError> {
-    bind_restored_site_image(txn, "ui_wallpaper_url", url, origins, paths).await
-}
-
-/// [`bind_restored_wallpaper`] for any publicly rendered site image setting.
+/// Restore a site image, retaining missing local URLs without binding them.
+/// Returns the stored value and any dead URLs.
 pub(crate) async fn bind_restored_site_image(
     txn: &impl ConnectionTrait,
     key: &str,
@@ -600,7 +588,7 @@ pub(crate) async fn bind_restored_site_image(
 }
 
 /// Settings restore of the dashboard layout; dead sticker media is handled as
-/// in [`bind_restored_wallpaper`] while live stickers are published and bound.
+/// in [`bind_restored_site_image`] while live stickers are published and bound.
 pub(crate) async fn bind_restored_dashboard_layout(
     txn: &impl ConnectionTrait,
     layout_json: &str,

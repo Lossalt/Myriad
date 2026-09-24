@@ -506,8 +506,6 @@ export function makeUpdaterApi(
   }
 }
 
-export const updaterApi = makeUpdaterApi()
-
 export async function detectVersionDrift(): Promise<{
   current: string
   build: string

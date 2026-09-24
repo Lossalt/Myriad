@@ -1,6 +1,6 @@
 import type { UseMusicPlayerReturn } from '../../hooks/useMusicPlayer'
 import { LuSearchX } from '@lib/chromeStrokeIcons'
-import React, { memo, useCallback, useEffect, useMemo } from 'react'
+import { memo, useCallback, useEffect, useMemo } from 'react'
 import { useI18n } from '../../contexts/I18nContext'
 import { useAnimationLevel } from '../../hooks/useAnimationLevel'
 import { getSongVipStatus, highlightText } from '../../utils/musicPlayer'

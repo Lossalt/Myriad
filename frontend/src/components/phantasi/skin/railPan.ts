@@ -112,24 +112,6 @@ export function eagerStoryDelta(
   return ranges
 }
 
-const storyCoverWatches: Array<{ col: number; wake: () => void }> = []
-
-export function watchStoryCover(col: number, wake: () => void): () => void {
-  const item = { col, wake }
-  storyCoverWatches.push(item)
-  return () => {
-    const at = storyCoverWatches.indexOf(item)
-    if (at >= 0) storyCoverWatches.splice(at, 1)
-  }
-}
-
-export function wakeStoryCovers(from: number, to: number): void {
-  if (to < from || storyCoverWatches.length === 0) return
-  for (const item of storyCoverWatches) {
-    if (item.col >= from && item.col <= to) item.wake()
-  }
-}
-
 function eagerStorySrc(img: HTMLImageElement | null): void {
   if (!img || typeof img.getAttribute !== 'function') return
   const src = img.getAttribute('data-src')
@@ -347,7 +329,6 @@ export function eagerStoryCovers(
     ? eagerStoryDelta(from, to, prev.from, prev.to)
     : [{ from, to }]
   if (ranges.length === 0) return
-  for (const range of ranges) wakeStoryCovers(range.from, range.to)
   eagerDeltaCols.length = 0
   for (const range of ranges) {
     for (let col = range.from; col <= range.to; col++) eagerDeltaCols.push(col)

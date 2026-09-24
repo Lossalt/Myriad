@@ -61,8 +61,6 @@ interface LoadWallpaperResult {
   blur: number
 
   verified: boolean
-  /** @deprecated 使用 evocative 替代 */
-  parallaxEnabled: boolean
 
   evocative: {
     parallax: boolean
@@ -572,7 +570,6 @@ export function useWallpaper() {
               verified:
                 !!verifiedUrl &&
                 areUrlsEquivalent(verifiedUrl, DEFAULT_FALLBACK_WALLPAPER_URL),
-              parallaxEnabled: evocative.parallax,
               evocative,
             }
             lastLoadResult = result
@@ -612,7 +609,6 @@ export function useWallpaper() {
             actualUrl,
             blur,
             verified,
-            parallaxEnabled: evocative.parallax,
             evocative,
           })
 

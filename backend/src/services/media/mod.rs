@@ -38,15 +38,11 @@ pub use cite::{
     normalize_cited_media, normalize_local_url, resolve_asset_id,
 };
 pub(crate) use cite::{
-    bind_restored_dashboard_layout, bind_restored_site_image, bind_restored_wallpaper,
-    sync_note_history_refs,
+    bind_restored_dashboard_layout, bind_restored_site_image, sync_note_history_refs,
 };
 pub use error::MediaError;
 pub use legacy::{LegacyClass, LegacyPaths};
 pub use maintenance::{maintain, prune_references, start_upgrade_worker};
-pub use migration::{
-    MigrationBatch, MigrationJobInput, MigrationStats, migrate_catalog_batch, upsert_job,
-};
 pub use recovery::{RecoverPlan, plan_recovery};
 pub use references::{active_count, parse_consumer_type};
 pub use scan::catalog_labels_for_assets;
@@ -263,17 +259,6 @@ impl MediaService {
         limit: u32,
     ) -> Result<RecoveryReport, MediaError> {
         recovery::recover_expired(&self.store, db, limit, WRITE_LEASE_SECS).await
-    }
-
-    pub async fn migrate_legacy_catalog_batch(
-        &self,
-        db: &DatabaseConnection,
-        paths: &LegacyPaths,
-        allowed_origins: &[String],
-        after_id: i32,
-        limit: u32,
-    ) -> Result<MigrationBatch, MediaError> {
-        migrate_catalog_batch(&self.store, db, paths, allowed_origins, after_id, limit).await
     }
 
     pub async fn delete(

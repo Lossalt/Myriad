@@ -135,102 +135,6 @@ export class ObjectPool<T> {
   }
 }
 
-export interface AnimationStateObject {
-  id: string
-  opacity: number
-  transform: string
-  isActive: boolean
-  startTime: number
-}
-
-export const animationStatePool = new ObjectPool<AnimationStateObject>({
-  create: () => ({
-    id: '',
-    opacity: 0,
-    transform: '',
-    isActive: false,
-    startTime: 0,
-  }),
-  reset: (obj) => {
-    obj.id = ''
-    obj.opacity = 0
-    obj.transform = ''
-    obj.isActive = false
-    obj.startTime = 0
-  },
-  initialSize: 10,
-  maxSize: 100,
-  idleTimeout: 30000,
-})
-
-export interface TimerObject {
-  id: ReturnType<typeof setTimeout> | null
-  callback: (() => void) | null
-  delay: number
-}
-
-export const timerPool = new ObjectPool<TimerObject>({
-  create: () => ({
-    id: null,
-    callback: null,
-    delay: 0,
-  }),
-  reset: (obj) => {
-    if (obj.id !== null) {
-      clearTimeout(obj.id)
-    }
-    obj.id = null
-    obj.callback = null
-    obj.delay = 0
-  },
-  destroy: (obj) => {
-    if (obj.id !== null) {
-      clearTimeout(obj.id)
-    }
-  },
-  initialSize: 5,
-  maxSize: 30,
-  idleTimeout: 60000,
-})
-
-export class PoolManager {
-  private pools = new Map<string, ObjectPool<any>>()
-
-  register<T>(name: string, pool: ObjectPool<T>): void {
-    this.pools.set(name, pool)
-  }
-
-  get<T>(name: string): ObjectPool<T> | undefined {
-    return this.pools.get(name)
-  }
-
-  getStatus(): Record<string, ReturnType<ObjectPool<any>['getStatus']>> {
-    const status: Record<string, ReturnType<ObjectPool<any>['getStatus']>> = {}
-    for (const [name, pool] of this.pools) {
-      status[name] = pool.getStatus()
-    }
-    return status
-  }
-
-  clearAll(): void {
-    for (const pool of this.pools.values()) {
-      pool.clear()
-    }
-  }
-
-  destroyAll(): void {
-    for (const pool of this.pools.values()) {
-      pool.destroy()
-    }
-    this.pools.clear()
-  }
-}
-
-export const globalPoolManager = new PoolManager()
-
-globalPoolManager.register('animationState', animationStatePool)
-globalPoolManager.register('timer', timerPool)
-
 export interface ImageLoadObject {
   img: HTMLImageElement
   onLoad: ((e: Event) => void) | null
@@ -261,8 +165,6 @@ export const imagePool = new ObjectPool<ImageLoadObject>({
   idleTimeout: 120000,
 })
 
-globalPoolManager.register('image', imagePool)
-
 export interface CanvasPoolObject {
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D | null
@@ -287,8 +189,6 @@ export const canvasPool = new ObjectPool<CanvasPoolObject>({
   maxSize: 3,
   idleTimeout: 60000,
 })
-
-globalPoolManager.register('canvas', canvasPool)
 
 export function withPooledCanvas<T>(
   width: number,

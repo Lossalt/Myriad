@@ -216,18 +216,6 @@ pub fn installation_conflict_owner_ids(
     }
 }
 
-/// Parse a JWT `sub` claim into an authenticated non-guest user id.
-///
-/// Guests (`sub < 0`), missing, and non-numeric subjects yield `None`.
-pub fn parse_authenticated_subject_id(sub: &str) -> Option<i32> {
-    sub.parse::<i32>().ok().filter(|user_id| *user_id >= 0)
-}
-
-/// Durable user id for writes. `0`, guests, and non-numeric subjects are missing.
-pub fn positive_user_id(sub: &str) -> Option<i32> {
-    parse_authenticated_subject_id(sub).filter(|user_id| *user_id > 0)
-}
-
 /// Private-install owner id to query before falling back to the public install.
 ///
 /// Returns `None` when `user_id` is `None` or equals `site_owner_id`.
@@ -398,8 +386,7 @@ pub async fn lock_tapp_lifecycle(db: &impl ConnectionTrait, tapp_id: &str) -> Re
 mod tests {
     use super::{
         canonical_installation_owner_id, installation_conflict_owner_ids,
-        parse_authenticated_subject_id, positive_user_id, private_install_lookup_user_id,
-        tapp_lifecycle_lock_key, tapp_owner_priority,
+        private_install_lookup_user_id, tapp_lifecycle_lock_key, tapp_owner_priority,
     };
     use crate::services::permission_service::UserRole;
 
@@ -506,18 +493,6 @@ mod tests {
             installation_conflict_owner_ids(UserRole::Guest, -5, 1),
             vec![-5]
         );
-    }
-
-    #[test]
-    fn authenticated_subject_id_rejects_guests_and_junk() {
-        assert_eq!(parse_authenticated_subject_id("42"), Some(42));
-        assert_eq!(parse_authenticated_subject_id("0"), Some(0));
-        assert_eq!(parse_authenticated_subject_id("-1"), None);
-        assert_eq!(parse_authenticated_subject_id("guest"), None);
-        assert_eq!(parse_authenticated_subject_id(""), None);
-        assert_eq!(positive_user_id("42"), Some(42));
-        assert_eq!(positive_user_id("0"), None);
-        assert_eq!(positive_user_id("guest"), None);
     }
 
     #[test]

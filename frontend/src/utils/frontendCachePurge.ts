@@ -11,7 +11,6 @@ import {
   clearLyricsCache,
   clearPlaylistCache,
 } from './musicPlayer'
-import { MemoryManager } from './performance'
 import { requestCache } from './requestCache'
 import { clearDedupCache } from './requestDedup'
 import { globalResourceLoader } from './resourceLoader'
@@ -162,7 +161,6 @@ function clearInMemoryCaches(warnings: string[]): void {
     ],
     ['geo', () => resetGeoCache()],
     ['resourceLoader', () => globalResourceLoader.reset()],
-    ['memoryManager', () => MemoryManager.clear()],
   ]
 
   for (const [name, run] of steps) {

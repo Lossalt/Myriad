@@ -374,7 +374,6 @@ export function NavigationIsland() {
   const navContentRef = useRef<HTMLDivElement>(null)
   const navContainerRef = useRef<HTMLElement>(null)
   const lastModeRef = useRef<'normal' | 'secondary'>('normal')
-  const lastNavLayoutRef = useRef<NavLayout>(chromeLayout)
   const islandMetricsRef = useRef<Record<string, ModeMetrics>>({})
   const prevPathnameRef = useRef(location.pathname)
   const cachedPaddingRef = useRef<number | null>(null)
@@ -828,7 +827,6 @@ export function NavigationIsland() {
       commit: (target) => {
         chromeLayoutRef.current = target
         setChromeLayout(target)
-        lastNavLayoutRef.current = target
         applyNavLayoutToDocument(target)
         remeasureFor(target)
       },
@@ -848,7 +846,6 @@ export function NavigationIsland() {
 
   useLayoutEffect(() => {
     if (chromeSwitch !== null) return
-    lastNavLayoutRef.current = chromeLayout
     const content = navContentRef.current
     const island = content?.closest('.dynamic-island') as HTMLElement | null
     if (!island || !content) return

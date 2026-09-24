@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use crate::middleware::auth::{Claims, OptionalClaims};
 use crate::services::tapp_list_card_sizes::{self, TappListCardSizes};
-use crate::services::tapp_ownership::parse_authenticated_subject_id;
 use crate::state::AppState;
 
 fn require_db(state: &AppState) -> Result<sea_orm::DatabaseConnection, (StatusCode, Json<Value>)> {

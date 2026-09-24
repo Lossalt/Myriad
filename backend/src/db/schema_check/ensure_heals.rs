@@ -856,6 +856,38 @@ pub(crate) async fn ensure_repost_state_consistent(db: &DatabaseConnection) -> R
 ///
 /// 每条规则只认确定的事实，重复执行无副作用。
 pub(crate) async fn ensure_timeline_posts_only(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // Healthy databases must not see a DELETE on every boot (the drift check
+    // forbids repeated dedup writes), so look for residue first.
+    let residue = db
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            r#"
+SELECT EXISTS (
+    SELECT 1 FROM federation_timeline WHERE activity_type IN ('Delete', 'Undo', 'Like')
+) OR EXISTS (
+    SELECT 1 FROM federation_timeline t
+    JOIN federation_remote_actors ra ON ra.id = t.remote_actor_id
+    WHERE t.activity_type = 'Update' AND t.content_json->>'id' = ra.actor_url
+) OR EXISTS (
+    SELECT 1 FROM federation_timeline u
+    WHERE u.activity_type = 'Update'
+      AND u.remote_actor_id IS NOT NULL
+      AND EXISTS (
+          SELECT 1 FROM federation_timeline c
+          WHERE c.user_id = u.user_id
+            AND c.remote_actor_id = u.remote_actor_id
+            AND c.activity_type = 'Create'
+            AND c.content_json->>'id' = u.content_json->>'id')
+) AS residue
+"#,
+        ))
+        .await?
+        .map(|row| row.try_get::<bool>("", "residue"))
+        .transpose()?
+        .unwrap_or(false);
+    if !residue {
+        return Ok(());
+    }
     db.execute_unprepared(
         r#"
 DELETE FROM federation_timeline WHERE activity_type IN ('Delete', 'Undo', 'Like');

@@ -1585,7 +1585,7 @@ mod tests {
 
     /// Handlers read the subject the auth boundary parsed (`durable_user_id`,
     /// `subject_id`, `DurableUserId`), never `claims.sub` again: one parse,
-    /// one semantics. `positive_user_id(&str)` stays for external input only.
+    /// one semantics. Production handlers must use the authenticated identity.
     #[test]
     fn claims_sub_is_parsed_only_at_the_auth_boundary() {
         let offenders: Vec<String> = non_auth_production_sources()

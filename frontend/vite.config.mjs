@@ -145,12 +145,6 @@ export default defineConfig(({ command }) => ({
                 },
                 {
                   name: (id) => {
-                    if (
-                      id.includes('node_modules/chart.js') ||
-                      id.includes('node_modules/react-chartjs-2')
-                    ) {
-                      return 'chart-vendor'
-                    }
                     // motion-dom / motion-utils are separate packages whose paths
                     // also contain node_modules/motion. Merging them into `motion`
                     // would make shared helpers a static dep of the 124K chunk and

@@ -18,7 +18,6 @@ pub const EVENT_KEY_FIELD: &str = "event_key";
 /// 通知元数据 `action` 字段的取值：点击后打开 Agent 会话 / Agent 管理页。
 pub const ACTION_OPEN_AGENT: &str = "open_agent";
 pub const ACTION_OPEN_AGENT_MANAGE: &str = "open_agent_manage";
-pub const NOTIFICATION_ACTIONS: [&str; 2] = [ACTION_OPEN_AGENT, ACTION_OPEN_AGENT_MANAGE];
 
 pub const SOURCE_KEYS: [&str; 8] = [
     "agent",
@@ -582,7 +581,7 @@ mod tests {
             "schemaVersion": 1,
             "sources": SOURCE_KEYS,
             "events": EVENT_DEFINITIONS.as_slice(),
-            "actions": NOTIFICATION_ACTIONS,
+            "actions": [ACTION_OPEN_AGENT, ACTION_OPEN_AGENT_MANAGE],
         });
         assert_eq!(
             spec, expected,
