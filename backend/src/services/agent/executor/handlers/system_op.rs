@@ -160,19 +160,20 @@ async fn execute_scheduler_create(
     required_permissions.extend(backend_action_permissions_of(&wrappers));
     if ctx.autonomy_permission_cap.is_some() {
         // A task created under autonomy must not schedule actions beyond the
-        // turn's cap; the role check below alone would allow them.
-        let required: Vec<String> = required_permissions
-            .iter()
-            .map(|permission| permission.as_str().to_string())
-            .collect();
-        crate::services::agent::consciousness::authorize_capability(
+        // turn's cap. Translate Tapp permissions into the Agent grant set;
+        // passing `scheduler:register` / `network:fetch` to authorize_capability
+        // always fails because those strings are not Agent grants.
+        let granted = crate::services::agent::consciousness::effective_granted(
             ctx.db,
             ctx.user_id,
             ctx.autonomy_permission_cap.as_deref(),
-            "scheduler.create",
-            &required,
         )
         .await?;
+        let granted_set: std::collections::HashSet<String> = granted.into_iter().collect();
+        crate::services::agent::scheduler_create_tapp_permissions_within_grants(
+            &granted_set,
+            &required_permissions,
+        )?;
     }
     {
         let config = GLOBAL_DYNAMIC_CONFIG.read().await;

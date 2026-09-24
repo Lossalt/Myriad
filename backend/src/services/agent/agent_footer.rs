@@ -610,6 +610,24 @@ pub(crate) fn scheduler_create_actions_within_grants(
     Ok(())
 }
 
+/// Execute-time translation of `scheduler.create`'s Tapp permissions into the
+/// Agent grant vocabulary. Do not pass `permission.as_str()` to
+/// `authorize_capability`: those strings are not in the Agent grant set.
+pub(crate) fn scheduler_create_tapp_permissions_within_grants(
+    granted: &std::collections::HashSet<String>,
+    permissions: &[crate::services::permission_service::TappPermission],
+) -> Result<(), String> {
+    for permission in permissions {
+        if !granted_covers_tapp_permission(granted, *permission) {
+            return Err(format!(
+                "capability 'scheduler.create' is not available for scheduled action: {}",
+                permission.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 获取用户在 Agent 系统中的授予权限。
 ///
 /// - 管理员 / 系统用户：全部能力权限
@@ -1118,6 +1136,78 @@ mod tests {
             json!([{ "type": "platform.sync", "platform": "steam" }]),
         );
         assert!(scheduler_create_actions_within_grants(&sync_params, &elevated).is_err());
+    }
+
+    #[test]
+    fn autonomy_scheduler_create_translates_tapp_permissions() {
+        use crate::services::agent::consciousness::missing_permission;
+        use crate::services::agent::system_op_pure::extract_raw_backend_actions;
+        use crate::services::permission_service::TappPermission;
+        use crate::services::tapp_scheduler::{
+            backend_action_permissions_of, normalize_backend_actions_parsed,
+        };
+        use std::collections::HashSet;
+
+        fn required_of(params: &HashMap<String, Value>) -> Vec<TappPermission> {
+            let mut required = vec![TappPermission::SchedulerRegister];
+            if let Some(raw) = extract_raw_backend_actions(params) {
+                let (_normalized, wrappers) =
+                    normalize_backend_actions_parsed(Some(raw)).expect("actions");
+                required.extend(backend_action_permissions_of(&wrappers));
+            }
+            required
+        }
+
+        let mut basic = HashMap::new();
+        basic.insert(
+            "backendActions".into(),
+            json!([
+                { "action": "storage.get", "key": "note" },
+                { "action": "notification.queue", "message": "ok" }
+            ]),
+        );
+        let mut fetch = HashMap::new();
+        fetch.insert(
+            "backendActions".into(),
+            json!([{ "type": "fetch", "url": "https://example.com" }]),
+        );
+        let granted: HashSet<String> = ["scheduler:write".to_string()].into_iter().collect();
+        let granted_list: Vec<String> = granted.iter().cloned().collect();
+
+        let basic_required = required_of(&basic);
+        // The old execute path compared Tapp strings (`scheduler:register`) to
+        // the Agent grant set and always refused. The translated check allows
+        // a scheduler:write ceiling that only schedules basic actions.
+        let tapp_strings: Vec<String> = basic_required
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+        assert!(
+            missing_permission(&granted_list, "scheduler.create", &tapp_strings).is_some(),
+            "Tapp strings must not be treated as Agent grants"
+        );
+        assert!(
+            scheduler_create_tapp_permissions_within_grants(&granted, &basic_required).is_ok(),
+            "scheduler:write plus basic actions must be allowed"
+        );
+
+        let fetch_required = required_of(&fetch);
+        let refused = scheduler_create_tapp_permissions_within_grants(&granted, &fetch_required);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("network:fetch")),
+            "fetch without a network grant must be refused, got {refused:?}"
+        );
+
+        for params in [&basic, &fetch] {
+            let required = required_of(params);
+            assert_eq!(
+                scheduler_create_tapp_permissions_within_grants(&granted, &required).is_ok(),
+                scheduler_create_actions_within_grants(params, &granted).is_ok(),
+                "execution and plan must agree for {params:?}"
+            );
+        }
     }
 
     #[test]

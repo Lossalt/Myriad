@@ -73,5 +73,6 @@ pub use agent_footer::{
 };
 pub(crate) use agent_footer::{
     granted_covers_tapp_permission, scheduler_create_actions_within_grants,
+    scheduler_create_tapp_permissions_within_grants,
 };
 pub use agent_header::{Agent, LANE_QUEUE, SYSTEM_USER_ID};
