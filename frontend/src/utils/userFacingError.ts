@@ -2122,19 +2122,9 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.notFound
   }
-  if (
-    /transfer is (not ready|already )|channel already closed|channel must be closed/i.test(
-      raw,
-    )
-  ) {
-    return t.channelNotReady
-  }
-  if (
-    /unsupported attachment (mime|type)|unsupported content type|invalid attachment url|attachment url/i.test(
-      raw,
-    )
-  ) {
-    return t.invalidUrl
+  // Legacy peer text; the MIME after the colon is not shown.
+  if (/^unsupported attachment mime\b/i.test(raw)) {
+    return t.byCode.attachment_type_unsupported
   }
   if (
     / is required$| are required$|key rotation requires confirm/i.test(raw)

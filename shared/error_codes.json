@@ -441,8 +441,8 @@
     "setup passphrase does not match": "setup_secret_mismatch",
     "Setup secret required": "setup_secret_mismatch",
     "Transfer is already ": "transfer_state_changed",
-    "Unsupported attachment MIME": "attachment_type_unsupported",
-    "Attachment URL must be": "attachment_invalid"
+    "Attachment URL must be": "attachment_invalid",
+    "Transfer is not ready for download": "transfer_not_ready"
   },
   "explicit": [
     "sticker_pack_full",
