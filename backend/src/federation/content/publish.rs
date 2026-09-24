@@ -5,8 +5,8 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, T
 use serde_json::json;
 
 use super::ap_object::{
-    StagedFanOut, build_ap_object, deliver_to_local_followers, fan_out_to_followers,
-    resolve_audience, stage_follower_fan_out, stage_room_peer_fan_out,
+    StagedFanOut, build_ap_object, deliver_to_local_followers, resolve_audience,
+    stage_follower_fan_out, stage_room_peer_fan_out,
 };
 use super::timeline::{insert_author_timeline, published_fields_from_activity_json};
 use super::types::{CreateNoteRequest, PublishRequest, PublishResponse, PublishedItem};
@@ -366,6 +366,10 @@ pub(crate) fn unique_unpublish_row<T>(mut rows: Vec<T>) -> Result<T, UnpublishLo
 ///
 /// Accepts `activity_id`, or `content_type`+`content_id`, or `content_id` alone
 /// (type inferred / looked up). `content_id` may be bare id, object URL, or path.
+///
+/// 整个撤回在一个事务里：锁住已发布行 → 写 Delete → 删已发布行与时间线 →
+/// 释放原活动绑定的附件引用 → 按原受众排队 Delete。并发撤回同一条内容时，
+/// 后到的一方等锁后查不到行，得到 404，不会再写第二条 Delete。
 pub async fn unpublish_content(
     user_id: i32,
     username: &str,
@@ -379,11 +383,13 @@ pub async fn unpublish_content(
     let activity_id = activity_id.map(str::trim).filter(|s| !s.is_empty());
     let content_id_raw = content_id.map(str::trim).filter(|s| !s.is_empty());
 
-    // 查找已发布记录 — activity_id first, then content_type+content_id (URL-tolerant)
+    let txn = db.begin().await.map_err(db_err)?;
+
+    // 查找并锁住已发布记录 — activity_id first, then content_type+content_id (URL-tolerant)
     let row = if let Some(aid) = activity_id {
-        db.query_one_raw(Statement::from_sql_and_values(
+        txn.query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT id, activity_id, content_type, content_id FROM federation_published_content WHERE user_id = $1 AND activity_id = $2",
+            "SELECT id, activity_id, content_type, content_id, visibility FROM federation_published_content WHERE user_id = $1 AND activity_id = $2 FOR UPDATE",
             [user_id.into(), aid.into()],
         ))
         .await
@@ -398,10 +404,10 @@ pub async fn unpublish_content(
         }
         if let Some(ct) = ct_opt.as_deref().filter(|s| !s.is_empty()) {
             // Exact type + id
-            let found = db
+            let found = txn
                 .query_one_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT id, activity_id, content_type, content_id FROM federation_published_content WHERE user_id = $1 AND content_type = $2 AND content_id = $3",
+                    "SELECT id, activity_id, content_type, content_id, visibility FROM federation_published_content WHERE user_id = $1 AND content_type = $2 AND content_id = $3 FOR UPDATE",
                     [user_id.into(), ct.into(), bare_id.clone().into()],
                 ))
                 .await
@@ -410,9 +416,9 @@ pub async fn unpublish_content(
                 found
             } else {
                 // content_id may have been passed as full object URL while stored bare
-                db.query_one_raw(Statement::from_sql_and_values(
+                txn.query_one_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT id, activity_id, content_type, content_id FROM federation_published_content WHERE user_id = $1 AND content_type = $2 AND (content_id = $3 OR content_id = $4)",
+                    "SELECT id, activity_id, content_type, content_id, visibility FROM federation_published_content WHERE user_id = $1 AND content_type = $2 AND (content_id = $3 OR content_id = $4) FOR UPDATE",
                     [
                         user_id.into(),
                         ct.into(),
@@ -424,10 +430,10 @@ pub async fn unpublish_content(
                 .map_err(db_err)?
             }
         } else {
-            let rows = db
+            let rows = txn
                 .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT id, activity_id, content_type, content_id FROM federation_published_content WHERE user_id = $1 AND (content_id = $2 OR content_id = $3) LIMIT 2",
+                    "SELECT id, activity_id, content_type, content_id, visibility FROM federation_published_content WHERE user_id = $1 AND (content_id = $2 OR content_id = $3) LIMIT 2 FOR UPDATE",
                     [user_id.into(), bare_id.into(), cid_raw.into()],
                 ))
                 .await
@@ -463,17 +469,23 @@ pub async fn unpublish_content(
 
     let pub_id = crate::federation::types::row_positive_id(&row, "id")
         .map_err(|error| db_err(sea_orm::DbErr::Custom(error)))?;
-    let original_activity_id: String = row.try_get("", "activity_id").unwrap_or_default();
+    let original_activity_id: String = row.try_get("", "activity_id").map_err(db_err)?;
     let content_type: String = row
         .try_get::<String>("", "content_type")
         .unwrap_or_else(|_| content_type.unwrap_or("").to_string());
     let content_id: String = row
         .try_get::<String>("", "content_id")
         .unwrap_or_else(|_| content_id_raw.unwrap_or("").to_string());
+    let stored_visibility: Option<String> = row.try_get("", "visibility").ok().flatten();
+    let audience = unpublish_audience(stored_visibility.as_deref(), &content_type);
 
-    // 创建 Delete Activity
+    // 创建 Delete Activity —— 寻址与原 Create 一致
     let delete_activity_id = generate_activity_id(&base_url);
     let local_actor = actor_url(&base_url, username);
+    let (to, cc) = match audience.addressing {
+        Some(visibility) => resolve_audience(visibility, &base_url, username),
+        None => (vec![AP_PUBLIC.to_string()], vec![]),
+    };
 
     let delete_json = json!({
         "@context": build_ap_context(),
@@ -481,13 +493,14 @@ pub async fn unpublish_content(
         "id": &delete_activity_id,
         "actor": &local_actor,
         "published": now_iso8601(),
-        "to": [AP_PUBLIC],
+        "to": to,
+        "cc": cc,
         "object": &original_activity_id,
     });
 
     // 存 Delete Activity
     let del_db_id = insert_local_activity(
-        db,
+        &txn,
         user_id,
         &delete_activity_id,
         "Delete",
@@ -498,7 +511,7 @@ pub async fn unpublish_content(
     .map_err(db_err)?;
 
     // 删除 published_content 记录
-    db.execute_raw(Statement::from_sql_and_values(
+    txn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "DELETE FROM federation_published_content WHERE id = $1",
         [pub_id.into()],
@@ -507,26 +520,39 @@ pub async fn unpublish_content(
     .map_err(db_err)?;
 
     // 从作者与本地时间线移除原 Create
-    let _ = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "DELETE FROM federation_timeline WHERE activity_id = $1",
-            [original_activity_id.clone().into()],
-        ))
-        .await;
+    txn.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "DELETE FROM federation_timeline WHERE activity_id = $1",
+        [original_activity_id.clone().into()],
+    ))
+    .await
+    .map_err(db_err)?;
 
-    let delivered_queued = fan_out_to_followers(db, user_id, del_db_id, &delete_json)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "unpublish follower fan-out failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "Failed to enqueue delete delivery",
-                    "code": "delivery_enqueue_failed",
-                })),
-            )
-        })?;
+    // 发布时以原活动为消费者绑定的附件引用随撤回释放，附件才能被删除。
+    crate::services::media::bind(
+        &txn,
+        &crate::services::media::Consumer::federation_activity(original_activity_id.clone()),
+        &crate::services::media::Citations::new(),
+        crate::services::media::Authority::Site,
+        crate::services::media::Unresolved::Skip,
+    )
+    .await
+    .map_err(media_ref_err)?;
+
+    let staged = stage_fan_out(
+        &txn,
+        &base_url,
+        user_id,
+        del_db_id,
+        audience.fan_out,
+        audience.room_peers,
+    )
+    .await
+    .map_err(db_err)?;
+    txn.commit().await.map_err(db_err)?;
+
+    let delivered_queued =
+        staged.queued + deliver_to_local_followers(db, &staged.local_followers, &delete_json).await;
 
     tracing::info!(
         "🗑️ Unpublished {} #{} (Delete: {}); delivered_queued={}",
@@ -543,6 +569,34 @@ pub async fn unpublish_content(
         "content_id": content_id,
         "activity_id": original_activity_id,
     }))
+}
+
+/// 撤回时 Delete 的受众：与原 Create 相同。
+#[derive(Debug, PartialEq, Eq)]
+struct UnpublishAudience {
+    /// 按哪个 visibility 生成 `to`/`cc`；`None` 是无法识别的历史值，沿用旧的 `to: [Public]`。
+    addressing: Option<Visibility>,
+    /// 粉丝扇出范围按哪个 visibility 判定。
+    fan_out: Visibility,
+    /// 原 Create 是否投过群邻。
+    room_peers: bool,
+}
+
+fn unpublish_audience(stored_visibility: Option<&str>, content_type: &str) -> UnpublishAudience {
+    match stored_visibility.map(crate::federation::audience::parse_visibility) {
+        Some(Ok(visibility)) => UnpublishAudience {
+            addressing: Some(visibility),
+            fan_out: visibility,
+            // 转发（repost）只投粉丝与原作者，从没投过群邻（见 interactions 的转发路径）。
+            room_peers: visibility == Visibility::Public && content_type != "repost",
+        },
+        // 历史行：维持改动前的行为 —— 投全部粉丝、不投群邻。
+        _ => UnpublishAudience {
+            addressing: None,
+            fan_out: Visibility::Followers,
+            room_peers: false,
+        },
+    }
 }
 
 /// 获取用户已发布的内容列表
@@ -827,6 +881,162 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(direct.delivered_queued, 0);
+
+        fixture.close().await;
+    }
+
+    #[test]
+    fn unpublish_audience_matches_the_original_create() {
+        let public = unpublish_audience(Some("public"), "note");
+        assert_eq!(public.addressing, Some(Visibility::Public));
+        assert!(public.room_peers);
+        // 转发只投过粉丝与原作者，撤回也不投群邻。
+        assert!(!unpublish_audience(Some("public"), "repost").room_peers);
+        let followers = unpublish_audience(Some("followers"), "note");
+        assert_eq!(followers.addressing, Some(Visibility::Followers));
+        assert!(!followers.room_peers);
+        let direct = unpublish_audience(Some("direct"), "note");
+        assert_eq!(direct.fan_out, Visibility::Direct);
+        assert!(!direct.room_peers);
+        // 无法识别的历史值维持改动前：to Public、投全部粉丝、不投群邻。
+        for legacy in [None, Some("weird")] {
+            let audience = unpublish_audience(legacy, "note");
+            assert_eq!(audience.addressing, None);
+            assert_eq!(audience.fan_out, Visibility::Followers);
+            assert!(!audience.room_peers);
+        }
+    }
+
+    #[test]
+    fn unpublish_runs_in_one_locked_transaction() {
+        let src = include_str!("publish.rs");
+        let body = src
+            .split("pub async fn unpublish_content")
+            .nth(1)
+            .and_then(|rest| rest.split("struct UnpublishAudience").next())
+            .expect("unpublish_content");
+        let pos = |needle: &str| body.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        let begin = pos("db.begin()");
+        let delete = pos("\"Delete\",");
+        let drop_row = pos("DELETE FROM federation_published_content");
+        let drop_timeline = pos("DELETE FROM federation_timeline");
+        let release = pos("Citations::new()");
+        let stage = pos("stage_fan_out(");
+        let commit = pos("txn.commit()");
+        let local = pos("deliver_to_local_followers(");
+        assert!(begin < delete && delete < drop_row && drop_row < drop_timeline);
+        assert!(drop_timeline < release && release < stage && stage < commit && commit < local);
+        assert!(body.contains("Consumer::federation_activity(original_activity_id"));
+        // 每条定位已发布行的查询都加行锁，并发撤回的后到者查不到行。
+        assert_eq!(
+            body.matches("FROM federation_published_content WHERE user_id")
+                .count(),
+            body.matches("FOR UPDATE\"").count()
+        );
+        assert!(!body.contains("let _ = db"));
+        assert!(!body.contains("[AP_PUBLIC],"));
+    }
+
+    #[tokio::test]
+    async fn unpublish_is_atomic_audience_scoped_and_releases_media() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = seed_followers(db).await;
+
+        let published = publish_content(1, false, "alice", db, &note("followers"))
+            .await
+            .unwrap();
+        let aid = published.activity_id.clone();
+        // 模拟发布时绑定的附件引用。
+        db.execute_unprepared(&format!(
+            "INSERT INTO media_assets (id, kind, url, mime, name, size) \
+             VALUES (900, 'upload', '/media/x.png', 'image/png', 'x.png', 0); \
+             INSERT INTO media_references \
+                 (asset_id, consumer_type, consumer_id, slot, requires_public, created_at) \
+             VALUES (900, 'federation_activity', '{aid}', 'attachment:0', true, NOW())"
+        ))
+        .await
+        .unwrap();
+
+        let out = unpublish_content(1, "alice", db, None, None, Some(&aid))
+            .await
+            .unwrap();
+        let delete_id = out["delete_activity_id"].as_str().unwrap().to_string();
+        let delete = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                format!(
+                    "SELECT id, object_json FROM federation_activities \
+                     WHERE activity_id = '{delete_id}'"
+                ),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let delete_db_id: i32 = delete.try_get("", "id").unwrap();
+        let json: serde_json::Value = delete.try_get("", "object_json").unwrap();
+        // followers-only 帖子的 Delete 寻址给粉丝集合，不是 Public。
+        assert_eq!(json["to"], json!([format!("{base}/users/alice/followers")]));
+        assert_eq!(json["object"], json!(aid));
+        let q = |sql: String| async move { count(db, &sql).await };
+        assert_eq!(
+            q(format!(
+                "SELECT COUNT(*) FROM federation_delivery_queue WHERE activity_id = {delete_db_id}"
+            ))
+            .await,
+            1,
+            "only the healthy remote follower is queued"
+        );
+        assert_eq!(
+            q(format!(
+                "SELECT COUNT(*) FROM federation_published_content WHERE activity_id = '{aid}'"
+            ))
+            .await,
+            0
+        );
+        assert_eq!(
+            q(format!(
+                "SELECT COUNT(*) FROM media_references \
+                 WHERE consumer_type = 'federation_activity' AND consumer_id = '{aid}'"
+            ))
+            .await,
+            0,
+            "withdrawn post must release its attachment references"
+        );
+
+        // 再撤一次：404，不写第二条 Delete。
+        let again = unpublish_content(1, "alice", db, None, None, Some(&aid))
+            .await
+            .unwrap_err();
+        assert_eq!(again.0, StatusCode::NOT_FOUND);
+
+        // 并发撤回同一条：恰好一方成功，另一方 404，只有一条 Delete。
+        let second = publish_content(1, false, "alice", db, &note("public"))
+            .await
+            .unwrap();
+        let sid = second.activity_id.clone();
+        let (a, b) = tokio::join!(
+            unpublish_content(1, "alice", db, None, None, Some(&sid)),
+            unpublish_content(1, "alice", db, None, None, Some(&sid)),
+        );
+        assert_eq!(a.is_ok() as u8 + b.is_ok() as u8, 1);
+        let loser = a.err().or(b.err()).unwrap();
+        assert_eq!(loser.0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            q(format!(
+                "SELECT COUNT(*) FROM federation_activities \
+                 WHERE activity_type = 'Delete' AND object_json->>'object' = '{sid}'"
+            ))
+            .await,
+            1
+        );
+        assert_eq!(
+            q("SELECT COUNT(*) FROM federation_activities WHERE activity_type = 'Delete'".into())
+                .await,
+            2
+        );
 
         fixture.close().await;
     }
