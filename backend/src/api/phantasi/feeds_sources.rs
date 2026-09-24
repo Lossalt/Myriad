@@ -448,9 +448,10 @@ pub(crate) async fn add_source(
         )));
     }
 
-    // 检查是否已订阅
+    // 检查是否已订阅：与友链申请同一规则，按规范化 URL（`url_key`）比较，
+    // `…/feed` 与 `…/feed/` 不算两个源。
     let existing = phantasi_sources::Entity::find()
-        .filter(phantasi_sources::Column::Url.eq(url))
+        .filter(phantasi_sources::Column::UrlKey.eq(phantasi_sources::url_match_key(url)))
         .one(&db)
         .await
         .map_err(|error| phantasi_store_http("find existing source", error))?;

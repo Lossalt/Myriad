@@ -42,15 +42,19 @@ pub(crate) async fn import_opml(
         )));
     }
 
-    // 批量查询已存在的 URL（避免 N+1）
-    let feed_urls: Vec<String> = feeds.iter().map(|f| f.url.clone()).collect();
-    let existing_urls: std::collections::HashSet<String> = phantasi_sources::Entity::find()
-        .filter(phantasi_sources::Column::Url.is_in(&feed_urls))
+    // 批量查询已存在的源（避免 N+1）。按规范化 URL（`url_key`）比较，与手动添加、
+    // 友链申请同一规则；同一份 OPML 里的重复项也只收一次。
+    let feed_keys: Vec<String> = feeds
+        .iter()
+        .map(|f| phantasi_sources::url_match_key(&f.url))
+        .collect();
+    let mut existing_urls: std::collections::HashSet<String> = phantasi_sources::Entity::find()
+        .filter(phantasi_sources::Column::UrlKey.is_in(&feed_keys))
         .all(&db)
         .await
         .map_err(|error| phantasi_store_http("find existing sources", error))?
         .into_iter()
-        .map(|s| s.url)
+        .filter_map(|s| s.url_key)
         .collect();
 
     let now = Utc::now();
@@ -58,7 +62,7 @@ pub(crate) async fn import_opml(
     // 收集需要插入的新订阅源
     let new_sources: Vec<phantasi_sources::ActiveModel> = feeds
         .into_iter()
-        .filter(|feed| !existing_urls.contains(&feed.url))
+        .filter(|feed| existing_urls.insert(phantasi_sources::url_match_key(&feed.url)))
         .map(|feed| {
             let mut source = phantasi_sources::ActiveModel {
                 user_id: Set(user_id),
@@ -82,7 +86,7 @@ pub(crate) async fn import_opml(
         .collect();
 
     let imported = new_sources.len();
-    let skipped = feed_urls.len() - imported;
+    let skipped = feed_keys.len() - imported;
 
     // 批量插入新订阅源
     if !new_sources.is_empty() {
