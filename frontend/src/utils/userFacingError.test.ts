@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { before, describe, it } from 'node:test'
+import errorCodeSpec from '../../../shared/error_codes.json' with { type: 'json' }
 import { loadShellNamespace } from '../i18n/loadLocale.ts'
 import { currentCopy, formatCurrent } from '../i18n/localeCopy.ts'
 import { ApiError } from '../services/api.ts'
@@ -1897,5 +1899,39 @@ describe('userFacingError', () => {
     assert.notEqual(replies, comments)
     assert.equal(/Failed to load comment replies/i.test(replies), false)
     assert.notEqual(pub, currentCopy().errors.operationFailed)
+  })
+})
+
+const RULE_BUDGET = 485
+
+describe('userFacingError is driven by codes', () => {
+  before(async () => {
+    await Promise.all([
+      loadShellNamespace('tapp', 'en-US'),
+      loadShellNamespace('phantasi', 'en-US'),
+      loadShellNamespace('merope', 'en-US'),
+    ])
+  })
+
+  // Answers to remote federation servers, never shown in this UI.
+  const SERVER_TO_SERVER = new Set(['gone', 'activity_not_ready', 'inbox_failed'])
+
+  it('gives every code the backend infers its own copy, whatever the text says', () => {
+    const codes = new Set(Object.values(errorCodeSpec.labels))
+    const unrelated = 'text that matches no rule'
+    const bare = [...codes].filter((code) => {
+      if (SERVER_TO_SERVER.has(code)) return false
+      const copy = userFacingError(new ApiError(unrelated, 400, code), 'FALLBACK')
+      return copy === 'FALLBACK' || copy === unrelated
+    })
+    assert.deepEqual(bare, [])
+  })
+
+  it('does not grow the text-matching compatibility layer', () => {
+    // Regexes over backend prose are a shrinking fallback: new faults get a
+    // code and a copy entry instead. Lower this bound as rules are removed.
+    const source = readFileSync(new URL('./userFacingError.ts', import.meta.url), 'utf8')
+    const rules = source.match(/\/[gimsuy]*\.test\(/g)?.length ?? 0
+    assert.ok(rules <= RULE_BUDGET, `${rules} text rules; budget ${RULE_BUDGET}`)
   })
 })

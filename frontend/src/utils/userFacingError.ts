@@ -88,10 +88,10 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   const code = resolveErrorCode(readCode(reason), raw)
   const hint = readHint(reason)
 
-  if (code === 'unauthorized' || code === 'UNAUTHORIZED') {
+  if (code === 'unauthorized') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
   }
-  if (code === 'forbidden' || code === 'FORBIDDEN' || code === 'no_admin') {
+  if (code === 'forbidden' || code === 'no_admin') {
     return joinParts(t.forbidden, usefulExtra(hint, t.forbidden))
   }
   if (
@@ -106,7 +106,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.federationDisabledRegion
   }
-  if (code === 'not_found' || code === 'NOT_FOUND') {
+  if (code === 'not_found') {
     return joinParts(t.notFound, usefulExtra(hint, t.notFound))
   }
   if (code === 'locale_invalid') {
@@ -146,19 +146,19 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'identity_unlink_failed') {
     return classified(currentCopy().config.usersUnlinkFailed, raw, hint)
   }
-  if (code === 'bad_request' || code === 'BAD_REQUEST') {
+  if (code === 'bad_request') {
     const label = httpStatusMessage(400)
     return joinParts(label, usefulExtra(hint, label))
   }
-  if (code === 'conflict' || code === 'CONFLICT') {
+  if (code === 'conflict') {
     const label = httpStatusMessage(409)
     return joinParts(label, usefulExtra(hint, label))
   }
-  if (code === 'internal_error' || code === 'INTERNAL_ERROR') {
+  if (code === 'internal_error') {
     const label = fill(t.serverError, { status: 500 })
     return joinParts(label, usefulExtra(hint, label))
   }
-  if (code === 'service_unavailable' || code === 'SERVICE_UNAVAILABLE') {
+  if (code === 'service_unavailable') {
     return joinParts(
       t.serviceUnavailable,
       usefulExtra(hint, t.serviceUnavailable),
@@ -338,8 +338,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     code === 'database_error' ||
-    code === 'DATABASE_ERROR' ||
-    /^database (error|query failed|not connected|is not connected)$/i.test(raw) ||
+    /^database is not connected$/i.test(raw) ||
     /数据库连接未初始化|数据库未连接/.test(raw)
   ) {
     return joinParts(t.database, usefulExtra(hint, t.database))
@@ -731,7 +730,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, currentCopy().tapp.listLoadFailed),
     )
   }
-  if (/tapp \S+ is already installed/i.test(raw)) {
+  if (code === 'tapp_already_installed' || /tapp \S+ is already installed/i.test(raw)) {
     return currentCopy().tapp.alreadyInstalled
   }
   if (
@@ -1273,10 +1272,10 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.platformDisabled
   }
-  if (code === 'API_NOT_FOUND' || code === 'api_not_found') {
+  if (code === 'api_not_found') {
     return joinParts(t.notFound, usefulExtra(hint, t.notFound))
   }
-  if (code === 'INVALID_USER' || code === 'invalid_user') {
+  if (code === 'invalid_user') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
   }
   if (
