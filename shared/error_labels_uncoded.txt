@@ -1,22 +1,11 @@
 # Public error labels that still reach clients as code "unmapped".
 # This list may only shrink: give a label a code in error_codes.json and delete it here.
 A durable user account is required
-Admin account already exists
 An accepted intention must enter Work mode
 An application is already pending
 Article has no content
 Authentication context is missing
-Authentication is not configured
-Bangumi credentials required
 Cannot delete favorite preset, please unfavorite first
-Cannot delete the last administrator
-Cannot delete your own account
-Cannot demote the last administrator
-Cannot disable local login: user has no linked OAuth identity
-Cannot fetch internal URLs
-Cannot fetch unsafe URLs
-Cannot revoke your own admin role
-Cannot unlink the user's only sign-in method
 Comment too long (max 2000 chars)
 Could not load Agent run
 Could not load Agent session
@@ -31,35 +20,24 @@ Expected an inline image
 Failed to check Tapp install permission
 Failed to collect runtime metrics
 Failed to collect scheduler metrics
-Failed to create admin account
 Failed to load Tapp settings
 Failed to read media
 Failed to resolve site owner
 Failed to store media
-Failed to write setup claim marker
 Federation feed is unavailable
-Guest session signing is unavailable
 Heartbeat not initialized
-Hitokoto response too large or unreadable
-Identity not found for this user
 Image dimensions exceed the editing limit
 Image editing failed; please try again
 Image editor is busy; please try again
 Image generation is not configured
 Image must be at most 10 MB
 Instruction must be non-empty and within length limits
-Invalid GitHub repository
-Invalid URL scheme
 Invalid cache file structure
 Invalid image
 Invalid image data
-Invalid item id
-Invalid or disallowed hitokoto url
 Invalid payload
-Invalid playlist ID
 Invalid preset type, must be 'favorite' or 'history'
 Invalid runtime grant subject
-Invalid tapp id
 Invalid visibility, must be 'all' or 'admin'
 Live run unavailable
 Login required
@@ -84,11 +62,8 @@ Reference image is too large
 Rig image validation failed
 Rig image validation is busy; retry shortly
 Run not found, expired, or access denied
-Scheduler not initialized
 Seek action requires a position value
 Selected text too long (max 5000 chars)
-Settings restored, but platform auto-refresh could not be updated
-Setup window state unavailable
 Skill evolution not initialized
 Skill registry not initialized
 Source image is missing
@@ -105,30 +80,12 @@ This file is still in use and cannot be deleted.
 This file is still published and cannot be made private.
 This note is edited through its document; reopen it
 This site is already listed
-URL too long
 Unable to load generated image
 Unsupported image format
 Use a prompt of 1–2000 characters and dimensions between 256 and 2048 pixels
 Volume must be between 0 and 100
 Work input does not match the accepted intention
-channel_id is required
-could not store font
 empty
-export_hash_failed
-export_integrity_failed
-invalid job id
-invalid snapshot id
-invalid_body
-invalid_json
-invalid_mode
-invalid_path
-keyword required
 page must be >= 1
 pagination offset overflow
-site_title or hint is required
 sticker prompt must be 1 to 2000 characters
-too_many_rows
-updater credentials are not a valid HTTP header value
-updater not configured (set MYRIAD_UPDATER_URL)
-updater service is not configured on this backend
-updater transport error

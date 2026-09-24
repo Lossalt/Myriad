@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "Ce filtre est introuvable.",
     "trust_min_level_invalid": "Le niveau de confiance minimal doit être compris entre 0 et 4.",
     "trust_rate_invalid": "Valeurs de limitation hors limites : 1 000 000 requêtes au plus, fenêtre de 1 à 86 400 s, multiplicateur de confiance de 1 à 100.",
-    "domain_move_same_url": "La nouvelle adresse doit être différente de l’actuelle."
+    "domain_move_same_url": "La nouvelle adresse doit être différente de l’actuelle.",
+    "admin_exists": "Un compte administrateur existe déjà. Connectez-vous avec ce compte pour ajouter des utilisateurs.",
+    "last_admin_required": "Il doit rester au moins un administrateur. Nommez d’abord un autre utilisateur administrateur.",
+    "self_delete_forbidden": "Vous ne pouvez pas supprimer le compte avec lequel vous êtes connecté. Demandez à un autre administrateur.",
+    "self_demote_forbidden": "Vous ne pouvez pas retirer votre propre rôle d’administrateur. Demandez à un autre administrateur.",
+    "local_login_needs_oauth": "Associez un fournisseur de connexion à cet utilisateur avant de désactiver la connexion par mot de passe.",
+    "last_sign_in_method": "C’est le seul moyen de connexion de cet utilisateur. Ajoutez-en un autre avant de le dissocier.",
+    "identity_not_found": "Ce compte associé n’existe plus. Actualisez puis réessayez.",
+    "private_network_blocked": "Cette adresse pointe vers un réseau privé ou un emplacement non sûr et ne peut pas être récupérée.",
+    "invalid_url": "Cette adresse n’est pas valide. Utilisez un lien http:// ou https://.",
+    "url_too_long": "Cette adresse est trop longue. Utilisez un lien plus court.",
+    "github_repo_invalid": "Ce dépôt GitHub n’est pas valide. Utilisez la forme owner/repo.",
+    "youtube_channel_required": "Saisissez un identifiant de chaîne YouTube.",
+    "analytics_export_failed": "Impossible de préparer la sauvegarde des statistiques. Réessayez.",
+    "analytics_import_too_large": "Cette sauvegarde des statistiques contient trop de lignes pour être importée.",
+    "updater_not_configured": "Le service de mise à jour n’est pas configuré sur ce serveur.",
+    "updater_misconfigured": "Les identifiants du service de mise à jour ne sont pas valides. Vérifiez la configuration du serveur.",
+    "updater_unreachable": "Impossible de joindre le service de mise à jour. Réessayez plus tard.",
+    "seo_site_title_required": "Saisissez d’abord un titre de site ou une indication.",
+    "setup_state_unavailable": "Impossible de vérifier l’état de l’installation. Redémarrez le serveur puis réessayez.",
+    "WIDGET_FONT_STORE_FAILED": "Impossible d’enregistrer la police. Réessayez."
   }
 }

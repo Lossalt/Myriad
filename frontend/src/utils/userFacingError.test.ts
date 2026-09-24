@@ -1226,7 +1226,7 @@ describe('userFacingError', () => {
     assert.notEqual(save, currentCopy().errors.operationFailed)
     const identity = userFacingError('Identity not found for this user')
     assert.equal(/Identity not found/.test(identity), false)
-    assert.match(identity, /找不到|not found|見つかり/)
+    assert.equal(identity, currentCopy().errors.byCode.identity_not_found)
   })
 
   it('maps avatar source leftovers away from the site-face copy', () => {

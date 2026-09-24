@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "That filter could not be found.",
     "trust_min_level_invalid": "The minimum trust level must be between 0 and 4.",
     "trust_rate_invalid": "Rate limit values are out of range: up to 1,000,000 requests, a 1–86,400 second window, and a 1–100× trusted multiplier.",
-    "domain_move_same_url": "The new address must be different from the current one."
+    "domain_move_same_url": "The new address must be different from the current one.",
+    "admin_exists": "An administrator already exists. Sign in with that account to add more users.",
+    "last_admin_required": "At least one administrator must remain. Make another user an administrator first.",
+    "self_delete_forbidden": "You can’t delete the account you’re signed in with. Ask another administrator.",
+    "self_demote_forbidden": "You can’t remove your own administrator role. Ask another administrator.",
+    "local_login_needs_oauth": "Link a sign-in provider to this user before turning off password sign-in.",
+    "last_sign_in_method": "This is the user’s only way to sign in. Add another sign-in method before unlinking it.",
+    "identity_not_found": "That linked account no longer exists. Refresh and try again.",
+    "private_network_blocked": "That address points to a private or unsafe location and can’t be fetched.",
+    "invalid_url": "That address is not valid. Use an http:// or https:// link.",
+    "url_too_long": "That address is too long. Use a shorter link.",
+    "github_repo_invalid": "That GitHub repository is not valid. Use the owner/repo form.",
+    "youtube_channel_required": "Enter a YouTube channel ID.",
+    "analytics_export_failed": "Couldn’t prepare the analytics backup. Please try again.",
+    "analytics_import_too_large": "This analytics backup has too many rows to import.",
+    "updater_not_configured": "The update service isn’t set up on this server.",
+    "updater_misconfigured": "The update service credentials are invalid. Check the server configuration.",
+    "updater_unreachable": "Couldn’t reach the update service. Please try again later.",
+    "seo_site_title_required": "Enter a site title or a hint first.",
+    "setup_state_unavailable": "Couldn’t verify the setup state. Restart the server and try again.",
+    "WIDGET_FONT_STORE_FAILED": "Couldn’t save the font. Please try again."
   }
 }

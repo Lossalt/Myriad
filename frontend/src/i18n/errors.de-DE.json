@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "Dieser Filter wurde nicht gefunden.",
     "trust_min_level_invalid": "Die minimale Vertrauensstufe muss zwischen 0 und 4 liegen.",
     "trust_rate_invalid": "Rate-Limit-Werte außerhalb des Bereichs: höchstens 1.000.000 Anfragen, Zeitfenster 1–86.400 s, Vertrauensfaktor 1–100.",
-    "domain_move_same_url": "Die neue Adresse muss sich von der aktuellen unterscheiden."
+    "domain_move_same_url": "Die neue Adresse muss sich von der aktuellen unterscheiden.",
+    "admin_exists": "Es gibt bereits ein Administratorkonto. Melden Sie sich damit an, um weitere Nutzer hinzuzufügen.",
+    "last_admin_required": "Mindestens ein Administrator muss bleiben. Machen Sie zuerst einen anderen Nutzer zum Administrator.",
+    "self_delete_forbidden": "Das angemeldete Konto kann nicht gelöscht werden. Bitten Sie einen anderen Administrator darum.",
+    "self_demote_forbidden": "Die eigene Administratorrolle kann nicht entzogen werden. Bitten Sie einen anderen Administrator darum.",
+    "local_login_needs_oauth": "Verknüpfen Sie zuerst einen Anmeldeanbieter mit diesem Nutzer, bevor Sie die Passwortanmeldung abschalten.",
+    "last_sign_in_method": "Das ist die einzige Anmeldemethode dieses Nutzers. Fügen Sie zuerst eine weitere hinzu.",
+    "identity_not_found": "Dieses verknüpfte Konto existiert nicht mehr. Neu laden und erneut versuchen.",
+    "private_network_blocked": "Diese Adresse zeigt auf ein privates oder unsicheres Ziel und kann nicht abgerufen werden.",
+    "invalid_url": "Diese Adresse ist ungültig. Verwenden Sie einen http://- oder https://-Link.",
+    "url_too_long": "Diese Adresse ist zu lang. Verwenden Sie einen kürzeren Link.",
+    "github_repo_invalid": "Dieses GitHub-Repository ist ungültig. Verwenden Sie die Form owner/repo.",
+    "youtube_channel_required": "Geben Sie eine YouTube-Kanal-ID ein.",
+    "analytics_export_failed": "Die Statistiksicherung konnte nicht erstellt werden. Bitte erneut versuchen.",
+    "analytics_import_too_large": "Diese Statistiksicherung hat zu viele Zeilen für den Import.",
+    "updater_not_configured": "Auf diesem Server ist kein Update-Dienst eingerichtet.",
+    "updater_misconfigured": "Die Zugangsdaten des Update-Dienstes sind ungültig. Prüfen Sie die Serverkonfiguration.",
+    "updater_unreachable": "Der Update-Dienst ist nicht erreichbar. Bitte später erneut versuchen.",
+    "seo_site_title_required": "Geben Sie zuerst einen Seitentitel oder einen Hinweis ein.",
+    "setup_state_unavailable": "Der Einrichtungsstatus lässt sich nicht prüfen. Starten Sie den Server neu und versuchen Sie es erneut.",
+    "WIDGET_FONT_STORE_FAILED": "Die Schriftart konnte nicht gespeichert werden. Bitte erneut versuchen."
   }
 }

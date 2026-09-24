@@ -560,13 +560,6 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     )
   }
   if (
-    /^export_hash_failed$|^export_integrity_failed$|^integrity_seal_failed/i.test(
-      raw,
-    )
-  ) {
-    return currentCopy().config.analytics.exportFailed
-  }
-  if (
     /^invalid tapp archive/i.test(raw) ||
     /^invalid manifest(\.json)?/i.test(raw) ||
     /invalid \.tapp file/i.test(raw) ||

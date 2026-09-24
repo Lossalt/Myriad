@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "找不到這條過濾規則。",
     "trust_min_level_invalid": "最低信任等級需要在 0 到 4 之間。",
     "trust_rate_invalid": "限流設定超出範圍：請求數最多 1000000，時間視窗 1–86400 秒，受信任倍數 1–100。",
-    "domain_move_same_url": "新位址需要和目前位址不同。"
+    "domain_move_same_url": "新位址需要和目前位址不同。",
+    "admin_exists": "管理員帳號已經存在。請用該帳號登入後再新增使用者。",
+    "last_admin_required": "至少要保留一位管理員。請先把其他使用者設為管理員。",
+    "self_delete_forbidden": "不能刪除目前登入的帳號。請讓其他管理員操作。",
+    "self_demote_forbidden": "不能撤銷自己的管理員身分。請讓其他管理員操作。",
+    "local_login_needs_oauth": "請先為該使用者綁定第三方登入，再關閉密碼登入。",
+    "last_sign_in_method": "這是該使用者唯一的登入方式。請先新增其他登入方式再解除綁定。",
+    "identity_not_found": "這個關聯帳號已不存在。請重新整理後重試。",
+    "private_network_blocked": "這個地址指向內網或不安全的位置，不能抓取。",
+    "invalid_url": "這個地址無效。請使用 http:// 或 https:// 開頭的連結。",
+    "url_too_long": "這個地址太長了。請換一個更短的連結。",
+    "github_repo_invalid": "GitHub 儲存庫名稱無效。請按 owner/repo 格式填寫。",
+    "youtube_channel_required": "請填寫 YouTube 頻道 ID。",
+    "analytics_export_failed": "統計備份產生失敗。請重試。",
+    "analytics_import_too_large": "這份統計備份的資料列太多，無法匯入。",
+    "updater_not_configured": "這台伺服器沒有設定更新服務。",
+    "updater_misconfigured": "更新服務的憑證無效。請檢查伺服器設定。",
+    "updater_unreachable": "連不上更新服務。請稍後重試。",
+    "seo_site_title_required": "請先填寫網站標題或提示。",
+    "setup_state_unavailable": "無法確認安裝狀態。請重新啟動伺服器後重試。",
+    "WIDGET_FONT_STORE_FAILED": "字型儲存失敗。請重試。"
   }
 }

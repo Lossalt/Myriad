@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "그 필터를 찾을 수 없어요.",
     "trust_min_level_invalid": "최소 신뢰 수준은 0~4 사이여야 해요.",
     "trust_rate_invalid": "속도 제한 값이 범위를 벗어났어요. 요청 수는 최대 1,000,000, 시간 창은 1~86,400초, 신뢰 배수는 1~100이에요.",
-    "domain_move_same_url": "새 주소는 지금 주소와 달라야 해요."
+    "domain_move_same_url": "새 주소는 지금 주소와 달라야 해요.",
+    "admin_exists": "관리자 계정이 이미 있어요. 그 계정으로 로그인한 뒤 사용자를 추가하세요.",
+    "last_admin_required": "관리자는 최소 한 명 있어야 해요. 먼저 다른 사용자를 관리자로 지정하세요.",
+    "self_delete_forbidden": "지금 로그인한 계정은 삭제할 수 없어요. 다른 관리자에게 요청하세요.",
+    "self_demote_forbidden": "자신의 관리자 권한은 해제할 수 없어요. 다른 관리자에게 요청하세요.",
+    "local_login_needs_oauth": "비밀번호 로그인을 끄기 전에 이 사용자에게 외부 로그인을 연결하세요.",
+    "last_sign_in_method": "이 사용자의 유일한 로그인 방법이에요. 다른 로그인 방법을 추가한 뒤 연결을 해제하세요.",
+    "identity_not_found": "연결된 계정이 더 이상 없어요. 새로 고친 뒤 다시 시도하세요.",
+    "private_network_blocked": "그 주소는 내부망이나 안전하지 않은 위치를 가리켜서 가져올 수 없어요.",
+    "invalid_url": "그 주소는 올바르지 않아요. http:// 또는 https:// 링크를 쓰세요.",
+    "url_too_long": "주소가 너무 길어요. 더 짧은 링크를 쓰세요.",
+    "github_repo_invalid": "GitHub 저장소 이름이 올바르지 않아요. owner/repo 형식으로 입력하세요.",
+    "youtube_channel_required": "YouTube 채널 ID를 입력하세요.",
+    "analytics_export_failed": "통계 백업을 만들지 못했어요. 다시 시도하세요.",
+    "analytics_import_too_large": "이 통계 백업은 행이 너무 많아서 가져올 수 없어요.",
+    "updater_not_configured": "이 서버에는 업데이트 서비스가 설정되어 있지 않아요.",
+    "updater_misconfigured": "업데이트 서비스 자격 증명이 올바르지 않아요. 서버 설정을 확인하세요.",
+    "updater_unreachable": "업데이트 서비스에 연결할 수 없어요. 잠시 뒤 다시 시도하세요.",
+    "seo_site_title_required": "먼저 사이트 제목이나 힌트를 입력하세요.",
+    "setup_state_unavailable": "설치 상태를 확인할 수 없어요. 서버를 다시 시작한 뒤 다시 시도하세요.",
+    "WIDGET_FONT_STORE_FAILED": "글꼴을 저장하지 못했어요. 다시 시도하세요."
   }
 }

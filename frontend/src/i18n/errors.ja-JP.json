@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "そのフィルターが見つかりません。",
     "trust_min_level_invalid": "最低信頼レベルは 0〜4 の範囲で指定してください。",
     "trust_rate_invalid": "レート制限の値が範囲外です。リクエスト数は最大 1,000,000、時間枠は 1〜86,400 秒、信頼済み倍率は 1〜100 です。",
-    "domain_move_same_url": "新しいアドレスは現在のアドレスと異なる必要があります。"
+    "domain_move_same_url": "新しいアドレスは現在のアドレスと異なる必要があります。",
+    "admin_exists": "管理者アカウントはすでに存在します。そのアカウントでログインしてからユーザーを追加してください。",
+    "last_admin_required": "管理者は最低 1 人必要です。先に別のユーザーを管理者にしてください。",
+    "self_delete_forbidden": "ログイン中のアカウントは削除できません。別の管理者に依頼してください。",
+    "self_demote_forbidden": "自分の管理者権限は外せません。別の管理者に依頼してください。",
+    "local_login_needs_oauth": "パスワードログインを無効にする前に、このユーザーに外部ログインを連携してください。",
+    "last_sign_in_method": "このユーザーの唯一のログイン方法です。別のログイン方法を追加してから解除してください。",
+    "identity_not_found": "この連携アカウントはもう存在しません。再読み込みしてから再試行してください。",
+    "private_network_blocked": "このアドレスは内部ネットワークなど安全でない場所を指しているため、取得できません。",
+    "invalid_url": "このアドレスは無効です。http:// または https:// で始まるリンクを使ってください。",
+    "url_too_long": "アドレスが長すぎます。短いリンクを使ってください。",
+    "github_repo_invalid": "GitHub リポジトリ名が無効です。owner/repo の形式で入力してください。",
+    "youtube_channel_required": "YouTube のチャンネル ID を入力してください。",
+    "analytics_export_failed": "統計バックアップを作成できませんでした。再試行してください。",
+    "analytics_import_too_large": "この統計バックアップは行数が多すぎるため、インポートできません。",
+    "updater_not_configured": "このサーバーには更新サービスが設定されていません。",
+    "updater_misconfigured": "更新サービスの認証情報が無効です。サーバーの設定を確認してください。",
+    "updater_unreachable": "更新サービスに接続できません。しばらくしてから再試行してください。",
+    "seo_site_title_required": "先にサイトのタイトルかヒントを入力してください。",
+    "setup_state_unavailable": "セットアップの状態を確認できません。サーバーを再起動してから再試行してください。",
+    "WIDGET_FONT_STORE_FAILED": "フォントを保存できませんでした。再試行してください。"
   }
 }

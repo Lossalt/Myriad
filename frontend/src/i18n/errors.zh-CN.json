@@ -471,6 +471,26 @@
     "trust_filter_id_invalid": "找不到这条过滤规则。",
     "trust_min_level_invalid": "最低信任等级需要在 0 到 4 之间。",
     "trust_rate_invalid": "限流设置超出范围：请求数最多 1000000，时间窗口 1–86400 秒，受信任倍数 1–100。",
-    "domain_move_same_url": "新地址需要和当前地址不同。"
+    "domain_move_same_url": "新地址需要和当前地址不同。",
+    "admin_exists": "管理员账号已经存在。请用该账号登录后再添加用户。",
+    "last_admin_required": "至少要保留一位管理员。请先把其他用户设为管理员。",
+    "self_delete_forbidden": "不能删除当前登录的账号。请让其他管理员操作。",
+    "self_demote_forbidden": "不能撤销自己的管理员身份。请让其他管理员操作。",
+    "local_login_needs_oauth": "请先为该用户绑定第三方登录，再关闭密码登录。",
+    "last_sign_in_method": "这是该用户唯一的登录方式。请先添加其他登录方式再解绑。",
+    "identity_not_found": "这个关联账号已不存在。请刷新后重试。",
+    "private_network_blocked": "这个地址指向内网或不安全的位置，不能抓取。",
+    "invalid_url": "这个地址无效。请使用 http:// 或 https:// 开头的链接。",
+    "url_too_long": "这个地址太长了。请换一个更短的链接。",
+    "github_repo_invalid": "GitHub 仓库名无效。请按 owner/repo 格式填写。",
+    "youtube_channel_required": "请填写 YouTube 频道 ID。",
+    "analytics_export_failed": "统计备份生成失败。请重试。",
+    "analytics_import_too_large": "这份统计备份的数据行太多，无法导入。",
+    "updater_not_configured": "这台服务器没有配置更新服务。",
+    "updater_misconfigured": "更新服务的凭据无效。请检查服务器配置。",
+    "updater_unreachable": "连不上更新服务。请稍后重试。",
+    "seo_site_title_required": "请先填写网站标题或提示。",
+    "setup_state_unavailable": "无法确认安装状态。请重启服务器后重试。",
+    "WIDGET_FONT_STORE_FAILED": "字体保存失败。请重试。"
   }
 }
