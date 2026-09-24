@@ -263,7 +263,7 @@ async fn restore_version(
         req.revision,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;

@@ -280,7 +280,7 @@ pub(crate) async fn create_note_doc(
         doc.revision,
         doc.image.as_deref(),
         &doc.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -421,7 +421,7 @@ pub(crate) async fn update_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -655,7 +655,7 @@ pub(crate) async fn schedule_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -739,7 +739,7 @@ pub(crate) async fn unschedule_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;

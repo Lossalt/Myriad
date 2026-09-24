@@ -147,10 +147,14 @@ async fn write_published_item<C: ConnectionTrait>(
     published_at_ms: Option<i64>,
     author: Option<String>,
 ) -> Result<PublishedNote, HttpError> {
-    let (rewritten_cover, rewritten_body) =
-        crate::services::media::publish_cited_media(db, &[], image.as_deref(), content_md)
-            .await
-            .map_err(media_bind_http)?;
+    let (rewritten_cover, rewritten_body) = crate::services::media::publish_cited_media(
+        db,
+        &crate::services::media::upgrade::configured_origins().await,
+        image.as_deref(),
+        content_md,
+    )
+    .await
+    .map_err(media_bind_http)?;
     let content_md = rewritten_body;
     let image = rewritten_cover.or(image);
     validate_note(title, &content_md).map_err(validation_err)?;
@@ -330,7 +334,7 @@ async fn publish_doc_on<C: ConnectionTrait>(
             saved.revision - 1,
             saved.image.as_deref(),
             &saved.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -339,7 +343,7 @@ async fn publish_doc_on<C: ConnectionTrait>(
             item.id,
             saved.image.as_deref(),
             &saved.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -379,9 +383,15 @@ pub async fn delete_note_with_doc(
                 .await
                 .map_err(media_bind_http)?;
         }
-        crate::services::media::bind_note_published(&txn, item_id, None, "", &[])
-            .await
-            .map_err(media_bind_http)?;
+        crate::services::media::bind_note_published(
+            &txn,
+            item_id,
+            None,
+            "",
+            &crate::services::media::upgrade::configured_origins().await,
+        )
+        .await
+        .map_err(media_bind_http)?;
         phantasi_items::Entity::delete_by_id(item_id)
             .exec(&txn)
             .await
@@ -466,9 +476,14 @@ pub async fn update_note_doc_topic(
                 "Note draft was updated elsewhere",
             ));
         }
-        crate::services::media::sync_note_history_refs(&txn, doc_id, expected_revision, &[])
-            .await
-            .map_err(media_bind_http)?;
+        crate::services::media::sync_note_history_refs(
+            &txn,
+            doc_id,
+            expected_revision,
+            &crate::services::media::upgrade::configured_origins().await,
+        )
+        .await
+        .map_err(media_bind_http)?;
         phantasi_note_docs::Entity::find_by_id(doc_id)
             .one(&txn)
             .await
@@ -787,7 +802,7 @@ pub async fn write_note_with_doc(
             doc.revision - 1,
             doc.image.as_deref(),
             &doc.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -796,7 +811,7 @@ pub async fn write_note_with_doc(
             item.id,
             doc.image.as_deref(),
             &doc.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;

@@ -2285,3 +2285,30 @@ async fn postgres_message_payload_binds_only_the_senders_media() {
     assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_note_cites_absolute_site_urls_under_configured_origins() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let body = format!("![a](https://site.example{})", image.content_path);
+    let doc: i32 = f
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO phantasi_note_docs(user_id, title, content_md) VALUES (1, 'n', $1) RETURNING id",
+            [body.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let origins = vec!["https://site.example".to_string()];
+    cite::bind_note_draft(&f.db, doc, 1, None, &body, &origins)
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
+    f.close().await;
+}

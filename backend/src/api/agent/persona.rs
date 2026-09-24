@@ -386,17 +386,25 @@ pub async fn put_persona(
         .map_err(|error| persona_store_http("update persona portrait", error))?;
     let portrait_url = match saved.portrait_asset_id.as_deref() {
         Some(url) => Some(
-            crate::services::media::publish_local_url(&transaction, url, &[])
-                .await
-                .map_err(|error| HttpError(error.into()))?,
+            crate::services::media::publish_local_url(
+                &transaction,
+                url,
+                &crate::services::media::upgrade::configured_origins().await,
+            )
+            .await
+            .map_err(|error| HttpError(error.into()))?,
         ),
         None => None,
     };
     let avatar_url = match saved.avatar_asset_id.as_deref() {
         Some(url) => Some(
-            crate::services::media::publish_local_url(&transaction, url, &[])
-                .await
-                .map_err(|error| HttpError(error.into()))?,
+            crate::services::media::publish_local_url(
+                &transaction,
+                url,
+                &crate::services::media::upgrade::configured_origins().await,
+            )
+            .await
+            .map_err(|error| HttpError(error.into()))?,
         ),
         None => None,
     };
@@ -415,7 +423,7 @@ pub async fn put_persona(
             .or(saved.portrait_asset_id.as_deref()),
         avatar_url.as_deref().or(saved.avatar_asset_id.as_deref()),
         saved.visual_profile.as_ref(),
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -452,9 +460,15 @@ pub async fn delete_persona(
     let cleared_asset = merope_rig::persist_active_asset(&transaction, None)
         .await
         .map_err(|error| persona_store_http("clear persona portrait", error))?;
-    crate::services::media::bind_persona(&transaction, None, None, None, &[])
-        .await
-        .map_err(|error| HttpError(error.into()))?;
+    crate::services::media::bind_persona(
+        &transaction,
+        None,
+        None,
+        None,
+        &crate::services::media::upgrade::configured_origins().await,
+    )
+    .await
+    .map_err(|error| HttpError(error.into()))?;
     transaction
         .commit()
         .await
