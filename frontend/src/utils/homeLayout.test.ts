@@ -28,6 +28,7 @@ import {
   homeWidgetsForView,
   homeWidgetsOccupiedCells,
   isHomeStickerItem,
+  keepUnrenderedTiles,
   layoutsAfterWidgetRegistry,
   layoutsForFirstPaint,
   packWidgetsIntoColumns,
@@ -460,5 +461,28 @@ describe('homeWidgetsForView', () => {
     assert.deepEqual(homeWidgetsForView(layouts, 'free', false).map(w => w.id), ['f'])
     assert.deepEqual(homeWidgetsForView({ ...layouts, free: [] }, 'free', false).map(w => w.id), ['s'])
     assert.deepEqual(homeWidgetsForView(layouts, 'standard', false).map(w => w.id), ['s'])
+  })
+})
+
+describe('keepUnrenderedTiles', () => {
+  const tile = (id: string, type: string) =>
+    ({ id, type, size: '2x2', position: { x: 0, y: 0 } }) as WidgetConfig
+  const renderable = (w: WidgetConfig) => w.type !== 'tapp:gallery'
+
+  it('an edit made while Tapp widgets failed to load keeps them stored', () => {
+    const stored = [tile('a', 'clock'), tile('t', 'tapp:gallery')]
+    const edited = [{ ...tile('a', 'clock'), position: { x: 2, y: 0 } }]
+    assert.deepEqual(
+      keepUnrenderedTiles(edited, stored, renderable).map((w) => w.id),
+      ['a', 't'],
+    )
+  })
+
+  it('a rendered tile the edit removed stays removed', () => {
+    const stored = [tile('a', 'clock'), tile('b', 'weather')]
+    assert.deepEqual(
+      keepUnrenderedTiles([tile('a', 'clock')], stored, renderable).map((w) => w.id),
+      ['a'],
+    )
   })
 })

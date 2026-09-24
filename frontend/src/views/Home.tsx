@@ -65,6 +65,7 @@ import {
   homeLayoutsHaveTiles,
   homeWidgetsForView,
   isHomeStickerItem,
+  keepUnrenderedTiles,
   layoutsAfterWidgetRegistry,
   peekStoredHomeLayoutMode,
   persistHomeLayoutMode,
@@ -206,7 +207,11 @@ export default function Home() {
     [t.widgets],
   )
 
-  const { tappWidgets, isLoading: isTappWidgetsLoading } = useTappWidgets()
+  const {
+    tappWidgets,
+    isLoading: isTappWidgetsLoading,
+    error: tappWidgetsError,
+  } = useTappWidgets()
 
   const ALL_AVAILABLE_WIDGETS = useMemo(() => {
     return [...AVAILABLE_WIDGETS, ...tappWidgets]
@@ -413,10 +418,18 @@ export default function Home() {
   const handleWidgetsChange = (newWidgets: WidgetConfig[]) => {
     if (layoutImportInFlightRef.current) return
     const registeredWidgetIds = new Set(ALL_AVAILABLE_WIDGETS.map((w) => w.id))
-    let validWidgets = isTappWidgetsLoading
-      ? newWidgets
-      : newWidgets.filter(
-          (w) => isHomeStickerItem(w) || registeredWidgetIds.has(w.type),
+    const isRenderable = (w: WidgetConfig) =>
+      isHomeStickerItem(w) || registeredWidgetIds.has(w.type)
+    // Only a registry that loaded completely may prune unknown tiles. After a
+    // failed Tapp sync every Tapp widget is "unknown", and saving that would
+    // delete them all.
+    const registryComplete = !isTappWidgetsLoading && !tappWidgetsError
+    let validWidgets = registryComplete
+      ? newWidgets.filter(isRenderable)
+      : keepUnrenderedTiles(
+          newWidgets,
+          rawLayouts?.[effectiveMode] ?? layoutsRef.current[effectiveMode],
+          isRenderable,
         )
     if (effectiveMode === 'standard') {
       validWidgets = validWidgets.filter((w) => !isHomeStickerItem(w))
