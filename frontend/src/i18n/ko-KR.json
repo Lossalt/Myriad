@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "이 이메일의 계정이 이미 있습니다. 원래 방법으로 로그인한 뒤, 계정 설정에서 이 제공자를 연결하세요.",
     "oauthErrorBrowserTxMismatch": "이 브라우저에서 로그인을 확인하지 못했습니다(세션 불일치). 로그인 페이지에서 외부 로그인을 다시 시작하세요.",
     "oauthErrorLinkFailed": "이 제공자를 연결하지 못했습니다. 로그인한 뒤 계정 설정에서 다시 시도하세요.",
-    "invalidCredentials": "사용자 이름 또는 비밀번호가 올바르지 않습니다.",
-    "localLoginDisabled": "이 계정은 비밀번호 로그인이 꺼져 있습니다. 연결된 외부 제공자로 로그인하세요.",
     "linkSuccess": "계정을 연결했습니다.",
     "linkSuccessProvider": "{provider}를 연결했습니다.",
     "linkSuccessDetail": "{provider}를 {username}(으)로 연결했습니다.",
@@ -418,9 +416,6 @@
     "emailOptional": "이메일(선택)",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "가입에 실패했습니다",
-    "registerDisabled": "공개 가입이 꺼져 있습니다. 관리자에게 계정 생성을 요청하세요.",
-    "registerSetupRequired": "계정을 만들기 전에 설치를 마치세요.",
-    "usernameTaken": "이 사용자 이름은 이미 쓰입니다",
     "registerResponseIncomplete": "가입 응답이 불완전합니다",
     "usernameRange3to20": "사용자 이름은 3–20자여야 합니다",
     "passwordRule": "비밀번호는 8자 이상이며 영문과 숫자를 포함해야 합니다"

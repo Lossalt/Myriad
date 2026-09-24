@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "應用一次要儲存的資料太多了。",
     "tapp_visibility_invalid": "可見範圍只能選「所有人」或「僅管理員」。",
     "no_fields_to_update": "沒有需要儲存的修改。",
-    "empty_batch": "沒有可傳送的內容。"
+    "empty_batch": "沒有可傳送的內容。",
+    "invalid_credentials": "使用者名稱或密碼不正確。",
+    "local_login_disabled": "此賬號已禁用密碼登入。請使用已繫結的第三方賬號登入。",
+    "registration_disabled": "公開註冊已關閉，請讓管理員建立賬號",
+    "setup_required": "請先完成安裝嚮導再註冊",
+    "username_taken": "這個使用者名稱已被使用",
+    "admin_role_owner_only": "僅站點所有者可授予或撤銷管理員權限",
+    "admin_delete_owner_only": "僅站點所有者可刪除管理員賬號。",
+    "owner_delete_forbidden": "不能刪除站點所有者。",
+    "owner_demote_forbidden": "不能降級站點所有者。",
+    "owner_install_block_forbidden": "不能禁止站點所有者安裝應用。"
   }
 }

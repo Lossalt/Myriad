@@ -380,7 +380,8 @@ pub async fn local_login(
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "Invalid credentials",
-                    "message": "Username or password is incorrect"
+                    "message": "Username or password is incorrect",
+                    "code": "invalid_credentials"
                 })),
             )));
         }
@@ -423,7 +424,8 @@ pub async fn local_login(
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "Local login disabled",
-                "message": "This account has been linked to GitHub. Please use GitHub OAuth to login."
+                "message": "This account has been linked to GitHub. Please use GitHub OAuth to login.",
+                "code": "local_login_disabled"
             })),
         )));
     }
@@ -790,7 +792,8 @@ async fn verify_password(password: &str, hash: &str) -> Result<(), HttpError> {
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "Invalid credentials",
-                    "message": "Username or password is incorrect"
+                    "message": "Username or password is incorrect",
+                    "code": "invalid_credentials"
                 })),
             )))
         }
@@ -830,7 +833,8 @@ pub async fn register(
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "Registration disabled",
-                    "message": "Public registration is disabled. Ask an administrator to create an account."
+                    "message": "Public registration is disabled. Ask an administrator to create an account.",
+                    "code": "registration_disabled"
                 })),
             )));
         }
@@ -842,7 +846,8 @@ pub async fn register(
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "setup_required",
-                    "message": "Finish the setup wizard before creating an account."
+                    "message": "Finish the setup wizard before creating an account.",
+                    "code": "setup_required"
                 })),
             )));
         }
@@ -870,7 +875,8 @@ pub async fn register(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Username taken",
-                "message": "This username is already in use"
+                "message": "This username is already in use",
+                "code": "username_taken"
             })),
         )));
     }
@@ -1247,7 +1253,8 @@ pub async fn admin_create_user(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Username taken",
-                "message": "This username is already in use"
+                "message": "This username is already in use",
+                "code": "username_taken"
             })),
         )));
     }

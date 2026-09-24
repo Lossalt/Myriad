@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "Ein Konto mit dieser E-Mail existiert schon. Mit der ursprünglichen Methode anmelden, dann diesen Anbieter in den Kontoeinstellungen verknüpfen.",
     "oauthErrorBrowserTxMismatch": "Diese Anmeldung ließ sich in diesem Browser nicht prüfen (Sitzung passt nicht). Drittanbieter-Login von der Anmeldeseite neu starten.",
     "oauthErrorLinkFailed": "Dieser Anbieter ließ sich nicht verknüpfen. In den Kontoeinstellungen erneut versuchen, während Sie angemeldet sind.",
-    "invalidCredentials": "Benutzername oder Passwort ist falsch.",
-    "localLoginDisabled": "Passwort-Login ist für dieses Konto aus. Mit einem verknüpften Drittanbieter anmelden.",
     "linkSuccess": "Konto erfolgreich verknüpft.",
     "linkSuccessProvider": "{provider} erfolgreich verknüpft.",
     "linkSuccessDetail": "{provider} als {username} verknüpft.",
@@ -418,9 +416,6 @@
     "emailOptional": "E-Mail (optional)",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "Registrierung fehlgeschlagen",
-    "registerDisabled": "Öffentliche Registrierung ist aus. Bitten Sie einen Administrator, ein Konto anzulegen.",
-    "registerSetupRequired": "Einrichtung abschließen, bevor Sie ein Konto anlegen.",
-    "usernameTaken": "Dieser Benutzername ist schon vergeben",
     "registerResponseIncomplete": "Unvollständige Registrierungsantwort",
     "usernameRange3to20": "Benutzername muss 3–20 Zeichen haben",
     "passwordRule": "Passwort mindestens 8 Zeichen, mit Buchstaben und Zahlen"

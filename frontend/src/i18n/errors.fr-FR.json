@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "Ce Tapp a tenté d’enregistrer trop de données à la fois.",
     "tapp_visibility_invalid": "Choisissez qui peut voir ce Tapp : tout le monde ou les admins seulement.",
     "no_fields_to_update": "Aucune modification à enregistrer.",
-    "empty_batch": "Il n’y avait rien à envoyer."
+    "empty_batch": "Il n’y avait rien à envoyer.",
+    "invalid_credentials": "Nom d'utilisateur ou mot de passe incorrect.",
+    "local_login_disabled": "La connexion par mot de passe est coupée pour ce compte. Utilisez un fournisseur déjà lié.",
+    "registration_disabled": "L'inscription publique est coupée. Demandez à un admin de créer un compte.",
+    "setup_required": "Terminez l'installation avant de créer un compte.",
+    "username_taken": "Ce nom d'utilisateur est déjà pris",
+    "admin_role_owner_only": "Seul le propriétaire peut accorder ou retirer le rôle admin",
+    "admin_delete_owner_only": "Seul le propriétaire peut supprimer des administrateurs.",
+    "owner_delete_forbidden": "Impossible de supprimer le propriétaire du site.",
+    "owner_demote_forbidden": "Impossible de rétrograder le propriétaire du site.",
+    "owner_install_block_forbidden": "Impossible de bloquer les installations pour le propriétaire du site."
   }
 }

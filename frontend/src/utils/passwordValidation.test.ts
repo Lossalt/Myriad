@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { loadLocale } from '../i18n/loadLocale'
 import { ApiError } from '../services/api.ts'
-import { messageForAdminUserError } from './authErrorMessages.ts'
 import { passwordValidationCode } from './passwordValidation.ts'
+import { userFacingError } from './userFacingError.ts'
 
 it('shows localized password requirements for admin creation instead of HTTP 400', async () => {
   const t = await loadLocale('en-US')
@@ -12,7 +12,7 @@ it('shows localized password requirements for admin creation instead of HTTP 400
     ['password_too_long', t.auth.passwordLengthError],
     ['password_needs_letter_and_digit', t.userModal.passwordNeedsLetterAndDigit],
   ]) {
-    assert.equal(messageForAdminUserError(new ApiError('Invalid password', 400, code), t, 'fallback'), expected)
+    assert.equal(userFacingError(new ApiError('Invalid password', 400, code), 'fallback'), expected)
   }
 })
 

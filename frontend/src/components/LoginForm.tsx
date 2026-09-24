@@ -7,10 +7,10 @@ import { useI18n } from '../contexts/I18nContext'
 import { ApiError } from '../services/api'
 import { fetchJson } from '../utils/apiHelper'
 import { emitAppEvent } from '../utils/appEvents'
-import { messageForLocalLoginError } from '../utils/authErrorMessages'
 import { sanitizeUsername } from '../utils/inputSanitizer'
 import { normalizeOAuthIconUrl, preloadOAuthIcons } from '../utils/oauthIcons'
 import { setSessionHint } from '../utils/sessionDetection'
+import { userFacingError } from '../utils/userFacingError'
 import OAuthIconImage from './OAuthIconImage'
 import { Spinner } from './Spinner'
 import './LoginForm.css'
@@ -147,10 +147,11 @@ const LoginForm: FC = () => {
         window.location.href = '/'
       }, 100)
     } catch (err: unknown) {
+      // 登录限流带重试秒数（Retry-After），比通用 rate_limited 文案更具体。
       if (err instanceof ApiError && err.status === 429) {
         setError(format(t.auth.rateLimitError, { seconds: err.retryAfter ?? 60 }))
       } else {
-        setError(messageForLocalLoginError(err, t, format))
+        setError(userFacingError(err, t.auth.loginFailed))
       }
     } finally {
       setSubmitting(false)

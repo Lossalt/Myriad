@@ -394,7 +394,17 @@
     "Invalid Idempotency-Key": "idempotency_key_invalid",
     "Idempotency-Key was already used for a different request": "idempotency_key_reused",
     "No fields to update": "no_fields_to_update",
-    "empty": "empty_batch"
+    "empty": "empty_batch",
+    "Invalid credentials": "invalid_credentials",
+    "Local login disabled": "local_login_disabled",
+    "Registration disabled": "registration_disabled",
+    "Username taken": "username_taken",
+    "Cannot unlink last identity": "last_sign_in_method",
+    "Only the site owner can change admin roles": "admin_role_owner_only",
+    "Only the site owner can delete administrators": "admin_delete_owner_only",
+    "Cannot delete the site owner": "owner_delete_forbidden",
+    "Cannot demote the site owner": "owner_demote_forbidden",
+    "Cannot disable Tapp install for the site owner": "owner_install_block_forbidden"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",
@@ -539,7 +549,11 @@
     "instance not found": "text_instance_not_found",
     "invalid tappid": "text_invalid_tappid",
     "invalid url": "text_invalid_url",
-    "no library data available": "text_no_library_data_available"
+    "no library data available": "text_no_library_data_available",
+    "Username or password is incorrect": "invalid_credentials",
+    "Public registration is disabled. Ask an administrator to create an account.": "registration_disabled",
+    "Finish the setup wizard before creating an account.": "setup_required",
+    "This username is already in use": "username_taken"
   },
   "prefixes": {
     "分享内容为空": "share_text_empty",
@@ -944,6 +958,7 @@
     "x_username_required",
     "youtube_api_key_required",
     "youtube_upstream_failed",
-    "pagination_invalid"
+    "pagination_invalid",
+    "setup_required"
   ]
 }

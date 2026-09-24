@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "This Tapp tried to save too much data at once.",
     "tapp_visibility_invalid": "Choose who can see this Tapp: everyone or admins only.",
     "no_fields_to_update": "Nothing to save: no changes were made.",
-    "empty_batch": "There was nothing to send."
+    "empty_batch": "There was nothing to send.",
+    "invalid_credentials": "Username or password is incorrect.",
+    "local_login_disabled": "Password login is disabled for this account. Use a linked third-party provider to sign in.",
+    "registration_disabled": "Public registration is off. Ask an administrator to create an account.",
+    "setup_required": "Finish setup before creating an account.",
+    "username_taken": "This username is already in use",
+    "admin_role_owner_only": "Only the site owner can grant or revoke admin roles",
+    "admin_delete_owner_only": "Only the site owner can delete administrators.",
+    "owner_delete_forbidden": "Cannot delete the site owner.",
+    "owner_demote_forbidden": "Cannot demote the site owner.",
+    "owner_install_block_forbidden": "Cannot block app installs for the site owner."
   }
 }

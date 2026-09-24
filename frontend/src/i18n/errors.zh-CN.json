@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "应用一次要保存的数据太多了。",
     "tapp_visibility_invalid": "可见范围只能选「所有人」或「仅管理员」。",
     "no_fields_to_update": "没有需要保存的修改。",
-    "empty_batch": "没有可发送的内容。"
+    "empty_batch": "没有可发送的内容。",
+    "invalid_credentials": "用户名或密码不正确。",
+    "local_login_disabled": "此账号已禁用密码登录。请使用已绑定的第三方账号登录。",
+    "registration_disabled": "公开注册已关闭，请让管理员创建账号",
+    "setup_required": "请先完成安装向导再注册",
+    "username_taken": "这个用户名已被使用",
+    "admin_role_owner_only": "仅站点所有者可授予或撤销管理员权限",
+    "admin_delete_owner_only": "仅站点所有者可删除管理员账号。",
+    "owner_delete_forbidden": "不能删除站点所有者。",
+    "owner_demote_forbidden": "不能降级站点所有者。",
+    "owner_install_block_forbidden": "不能禁止站点所有者安装应用。"
   }
 }

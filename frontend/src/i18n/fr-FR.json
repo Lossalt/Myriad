@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "Un compte existe déjà avec cet e-mail. Connectez-vous avec la méthode d'origine, puis liez ce fournisseur dans le compte.",
     "oauthErrorBrowserTxMismatch": "Cette connexion n'a pas pu être vérifiée dans ce navigateur (session différente). Relancez depuis la page de connexion.",
     "oauthErrorLinkFailed": "Impossible de lier ce fournisseur. Réessayez depuis le compte, une fois connecté.",
-    "invalidCredentials": "Nom d'utilisateur ou mot de passe incorrect.",
-    "localLoginDisabled": "La connexion par mot de passe est coupée pour ce compte. Utilisez un fournisseur déjà lié.",
     "linkSuccess": "Compte lié.",
     "linkSuccessProvider": "{provider} lié.",
     "linkSuccessDetail": "{provider} lié en tant que {username}.",
@@ -418,9 +416,6 @@
     "emailOptional": "E-mail (facultatif)",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "Inscription échouée",
-    "registerDisabled": "L'inscription publique est coupée. Demandez à un admin de créer un compte.",
-    "registerSetupRequired": "Terminez l'installation avant de créer un compte.",
-    "usernameTaken": "Ce nom d'utilisateur est déjà pris",
     "registerResponseIncomplete": "Réponse d'inscription incomplète",
     "usernameRange3to20": "Le nom d'utilisateur doit faire 3 à 20 caractères",
     "passwordRule": "Au moins 8 caractères, avec des lettres et des chiffres"

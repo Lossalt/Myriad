@@ -1266,7 +1266,8 @@ pub async fn provider_unlink(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Cannot unlink last identity",
-                "message": "Keep a usable local login (password set and not disabled), or link another provider."
+                "message": "Keep a usable local login (password set and not disabled), or link another provider.",
+                "code": "last_sign_in_method"
             })),
         )));
     }

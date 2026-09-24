@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import {
-  messageForAdminUserError,
-  messageForLocalLoginError,
-  messageForOAuthError,
-  sanitizeOAuthDesc,
-} from './authErrorMessages'
+import { messageForOAuthError, sanitizeOAuthDesc } from './oauthErrorMessages'
 
 const t = {
   auth: {
@@ -31,22 +26,6 @@ const t = {
     oauthErrorEmailAlreadyRegistered: 'email already registered msg',
     oauthErrorBrowserTxMismatch: 'browser tx mismatch msg',
     oauthErrorLinkFailed: 'link failed msg',
-    invalidCredentials: 'bad credentials',
-    localLoginDisabled: 'local disabled',
-    rateLimitError: 'retry in {seconds}s',
-    loginFailed: 'login failed',
-  },
-  config: {
-    usersErrorUnlinkLast: 'unlink last',
-    usersErrorDeleteSelf: 'delete self',
-    usersErrorLastAdmin: 'last admin',
-    usersErrorLastAdminDemote: 'last admin demote',
-    usersErrorRevokeSelf: 'revoke self',
-    usersErrorPrimaryAdminDelete: 'primary delete',
-    usersPrimaryAdminOnly: 'primary roles',
-    usersErrorCannotDeleteOwner: 'cannot delete owner',
-    usersErrorCannotDemoteOwner: 'cannot demote owner',
-    usersLocalLoginRequiresOAuth: 'needs oauth',
   },
 } as any
 
@@ -125,89 +104,6 @@ describe('messageForOAuthError', () => {
     assert.match(
       messageForOAuthError('weird_code', null, t, format),
       /weird_code/,
-    )
-  })
-})
-
-describe('messageForLocalLoginError', () => {
-  it('maps credentials and local_login_disabled', () => {
-    assert.equal(
-      messageForLocalLoginError(
-        new Error('Username or password is incorrect'),
-        t,
-        format,
-      ),
-      'bad credentials',
-    )
-    assert.equal(
-      messageForLocalLoginError(new Error('Local login disabled'), t, format),
-      'local disabled',
-    )
-  })
-
-  it('maps rate limit retry seconds', () => {
-    assert.equal(
-      messageForLocalLoginError(
-        new Error('Rate limit exceeded. Please try again in 300 seconds.'),
-        t,
-        format,
-      ),
-      'retry in 300s',
-    )
-  })
-})
-
-describe('messageForAdminUserError', () => {
-  it('maps known admin English errors', () => {
-    assert.equal(
-      messageForAdminUserError(
-        new Error("Cannot unlink the user's only sign-in method"),
-        t,
-        'fallback',
-      ),
-      'unlink last',
-    )
-    assert.equal(
-      messageForAdminUserError(
-        new Error('Cannot delete your own account'),
-        t,
-        'fallback',
-      ),
-      'delete self',
-    )
-    assert.equal(
-      messageForAdminUserError(
-        new Error(
-          'Only the primary administrator (id=1) can change admin roles',
-        ),
-        t,
-        'fallback',
-      ),
-      'primary roles',
-    )
-    assert.equal(
-      messageForAdminUserError(
-        new Error('Only the site owner can change admin roles'),
-        t,
-        'fallback',
-      ),
-      'primary roles',
-    )
-    assert.equal(
-      messageForAdminUserError(
-        new Error('Cannot delete the site owner'),
-        t,
-        'fallback',
-      ),
-      'cannot delete owner',
-    )
-    assert.equal(
-      messageForAdminUserError(
-        new Error('Cannot demote the site owner'),
-        t,
-        'fallback',
-      ),
-      'cannot demote owner',
     )
   })
 })

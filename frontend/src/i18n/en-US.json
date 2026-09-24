@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "An account with this email already exists. Sign in with your original method, then link this provider from account settings.",
     "oauthErrorBrowserTxMismatch": "This sign-in could not be verified in this browser (session mismatch). Start third-party login again from the login page.",
     "oauthErrorLinkFailed": "Could not link this provider. Try again from account settings while signed in.",
-    "invalidCredentials": "Username or password is incorrect.",
-    "localLoginDisabled": "Password login is disabled for this account. Use a linked third-party provider to sign in.",
     "linkSuccess": "Account linked successfully.",
     "linkSuccessProvider": "Linked {provider} successfully.",
     "linkSuccessDetail": "Linked {provider} as {username}.",
@@ -418,9 +416,6 @@
     "emailOptional": "Email (optional)",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "Registration failed",
-    "registerDisabled": "Public registration is off. Ask an administrator to create an account.",
-    "registerSetupRequired": "Finish setup before creating an account.",
-    "usernameTaken": "This username is already in use",
     "registerResponseIncomplete": "Incomplete registration response",
     "usernameRange3to20": "Username must be 3-20 characters",
     "passwordRule": "Password must be at least 8 chars and contain letters and digits"

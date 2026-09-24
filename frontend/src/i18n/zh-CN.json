@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "该邮箱已注册其他账号。请先用原登录方式进入，再在账号设置中绑定此提供商。",
     "oauthErrorBrowserTxMismatch": "无法在当前浏览器确认此次登录（会话不匹配）。请返回登录页重新发起第三方登录。",
     "oauthErrorLinkFailed": "无法绑定此提供商。请在登录后从账号设置重试。",
-    "invalidCredentials": "用户名或密码不正确。",
-    "localLoginDisabled": "此账号已禁用密码登录。请使用已绑定的第三方账号登录。",
     "linkSuccess": "账号绑定成功。",
     "linkSuccessProvider": "已成功绑定 {provider}。",
     "linkSuccessDetail": "已绑定 {provider}（{username}）。",
@@ -418,9 +416,6 @@
     "emailOptional": "邮箱（可选）",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "注册失败",
-    "registerDisabled": "公开注册已关闭，请让管理员创建账号",
-    "registerSetupRequired": "请先完成安装向导再注册",
-    "usernameTaken": "这个用户名已被使用",
     "registerResponseIncomplete": "注册响应不完整",
     "usernameRange3to20": "用户名长度应为 3-20 个字符",
     "passwordRule": "密码至少 8 位，且必须包含字母与数字"

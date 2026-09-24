@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "Tapp が一度に保存しようとしたデータが大きすぎます。",
     "tapp_visibility_invalid": "公開範囲は「全員」か「管理者のみ」を選んでください。",
     "no_fields_to_update": "保存する変更がありません。",
-    "empty_batch": "送信する内容がありません。"
+    "empty_batch": "送信する内容がありません。",
+    "invalid_credentials": "ユーザー名またはパスワードが正しくありません。",
+    "local_login_disabled": "このアカウントではパスワードログインが無効です。連携済みのサードパーティでログインしてください。",
+    "registration_disabled": "公開登録はオフです。管理者にアカウント作成を依頼してください。",
+    "setup_required": "登録する前にセットアップを完了してください。",
+    "username_taken": "このユーザー名は既に使われています",
+    "admin_role_owner_only": "管理者権限の付与・解除はサイト所有者のみ可能です",
+    "admin_delete_owner_only": "管理者アカウントの削除はサイト所有者のみ可能です。",
+    "owner_delete_forbidden": "サイト所有者は削除できません。",
+    "owner_demote_forbidden": "サイト所有者の管理者権限は解除できません。",
+    "owner_install_block_forbidden": "サイト所有者のインストールを禁止できません。"
   }
 }

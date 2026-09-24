@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "該郵箱已註冊其他賬號。請先用原登入方式進入，再在賬號設定中繫結此提供商。",
     "oauthErrorBrowserTxMismatch": "無法在當前瀏覽器確認此次登入（會話不匹配）。請返回登入頁重新發起第三方登入。",
     "oauthErrorLinkFailed": "無法繫結此提供商。請在登入後從賬號設定重試。",
-    "invalidCredentials": "使用者名稱或密碼不正確。",
-    "localLoginDisabled": "此賬號已禁用密碼登入。請使用已繫結的第三方賬號登入。",
     "linkSuccess": "賬號繫結成功。",
     "linkSuccessProvider": "已成功繫結 {provider}。",
     "linkSuccessDetail": "已繫結 {provider}（{username}）。",
@@ -418,9 +416,6 @@
     "emailOptional": "郵箱（可選）",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "註冊失敗",
-    "registerDisabled": "公開註冊已關閉，請讓管理員建立賬號",
-    "registerSetupRequired": "請先完成安裝嚮導再註冊",
-    "usernameTaken": "這個使用者名稱已被使用",
     "registerResponseIncomplete": "註冊響應不完整",
     "usernameRange3to20": "使用者名稱長度應為 3-20 個字元",
     "passwordRule": "密碼至少 8 位，且必須包含字母與數字"

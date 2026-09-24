@@ -400,8 +400,6 @@
     "oauthErrorEmailAlreadyRegistered": "このメールアドレスは既に別のアカウントで登録されています。元の方法でログインし、アカウント設定からこのプロバイダーを連携してください。",
     "oauthErrorBrowserTxMismatch": "このブラウザではログインを確認できませんでした（セッション不一致）。ログインページからサードパーティログインをやり直してください。",
     "oauthErrorLinkFailed": "このプロバイダーを連携できませんでした。ログイン後、アカウント設定から再試行してください。",
-    "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
-    "localLoginDisabled": "このアカウントではパスワードログインが無効です。連携済みのサードパーティでログインしてください。",
     "linkSuccess": "アカウントの連携に成功しました。",
     "linkSuccessProvider": "{provider} の連携に成功しました。",
     "linkSuccessDetail": "{provider} を {username} として連携しました。",
@@ -418,9 +416,6 @@
     "emailOptional": "メールアドレス（任意）",
     "emailPlaceholder": "you@example.com",
     "registerFailed": "登録に失敗しました",
-    "registerDisabled": "公開登録はオフです。管理者にアカウント作成を依頼してください。",
-    "registerSetupRequired": "登録する前にセットアップを完了してください。",
-    "usernameTaken": "このユーザー名は既に使われています",
     "registerResponseIncomplete": "登録レスポンスが不完全です",
     "usernameRange3to20": "ユーザー名は 3〜20 文字で入力してください",
     "passwordRule": "パスワードは 8 文字以上、英数字を含めてください"

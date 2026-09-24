@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "Dieser Tapp wollte zu viele Daten auf einmal speichern.",
     "tapp_visibility_invalid": "Wähle, wer diesen Tapp sieht: alle oder nur Admins.",
     "no_fields_to_update": "Keine Änderungen zum Speichern.",
-    "empty_batch": "Es gab nichts zu senden."
+    "empty_batch": "Es gab nichts zu senden.",
+    "invalid_credentials": "Benutzername oder Passwort ist falsch.",
+    "local_login_disabled": "Passwort-Login ist für dieses Konto aus. Mit einem verknüpften Drittanbieter anmelden.",
+    "registration_disabled": "Öffentliche Registrierung ist aus. Bitten Sie einen Administrator, ein Konto anzulegen.",
+    "setup_required": "Einrichtung abschließen, bevor Sie ein Konto anlegen.",
+    "username_taken": "Dieser Benutzername ist schon vergeben",
+    "admin_role_owner_only": "Nur der Seiteninhaber kann Admin-Rollen vergeben oder entziehen",
+    "admin_delete_owner_only": "Nur der Seiteninhaber kann Administratoren löschen.",
+    "owner_delete_forbidden": "Der Seiteninhaber kann nicht gelöscht werden.",
+    "owner_demote_forbidden": "Der Seiteninhaber kann nicht herabgestuft werden.",
+    "owner_install_block_forbidden": "App-Installationen des Seiteninhabers können nicht gesperrt werden."
   }
 }

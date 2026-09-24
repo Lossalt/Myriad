@@ -620,6 +620,16 @@
     "tapp_storage_too_large": "Tapp이 한 번에 저장하려는 데이터가 너무 커요.",
     "tapp_visibility_invalid": "공개 범위는 ‘모두’ 또는 ‘관리자만’ 중에서 고르세요.",
     "no_fields_to_update": "저장할 변경 사항이 없습니다.",
-    "empty_batch": "보낼 내용이 없습니다."
+    "empty_batch": "보낼 내용이 없습니다.",
+    "invalid_credentials": "사용자 이름 또는 비밀번호가 올바르지 않습니다.",
+    "local_login_disabled": "이 계정은 비밀번호 로그인이 꺼져 있습니다. 연결된 외부 제공자로 로그인하세요.",
+    "registration_disabled": "공개 가입이 꺼져 있습니다. 관리자에게 계정 생성을 요청하세요.",
+    "setup_required": "계정을 만들기 전에 설치를 마치세요.",
+    "username_taken": "이 사용자 이름은 이미 쓰입니다",
+    "admin_role_owner_only": "관리자 역할은 사이트 소유자만 주거나 거둘 수 있습니다",
+    "admin_delete_owner_only": "관리자 삭제는 사이트 소유자만 할 수 있습니다.",
+    "owner_delete_forbidden": "사이트 소유자는 삭제할 수 없습니다.",
+    "owner_demote_forbidden": "사이트 소유자는 강등할 수 없습니다.",
+    "owner_install_block_forbidden": "사이트 소유자의 앱 설치는 막을 수 없습니다."
   }
 }
