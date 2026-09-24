@@ -1690,6 +1690,7 @@ pub async fn generate_portrait(
         .with_producer_key(generation_token.clone()),
         generated,
         "portrait",
+        crate::services::media::MediaExposure::Private,
     )
     .await
     {
@@ -1970,6 +1971,7 @@ pub async fn generate_sticker_avatar(
         .with_producer_key(generation_token.clone()),
         generated,
         "avatar",
+        crate::services::media::MediaExposure::Private,
     )
     .await
     {

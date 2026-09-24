@@ -1040,6 +1040,7 @@ async fn execute_ai_image(
         ),
         generated,
         "generated",
+        crate::services::media::MediaExposure::Public,
     )
     .await
     .map_err(|error| error.to_string())?;
