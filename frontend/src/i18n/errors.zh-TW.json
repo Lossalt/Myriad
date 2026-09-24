@@ -672,6 +672,15 @@
     "playground_admin_required": "Tapp 遊樂場僅管理員可用。請使用管理員賬號登入後再試。",
     "playground_rate_limited": "請求過於頻繁，請稍後再點選重試。",
     "playground_generate_failed": "生成失敗，請稍後重試。",
-    "playground_bad_request": "請求無效。"
+    "playground_bad_request": "請求無效。",
+    "file_too_large": "這個檔案太大了。",
+    "payload_too_large": "這條訊息太大了。",
+    "skill_file_failed": "這個技能檔案沒能更新。",
+    "agent_confirmation_store_failed": "這次確認已經不在了。",
+    "tapp_generate_failed": "應用沒能生成。請再試一次。",
+    "report_load_failed": "報告沒能載入。請再試一次。",
+    "tapp_access_check_failed": "沒能確認這個應用的訪問權限。",
+    "tapp_list_load_failed": "載入應用失敗",
+    "tapp_install_failed": "安裝失敗"
   }
 }

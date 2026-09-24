@@ -672,6 +672,15 @@
     "playground_admin_required": "Tapp プレイグラウンドは管理者のみ利用できます。管理者アカウントでログインしてから再試行してください。",
     "playground_rate_limited": "リクエストが多すぎます。少し待ってから再試行してください。",
     "playground_generate_failed": "生成に失敗しました。もう一度お試しください。",
-    "playground_bad_request": "無効なリクエストです。"
+    "playground_bad_request": "無効なリクエストです。",
+    "file_too_large": "ファイルが大きすぎます。",
+    "payload_too_large": "メッセージが大きすぎます。",
+    "skill_file_failed": "このスキルファイルを更新できませんでした。",
+    "agent_confirmation_store_failed": "この確認はもう使えません。",
+    "tapp_generate_failed": "アプリを生成できませんでした。もう一度お試しください。",
+    "report_load_failed": "レポートを読み込めませんでした。もう一度お試しください。",
+    "tapp_access_check_failed": "Tapp のアクセス権を確認できませんでした。",
+    "tapp_list_load_failed": "アプリの読み込みに失敗しました",
+    "tapp_install_failed": "インストール失敗"
   }
 }

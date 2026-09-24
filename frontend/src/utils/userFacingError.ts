@@ -103,14 +103,8 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return joinParts(t.forbidden, usefulExtra(hint, t.forbidden))
   }
   if (
-    code === 'federation_disabled_region' ||
-    /federation is not supported in this region/i.test(raw) ||
-    /federation is disabled because this server['’]s egress location is mainland china/i.test(
-      raw,
-    ) ||
-    is('text_federation_disabled_in_this_region') ||
-    /^federation is disabled on this instance$/i.test(raw) ||
-    /federation apps cannot be downloaded or installed/i.test(raw)
+    is('federation_disabled_region') ||
+    is('text_federation_disabled_in_this_region')
   ) {
     return t.federationDisabledRegion
   }
@@ -129,13 +123,13 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'permissions_save_failed') {
     return classified(currentCopy().config.permissionsSaveFailed, raw, hint)
   }
-  if (code === 'tapp_save_failed') {
+  if (is('tapp_save_failed')) {
     return classified(t.tappSaveFailed, raw, hint)
   }
-  if (code === 'account_update_failed') {
+  if (is('account_update_failed')) {
     return classified(currentCopy().config.usersUpdateFailed, raw, hint)
   }
-  if (code === 'users_load_failed') {
+  if (is('users_load_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(
       joinParts(currentCopy().config.usersLoadError, action),
@@ -143,7 +137,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       hint,
     )
   }
-  if (code === 'account_delete_failed') {
+  if (is('account_delete_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(
       joinParts(currentCopy().config.usersDeleteFailed, action),
@@ -151,7 +145,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       hint,
     )
   }
-  if (code === 'identity_unlink_failed') {
+  if (is('identity_unlink_failed')) {
     return classified(currentCopy().config.usersUnlinkFailed, raw, hint)
   }
   if (code === 'bad_request') {
@@ -326,29 +320,16 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'no_valid_report') {
     return joinParts(t.noValidReport, usefulExtra(hint, t.noValidReport))
   }
-  if (code === 'file_too_large' || /^file size must be between/i.test(raw)) {
-    return classified(t.fileTooLarge, raw, hint)
-  }
-  if (
-    code === 'payload_too_large' ||
-    /^message payload too large/i.test(raw)
-  ) {
-    return classified(t.payloadTooLarge, raw, hint)
-  }
   if (code === 'TIMEOUT' || status === 408) {
     return joinParts(t.timeout, usefulExtra(hint, t.timeout))
   }
   if (code === 'NETWORK_ERROR' || (status === 0 && reason instanceof ApiError)) {
     return joinParts(t.networkError, usefulExtra(hint, t.networkError))
   }
-  if (code === 'CSRF' || /csrf token/i.test(raw)) {
+  if (code === 'CSRF' || is('csrf_failed')) {
     return joinParts(t.csrfUnavailable, usefulExtra(hint, t.csrfUnavailable))
   }
-  if (
-    code === 'database_error' ||
-    is('text_database_is_not_connected') ||
-    /数据库连接未初始化|数据库未连接/.test(raw)
-  ) {
+  if (code === 'database_error' || is('text_database_is_not_connected')) {
     return joinParts(t.database, usefulExtra(hint, t.database))
   }
   if (code === 'password_too_short') return t.passwordMinLength
@@ -362,126 +343,61 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'session_failed') {
     return joinParts(t.sessionFailed, usefulExtra(hint, t.sessionFailed))
   }
-  if (
-    /^failed to (list sessions|find session|load session messages)/i.test(raw)
-  ) {
+  if (is('agent_session_query_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.agentSessionLoadFailed, action), raw, hint)
   }
-  if (
-    /^failed to (create session|update session|save user message|save assistant message)/i.test(
-      raw,
-    )
-  ) {
+  if (is('agent_session_save_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.agentSessionSaveFailed, action), raw, hint)
   }
-  if (/^failed to archive session/i.test(raw)) {
+  if (is('agent_session_archive_failed')) {
     return classified(t.agentSessionArchiveFailed, raw, hint)
   }
-  if (
-    /^failed to (count persona reports|load persona)/i.test(
-      raw,
-    )
-  ) {
+  if (is('persona_load_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.personaLoadFailed, action), raw, hint)
   }
-  if (
-    /^failed to (begin persona save|save persona|update persona portrait|commit persona save)/i.test(
-      raw,
-    )
-  ) {
+  if (is('persona_save_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.personaSaveFailed, action), raw, hint)
   }
-  if (
-    /^failed to (begin persona delete|delete persona|clear persona portrait|commit persona delete)/i.test(
-      raw,
-    )
-  ) {
+  if (is('persona_delete_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.personaDeleteFailed, action), raw, hint)
   }
-  if (/^failed to load addressee/i.test(raw)) {
+  if (is('addressee_load_failed')) {
     return classified(t.addresseeLoadFailed, raw, hint)
   }
-  if (/^failed to (save addressee|save quiet-hours)/i.test(raw)) {
+  if (is('addressee_save_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.addresseeSaveFailed, action), raw, hint)
   }
-  if (
-    code === 'preset_fetch_failed' ||
-    /^failed to (fetch favorites|fetch history|find preset|check existing preset)/i.test(
-      raw,
-    )
-  ) {
+  if (is('preset_fetch_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.presetLoadFailed, action), raw, hint)
   }
-  if (
-    code === 'preset_update_failed' ||
-    /^failed to (create preset|update preset|toggle favorite)/i.test(raw)
-  ) {
+  if (is('preset_update_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.presetSaveFailed, action), raw, hint)
   }
-  if (/^failed to delete preset/i.test(raw)) {
+  if (is('preset_delete_failed')) {
     return classified(t.presetDeleteFailed, raw, hint)
   }
-  if (
-    code === 'account_load_failed' ||
-    /^failed to (look up account|load current user|check existing admin|check username|read installation claim|read user data)/i.test(
-      raw,
-    )
-  ) {
+  if (is('account_load_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.accountLoadFailed, action), raw, hint)
   }
-  if (
-    /^failed to (begin admin setup|lock admin setup|create admin account)/i.test(
-      raw,
-    )
-  ) {
+  if (is('account_save_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.accountSaveFailed, action), raw, hint)
   }
-  if (/^failed to (change password|set password)/i.test(raw)) {
+  if (is('password_change_failed')) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.passwordChangeFailed, action), raw, hint)
   }
-  if (/^failed to update local login/i.test(raw)) {
+  if (is('local_login_save_failed')) {
     return classified(t.localLoginSaveFailed, raw, hint)
-  }
-  if (
-    /^failed to (check owner|list users|list user identities|find user|list user apps|count admins|count identities|load identity)/i.test(
-      raw,
-    )
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(
-      joinParts(currentCopy().config.usersLoadError, action),
-      raw,
-      hint,
-    )
-  }
-  if (/^failed to update user/i.test(raw)) {
-    return classified(currentCopy().config.usersUpdateFailed, raw, hint)
-  }
-  if (/^failed to unlink identity/i.test(raw)) {
-    return classified(currentCopy().config.usersUnlinkFailed, raw, hint)
-  }
-  if (
-    /^failed to (begin user delete|cleanup user data|delete user|rollback user delete|commit user delete)/i.test(
-      raw,
-    )
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(
-      joinParts(currentCopy().config.usersDeleteFailed, action),
-      raw,
-      hint,
-    )
   }
   if (code === 'account_create_failed') {
     return joinParts(
@@ -502,17 +418,17 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('ai_response_invalid')) {
     return joinParts(t.aiResponseInvalid, usefulExtra(hint, t.aiResponseInvalid))
   }
+  // uncoded: agent step errors are plain strings with no code field
+  // (ai_process.rs ai_step_failed, ui_control.rs / execute_step.rs classify_outbound_fetch).
   if (
-    /^(annotation generation|podcast script generation|smart filter|content comparison|prompt generation|translation|code explanation|ai abstraction|skill ai generation|skill ai planning|ui analysis) failed/i.test(
+    /^(annotation generation|podcast script generation|smart filter|content comparison|prompt generation|translation|code explanation|ai abstraction|skill ai planning|ui analysis) failed/i.test(
       raw,
-    ) ||
-    /^failed to parse skill ai json/i.test(raw)
+    )
   ) {
     const action =
       raw.match(
-        /^(annotation generation|podcast script generation|smart filter|content comparison|prompt generation|translation|code explanation|ai abstraction|skill ai generation|skill ai planning|ui analysis)/i,
-      )?.[1] ||
-      (/parse skill ai json/i.test(raw) ? 'skill AI JSON' : '')
+        /^(annotation generation|podcast script generation|smart filter|content comparison|prompt generation|translation|code explanation|ai abstraction|skill ai planning|ui analysis)/i,
+      )?.[1] || ''
     const status = raw.match(/\bHTTP\s+(\d{3})\b/i)
     const colon = raw.indexOf(':')
     const rest = colon >= 0 ? raw.slice(colon + 1).trim() : ''
@@ -529,29 +445,12 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   }
   if (
     is('ai_generation_failed') ||
-    /^ai error:/i.test(raw) ||
+    // uncoded: Gemini client strings carrying the provider's status/body
+    // (gemini_media.rs GeminiMediaError, analyzer/client.rs).
     /^gemini api /i.test(raw) ||
     /invalid gemini json/i.test(raw)
   ) {
     return joinParts(t.aiGenerationFailed, usefulExtra(hint, t.aiGenerationFailed))
-  }
-  if (/skill improvement on cooldown/i.test(raw)) {
-    const wait = raw.match(/(\d+) seconds remaining/i)?.[1]
-    return joinParts(
-      t.skillCooldown,
-      wait ? `${wait}s` : '',
-      usefulExtra(hint, t.skillCooldown),
-    )
-  }
-  if (/^invalid skill file format/i.test(raw)) {
-    return t.skillFileInvalid
-  }
-  if (
-    /^failed to (backup|read|write|replace) skill/i.test(raw) ||
-    /^failed to (create skill trash directory|move skill to trash)/i.test(raw) ||
-    /^skill file missing/i.test(raw)
-  ) {
-    return classified(t.skillFileFailed, raw, hint)
   }
   if (code === 'settings_backup_failed') {
     return joinParts(
@@ -560,6 +459,9 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     )
   }
   if (
+    // uncoded: package validation strings reach the client through the
+    // ApiResponse envelope (myriad-tapp-rules prepared.rs, tapp_store
+    // prepared_package.rs), plus TappRuntime.ts's own manifest check.
     /^invalid tapp archive/i.test(raw) ||
     /^invalid manifest(\.json)?/i.test(raw) ||
     /invalid \.tapp file/i.test(raw) ||
@@ -573,13 +475,10 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'steering_unavailable') {
     return classified(t.agentSteeringFailed, raw, hint)
   }
-  if (code === 'dnd_schedule_invalid' || /invalid do-not-disturb/i.test(raw)) {
+  if (code === 'dnd_schedule_invalid') {
     return t.dndScheduleInvalid
   }
-  if (
-    code === 'dnd_schedule_incomplete' ||
-    /set both start and end, or clear both/i.test(raw)
-  ) {
+  if (code === 'dnd_schedule_incomplete') {
     return t.dndScheduleIncomplete
   }
   if (code === 'merope_disabled') {
@@ -594,8 +493,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     code === 'GUEST_LAYOUT_READONLY' ||
     code === 'TAPP_PERMISSION_NOT_GRANTED' ||
     code === 'site_owner_required' ||
-    code === 'admin_required' ||
-    /guests cannot /i.test(raw)
+    code === 'admin_required'
   ) {
     return t.forbidden
   }
@@ -614,12 +512,14 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('hitokoto_fetch_failed')) {
     return currentCopy().config.hitokotoLoadFailed
   }
+  // uncoded: agent step errors (handlers/external.rs reqwest_fetch_error /
+  // display_fetch_error) and fetcher errors (fetcher/platforms_core.rs) that
+  // embed the provider's reply.
   if (
     /failed to fetch (hitokoto|bilibili|bangumi|steam|weather|netease|game details)/i.test(
       raw,
     ) ||
-    /^(bilibili|bangumi|weather|netease|steam) api error/i.test(raw) ||
-    /获取\s*(Steam|Bilibili|Bangumi|Hitokoto|天气|网易)/i.test(raw)
+    /^(bilibili|bangumi|weather|netease|steam) api error/i.test(raw)
   ) {
     const name = /hitokoto/i.test(raw)
       ? 'Hitokoto'
@@ -629,9 +529,9 @@ export function userFacingError(reason: unknown, fallback?: string): string {
           ? 'Bangumi'
           : /steam|game details/i.test(raw)
             ? 'Steam'
-            : /weather|天气/i.test(raw)
+            : /weather/i.test(raw)
               ? 'Weather'
-              : /netease|网易/i.test(raw)
+              : /netease/i.test(raw)
                 ? 'Netease'
                 : 'Platform'
     const label = fill(t.platformNamedFetchFailed, { name })
@@ -648,6 +548,9 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, label, keep, http),
     )
   }
+  // uncoded: platform cache strings name the platform (platform_cache.rs
+  // platform_cache_read_failed, data_read/platform.rs, ai_process.rs /
+  // catalog.rs "No data available for platform").
   if (
     /^no cached \w+ data/i.test(raw) ||
     /^no data available for platform:/i.test(raw) ||
@@ -663,10 +566,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, t.platformCacheMissing),
     )
   }
-  if (
-    /^failed to (read|parse) \w+ data/i.test(raw) ||
-    /^failed to (read|parse) cache/i.test(raw)
-  ) {
+  if (/^failed to (read|parse) \w+ data/i.test(raw)) {
     const found = raw.match(/^failed to (?:read|parse) (\w+) data/i)?.[1] || 'platform'
     const name = `${found.charAt(0).toUpperCase()}${found.slice(1)}`
     return classified(
@@ -675,6 +575,8 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       hint,
     )
   }
+  // uncoded: outbound HTTP strings from agent steps (handlers/external.rs),
+  // the Tapp declared-API proxy (tapp_api_service.rs) and myriad-outbound.
   if (
     /^http request failed/i.test(raw) ||
     /^request failed(:|$)/i.test(raw) ||
@@ -696,125 +598,29 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return classified(t.aiResponseInvalid, raw, hint)
   }
-  if (/^failed to (consume|persist|load) confirmation/i.test(raw)) {
-    return classified(t.agentConfirmMissing, raw, hint)
-  }
-  if (
-    /persist tapp interaction wait/i.test(raw) ||
-    /failed to (create tapp staging|activate staged)/i.test(raw) ||
-    (/tapp/i.test(raw) &&
-      /storage is not writable|not enough disk space/i.test(raw))
-  ) {
-    return classified(t.tappSaveFailed, raw, hint)
-  }
-  if (/^failed to serialize manifest/i.test(raw)) {
-    return classified(currentCopy().tapp.installFailed, raw, hint)
-  }
-  if (/^tapp generation failed/i.test(raw)) {
-    return classified(t.tappGenerateFailed, raw, hint)
-  }
-  if (/^failed to fetch tapps/i.test(raw)) {
-    return classified(currentCopy().tapp.loadAppFailed, raw, hint)
-  }
-  if (
-    /^failed to (load|list) (the )?app list/i.test(raw) ||
-    /failed to load site tapp catalog/i.test(raw)
-  ) {
-    return joinParts(
-      currentCopy().tapp.listLoadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().tapp.listLoadFailed),
-    )
-  }
-  if (code === 'tapp_already_installed' || /tapp \S+ is already installed/i.test(raw)) {
+  if (code === 'tapp_already_installed') {
     return currentCopy().tapp.alreadyInstalled
   }
-  if (
-    /tapp \S+ is not installed/i.test(raw) ||
-    /tapp \S+ is already being uninstalled/i.test(raw)
-  ) {
+  if (code === 'tapp_not_installed') {
     return currentCopy().tapp.appNotExist
   }
-  if (/tapp \S+ requires permission reauthorization/i.test(raw)) {
-    return currentCopy().tapp.reauthorizationMessage
-  }
   if (
-    /^failed to save (to cloud|window schemes)/i.test(raw)
+    is('REPORT_CREATE_FAILED') ||
+    is('REPORT_UPDATE_FAILED') ||
+    is('REPORT_DELETE_FAILED')
   ) {
-    return joinParts(
-      currentCopy().tapp.schemeSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().tapp.schemeSaveFailed),
-    )
-  }
-  if (/^failed to save dashboard layout/i.test(raw)) {
-    return joinParts(
-      t.dashboardLayoutSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.dashboardLayoutSaveFailed),
-    )
-  }
-  if (/^failed to save dashboard title/i.test(raw)) {
-    return joinParts(
-      t.dashboardTitleSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.dashboardTitleSaveFailed),
-    )
-  }
-  if (/^failed to save custom platforms/i.test(raw)) {
-    return joinParts(
-      t.customPlatformsSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.customPlatformsSaveFailed),
-    )
-  }
-  if (/^failed to save control panel/i.test(raw)) {
-    return joinParts(
-      t.controlPanelSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.controlPanelSaveFailed),
-    )
-  }
-  if (/^failed to save title style/i.test(raw)) {
-    return joinParts(
-      t.titleStyleSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.titleStyleSaveFailed),
-    )
-  }
-  if (/^failed to save widget theme/i.test(raw)) {
-    return joinParts(
-      t.widgetThemeSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.widgetThemeSaveFailed),
-    )
-  }
-  if (
-    /^failed to list agent reports/i.test(raw) ||
-    /^failed to (load|fetch) reports?/i.test(raw)
-  ) {
-    return classified(t.reportLoadFailed, raw, hint)
-  }
-  if (/^failed to (create|update|delete) report/i.test(raw)) {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.reportSaveFailed, action), raw, hint)
-  }
-  if (
-    code === 'tapp_access_check_failed' ||
-    /^failed to verify tapp access/i.test(raw)
-  ) {
-    return classified(t.tappAccessCheckFailed, raw, hint)
   }
   if (code === 'tapp_not_found') {
     return classified(t.tappFindFailed, raw, hint)
   }
-  if (
-    code === 'TAPP_CREDENTIAL_LOAD_FAILED' ||
-    /^failed to load (shortcuts|components|tapp credentials)/i.test(raw)
-  ) {
+  if (code === 'TAPP_CREDENTIAL_LOAD_FAILED') {
     const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
     return classified(joinParts(t.tappResourceLoadFailed, action), raw, hint)
   }
+  // uncoded: image cache strings travel inside media / AI task errors
+  // (image_cache.rs cache_io_error, data_paths.rs storage_error).
   if (/^image too large/i.test(raw)) {
     return classified(t.imageTooLarge, raw, hint)
   }

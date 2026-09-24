@@ -16,8 +16,7 @@ use super::{
     cleanup_reinstall_orphans, current_user_role, ensure_tapp_install_allowed,
     filter_install_permissions, get_admin_user_id, installation_conflict_owner_ids,
     lock_tapp_lifecycle, log_install_failure, log_tapp_filesystem_access,
-    reconcile_manifest_widgets, tapp_dir_for, tapp_filesystem_error_message,
-    tapp_filesystem_error_status, validate_tapp_id,
+    reconcile_manifest_widgets, tapp_dir_for, tapp_filesystem_http_error, validate_tapp_id,
 };
 use axum::{
     Extension, Json,
@@ -378,10 +377,7 @@ async fn install_prepared_package(
                 Some(&final_tapp_dir),
                 &error,
             );
-            api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to create Tapp staging directory", &error),
-            )
+            tapp_filesystem_http_error("Failed to create Tapp staging directory", &error)
         })?;
     let tapp_dir = stage.path();
     let now = Utc::now().fixed_offset();
@@ -487,9 +483,9 @@ async fn install_prepared_package(
                 Some(&final_tapp_dir),
                 &error,
             );
-            return Err(api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to activate staged Tapp", &error),
+            return Err(tapp_filesystem_http_error(
+                "Failed to activate staged Tapp",
+                &error,
             ));
         }
     };
@@ -931,13 +927,7 @@ pub(super) async fn update_tapp(
                 Some(&final_tapp_dir),
                 &error,
             );
-            api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message(
-                    "Failed to create Tapp update staging directory",
-                    &error,
-                ),
-            )
+            tapp_filesystem_http_error("Failed to create Tapp update staging directory", &error)
         })?;
     let tapp_dir = stage.path();
     let now = Utc::now().fixed_offset();
@@ -997,9 +987,9 @@ pub(super) async fn update_tapp(
                 %error,
                 "Tapp update activate failed"
             );
-            return Err(api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to activate staged Tapp update", &error),
+            return Err(tapp_filesystem_http_error(
+                "Failed to activate staged Tapp update",
+                &error,
             ));
         }
     };

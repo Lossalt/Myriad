@@ -672,6 +672,15 @@
     "playground_admin_required": "Tapp Playground is admin-only. Sign in with an administrator account and try again.",
     "playground_rate_limited": "Too many requests. Wait a moment, then press Retry.",
     "playground_generate_failed": "Generation failed. Please try again.",
-    "playground_bad_request": "Invalid request."
+    "playground_bad_request": "Invalid request.",
+    "file_too_large": "That file is too large.",
+    "payload_too_large": "That message is too large.",
+    "skill_file_failed": "Could not update this skill file.",
+    "agent_confirmation_store_failed": "This confirmation is no longer available.",
+    "tapp_generate_failed": "Could not generate the app. Try again.",
+    "report_load_failed": "Could not load reports. Try again.",
+    "tapp_access_check_failed": "Could not verify Tapp access.",
+    "tapp_list_load_failed": "Failed to load app",
+    "tapp_install_failed": "Installation failed"
   }
 }

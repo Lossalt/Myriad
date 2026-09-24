@@ -2,6 +2,7 @@
 use super::*;
 use crate::error::HttpError;
 use crate::services::agent::heartbeat::{is_reserved_heartbeat_task, reserved_heartbeat_error};
+use crate::services::agent::skill_evolution::SkillDeleteError;
 
 fn reject_reserved_heartbeat(task_id: &str) -> Result<(), HttpError> {
     if is_reserved_heartbeat_task(task_id) {
@@ -516,7 +517,14 @@ pub(crate) async fn delete_skill(
 
     evo.delete_skill(&skill_id)
         .await
-        .map_err(|e| HttpError::from((StatusCode::BAD_REQUEST, Json(AppError::public_json(e)))))?;
+        .map_err(|error| match error {
+            SkillDeleteError::Rejected(label) => {
+                HttpError::from((StatusCode::BAD_REQUEST, Json(AppError::public_json(label))))
+            }
+            SkillDeleteError::File(label) => {
+                HttpError(AppError::bad_request(label).with_code("skill_file_failed"))
+            }
+        })?;
 
     Ok(Json(json!({ "success": true })))
 }

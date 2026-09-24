@@ -31,6 +31,11 @@ type RuntimeEvent =
 
 type RuntimeEventCallback = (data: unknown) => void
 
+/** Runtime refusals carry a code so callers can word them without reading the text. */
+function runtimeError(message: string, code: string): Error {
+  return Object.assign(new Error(message), { code })
+}
+
 function samePermissions(
   left: TappPermission[],
   right: TappPermission[],
@@ -326,7 +331,7 @@ export class TappRuntime {
     }
 
     if (this.installedTapps.has(manifest.id)) {
-      throw new Error(`Tapp ${manifest.id} is already installed`)
+      throw runtimeError(`Tapp ${manifest.id} is already installed`, 'tapp_already_installed')
     }
 
     this.assertActive()
@@ -372,10 +377,10 @@ export class TappRuntime {
   ): Promise<void> {
     const instance = this.installedTapps.get(tappId)
     if (!instance) {
-      throw new Error(`Tapp ${tappId} is not installed`)
+      throw runtimeError(`Tapp ${tappId} is not installed`, 'tapp_not_installed')
     }
     if (this.uninstallingTapps.has(tappId)) {
-      throw new Error(`Tapp ${tappId} is already being uninstalled`)
+      throw runtimeError(`Tapp ${tappId} is already being uninstalled`, 'tapp_not_installed')
     }
     this.uninstallingTapps.add(tappId)
 
@@ -419,13 +424,16 @@ export class TappRuntime {
     return this.enqueueLifecycleTransition(tappId, async () => {
       const instance = this.installedTapps.get(tappId)
       if (!instance) {
-        throw new Error(`Tapp ${tappId} is not installed`)
+        throw runtimeError(`Tapp ${tappId} is not installed`, 'tapp_not_installed')
       }
       if (this.uninstallingTapps.has(tappId)) {
-        throw new Error(`Tapp ${tappId} is being uninstalled`)
+        throw runtimeError(`Tapp ${tappId} is being uninstalled`, 'tapp_not_installed')
       }
       if (instance.needsReauthorization) {
-        throw new Error(`Tapp ${tappId} requires permission reauthorization`)
+        throw runtimeError(
+          `Tapp ${tappId} requires permission reauthorization`,
+          'tapp_reauthorization_required',
+        )
       }
 
       if (this.runningTapps.has(tappId)) return
@@ -518,7 +526,7 @@ export class TappRuntime {
     return this.enqueueLifecycleTransition(tappId, async () => {
       const instance = this.installedTapps.get(tappId)
       if (!instance) {
-        throw new Error(`Tapp ${tappId} is not installed`)
+        throw runtimeError(`Tapp ${tappId} is not installed`, 'tapp_not_installed')
       }
 
       if (!this.runningTapps.has(tappId)) return
@@ -581,7 +589,7 @@ export class TappRuntime {
   ): Promise<RegisteredWidget> {
     const instance = this.installedTapps.get(tappId)
     if (!instance) {
-      throw new Error(`Tapp ${tappId} is not installed`)
+      throw runtimeError(`Tapp ${tappId} is not installed`, 'tapp_not_installed')
     }
 
     if (!instance.grantedPermissions.includes('widget:register')) {
@@ -659,7 +667,7 @@ export class TappRuntime {
   registerPlatform(tappId: string, config: CustomPlatformConfig): void {
     const instance = this.installedTapps.get(tappId)
     if (!instance) {
-      throw new Error(`Tapp ${tappId} is not installed`)
+      throw runtimeError(`Tapp ${tappId} is not installed`, 'tapp_not_installed')
     }
 
     if (!instance.grantedPermissions.includes('platform:register')) {

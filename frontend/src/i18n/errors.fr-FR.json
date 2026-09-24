@@ -672,6 +672,15 @@
     "playground_admin_required": "L’atelier Tapp est réservé aux administrateurs. Connectez-vous avec un compte administrateur et réessayez.",
     "playground_rate_limited": "Trop de requêtes. Attendez un instant, puis appuyez sur Réessayer.",
     "playground_generate_failed": "La génération a échoué. Réessayez.",
-    "playground_bad_request": "Requête invalide."
+    "playground_bad_request": "Requête invalide.",
+    "file_too_large": "Ce fichier est trop grand.",
+    "payload_too_large": "Ce message est trop grand.",
+    "skill_file_failed": "Impossible de mettre à jour ce fichier de compétence.",
+    "agent_confirmation_store_failed": "Cette confirmation n’est plus disponible.",
+    "tapp_generate_failed": "Impossible de générer l’application. Réessayez.",
+    "report_load_failed": "Impossible de charger les rapports. Réessayez.",
+    "tapp_access_check_failed": "Impossible de vérifier l’accès Tapp.",
+    "tapp_list_load_failed": "Impossible de charger l’application",
+    "tapp_install_failed": "L’installation a échoué"
   }
 }

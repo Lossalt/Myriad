@@ -356,6 +356,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "CSRF token not found",
+                "code": "csrf_failed",
                 "message": "No CSRF token found for this session. Please refresh the page."
             })),
         )
@@ -377,6 +378,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "CSRF token missing",
+                "code": "csrf_failed",
                 "message": "X-CSRF-Token header is required for state-changing operations"
             })),
         )
@@ -397,6 +399,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "CSRF token expired",
+                    "code": "csrf_failed",
                     "message": "Please refresh the page and try again"
                 })),
             )
@@ -408,6 +411,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "CSRF token invalid",
+                    "code": "csrf_failed",
                     "message": "Invalid CSRF token. Please refresh the page and try again."
                 })),
             )
@@ -468,6 +472,7 @@ pub async fn get_csrf_token(headers: HeaderMap) -> impl IntoResponse {
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": "CSRF token unavailable",
+                "code": "csrf_failed",
                 "message": "CSRF token signing is not configured"
             })),
         )

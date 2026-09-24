@@ -643,19 +643,25 @@ impl SkillEvolution {
     /// 手动删除一个 Agent 生成的 Skill（不允许删除 manual Skill）
     ///
     /// 软删除：移动到 skills/_trash/，不物理抹除。
-    pub async fn delete_skill(&self, skill_id: &str) -> Result<(), String> {
-        let registry = get_skill_registry().ok_or("Skill registry not initialized")?;
+    pub async fn delete_skill(&self, skill_id: &str) -> Result<(), SkillDeleteError> {
+        let registry = get_skill_registry().ok_or_else(|| {
+            SkillDeleteError::Rejected("Skill registry not initialized".to_string())
+        })?;
         let skill = registry
             .get(skill_id)
             .await
-            .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+            .ok_or_else(|| SkillDeleteError::Rejected(format!("Skill not found: {}", skill_id)))?;
 
         if skill.origin == SkillOrigin::Manual {
-            return Err("Cannot delete manual skills".to_string());
+            return Err(SkillDeleteError::Rejected(
+                "Cannot delete manual skills".to_string(),
+            ));
         }
 
         if skill.file_path.exists() {
-            soft_delete_skill_file(&skill).await?;
+            soft_delete_skill_file(&skill)
+                .await
+                .map_err(SkillDeleteError::File)?;
         }
 
         // 清理统计
@@ -677,6 +683,15 @@ impl SkillEvolution {
         );
         Ok(())
     }
+}
+
+/// Why a manual skill delete did not happen.
+#[derive(Debug)]
+pub enum SkillDeleteError {
+    /// The skill cannot be deleted: unknown, manual, or the registry is not ready.
+    Rejected(String),
+    /// Moving the skill file into the trash failed.
+    File(String),
 }
 
 /// 将 skill 文件移入 `skills/_trash/`（带时间戳前缀），避免物理删除无法恢复。

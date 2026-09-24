@@ -672,6 +672,15 @@
     "playground_admin_required": "Tapp 游乐场仅管理员可用。请使用管理员账号登录后再试。",
     "playground_rate_limited": "请求过于频繁，请稍后再点击重试。",
     "playground_generate_failed": "生成失败，请稍后重试。",
-    "playground_bad_request": "请求无效。"
+    "playground_bad_request": "请求无效。",
+    "file_too_large": "这个文件太大了。",
+    "payload_too_large": "这条消息太大了。",
+    "skill_file_failed": "这个技能文件没能更新。",
+    "agent_confirmation_store_failed": "这次确认已经不在了。",
+    "tapp_generate_failed": "应用没能生成。请再试一次。",
+    "report_load_failed": "报告没能加载。请再试一次。",
+    "tapp_access_check_failed": "没能确认这个应用的访问权限。",
+    "tapp_list_load_failed": "加载应用失败",
+    "tapp_install_failed": "安装失败"
   }
 }
