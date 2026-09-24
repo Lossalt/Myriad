@@ -56,18 +56,16 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
     };
 
     let store = IntentStore::new(db.clone());
-    // CAS Accepted → Running first so concurrent ticks do not create empty sessions.
-    store
-        .transition(
-            &intent.id,
-            intent.user_id,
-            IntentStatus::Running,
-            None,
-            None,
-            None,
-        )
+    // CAS Accepted → Running first so concurrent ticks do not create empty
+    // sessions, and only while the source is still autonomy: a user who
+    // accepted the card in the meantime owns it and runs it with their input.
+    if !store
+        .claim_for_autonomy(&intent.id, intent.user_id)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(());
+    }
 
     let session_id = match ensure_session(
         db,
