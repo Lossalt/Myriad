@@ -501,13 +501,13 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 {
                     let db = db.clone();
                     let dyn_cfg = GLOBAL_DYNAMIC_CONFIG.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(900)).await;
-                        let mut interval =
-                            tokio::time::interval(std::time::Duration::from_secs(86400));
-                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                        loop {
-                            interval.tick().await;
+                    let every = services::jobs::Every::new(std::time::Duration::from_secs(86400))
+                        .after(std::time::Duration::from_secs(900))
+                        .jitter(std::time::Duration::from_secs(60));
+                    services::jobs::jobs().periodic("private tapp prune", every, move || {
+                        let db = db.clone();
+                        let dyn_cfg = dyn_cfg.clone();
+                        async move {
                             let (mode, days) = {
                                 let cfg = dyn_cfg.read().await;
                                 let mode =
@@ -518,7 +518,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                                 (mode, days)
                             };
                             if mode != "inactivity" {
-                                continue;
+                                return;
                             }
                             match api::tapp_store::prune_stale_private_tapps(&db, days).await {
                                 Ok(n) if n > 0 => {

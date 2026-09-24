@@ -255,200 +255,180 @@ pub(crate) async fn start_unified_server(
         })
     };
 
-    // Spawn background task to clean up old tasks (防止内存泄漏)
-    tokio::spawn(async {
-        let mut cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 每5分钟
-        loop {
-            cleanup_interval.tick().await;
+    let jobs = services::jobs::jobs();
+    // 防止内存泄漏：每 5 分钟清理已结束的后台任务记录。
+    jobs.periodic(
+        "background task cleanup",
+        services::jobs::Every::new(std::time::Duration::from_secs(300)),
+        || async {
             services::background_processor::BACKGROUND_PROCESSOR
                 .cleanup_old_tasks()
                 .await;
             tracing::info!("🧹 Background task cleanup completed");
-        }
-    });
+        },
+    );
 
-    // Spawn background task to monitor for config reload
-    tokio::spawn(async move {
-        let mut check_interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
-        loop {
-            check_interval.tick().await;
-
-            if api::system::is_config_reload_requested() {
-                tracing::info!("🔄 Configuration reload detected");
-                api::system::reset_config_reload_flag();
-
-                // Reload .env (cwd), then durable DATA_DIR/site_public.env last so
-                // Docker volume site domain / CORS outlives compose-injected env.
-                // Without this, CONFIG_RELOAD would re-read compose .env and wipe
-                // the hot CORS allowlist written by site_domain.
-                let env_path = std::path::PathBuf::from(".env");
-                if let Err(e) = dotenvy::from_path_override(&env_path) {
-                    tracing::warn!("⚠️ Failed to reload .env file: {}", e);
-                } else {
-                    tracing::info!("♻️ Environment variables reloaded from .env");
-                }
-                api::site_domain::load_durable_site_public_env();
-
-                match AppConfig::from_env() {
-                    Ok(new_config) => {
-                        let previous_database_url =
-                            GLOBAL_CONFIG.read().await.database_url.clone();
-                        // Update global config FIRST for hot-reload
-                        *GLOBAL_CONFIG.write().await = new_config.clone();
-                        tracing::info!(
-                            "♻️ Global configuration updated - AI API settings now live!"
-                        );
-                        // Re-sync HTTP CorsLayer from env after durable overlay
-                        // (load_durable already set cors_runtime when file exists).
-                        if let Ok(cors) = std::env::var("CORS_ORIGINS") {
-                            crate::middleware::cors_runtime::set_cors_origins_csv(&cors);
-                        }
-
-                        let reconnect =
-                            api::system::database_target_changed(
-                                &previous_database_url,
-                                &new_config.database_url,
-                            );
-                        if !reconnect {
-                            tracing::info!(
-                                "♻️ Database target unchanged; skipping reconnect"
-                            );
-                            if let Ok(db) = services::tapp_registry::database() {
-                                let config_service = ConfigService::new(db);
-                                match config_service.load_config().await {
-                                    Ok(dynamic_config) => {
-                                        *GLOBAL_DYNAMIC_CONFIG.write().await = dynamic_config;
-                                        tracing::info!(
-                                            "✅ Dynamic configuration reloaded from database"
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "⚠️  Failed to reload dynamic config: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                services::oauth::registry::REGISTRY.reload().await;
-                            }
-                        } else {
-                            match db::connection::establish_connection(&new_config.database_url)
-                                .await
-                            {
-                                Ok(db) => {
-                                    tracing::info!("✅ Database connection established!");
-
-                                    match api::tapp_store::recover_tapp_filesystem_state(&db).await
-                                    {
-                                        Ok(0) => {}
-                                        Ok(count) => tracing::warn!(
-                                            count,
-                                            "Recovered interrupted Tapp filesystem transactions"
-                                        ),
-                                        Err(error) => tracing::error!(
-                                            %error,
-                                            "Failed to inspect Tapp filesystem transaction state"
-                                        ),
-                                    }
-
-                                    // Update process DB for health checks + background services
-                                    services::tapp_registry::set_process_database(db.clone());
-
-                                    // Reload dynamic configuration from database
-                                    let config_service = ConfigService::new(db);
-                                    match config_service.load_config().await {
-                                        Ok(dynamic_config) => {
-                                            *GLOBAL_DYNAMIC_CONFIG.write().await = dynamic_config;
-                                            tracing::info!(
-                                                "✅ Dynamic configuration reloaded from database"
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "⚠️  Failed to reload dynamic config: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-
-                                    // Reload OAuth provider registry from new dynamic config
-                                    services::oauth::registry::REGISTRY.reload().await;
-
-                                    // Route table + full-mode workers are built only at process
-                                    // start. Clearing CONFIG_MODE without rebuild claims "full
-                                    // APIs" on a setup-only Router — exit for supervisor restart.
-                                    let was_config_mode = CONFIG_MODE.load(Ordering::Relaxed);
-                                    if was_config_mode {
-                                        tracing::info!(
-                                            "🔁 Database became available while serving the CONFIG_MODE route table; scheduling process restart for full routes"
-                                        );
-                                        api::setup::schedule_setup_restart();
-                                    } else {
-                                        tracing::info!(
-                                            "♻️ Runtime configuration / database handle reloaded (route table unchanged)"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "❌ Database connection failed after reload: {}",
-                                        e
-                                    );
-                                    tracing::info!("🔧 Staying in configuration mode");
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to reload configuration: {}", e);
-                    }
-                }
-            }
-        }
-    });
+    // Monitor for config reload.
+    jobs.periodic(
+        "config reload watch",
+        services::jobs::Every::new(std::time::Duration::from_secs(2)),
+        reload_config_if_requested,
+    );
 
     // 每 60s 探测数据库与存储，并写回 /health 快照。
     // A failed probe is only reported. The pool reconnects by itself; swapping
     // in a new pool would split the process across pools (schedulers and
     // listeners keep the old one) and leak the old pool's connections.
-    tokio::spawn(async {
-        let mut health_check_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-        loop {
-            health_check_interval.tick().await;
-
-            match services::tapp_registry::database() {
-                Ok(db) => {
-                    if crate::db::health::probe_database(&db).await {
-                        tracing::debug!("💚 Database health check passed");
-                    } else {
-                        tracing::error!("❌ Database health check failed");
-                    }
-                }
-                _ => {
-                    crate::db::health::record_db_probe(false, false);
-                }
-            }
-
-            match tokio::task::spawn_blocking(
-                crate::services::data_paths::verify_runtime_storage_writable,
-            )
-            .await
-            {
-                Ok(Ok(())) => crate::db::health::record_storage_writable(true),
-                Ok(Err(e)) => {
-                    crate::db::health::record_storage_writable(false);
-                    tracing::error!("❌ Storage writability probe failed: {}", e);
-                }
-                Err(e) => {
-                    crate::db::health::record_storage_writable(false);
-                    tracing::error!("❌ Storage writability probe join failed: {}", e);
-                }
-            }
-        }
-    });
+    jobs.periodic(
+        "health probe",
+        services::jobs::Every::new(std::time::Duration::from_secs(60)),
+        probe_health,
+    );
 
     // Start server with the app (convert to service within start_server)
     start_server(config, app).await
+}
+
+async fn reload_config_if_requested() {
+    if !api::system::is_config_reload_requested() {
+        return;
+    }
+    tracing::info!("🔄 Configuration reload detected");
+    api::system::reset_config_reload_flag();
+
+    // Reload .env (cwd), then durable DATA_DIR/site_public.env last so
+    // Docker volume site domain / CORS outlives compose-injected env.
+    // Without this, CONFIG_RELOAD would re-read compose .env and wipe
+    // the hot CORS allowlist written by site_domain.
+    let env_path = std::path::PathBuf::from(".env");
+    if let Err(e) = dotenvy::from_path_override(&env_path) {
+        tracing::warn!("⚠️ Failed to reload .env file: {}", e);
+    } else {
+        tracing::info!("♻️ Environment variables reloaded from .env");
+    }
+    api::site_domain::load_durable_site_public_env();
+
+    match AppConfig::from_env() {
+        Ok(new_config) => {
+            let previous_database_url = GLOBAL_CONFIG.read().await.database_url.clone();
+            // Update global config FIRST for hot-reload
+            *GLOBAL_CONFIG.write().await = new_config.clone();
+            tracing::info!("♻️ Global configuration updated - AI API settings now live!");
+            // Re-sync HTTP CorsLayer from env after durable overlay
+            // (load_durable already set cors_runtime when file exists).
+            if let Ok(cors) = std::env::var("CORS_ORIGINS") {
+                crate::middleware::cors_runtime::set_cors_origins_csv(&cors);
+            }
+
+            let reconnect = api::system::database_target_changed(
+                &previous_database_url,
+                &new_config.database_url,
+            );
+            if !reconnect {
+                tracing::info!("♻️ Database target unchanged; skipping reconnect");
+                if let Ok(db) = services::tapp_registry::database() {
+                    let config_service = ConfigService::new(db);
+                    match config_service.load_config().await {
+                        Ok(dynamic_config) => {
+                            *GLOBAL_DYNAMIC_CONFIG.write().await = dynamic_config;
+                            tracing::info!("✅ Dynamic configuration reloaded from database");
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️  Failed to reload dynamic config: {}", e);
+                        }
+                    }
+                    services::oauth::registry::REGISTRY.reload().await;
+                }
+            } else {
+                match db::connection::establish_connection(&new_config.database_url).await {
+                    Ok(db) => {
+                        tracing::info!("✅ Database connection established!");
+
+                        match api::tapp_store::recover_tapp_filesystem_state(&db).await {
+                            Ok(0) => {}
+                            Ok(count) => tracing::warn!(
+                                count,
+                                "Recovered interrupted Tapp filesystem transactions"
+                            ),
+                            Err(error) => tracing::error!(
+                                %error,
+                                "Failed to inspect Tapp filesystem transaction state"
+                            ),
+                        }
+
+                        // Update process DB for health checks + background services
+                        services::tapp_registry::set_process_database(db.clone());
+
+                        // Reload dynamic configuration from database
+                        let config_service = ConfigService::new(db);
+                        match config_service.load_config().await {
+                            Ok(dynamic_config) => {
+                                *GLOBAL_DYNAMIC_CONFIG.write().await = dynamic_config;
+                                tracing::info!("✅ Dynamic configuration reloaded from database");
+                            }
+                            Err(e) => {
+                                tracing::warn!("⚠️  Failed to reload dynamic config: {}", e);
+                            }
+                        }
+
+                        // Reload OAuth provider registry from new dynamic config
+                        services::oauth::registry::REGISTRY.reload().await;
+
+                        // Route table + full-mode workers are built only at process
+                        // start. Clearing CONFIG_MODE without rebuild claims "full
+                        // APIs" on a setup-only Router — exit for supervisor restart.
+                        let was_config_mode = CONFIG_MODE.load(Ordering::Relaxed);
+                        if was_config_mode {
+                            tracing::info!(
+                                "🔁 Database became available while serving the CONFIG_MODE route table; scheduling process restart for full routes"
+                            );
+                            api::setup::schedule_setup_restart();
+                        } else {
+                            tracing::info!(
+                                "♻️ Runtime configuration / database handle reloaded (route table unchanged)"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Database connection failed after reload: {}", e);
+                        tracing::info!("🔧 Staying in configuration mode");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("❌ Failed to reload configuration: {}", e);
+        }
+    }
+}
+
+async fn probe_health() {
+    match services::tapp_registry::database() {
+        Ok(db) => {
+            if crate::db::health::probe_database(&db).await {
+                tracing::debug!("💚 Database health check passed");
+            } else {
+                tracing::error!("❌ Database health check failed");
+            }
+        }
+        _ => {
+            crate::db::health::record_db_probe(false, false);
+        }
+    }
+
+    match tokio::task::spawn_blocking(crate::services::data_paths::verify_runtime_storage_writable)
+        .await
+    {
+        Ok(Ok(())) => crate::db::health::record_storage_writable(true),
+        Ok(Err(e)) => {
+            crate::db::health::record_storage_writable(false);
+            tracing::error!("❌ Storage writability probe failed: {}", e);
+        }
+        Err(e) => {
+            crate::db::health::record_storage_writable(false);
+            tracing::error!("❌ Storage writability probe join failed: {}", e);
+        }
+    }
 }
 
 #[cfg(test)]

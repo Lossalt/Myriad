@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
@@ -300,28 +299,24 @@ impl UsedNonceStore {
 }
 
 /// Used nonces for optional anti-replay within this process.
-static USED_NONCES: Lazy<Arc<RwLock<UsedNonceStore>>> = Lazy::new(|| {
-    let store: Arc<RwLock<UsedNonceStore>> = Arc::new(RwLock::new(UsedNonceStore::new()));
-    let store_clone = store.clone();
+///
+/// The initializer must not spawn: it runs wherever the static is first
+/// touched, which need not be inside a tokio runtime. Expiry is swept by
+/// [`cleanup_used_nonces`] on the process memory-cleanup job.
+static USED_NONCES: Lazy<RwLock<UsedNonceStore>> = Lazy::new(|| RwLock::new(UsedNonceStore::new()));
 
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let mut nonces = store_clone.write().await;
-            let removed = nonces.retain_live(Instant::now());
-            if removed > 0 {
-                tracing::debug!(
-                    "🧹 OAuth used-nonce cleanup: removed {}, {} remain",
-                    removed,
-                    nonces.len()
-                );
-            }
-        }
-    });
-
-    store
-});
+/// Drop expired used-nonce entries.
+pub(crate) async fn cleanup_used_nonces() {
+    let mut nonces = USED_NONCES.write().await;
+    let removed = nonces.retain_live(Instant::now());
+    if removed > 0 {
+        tracing::debug!(
+            "🧹 OAuth used-nonce cleanup: removed {}, {} remain",
+            removed,
+            nonces.len()
+        );
+    }
+}
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -682,6 +677,13 @@ mod tests {
             provider_slug: "github".to_string(),
             purpose: OAuthPurpose::Login,
         }
+    }
+
+    #[test]
+    fn used_nonce_store_initializes_outside_a_runtime() {
+        // A plain #[test] has no tokio runtime; spawning in the initializer panicked.
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let _ = USED_NONCES.try_read().map(|store| store.len());
     }
 
     fn sample_link(uid: i32) -> StoredState {
