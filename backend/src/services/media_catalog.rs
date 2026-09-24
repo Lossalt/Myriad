@@ -6,9 +6,7 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::federation::content::federation_media_root;
 use crate::models::entities::media_assets;
-use crate::services::image_cache::ImageCacheService;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MediaAssetView {
@@ -238,20 +236,17 @@ pub async fn delete_asset(
     }
 }
 
-/// Legacy (pre-migration, `state IS NULL`) delete.
+/// Legacy (pre-migration, `state IS NULL`) delete: removes the catalog row only.
 ///
-/// Failure protocol: one SELECT decides eligibility (row, legacy state and
-/// every reference kind) and locks the row for the rest of the protocol, so a
-/// concurrent migration cannot flip it to a managed state between the check and
-/// the delete. Any query or decode failure aborts before touching disk. The
-/// file goes first (NotFound counts as removed), then the row, then commit. If
-/// the row delete or commit fails after the file is gone, the error surfaces
-/// and a retry of the same id converges: the file is NotFound and the row is
-/// deleted.
+/// One SELECT decides eligibility (row, legacy state and the scanned reference
+/// kinds) and locks the row, so a concurrent migration cannot flip it to a
+/// managed state between the check and the delete.
 ///
-/// References are substring matches over note/article/config bodies, not FKs;
-/// a body edited concurrently to cite this URL is outside this check (same as
-/// every legacy reference scan).
+/// The source file stays on disk. The reference scan only covers note, article
+/// and config bodies; personas, note history, federation activities and
+/// channel messages also cite legacy paths, so unlinking here could destroy
+/// media still in use. A file that is still cited is rediscovered and imported
+/// by the upgrade; old copies are reclaimed only by an explicit operator step.
 async fn delete_unmigrated_asset(
     db: &DatabaseConnection,
     id: i32,
@@ -267,7 +262,6 @@ async fn delete_unmigrated_asset(
     else {
         return Ok(Err(vec!["missing".into()]));
     };
-    let url: String = row.try_get("", "url")?;
     if !row.try_get::<bool>("", "unmigrated")? {
         // Reached only through `MediaError::Invalid`; a migrated row with a
         // corrupt state must not fall back to the legacy delete.
@@ -284,7 +278,6 @@ async fn delete_unmigrated_asset(
     if !refs.is_empty() {
         return Ok(Err(refs));
     }
-    remove_file(&url).await.map_err(DbErr::Custom)?;
     let deleted = media_assets::Entity::delete_many()
         .filter(media_assets::Column::Id.eq(id))
         .filter(media_assets::Column::State.is_null())
@@ -340,37 +333,6 @@ const LEGACY_DELETE_ELIGIBILITY_SQL: &str = r#"
             WHERE a.id = $1
             FOR UPDATE OF a
 "#;
-
-pub(crate) fn fs_remove_result(result: std::io::Result<()>) -> Result<(), String> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-async fn remove_file(url: &str) -> Result<(), String> {
-    if url.starts_with("/api/phantasi/image-cache/") {
-        return ImageCacheService::new().remove_stored_url(url).await;
-    }
-    if let Some(path) = federation_disk_path(url) {
-        return fs_remove_result(tokio::fs::remove_file(path).await);
-    }
-    Ok(())
-}
-
-fn federation_disk_path(url: &str) -> Option<std::path::PathBuf> {
-    let path = canonical_media_url(url)?;
-    let rest = path.strip_prefix("/media/federation/")?;
-    let (user, file) = rest.split_once('/')?;
-    if file.contains('/') || file.contains("..") {
-        return None;
-    }
-    if !user.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    Some(federation_media_root().join(user).join(file))
-}
 
 fn to_view(row: CatalogAsset, references: Vec<String>) -> MediaAssetView {
     let content_path = crate::services::media::content_path(row.id);
@@ -464,21 +426,15 @@ mod tests {
     }
 
     #[test]
-    fn file_delete_error_blocks_catalog_row_delete() {
-        assert!(super::fs_remove_result(Ok(())).is_ok());
-        assert!(
-            super::fs_remove_result(Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "gone"
-            )))
-            .is_ok()
-        );
-        let error = super::fs_remove_result(Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "locked",
-        )))
-        .unwrap_err();
-        assert!(error.contains("locked"), "{error}");
+    fn legacy_delete_never_unlinks_source_files() {
+        let src = include_str!("media_catalog.rs");
+        let body = src
+            .split("async fn delete_unmigrated_asset(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("delete_unmigrated_asset");
+        assert!(!body.contains(concat!("remove", "_file")));
+        assert!(!body.contains(concat!("remove", "_stored_url")));
     }
 
     #[tokio::test]
