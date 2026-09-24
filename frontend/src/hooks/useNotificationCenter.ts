@@ -5,14 +5,25 @@ import type {
   NotificationStreamEvent,
 } from '../services/notificationApi'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { currentCopy } from '../i18n/localeCopy'
 import notificationApi from '../services/notificationApi'
+import { authSubject } from '../utils/authSubject'
 import { formatUserFacingError } from '../utils/formatUserFacingError'
 import { showError } from '../utils/toastManager'
 
 /** 历史/SSE 增量封顶，防止长会话无限增长。 */
 const MAX_ITEMS = 100
+
+const subscribeSubject = (listener: () => void) => authSubject.subscribe(listener)
+const subjectRevision = () => authSubject.revision
 
 export interface UseNotificationCenterOptions {
   enabled: boolean
@@ -51,22 +62,25 @@ export function useNotificationCenter({
   const includeInPanelRef = useRef(includeInPanel)
   includeInPanelRef.current = includeInPanel
 
-  // 丢弃登出后才到达的历史响应，避免污染下一个用户。
+  // 身份边界是 authSubject（含角色），不是 userId：同 id 换角色也要清空重连。
+  const subject = useSyncExternalStore(subscribeSubject, subjectRevision, subjectRevision)
+
+  // 丢弃登出/换号后才到达的历史响应，避免污染下一个主体。
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
   const userIdRef = useRef(userId)
   userIdRef.current = userId
 
   const loadHistory = useCallback(async () => {
-    const requestedUserId = userId
+    const requestedSubject = authSubject.revision
     try {
       const res = await notificationApi.list(50)
-      if (!enabledRef.current || userIdRef.current !== requestedUserId) return
+      if (!enabledRef.current || authSubject.revision !== requestedSubject) return
       setItems(res.notifications)
       setLoaded(true)
     } catch (e) {
       console.warn('[NotificationCenter] Failed to load history:', e)
-      if (!enabledRef.current || userIdRef.current !== requestedUserId) return
+      if (!enabledRef.current || authSubject.revision !== requestedSubject) return
       showError(
         await formatUserFacingError(
           e,
@@ -75,7 +89,7 @@ export function useNotificationCenter({
       )
       setLoaded(true)
     }
-  }, [userId])
+  }, [subject])
 
   const loadHistoryRef = useRef(loadHistory)
   loadHistoryRef.current = loadHistory
@@ -88,13 +102,13 @@ export function useNotificationCenter({
       return
     }
 
-    // 即使 enabled 都是 true，账号切换也必须清数据并重建连接。
+    // 即使 enabled 都是 true，主体变更（换号或同 id 换角色）也必须清数据并重建连接。
     setItems([])
     setLoaded(false)
     let active = true
     const close = notificationApi.subscribe(
       (event: NotificationStreamEvent) => {
-        if (!active || !enabledRef.current || userId !== userIdRef.current)
+        if (!active || !enabledRef.current || userId !== userIdRef.current || subject !== authSubject.revision)
           return
         if (event.event === 'new_notification') {
           const n = event.notification
@@ -133,7 +147,7 @@ export function useNotificationCenter({
       {
 
         onReconnect: () => {
-          if (!active || !enabledRef.current || userId !== userIdRef.current)
+          if (!active || !enabledRef.current || userId !== userIdRef.current || subject !== authSubject.revision)
             return
           void loadHistoryRef.current()
           onMeropeResyncRef.current?.()
@@ -144,7 +158,7 @@ export function useNotificationCenter({
       active = false
       close()
     }
-  }, [enabled, userId])
+  }, [enabled, userId, subject])
 
   useEffect(() => {
     // 启用即拉历史：刷新后不能等打开通知页才加载。
