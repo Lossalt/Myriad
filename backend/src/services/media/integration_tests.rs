@@ -2525,11 +2525,12 @@ async fn postgres_references_of_gone_consumers_are_pruned() {
          ({id}, 'ai_task', 'old-task', 'result', NOW() - interval '2 days', NOW() - interval '3 days'),
          ({id}, 'channel_message', 'run_abc', 'inbound:0', NULL, NOW() - interval '2 days'),
          ({id}, 'ai_task', 'live-task', 'result', NOW() + interval '1 hour', NOW()),
+         ({id}, 'tapp_storage', '424242', 'value:0', NULL, NOW()),
          ({id}, 'note_draft', '1', 'body:0', NULL, NOW())"
     ))
     .await
     .unwrap();
-    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 3);
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 4);
     assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
     assert_eq!(references::active_count(&f.db, id).await.unwrap(), 2);
     f.close().await;

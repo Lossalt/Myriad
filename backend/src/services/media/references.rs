@@ -26,6 +26,7 @@ const CONSUMER_TYPES: &[&str] = &[
     "federation_activity",
     "federation_outbox",
     "channel_message",
+    "tapp_storage",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

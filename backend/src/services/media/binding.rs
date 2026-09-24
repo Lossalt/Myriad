@@ -119,6 +119,11 @@ impl Consumer {
         }
     }
 
+    /// One `tapp_storage` row; the row id is stable across overwrites of a key.
+    pub fn tapp_storage(row_id: i32) -> Self {
+        Self::new("tapp_storage", row_id.to_string(), Visibility::Private)
+    }
+
     pub fn federation_activity(activity_id: impl Into<String>) -> Self {
         Self::new("federation_activity", activity_id, Visibility::Public)
     }

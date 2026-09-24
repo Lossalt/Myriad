@@ -21,7 +21,7 @@ pub async fn maintain(db: &DatabaseConnection) -> Result<(), MediaError> {
 /// pruned here rather than at every delete site. Expired references are kept
 /// a day for diagnosis. Run inputs bound before they expired on their own are
 /// dropped once the run is long over. Bounded per tick.
-pub(super) async fn prune_references(
+pub async fn prune_references(
     db: &DatabaseConnection,
     limit: u64,
 ) -> Result<u64, MediaError> {
@@ -36,11 +36,17 @@ DELETE FROM media_references WHERE id IN (
        OR (r.consumer_type = 'channel_message'
            AND r.consumer_id ~ '^agent_messages:[0-9]+$'
            AND NOT EXISTS (SELECT 1 FROM agent_messages m
-                           WHERE m.id = substring(r.consumer_id FROM 16)::int))
+                           WHERE m.id = CASE WHEN r.consumer_id ~ '^agent_messages:[0-9]+$'
+                                        THEN substring(r.consumer_id FROM 16)::int END))
        OR (r.consumer_type = 'channel_message'
            AND r.consumer_id ~ '^federation_channel_messages:[0-9]+$'
            AND NOT EXISTS (SELECT 1 FROM federation_channel_messages m
-                           WHERE m.id = substring(r.consumer_id FROM 29)::int))
+                           WHERE m.id = CASE WHEN r.consumer_id ~ '^federation_channel_messages:[0-9]+$'
+                                        THEN substring(r.consumer_id FROM 29)::int END))
+       OR (r.consumer_type = 'tapp_storage'
+           AND NOT EXISTS (SELECT 1 FROM tapp_storage s
+                           WHERE s.id = CASE WHEN r.consumer_id ~ '^[0-9]+$'
+                                        THEN r.consumer_id::int END))
        OR (r.consumer_type = 'channel_message'
            AND r.consumer_id LIKE 'run\_%'
            AND r.expires_at IS NULL
