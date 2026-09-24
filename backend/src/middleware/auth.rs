@@ -792,17 +792,15 @@ async fn load_auth_snapshot(
                 [user_id.into()],
             ))
             .await
-            .map(|row| {
-                row.map(|row| AuthSnapshot {
-                    token_version: row
-                        .try_get::<i32>("", "token_version")
-                        .ok()
-                        .map(i64::from)
-                        .or_else(|| row.try_get::<i64>("", "token_version").ok())
-                        .unwrap_or(0),
-                    is_admin: row.try_get::<bool>("", "is_admin").unwrap_or(false),
-                    is_owner: row.try_get::<bool>("", "is_owner").unwrap_or(false),
+            .and_then(|row| {
+                row.map(|row| {
+                    Ok(AuthSnapshot {
+                        token_version: row_session_epoch(&row)?,
+                        is_admin: row.try_get::<bool>("", "is_admin").unwrap_or(false),
+                        is_owner: row.try_get::<bool>("", "is_owner").unwrap_or(false),
+                    })
                 })
+                .transpose()
             });
 
         if let Ok(snapshot) = &result {
@@ -814,6 +812,14 @@ async fn load_auth_snapshot(
         drop(owner);
         return result;
     }
+}
+
+/// A user's session epoch (`users.token_version`, `integer NOT NULL`) from a
+/// row that selected it. A value that does not decode is an error, never 0:
+/// epoch 0 is what never-revoked tokens carry, so defaulting to it would make
+/// revoked sessions valid again.
+pub(crate) fn row_session_epoch(row: &sea_orm::QueryResult) -> Result<i64, sea_orm::DbErr> {
+    row.try_get::<i32>("", "token_version").map(i64::from)
 }
 
 /// Current roles of a session that is still live.
@@ -998,12 +1004,7 @@ pub async fn bump_token_version(
             [user_id.into(), expected_version.into()],
         ))
         .await?;
-    let new_version = row.and_then(|r| {
-        r.try_get::<i32>("", "token_version")
-            .ok()
-            .map(i64::from)
-            .or_else(|| r.try_get::<i64>("", "token_version").ok())
-    });
+    let new_version = row.map(|r| row_session_epoch(&r)).transpose()?;
     if new_version.is_none() {
         return Ok(None);
     }
@@ -1402,6 +1403,60 @@ mod tests {
     /// Signing and verifying read the secret only through `session_secret`,
     /// which refuses a blank one. Startup config (`config.rs`, `main.rs`)
     /// only validates it.
+    #[test]
+    fn session_epoch_is_decoded_in_one_place() {
+        fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, offenders);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+                    let reads = production.matches("(\"\", \"token_version\")").count();
+                    let allowed = usize::from(path.ends_with("middleware/auth.rs"));
+                    if reads > allowed {
+                        offenders.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        let mut offenders = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut offenders,
+        );
+        assert!(
+            offenders.is_empty(),
+            "decode token_version via row_session_epoch(): {offenders:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_epoch_decodes_strictly() {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let db = sea_orm::Database::connect(url).await.unwrap();
+        let row = |sql: &'static str| {
+            let db = db.clone();
+            async move {
+                db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let epoch = row("SELECT 7::integer AS token_version").await;
+        assert_eq!(
+            crate::middleware::auth::row_session_epoch(&epoch).unwrap(),
+            7
+        );
+        let garbage = row("SELECT 'x'::text AS token_version").await;
+        assert!(crate::middleware::auth::row_session_epoch(&garbage).is_err());
+    }
+
     #[test]
     fn session_secret_is_read_in_one_place() {
         fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {

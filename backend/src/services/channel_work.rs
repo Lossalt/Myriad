@@ -701,12 +701,7 @@ async fn claims_for_user(db: &DatabaseConnection, user_id: i32) -> Result<Claims
     let username: String = row.try_get("", "username").unwrap_or_default();
     let is_admin: bool = row.try_get("", "is_admin").unwrap_or(false);
     let is_owner: bool = row.try_get("", "is_owner").unwrap_or(false);
-    let token_version: i64 = row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
+    let token_version = crate::middleware::auth::row_session_epoch(&row)?;
     Ok(mint_session_claims(
         user_id,
         username,

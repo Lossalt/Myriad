@@ -761,12 +761,10 @@ async fn handle_login(
     let is_admin: bool = row.try_get("", "is_admin").unwrap_or(false);
     let is_owner: bool = row.try_get("", "is_owner").unwrap_or(false);
     let username: String = row.try_get("", "username").unwrap_or_default();
-    let token_version: i64 = row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
+    let token_version = crate::middleware::auth::row_session_epoch(&row).map_err(|e| {
+        tracing::error!("OAuth session epoch unreadable: {e}");
+        err_500("Database error")
+    })?;
 
     let claims = mint_session_claims(user_id, &username, is_admin, is_owner, token_version);
     let token = encode_session_token(&claims).map_err(|e| {

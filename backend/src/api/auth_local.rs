@@ -420,12 +420,8 @@ pub async fn local_login(
 
     let is_admin: bool = user_row.try_get("", "is_admin").unwrap_or(false);
     let is_owner: bool = user_row.try_get("", "is_owner").unwrap_or(false);
-    let token_version: i64 = user_row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| user_row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
+    let token_version = crate::middleware::auth::row_session_epoch(&user_row)
+        .map_err(|error| auth_store_http("read user data", error))?;
 
     let local_login_disabled: bool = user_row
         .try_get("", "local_login_disabled")
@@ -607,12 +603,8 @@ pub async fn change_password(
         .map_err(|error| auth_store_http("change password", error))?
         .ok_or_else(|| auth_store_http("change password", "no user row returned"))?;
 
-    let new_tv: i64 = updated
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| updated.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(claims.tv + 1);
+    let new_tv = crate::middleware::auth::row_session_epoch(&updated)
+        .map_err(|error| auth_store_http("change password", error))?;
 
     if let Err(error) = notify_auth_cache_invalidation(&db, user_id).await {
         tracing::warn!(
@@ -1012,20 +1004,14 @@ pub async fn set_password(
         ))
         .await
         .map_err(|error| auth_store_http("set password", error))?;
-    let new_tv = updated
-        .as_ref()
-        .and_then(|row| {
-            row.try_get::<i32>("", "token_version")
-                .ok()
-                .map(i64::from)
-                .or_else(|| row.try_get::<i64>("", "token_version").ok())
-        })
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::NOT_FOUND,
-                Json(AppError::public_json("User not found")),
-            ))
-        })?;
+    let updated = updated.ok_or_else(|| {
+        HttpError::from((
+            StatusCode::NOT_FOUND,
+            Json(AppError::public_json("User not found")),
+        ))
+    })?;
+    let new_tv = crate::middleware::auth::row_session_epoch(&updated)
+        .map_err(|error| auth_store_http("set password", error))?;
     if let Err(error) = notify_auth_cache_invalidation(&db, user_id).await {
         tracing::warn!(
             user_id,
@@ -1173,15 +1159,12 @@ async fn issue_session_cookie(
             vec![SeaValue::Int(Some(user_id))],
         ))
         .await
-        .ok()
-        .flatten()
-        .and_then(|r| {
-            r.try_get::<i32>("", "token_version")
-                .ok()
-                .map(i64::from)
-                .or_else(|| r.try_get::<i64>("", "token_version").ok())
-        })
-        .unwrap_or(0);
+        .map_err(|error| auth_store_http("read session epoch", error))?
+        .ok_or_else(|| auth_store_http("read session epoch", "user row missing"))
+        .and_then(|row| {
+            crate::middleware::auth::row_session_epoch(&row)
+                .map_err(|error| auth_store_http("read session epoch", error))
+        })?;
 
     let claims = mint_session_claims(user_id, username, is_admin, is_owner, token_version);
     let token = encode_session_token(&claims).map_err(|_e| {
