@@ -379,23 +379,23 @@ pub(super) async fn build_ap_object(
 
 // Fan-out / Timeline
 
-/// Enqueue Activity delivery to all accepted incoming followers (fan-out on send).
+/// 不在调用方事务里的扇出：把活动投给全部已接受的粉丝，逐个尽力而为。
 ///
-/// Fail-closed: the first unusable follower, local miss, or queue insert error
-/// returns `Err` (interactions, key rotation and Move rely on that). Content
-/// publish / unpublish do not use this; they stage the fan-out inside their own
-/// transaction via [`stage_follower_fan_out`]. Returns how many follower inboxes
-/// were queued **or** delivered locally.
+/// 给「自身写入已经提交、扇出只是通知」的调用方用（密钥轮换后的
+/// Update(Person)）。坏数据的粉丝（空 inbox、列解码失败）记日志跳过，
+/// 同实例粉丝某一个投递失败也只记日志 —— 一个坏粉丝不再让其余粉丝收不到。
+/// 只有读粉丝列表或写投递队列的数据库错误返回 `Err`：已经排上的行保留，
+/// `(activity_id, target_inbox)` 唯一约束让重试不重复。
+///
+/// 需要「写入与扇出同生共死」的调用方（发布 / 撤回）不用它，而是在
+/// 自己的事务里调 [`stage_follower_fan_out`]、提交后调
+/// [`deliver_to_local_followers`]。返回排上队的远端行数加成功的本地投递数。
 ///
 /// Same-instance followers (inbox under our `base_url`) get the activity through
 /// [`deliver_activity_locally`](crate::federation::inbox::deliver_activity_locally),
 /// the same dispatch a remote inbox runs — HTTP delivery to localhost / private
-/// hosts is refused by the delivery worker, so without this shortcut
-/// multi-user and local-dev follows never see posts.
-///
-/// Actual HTTP delivery for remote followers is performed by
-/// `delivery::process_delivery_queue_detailed`, started via
-/// `delivery::spawn_delivery_worker` from main on full-mode boot.
+/// hosts is refused by the delivery worker. Remote rows are sent by
+/// `delivery::process_delivery_queue_detailed` (`delivery::spawn_delivery_worker`).
 pub(crate) async fn fan_out_to_followers(
     db: &DatabaseConnection,
     user_id: i32,
@@ -403,96 +403,23 @@ pub(crate) async fn fan_out_to_followers(
     activity_json: &serde_json::Value,
 ) -> Result<u32, String> {
     let base_url = get_base_url().await;
-
-    let followers = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"SELECT ra.inbox_url, ra.domain, ra.actor_url
-               FROM federation_follows f
-               JOIN federation_remote_actors ra ON ra.id = f.remote_actor_id
-               WHERE f.user_id = $1 AND f.direction = 'incoming' AND f.status = 'accepted'"#,
-            [user_id.into()],
-        ))
+    let staged = stage_follower_fan_out(db, &base_url, user_id, activity_db_id)
         .await
         .map_err(|e| {
-            format!(
-                "Fan-out follower query failed for user {user_id} activity_db_id={activity_db_id}: {e}"
-            )
+            format!("Fan-out failed for user {user_id} activity_db_id={activity_db_id}: {e}")
         })?;
-
-    let mut queued = 0u32;
-    let mut local_delivered = 0u32;
-
-    for row in followers {
-        let inbox: String = row
-            .try_get("", "inbox_url")
-            .map_err(|e| format!("invalid follower inbox_url: {e}"))?;
-        let domain: String = row
-            .try_get("", "domain")
-            .map_err(|e| format!("invalid follower domain: {e}"))?;
-        let follower_actor: String = row
-            .try_get("", "actor_url")
-            .map_err(|e| format!("invalid follower actor_url: {e}"))?;
-
-        if inbox.trim().is_empty() {
-            return Err(format!(
-                "Fan-out refused: empty inbox_url for follower {follower_actor} domain={domain} activity_db_id={activity_db_id}"
-            ));
-        }
-
-        if let Some(local_username) =
-            local_username_from_inbox_url(&base_url, &inbox).or_else(|| {
-                if follower_actor.is_empty() {
-                    None
-                } else {
-                    local_username_from_actor_url(&base_url, &follower_actor)
-                }
-            })
-        {
-            crate::federation::inbox::deliver_activity_locally(db, &local_username, activity_json)
-                .await
-                .map_err(|e| {
-                    format!(
-                        "Fan-out local delivery failed username={local_username} activity_db_id={activity_db_id}: {e}"
-                    )
-                })?;
-            local_delivered += 1;
-            queued += 1;
-            continue;
-        }
-
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_delivery_queue
-                   (activity_id, target_inbox, target_domain, status, created_at)
-               VALUES ($1, $2, $3, 'pending', NOW())
-               ON CONFLICT (activity_id, target_inbox) DO NOTHING"#,
-            [
-                activity_db_id.into(),
-                inbox.clone().into(),
-                domain.clone().into(),
-            ],
-        ))
-        .await
-        .map_err(|e| {
-            format!(
-                "Fan-out enqueue failed activity_db_id={activity_db_id} target_domain={domain} inbox={inbox}: {e}"
-            )
-        })?;
-        queued += 1;
-    }
-
-    if queued > 0 {
-        tracing::info!(
-            "Fan-out queued {queued} deliveries ({local_delivered} local) for activity_db_id={activity_db_id}"
-        );
-    } else {
-        tracing::debug!(
-            "Fan-out: no accepted followers for user {user_id} activity_db_id={activity_db_id}"
-        );
-    }
-
-    Ok(queued)
+    let local_delivered =
+        deliver_to_local_followers(db, &staged.local_followers, activity_json).await;
+    tracing::info!(
+        user_id,
+        activity_db_id,
+        queued = staged.queued,
+        local_delivered,
+        local_followers = staged.local_followers.len(),
+        skipped = staged.skipped,
+        "Fan-out to followers finished"
+    );
+    Ok(staged.queued + local_delivered)
 }
 
 /// 在发布事务内落下的扇出意图：远端投递行已写进 `federation_delivery_queue`，
@@ -502,7 +429,7 @@ pub(crate) async fn fan_out_to_followers(
 /// 提交，提交成功即由投递 worker 负责送达；提交失败则一行都不留，客户端重试
 /// 不会产生重复帖子，也不会有「帖子已落库但没排上投递」的半成品。
 #[derive(Debug, Default)]
-pub(super) struct StagedFanOut {
+pub(crate) struct StagedFanOut {
     /// 本事务写入的远端投递行数。
     pub queued: u32,
     /// 需要在提交后进程内投递的同实例粉丝用户名。
@@ -513,13 +440,13 @@ pub(super) struct StagedFanOut {
 
 /// 单个粉丝行的去向。坏数据只影响它自己，不连累其他粉丝。
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum FollowerRoute {
+pub(crate) enum FollowerRoute {
     Local(String),
     Remote { inbox: String, domain: String },
     Skip(&'static str),
 }
 
-pub(super) fn route_follower(
+pub(crate) fn route_follower(
     base_url: &str,
     inbox: Option<&str>,
     domain: Option<&str>,
@@ -547,12 +474,13 @@ pub(super) fn route_follower(
     }
 }
 
-/// 在调用方事务内为全部已接受的粉丝排队投递（发布 / 撤回用）。
+/// 在调用方事务内为全部已接受的粉丝排队投递（发布 / 撤回用；
+/// [`fan_out_to_followers`] 在自动提交连接上也走它）。
 ///
 /// 逐个粉丝尽力而为：坏数据的粉丝记日志跳过，其余照常排队。数据库错误原样
 /// 返回 —— 事务里任何一条语句失败都会让整个事务作废，此时调用方回滚，
 /// 内容和活动也一起不落库。
-pub(super) async fn stage_follower_fan_out(
+pub(crate) async fn stage_follower_fan_out(
     txn: &impl ConnectionTrait,
     base_url: &str,
     user_id: i32,
@@ -658,7 +586,7 @@ async fn enqueue_delivery(
 /// 它与远端收件箱走同一套分发（回执、事务、Delete / Undo 语义都一致）。
 /// 某个粉丝失败只记日志，不影响其他粉丝，也不影响已经提交的发布结果。
 /// 返回成功投递的人数。
-pub(super) async fn deliver_to_local_followers(
+pub(crate) async fn deliver_to_local_followers(
     db: &DatabaseConnection,
     usernames: &[String],
     activity_json: &serde_json::Value,
@@ -1023,31 +951,112 @@ mod tests {
                 .to_string()
         };
         let stage = section(
-            "pub(super) async fn stage_follower_fan_out",
+            "pub(crate) async fn stage_follower_fan_out",
             "pub(super) async fn stage_room_peer_fan_out",
         );
         assert!(stage.contains("txn: &impl ConnectionTrait"));
         assert!(stage.contains("FollowerRoute::Skip(reason)"));
         assert!(!stage.contains("return Err"));
         let local = section(
-            "pub(super) async fn deliver_to_local_followers",
+            "pub(crate) async fn deliver_to_local_followers",
             "/// If inbox is",
         );
         assert!(local.contains(") -> u32 {"));
         assert!(!local.contains('?'));
     }
 
+    /// 提交后扇出与事务内扇出走同一套逐粉丝路由：坏粉丝只跳过自己，
+    /// 数据库错误才返回 `Err`。
     #[test]
-    fn fan_out_to_followers_does_not_swallow_route_failures() {
+    fn fan_out_to_followers_is_best_effort_per_recipient() {
         let src = include_str!("ap_object.rs");
         let fan = src
             .split("pub(crate) async fn fan_out_to_followers")
             .nth(1)
-            .and_then(|rest| rest.split("pub(super) struct StagedFanOut").next())
+            .and_then(|rest| rest.split("pub(crate) struct StagedFanOut").next())
             .expect("fan_out_to_followers");
         assert!(fan.contains("Result<u32, String>"));
-        assert!(!fan.contains("unwrap_or_default()"));
-        assert!(!fan.contains("return 0;"));
-        assert!(fan.contains("Fan-out refused: empty inbox_url"));
+        assert!(fan.contains("stage_follower_fan_out(db"));
+        assert!(fan.contains("deliver_to_local_followers(db"));
+        assert!(!fan.contains("return Err"));
+    }
+
+    /// 密钥轮换走的提交后扇出：空 inbox 的坏远端、已不存在的本地用户都只
+    /// 跳过自己，正常远端照常排队，本地 bob 照常收到。
+    #[tokio::test]
+    async fn fan_out_to_followers_skips_bad_followers() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = get_base_url().await;
+        db.execute_unprepared(&format!(
+            r#"
+            INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+            INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+                (11, 'https://good.example/users/g', 'good.example', 'https://good.example/users/g/inbox'),
+                (12, 'https://bad.example/users/b', 'bad.example', ''),
+                (13, '{base}/users/bob', 'local', '{base}/users/bob/inbox'),
+                (14, '{base}/users/ghost', 'local', '{base}/users/ghost/inbox');
+            INSERT INTO federation_follows (user_id, remote_actor_id, direction, status) VALUES
+                (1, 11, 'incoming', 'accepted'), (1, 12, 'incoming', 'accepted'),
+                (1, 13, 'incoming', 'accepted'), (1, 14, 'incoming', 'accepted');
+            "#
+        ))
+        .await
+        .unwrap();
+        let activity_id = format!("{base}/activities/fan-out-test");
+        let create = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Create",
+            "id": &activity_id,
+            "actor": format!("{base}/users/alice"),
+            "to": [AP_PUBLIC],
+            "object": {
+                "type": "Note",
+                "id": format!("{base}/notes/fan-out-test"),
+                "attributedTo": format!("{base}/users/alice"),
+                "content": "hi",
+                "to": [AP_PUBLIC],
+            },
+        });
+        let act_db_id =
+            insert_local_activity(db, 1, &activity_id, "Create", Some("Note"), create.clone())
+                .await
+                .unwrap();
+
+        let delivered = fan_out_to_followers(db, 1, act_db_id, &create)
+            .await
+            .expect("bad followers must not fail the fan-out");
+        assert_eq!(delivered, 2, "good remote queued + bob delivered locally");
+        let queued: Vec<String> = db
+            .query_all_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT target_inbox FROM federation_delivery_queue WHERE activity_id = $1",
+                [act_db_id.into()],
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get("", "target_inbox").unwrap())
+            .collect();
+        assert_eq!(
+            queued,
+            vec!["https://good.example/users/g/inbox".to_string()]
+        );
+        let bob_rows = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT COUNT(*) AS n FROM federation_timeline WHERE user_id = 2 AND activity_id = $1",
+                [activity_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i64>("", "n")
+            .unwrap();
+        assert_eq!(bob_rows, 1);
+
+        fixture.close().await;
     }
 }

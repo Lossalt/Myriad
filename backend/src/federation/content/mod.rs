@@ -18,5 +18,7 @@ pub use types::{
     PublishedAttachment, PublishedItem,
 };
 
-pub(crate) use ap_object::fan_out_to_followers;
+pub(crate) use ap_object::{
+    FollowerRoute, StagedFanOut, deliver_to_local_followers, fan_out_to_followers, route_follower,
+};
 pub(crate) use timeline::preview_from_ap_object;
