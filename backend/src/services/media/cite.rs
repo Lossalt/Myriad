@@ -351,10 +351,12 @@ pub async fn bind_ai_task(
     .map(|_| ())
 }
 
-/// `payload` is client input: any string in it may name an asset. Only assets
-/// the sender may manage are bound, so a message cannot pin someone else's
-/// media against deletion; a sender without an actor (guest) binds nothing.
-pub async fn bind_channel_message(
+/// Media handed to one Agent run (web or channel). `payload` is client input:
+/// any string in it may name an asset. Only assets the sender may manage are
+/// bound, so a message cannot pin someone else's media against deletion; a
+/// sender without an actor (guest) binds nothing. The reference expires once
+/// the stored conversation messages protect the media themselves.
+pub async fn bind_run_input(
     txn: &impl ConnectionTrait,
     consumer_id: &str,
     payload: &Value,
@@ -364,7 +366,7 @@ pub async fn bind_channel_message(
     let authority = actor.map_or(Authority::Anonymous, Authority::Actor);
     bind(
         txn,
-        &Consumer::channel_message(consumer_id),
+        &Consumer::run_input(consumer_id),
         &Citations::strings(origins, payload, |i| format!("inbound:{i}")),
         authority,
         Unresolved::Reject,

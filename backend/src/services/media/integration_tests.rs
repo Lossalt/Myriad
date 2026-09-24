@@ -2284,7 +2284,7 @@ async fn postgres_message_payload_binds_only_the_senders_media() {
         { "url": foreign.content_path },
     ]});
     let sender = MediaActor::user(1).unwrap();
-    cite::bind_channel_message(&f.db, "run_a", &payload, &[], Some(&sender))
+    cite::bind_run_input(&f.db, "run_a", &payload, &[], Some(&sender))
         .await
         .unwrap();
     assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
@@ -2293,7 +2293,7 @@ async fn postgres_message_payload_binds_only_the_senders_media() {
         0,
         "a message must not pin another user's media"
     );
-    cite::bind_channel_message(&f.db, "run_guest", &payload, &[], None)
+    cite::bind_run_input(&f.db, "run_guest", &payload, &[], None)
         .await
         .unwrap();
     assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
@@ -2510,4 +2510,27 @@ async fn binding_resolves(db: &sea_orm::DatabaseConnection, path: &str) -> Optio
             .await
             .unwrap(),
     }
+}
+
+#[tokio::test]
+async fn postgres_references_of_gone_consumers_are_pruned() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let id = image.id;
+    f.db.execute_unprepared(&format!(
+        "INSERT INTO media_references (asset_id, consumer_type, consumer_id, slot, expires_at, created_at) VALUES
+         ({id}, 'channel_message', 'agent_messages:987654', 'body:0', NULL, NOW()),
+         ({id}, 'ai_task', 'old-task', 'result', NOW() - interval '2 days', NOW() - interval '3 days'),
+         ({id}, 'channel_message', 'run_abc', 'inbound:0', NULL, NOW() - interval '2 days'),
+         ({id}, 'ai_task', 'live-task', 'result', NOW() + interval '1 hour', NOW()),
+         ({id}, 'note_draft', '1', 'body:0', NULL, NOW())"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 3);
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
+    assert_eq!(references::active_count(&f.db, id).await.unwrap(), 2);
+    f.close().await;
 }

@@ -462,7 +462,7 @@ pub(crate) async fn start_process_run(
             crate::services::media::MediaActor::user(user_id)
         }
         .ok();
-        crate::services::media::bind_channel_message(
+        crate::services::media::bind_run_input(
             &txn,
             &run_id_for_meta,
             payload,

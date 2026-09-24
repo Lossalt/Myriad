@@ -8,7 +8,50 @@ pub async fn maintain(db: &DatabaseConnection) -> Result<(), MediaError> {
     let recovery = service.recover_expired(db, 16).await;
     let deletions = retry_deletions(&service, db, 16).await;
     let urls = normalize_catalog_urls(db, 64).await;
-    recovery.map(|_| ()).and(deletions).and(urls.map(|_| ()))
+    let refs = prune_references(db, 500).await;
+    recovery
+        .map(|_| ())
+        .and(deletions)
+        .and(urls.map(|_| ()))
+        .and(refs.map(|_| ()))
+}
+
+/// References whose consumer can no longer show the media. Conversation
+/// messages go away by cascade with their session, so their references are
+/// pruned here rather than at every delete site. Expired references are kept
+/// a day for diagnosis. Run inputs bound before they expired on their own are
+/// dropped once the run is long over. Bounded per tick.
+pub(super) async fn prune_references(
+    db: &DatabaseConnection,
+    limit: u64,
+) -> Result<u64, MediaError> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let result = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+DELETE FROM media_references WHERE id IN (
+    SELECT r.id FROM media_references r
+    WHERE (r.expires_at IS NOT NULL AND r.expires_at < NOW() - interval '1 day')
+       OR (r.consumer_type = 'channel_message'
+           AND r.consumer_id ~ '^agent_messages:[0-9]+$'
+           AND NOT EXISTS (SELECT 1 FROM agent_messages m
+                           WHERE m.id = substring(r.consumer_id FROM 16)::int))
+       OR (r.consumer_type = 'channel_message'
+           AND r.consumer_id ~ '^federation_channel_messages:[0-9]+$'
+           AND NOT EXISTS (SELECT 1 FROM federation_channel_messages m
+                           WHERE m.id = substring(r.consumer_id FROM 29)::int))
+       OR (r.consumer_type = 'channel_message'
+           AND r.consumer_id LIKE 'run\_%'
+           AND r.expires_at IS NULL
+           AND r.created_at < NOW() - interval '1 day')
+    LIMIT $1
+)
+"#,
+            [(limit.clamp(1, 5000) as i64).into()],
+        ))
+        .await?;
+    Ok(result.rows_affected())
 }
 
 /// Private assets written before every asset had one permanent address kept

@@ -105,6 +105,20 @@ impl Consumer {
         Self::new("channel_message", id, Visibility::Private)
     }
 
+    /// A stored Agent conversation message; same identity the upgrade uses.
+    pub fn agent_message(message_id: i32) -> Self {
+        Self::channel_message(format!("agent_messages:{message_id}"))
+    }
+
+    /// Media handed to one Agent run. Once the run's messages are stored they
+    /// protect the media themselves, so this expires instead of pinning it.
+    pub fn run_input(run_id: &str) -> Self {
+        Self {
+            expires_at: Some(Utc::now() + chrono::Duration::hours(24)),
+            ..Self::channel_message(run_id)
+        }
+    }
+
     pub fn federation_activity(activity_id: impl Into<String>) -> Self {
         Self::new("federation_activity", activity_id, Visibility::Public)
     }

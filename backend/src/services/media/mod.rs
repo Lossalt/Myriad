@@ -33,8 +33,8 @@ pub use access::{can_manage, can_read};
 pub use binding::{Authority, Bound, Citation, Citations, Consumer, Unresolved, Visibility, bind};
 pub use cite::{
     bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_site_image,
-    bind_and_publish_wallpaper, bind_channel_message, bind_note_draft, bind_note_published,
-    bind_persona, bind_rss_item, clear_note_doc, clear_rss_source, extract_registered_paths,
+    bind_and_publish_wallpaper, bind_note_draft, bind_note_published, bind_persona, bind_rss_item,
+    bind_run_input, clear_note_doc, clear_rss_source, extract_registered_paths,
     normalize_cited_media, normalize_local_url, resolve_asset_id,
 };
 pub(crate) use cite::{
