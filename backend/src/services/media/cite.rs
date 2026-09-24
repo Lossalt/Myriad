@@ -669,11 +669,36 @@ pub async fn site_media_local_path(
 /// Saving a wallpaper is publication; bind it in the same transaction as config.
 /// Returns the value to store: local media as its path-only public URL (which
 /// drops any stale origin), anything else unchanged.
+/// Setting keys holding one publicly rendered site image, with the consumer
+/// their media is bound to. SEO pages and the public UI serve these values to
+/// anonymous visitors and crawlers, so they must end up published.
+pub fn site_image_consumer(key: &str) -> Option<(&'static str, &'static str)> {
+    match key {
+        "ui_wallpaper_url" => Some(("site_wallpaper", "site")),
+        "site_og_image" => Some(("site_setting", "site_og_image")),
+        "site_favicon" => Some(("site_setting", "site_favicon")),
+        _ => None,
+    }
+}
+
 pub async fn bind_and_publish_wallpaper(
     txn: &impl ConnectionTrait,
     url: &str,
     origins: &[String],
 ) -> Result<String, MediaError> {
+    bind_and_publish_site_image(txn, "ui_wallpaper_url", url, origins).await
+}
+
+/// Publish the local media a site image setting cites and bind it to the
+/// setting. Returns the value to store (rewritten to the public URL).
+pub async fn bind_and_publish_site_image(
+    txn: &impl ConnectionTrait,
+    key: &str,
+    url: &str,
+    origins: &[String],
+) -> Result<String, MediaError> {
+    let (consumer_type, consumer_id) =
+        site_image_consumer(key).ok_or_else(|| MediaError::invalid("Not a site image setting"))?;
     let local = site_media_local_path(txn, url, origins).await?;
     let published = publish_local_url(txn, local.as_deref().unwrap_or(url), origins).await?;
     let refs = references_from_urls(
@@ -684,7 +709,7 @@ pub async fn bind_and_publish_wallpaper(
         true,
     )
     .await?;
-    bind_consumer(txn, "site_wallpaper", "site", &refs).await?;
+    bind_consumer(txn, consumer_type, consumer_id, &refs).await?;
     Ok(published)
 }
 
@@ -698,14 +723,27 @@ pub(crate) async fn bind_restored_wallpaper(
     origins: &[String],
     paths: &super::LegacyPaths,
 ) -> Result<(String, Vec<String>), MediaError> {
+    bind_restored_site_image(txn, "ui_wallpaper_url", url, origins, paths).await
+}
+
+/// [`bind_restored_wallpaper`] for any [`site_image_consumer`] setting.
+pub(crate) async fn bind_restored_site_image(
+    txn: &impl ConnectionTrait,
+    key: &str,
+    url: &str,
+    origins: &[String],
+    paths: &super::LegacyPaths,
+) -> Result<(String, Vec<String>), MediaError> {
+    let (consumer_type, consumer_id) =
+        site_image_consumer(key).ok_or_else(|| MediaError::invalid("Not a site image setting"))?;
     if let Some(path) = cite_local_path(url, origins) {
         if super::upgrade::is_dead_local_path(txn, paths, origins, &path).await? {
-            bind_consumer(txn, "site_wallpaper", "site", &[]).await?;
+            bind_consumer(txn, consumer_type, consumer_id, &[]).await?;
             return Ok((url.to_string(), vec![url.to_string()]));
         }
     }
     Ok((
-        bind_and_publish_wallpaper(txn, url, origins).await?,
+        bind_and_publish_site_image(txn, key, url, origins).await?,
         Vec::new(),
     ))
 }

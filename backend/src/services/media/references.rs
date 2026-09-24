@@ -21,6 +21,7 @@ const CONSUMER_TYPES: &[&str] = &[
     "persona_portrait",
     "sticker",
     "site_wallpaper",
+    "site_setting",
     "ai_task",
     "federation_activity",
     "federation_outbox",

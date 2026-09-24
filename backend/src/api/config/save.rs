@@ -133,14 +133,18 @@ async fn save_to_database(
         .begin()
         .await
         .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
-    if let Some(url) = updates.get("ui_wallpaper_url").and_then(Value::as_str) {
-        // Same origin set as the media upgrade backfill. URLs under an older
-        // site origin are recognized by the binder when they resolve locally.
-        let origins = crate::services::media::upgrade::configured_origins().await;
-        let published = crate::services::media::bind_and_publish_wallpaper(&txn, url, &origins)
-            .await
-            .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
-        updates.insert("ui_wallpaper_url".into(), json!(published));
+    // Same origin set as the media upgrade backfill. URLs under an older site
+    // origin are recognized by the binder when they resolve locally.
+    let origins = crate::services::media::upgrade::configured_origins().await;
+    for key in ["ui_wallpaper_url", "site_og_image", "site_favicon"] {
+        let Some(url) = updates.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let published =
+            crate::services::media::bind_and_publish_site_image(&txn, key, url, &origins)
+                .await
+                .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
+        updates.insert(key.into(), json!(published));
     }
     crate::services::config_service::ConfigService::update_configs_on(&txn, updates)
         .await

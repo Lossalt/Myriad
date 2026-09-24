@@ -537,8 +537,9 @@ async fn bind_restored_media(
         let text = restored_setting_text(&entry.value);
         let raw = text.as_deref().unwrap_or("");
         let (stored, dead) = match entry.key.as_str() {
-            "ui_wallpaper_url" => {
-                crate::services::media::bind_restored_wallpaper(txn, raw, origins, legacy).await?
+            key @ ("ui_wallpaper_url" | "site_og_image" | "site_favicon") => {
+                crate::services::media::bind_restored_site_image(txn, key, raw, origins, legacy)
+                    .await?
             }
             "dashboard_layout" => {
                 crate::services::media::bind_restored_dashboard_layout(txn, raw, origins, legacy)

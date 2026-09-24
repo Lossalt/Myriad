@@ -29,13 +29,17 @@ mod urls;
 mod validate;
 
 pub use access::{can_manage, can_read};
-pub(crate) use cite::{bind_restored_dashboard_layout, bind_restored_wallpaper, sync_note_history_refs};
 pub use cite::{
-    bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_wallpaper,
-    bind_channel_message, bind_consumer, bind_note_draft, bind_note_published, bind_persona,
-    bind_rss_item, bind_stickers, clear_note_doc, clear_rss_source, ensure_publishable,
-    extract_registered_paths, publish_asset_ids, publish_cited_media, publish_local_url,
-    references_from_fields, references_from_urls, resolve_asset_id,
+    bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_site_image,
+    bind_and_publish_wallpaper, bind_channel_message, bind_consumer, bind_note_draft,
+    bind_note_published, bind_persona, bind_rss_item, bind_stickers, clear_note_doc,
+    clear_rss_source, ensure_publishable, extract_registered_paths, publish_asset_ids,
+    publish_cited_media, publish_local_url, references_from_fields, references_from_urls,
+    resolve_asset_id,
+};
+pub(crate) use cite::{
+    bind_restored_dashboard_layout, bind_restored_site_image, bind_restored_wallpaper,
+    sync_note_history_refs,
 };
 pub use error::MediaError;
 pub use legacy::{LegacyClass, LegacyPaths};

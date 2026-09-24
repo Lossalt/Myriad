@@ -2312,3 +2312,28 @@ async fn postgres_note_cites_absolute_site_urls_under_configured_origins() {
     assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_share_image_and_favicon_are_published_and_bound() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    for key in ["site_og_image", "site_favicon"] {
+        let image = f.image().await;
+        let txn = f.db.begin().await.unwrap();
+        let stored = cite::bind_and_publish_site_image(&txn, key, &image.content_path, &[])
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert!(stored.starts_with("/media/assets/"), "{key}: {stored}");
+        let row = assets::find_by_id(&f.db, image.id).await.unwrap().unwrap();
+        assert_eq!(row.exposure.as_deref(), Some("public"));
+        assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
+        // A published site image cannot be made private under the crawler.
+        assert_eq!(
+            f.service.unpublish(&f.db, image.id).await.unwrap_err(),
+            MediaError::PublicInUse
+        );
+    }
+    f.close().await;
+}
