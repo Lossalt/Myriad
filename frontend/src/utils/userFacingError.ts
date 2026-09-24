@@ -876,11 +876,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.webfingerFailed
   }
-  if (
-    /psn npsso is empty|npsso exchange failed|cookie may be expired|psn_npsso not configured/i.test(
-      raw,
-    )
-  ) {
+  if (is('psn_npsso_expired')) {
     const statusMatch = raw.match(/\b(?:status\s+|HTTP\s+)(\d{3})\b/i)
     return joinParts(
       t.psnNpssoExpired,
@@ -888,19 +884,13 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       usefulExtra(hint, t.psnNpssoExpired),
     )
   }
-  if (/^psn (authorize|token)/i.test(raw) || /psn credential budget/i.test(raw)) {
+  if (is('psn_request_failed')) {
     return classified(t.psnRequestFailed, raw, hint)
   }
-  if (
-    code === 'steam_not_configured' ||
-    /steam api key 或 steam id 未配置|steam is not configured/i.test(raw)
-  ) {
+  if (is('steam_not_configured')) {
     return t.steamNotConfigured
   }
-  if (
-    code === 'platform_disabled' ||
-    /平台未启用|is not enabled/i.test(raw)
-  ) {
+  if (is('platform_disabled')) {
     return t.platformDisabled
   }
   if (code === 'api_not_found') {
@@ -909,41 +899,28 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'invalid_user') {
     return joinParts(t.unauthorized, usefulExtra(hint, t.unauthorized))
   }
+  // Tapp runtime contract: report reads fail with the shared `fetch_failed`
+  // code (tapp_runtime/reports.rs:86), so only the label tells them apart.
   if (
     code === 'fetch_failed' &&
     /failed to fetch report/i.test(raw)
   ) {
     return joinParts(t.reportLoadFailed, usefulExtra(hint, t.reportLoadFailed))
   }
-  if (
-    code === 'fetch_failed' ||
-    /failed to fetch data|获取失败|获取 .+失败|验证失败|解析响应失败|请求失败/i.test(
-      raw,
-    )
-  ) {
+  if (is('fetch_failed')) {
     return classified(t.platformFetchFailed, raw, hint)
   }
-  if (
-    code === 'platform_refresh_reconcile_failed' ||
-    /platform auto-refresh/i.test(raw) ||
-    /failed to (load core platform tasks|disable stale core task|(update|create|disable) \w+ core task)/i.test(
-      raw,
-    )
-  ) {
-    const plat = raw.match(/failed to (?:update|create|disable) (\w+) core task/i)
-    const name = plat?.[1]
-      ? `${plat[1].charAt(0).toUpperCase()}${plat[1].slice(1)}`
-      : 'Platform'
+  if (is('platform_refresh_reconcile_failed')) {
     return classified(
-      fill(t.noticePlatformSyncFailed, { name }),
+      fill(t.noticePlatformSyncFailed, { name: 'Platform' }),
       raw,
       hint,
     )
   }
-  if (/^game not found$|未找到游戏信息/i.test(raw)) {
+  if (is('game_not_found')) {
     return t.notFound
   }
-  if (/^username is required$|username 为必填/i.test(raw)) {
+  if (is('username_required')) {
     return t.usernameRequired
   }
   if (
@@ -953,73 +930,34 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return classified(t.agentProcessingFailed, raw, hint)
   }
-  if (
-    /抱歉，这次没能完成你的请求|抱歉，执行时遇到了问题|没能执行成功|执行过程中遇到问题/.test(
-      raw,
-    )
-  ) {
+  if (is('agent_apology_legacy') || is('agent_task_failed')) {
     return t.agentProcessingFailed
   }
-  if (
-    /^the scheduled task failed$|前端任务执行失败|^任务执行失败$|^任务未完成$|^任务失败$/.test(
-      raw,
-    )
-  ) {
-    return classified(t.noticeScheduleFailed, raw, hint)
-  }
-  if (/^the task failed$|^failed$|^未知错误$|^失败$/.test(raw)) {
-    return t.agentProcessingFailed
-  }
-  if (
-    /^the failed step was skipped$|用户选择跳过错误步骤/.test(raw)
-  ) {
+  if (is('agent_step_skipped')) {
     return t.agentStepSkipped
   }
-  if (
-    /^the failed step will be retried$|用户选择重试失败步骤/.test(raw)
-  ) {
+  if (is('agent_step_retrying')) {
     return t.agentStepRetrying
   }
   if (is('text_confirmation_failed') || raw.startsWith('确认执行失败')) {
     return t.agentConfirmFailed
   }
-  if (
-    /this action is not supported|that platform is not supported|不支持此操作|不支持的平台名称/i.test(
-      raw,
-    )
-  ) {
+  if (is('agent_unsupported')) {
     return t.agentUnsupported
   }
-  if (
-    /^this confirmation expired$|确认请求已过期/i.test(raw)
-  ) {
+  if (is('agent_confirm_expired')) {
     return t.agentConfirmExpired
   }
-  if (
-    /this confirmation is no longer available|确认请求不存在/i.test(raw)
-  ) {
+  if (is('agent_confirm_missing')) {
     return t.agentConfirmMissing
   }
-  if (
-    code === 'task_cancelled' ||
-    /^the task was cancelled$|^任务已取消$|任务已被取消|任务已被用户取消|操作已取消|用户取消了任务/i.test(
-      raw,
-    )
-  ) {
+  if (is('task_cancelled')) {
     return t.agentTaskCancelled
   }
-  if (
-    code === 'wait_channel_closed' ||
-    /任务等待通道已断开|^the wait channel closed$/i.test(raw)
-  ) {
+  if (is('wait_channel_closed')) {
     return t.waitChannelClosed
   }
-  if (
-    code === 'wait_input_timeout' ||
-    /等待用户输入已超时|任务等待用户输入超时|^waiting for input timed out|^Waiting for a reply timed out|^用户回答已过期|^The answer expired|^回答超时$|^The answer timed out$/i.test(
-      raw,
-    )
-  ) {
+  if (is('wait_input_timeout')) {
     const hours = raw.match(/（(\d+)小时）|\((\d+) hours\)/)
     if (hours) {
       return fill(t.waitInputTimeoutHours, {
@@ -1031,53 +969,28 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('rate_limited')) {
     return t.rateLimited
   }
-  if (
-    /^服务暂时不可用，等待后重试$|^Service temporarily unavailable; wait and retry$/i.test(
-      raw,
-    )
-  ) {
-    return t.serviceUnavailable
-  }
-  if (
-    /^API 响应解析失败|^Failed to parse the API response; retrying may help$/i.test(
-      raw,
-    )
-  ) {
+  if (is('ai_response_invalid')) {
     return t.aiResponseInvalid
-  }
-  if (
-    /^权限不足，需要用户授权$|^Permission denied; user authorization is required$/i.test(
-      raw,
-    )
-  ) {
-    return t.forbidden
   }
   if (is('text_the_requested_resource_does_not_exist')) {
     return t.notFound
   }
-  if (
-    /^内容策略违规|^Content policy violation; retry after removing sensitive content$/i.test(
-      raw,
-    )
-  ) {
+  if (is('content_policy_retry')) {
     return t.contentPolicyRetry
   }
-  if (/^配置缺失|^Configuration missing \(not retryable\)/i.test(raw)) {
+  if (is('service_not_configured')) {
     return classified(t.serviceNotConfigured, raw, hint)
   }
-  if (/^参数缺失:|^Missing parameter:/i.test(raw)) {
+  if (is('missing_parameter')) {
     return classified(t.missingParameter, raw, hint)
   }
-  if (/^未知错误:|^Unknown error:/i.test(raw)) {
+  if (is('unknown_error')) {
     return classified(t.unknown, raw, hint)
   }
   if (is('text_resume_exceeded_the_step_cap')) {
     return t.agentResumeOverCap
   }
-  if (
-    code === 'task_unavailable' ||
-    /任务状态已不可用|^the task is no longer available$/i.test(raw)
-  ) {
+  if (is('task_unavailable')) {
     return t.taskUnavailable
   }
   if (code === 'analytics_unavailable') {
@@ -1099,7 +1012,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       sec: Number(queueWait[1] || queueWait[2] || '0'),
     })
   }
-  if (/^现在没在放歌|^Nothing is playing/i.test(raw)) {
+  if (is('music_not_playing')) {
     return currentCopy().music.noPlaying
   }
   if (is('text_task_submitted_waiting_to_run')) {
@@ -1190,16 +1103,16 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('text_running_skill')) return t.agentRunningSkill
   if (is('text_calling_a_tool')) return t.agentCallingTool
   if (is('text_tapp_apps')) return currentCopy().tapp.apps
-  if (/^组件列表$/.test(raw)) return t.tappWidgets
-  if (/^存储数据$/.test(raw)) return t.tappStorage
+  if (is('text_tapp_widgets')) return t.tappWidgets
+  if (is('text_tapp_storage')) return t.tappStorage
   if (is('text_scheduled_tasks')) return t.tappScheduledTasks
-  if (/^执行记录$/.test(raw)) return t.tappExecutions
+  if (is('text_tapp_executions')) return t.tappExecutions
   if (is('text_unknown_app')) return t.unknownApp
   if (is('text_untitled_report')) return t.unnamedReport
-  if (/^未知标题$/.test(raw)) return t.unknownTitle
-  if (/^未命名内容$/.test(raw)) return t.untitledContent
-  if (/^未知用户$/.test(raw)) return currentCopy().userModal.unknownUser
-  if (/^未分类$/.test(raw)) return currentCopy().phantasi.uncategorized
+  if (is('text_unknown_title')) return t.unknownTitle
+  if (is('text_untitled_content')) return t.untitledContent
+  if (is('text_unknown_user')) return currentCopy().userModal.unknownUser
+  if (is('text_uncategorized')) return currentCopy().phantasi.uncategorized
   if (is('text_latest_articles')) {
     return currentCopy().phantasi.latestArticles
   }
@@ -1233,15 +1146,15 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('text_a_schedule_time_is_required')) {
     return currentCopy().phantasi.noteScheduleNeedTime
   }
-  if (/^游客$/.test(raw)) return t.guestLabel
+  if (is('text_guest')) return t.guestLabel
   const userNumber = raw.match(/^用户#(\d+)$/)
   if (userNumber) return fill(t.userNumber, { id: userNumber[1] })
-  if (/^Xbox 玩家$/.test(raw)) return currentCopy().reportCardWidget.xboxGamerDefault
-  if (/^PSN 玩家$/.test(raw)) return t.psnPlayer
-  if (/^Steam 玩家$/.test(raw)) return t.steamPlayer
-  if (/^等待 Tapp 完成交互$/.test(raw)) return t.waitTappInteraction
-  if (/^动态技能$/.test(raw)) return t.capDynamicSkills
-  if (/^MCP 工具$/.test(raw)) return t.capMcpTools
+  if (is('text_xbox_player')) return currentCopy().reportCardWidget.xboxGamerDefault
+  if (is('text_psn_player')) return t.psnPlayer
+  if (is('text_steam_player')) return t.steamPlayer
+  if (is('text_wait_tapp_interaction')) return t.waitTappInteraction
+  if (is('text_dynamic_skills')) return t.capDynamicSkills
+  if (is('text_mcp_tools')) return t.capMcpTools
   if (
     raw.startsWith('我现在心情很低，不想接新的事情') ||
     raw.startsWith('I\'m in a very low mood and don\'t want to take on anything new')
@@ -1249,12 +1162,12 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     return t.agentRefuseLowMood
   }
   if (raw.startsWith('我对这个请求的理解置信度较低')) return t.agentNeedClarification
-  if (/^重新执行这个步骤$/.test(raw)) return t.retryStepDesc
-  if (/^跳过这个步骤继续执行$/.test(raw)) return t.skipStepDesc
-  if (/^取消整个任务$/.test(raw)) return t.cancelTaskDesc
-  if (/^重试$/.test(raw)) return t.retryStep
-  if (/^跳过$/.test(raw)) return t.skipStep
-  if (/^联网搜索结果$/.test(raw)) return t.webSearchResult
+  if (is('text_retry_step_desc')) return t.retryStepDesc
+  if (is('text_skip_step_desc')) return t.skipStepDesc
+  if (is('text_cancel_task_desc')) return t.cancelTaskDesc
+  if (is('text_retry_step')) return t.retryStep
+  if (is('text_skip_step')) return t.skipStep
+  if (is('text_web_search_result')) return t.webSearchResult
   if (raw.includes('试试搜索你已有数据')) return t.searchLocalHint
   const dbMissing = raw.match(/^(\S+) 数据库文件不存在（(.+)）/)
   if (dbMissing) {
@@ -1263,28 +1176,28 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       path: dbMissing[2],
     })
   }
-  if (/^请尝试其他关键词$/.test(raw)) return t.tryOtherKeyword
-  if (/^检查拼写是否正确$/.test(raw)) return t.checkSpelling
+  if (is('text_try_other_keyword')) return t.tryOtherKeyword
+  if (is('text_check_spelling')) return t.checkSpelling
   if (raw.includes('page.content 读取 Tapp')) return t.pageContentNeedsTapp
   if (raw.includes('page.content 读取平台')) return t.pageContentNeedsPlatform
-  if (/^AI 联网搜索发现$/.test(raw)) return t.webSearchResult
+  if (is('text_web_search_result')) return t.webSearchResult
   if (raw.includes('AI 已根据近期失败原因改写')) return t.noticeSkillImprovedBody
   const prunedSkill = raw.match(/^自动技能「(.+)」因失败率过高被淘汰/)
   if (prunedSkill) {
     return fill(t.noticeSkillPrunedBody, { name: prunedSkill[1] })
   }
   if (raw.startsWith('我的理解是：')) return t.agentNeedClarification
-  if (/^网易云音乐用户$/.test(raw)) return t.neteaseMusicUser
-  if (/^Bangumi 用户$/.test(raw)) return t.bangumiUser
-  if (/^MyAnimeList 用户$/.test(raw)) return t.malUser
-  if (/^智能阅读列表$/.test(raw)) return currentCopy().phantasi.smartReadingList
-  if (/^订阅源$/.test(raw)) return currentCopy().phantasi.boardFeeds
-  if (/^已读$/.test(raw)) return t.phantasiMarkRead
-  if (/^未读$/.test(raw)) return t.phantasiMarkUnread
-  if (/^已收藏$/.test(raw)) return t.phantasiMarkStarred
-  if (/^取消收藏$/.test(raw)) return t.phantasiMarkUnstarred
-  if (/^稍后阅读$/.test(raw)) return t.phantasiMarkLater
-  if (/^请提供更多信息$|^Please provide more information\.?$/i.test(raw)) {
+  if (is('text_netease_music_user')) return t.neteaseMusicUser
+  if (is('text_bangumi_user')) return t.bangumiUser
+  if (is('text_mal_user')) return t.malUser
+  if (is('text_smart_reading_list')) return currentCopy().phantasi.smartReadingList
+  if (is('text_board_feeds')) return currentCopy().phantasi.boardFeeds
+  if (is('text_mark_read')) return t.phantasiMarkRead
+  if (is('text_mark_unread')) return t.phantasiMarkUnread
+  if (is('text_mark_starred')) return t.phantasiMarkStarred
+  if (is('text_mark_unstarred')) return t.phantasiMarkUnstarred
+  if (is('text_mark_later')) return t.phantasiMarkLater
+  if (is('text_need_more_info')) {
     return t.agentNeedMoreInfo
   }
   const webSearchNamed = raw.match(/^网络搜索\s*[—\-]\s*(\S.*)$/)

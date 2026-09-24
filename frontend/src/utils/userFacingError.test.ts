@@ -1206,12 +1206,11 @@ describe('userFacingError', () => {
     assert.notEqual(save, currentCopy().errors.operationFailed)
   })
 
-  it('maps platform auto-refresh leftovers and keeps the platform', () => {
-    const steam = userFacingError(
-      'Failed to update steam core task: relation "tapp_scheduled_tasks" does not exist',
+  it('maps platform auto-refresh reconcile failures', () => {
+    const restore = userFacingError(
+      'Settings restored, but platform auto-refresh could not be updated',
     )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(steam), false)
-    assert.match(steam, /Steam|自动刷新/)
+    assert.match(restore, /自动刷新|auto-refresh/i)
     const generic = userFacingError(
       new ApiError(
         'Failed to update platform auto-refresh',
@@ -1220,7 +1219,7 @@ describe('userFacingError', () => {
       ),
     )
     assert.notEqual(generic, currentCopy().errors.operationFailed)
-    assert.notEqual(steam, currentCopy().errors.operationFailed)
+    assert.notEqual(restore, currentCopy().errors.operationFailed)
   })
 
   it('maps storage preflight leftovers and keeps the path', () => {
