@@ -421,6 +421,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Release notes walk the commits since the previous tag.
+          fetch-depth: 0
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -538,17 +541,24 @@ jobs:
           [ ! -f docker-guard.env ] || checksum_assets+=(docker-guard.env)
           sha256sum "${checksum_assets[@]}" > SHA256SUMS
 
-          # Build a minimal changelog stub if not provided.
-          if [ ! -f "CHANGELOG-fragment.md" ]; then
-            {
-              echo "## ${VERSION}"
-              echo ""
-              echo "Channel: \`${CHANNEL}\`"
-              echo ""
-              echo "Images:"
-              jq -r '.images | to_entries[] | "- \(.key): `\(.value.ref)` (`\(.value.digest)`)"' release.json
-            } > CHANGELOG-fragment.md
-          fi
+          # Release notes: commits since the previous tag grouped by Conventional
+          # Commit type (plus release/notes/<version>.md highlights when present),
+          # followed by the shipped images.
+          # A dispatch re-release runs on the chosen branch; walk up to the tag.
+          HEAD_REV=$(git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" || echo "$COMMIT_SHA")
+          # Nearest earlier tag in this tag's own history (not the newest tag
+          # overall), so re-releasing an old tag still lists its own changes.
+          NOTES_BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${HEAD_REV}^" 2>/dev/null || true)
+          {
+            python3 scripts/extra/release-notes.py "$VERSION" "$NOTES_BASE" "$HEAD_REV"
+            echo ""
+            echo "---"
+            echo ""
+            echo "Channel: \`${CHANNEL}\`"
+            echo ""
+            echo "Images:"
+            jq -r '.images | to_entries[] | "- \(.key): `\(.value.ref)` (`\(.value.digest)`)"' release.json
+          } > RELEASE_NOTES.md
 
       - name: Sign release.json with cosign (keyless OIDC)
         env:
@@ -589,7 +599,7 @@ jobs:
           gh release create "${{ needs.resolve.outputs.version }}" \
             --title "${{ needs.resolve.outputs.version }}" \
             --target "${{ github.sha }}" \
-            --notes-file CHANGELOG-fragment.md \
+            --notes-file RELEASE_NOTES.md \
             --prerelease=${{ needs.resolve.outputs.prerelease }} \
             release.json release.json.sig release.json.pem \
             SHA256SUMS SHA256SUMS.sig SHA256SUMS.pem \
@@ -599,6 +609,8 @@ jobs:
         run: |
           {
             echo "## Released ${{ needs.resolve.outputs.version }}"
+            echo ""
+            cat RELEASE_NOTES.md
             echo ""
             echo '### release.json'
             echo '```json'
