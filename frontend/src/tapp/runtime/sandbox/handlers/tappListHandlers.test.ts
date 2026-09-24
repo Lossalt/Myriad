@@ -1,6 +1,7 @@
 import type { TappInstance, TappMessage } from '../../../types'
 import type { TappBridge } from '../../TappBridge'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, it } from 'node:test'
 import { registerTappListHandlers } from './contentHandlers.ts'
 
@@ -131,5 +132,13 @@ describe('registerTappListHandlers', { concurrency: false }, () => {
     assert.deepEqual((listed as { data: Array<{ id: string }> }).data[0]?.id, 'com.example.demo')
     assert.equal(calls[0]?.url, '/api/tapps')
     assert.equal(calls[0]?.method, 'GET')
+  })
+
+  it('lifecycle goes through the host runtime, never the raw API', () => {
+    const src = readFileSync(new URL('./contentHandlers.ts', import.meta.url), 'utf8')
+    for (const call of ['uninstallTapp', 'startTapp', 'stopTapp']) {
+      assert.doesNotMatch(src, new RegExp(`TappApiService\\.${call}\\(`), call)
+    }
+    assert.match(src, /runtimeKnowing\(tappId\)\)\.uninstallTapp\(/)
   })
 })

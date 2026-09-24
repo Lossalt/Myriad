@@ -21,6 +21,23 @@ function getArgs(message: { payload: unknown }): unknown[] {
   return (message.payload as { args?: unknown[] }).args || []
 }
 
+/**
+ * Lifecycle goes through the host runtime, never the raw API: uninstalling
+ * must stop instances, drop widgets/platforms/caches and emit events so open
+ * windows and background cores of that app are torn down.
+ */
+async function runtimeKnowing(tappId: string) {
+  const { getTappRuntime } = await import('../../TappRuntime')
+  const runtime = getTappRuntime()
+  if (!runtime.getTapp(tappId)) await runtime.syncFromBackend(true)
+  return runtime
+}
+
+async function syncRuntime() {
+  const { getTappRuntime } = await import('../../TappRuntime')
+  await getTappRuntime().syncFromBackend(true)
+}
+
 export function registerTappListHandlers(
   bridge: TappBridge,
   _tappInstance: TappInstance,
@@ -106,6 +123,7 @@ export function registerTappListHandlers(
           assets: resolved.assets,
           permissions: resolved.permissions,
         })
+        await syncRuntime()
         return {
           success: true,
           data: { id: result.id, name: result.name, status: result.status },
@@ -116,6 +134,7 @@ export function registerTappListHandlers(
         tappId: resolved.tappId,
         permissions: resolved.permissions,
       })
+      await syncRuntime()
       return {
         success: true,
         data: { id: result.id, name: result.name, status: result.status },
@@ -160,7 +179,7 @@ export function registerTappListHandlers(
   bridge.registerHandler('tappList.uninstall', async (message) => {
     const [tappId] = getArgs(message) as [string]
     try {
-      await TappApiService.uninstallTapp(tappId)
+      await (await runtimeKnowing(tappId)).uninstallTapp(tappId)
       return { success: true }
     } catch (error) {
       return fail(error)
@@ -170,7 +189,7 @@ export function registerTappListHandlers(
   bridge.registerHandler('tappList.start', async (message) => {
     const [tappId] = getArgs(message) as [string]
     try {
-      await TappApiService.startTapp(tappId)
+      await (await runtimeKnowing(tappId)).startTapp(tappId)
       return { success: true }
     } catch (error) {
       return fail(error)
@@ -180,7 +199,7 @@ export function registerTappListHandlers(
   bridge.registerHandler('tappList.stop', async (message) => {
     const [tappId] = getArgs(message) as [string]
     try {
-      await TappApiService.stopTapp(tappId)
+      await (await runtimeKnowing(tappId)).stopTapp(tappId)
       return { success: true }
     } catch (error) {
       return fail(error)
