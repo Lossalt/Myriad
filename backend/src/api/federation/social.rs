@@ -61,11 +61,15 @@ fn federation_user_error(context: &'static str, error: impl std::fmt::Display) -
 }
 
 fn federation_store_response(context: &'static str, error: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(AppError::public_json(federation_user_error(context, error))),
-    )
-        .into_response()
+    // The label may carry a detail suffix, so the code is set here rather than inferred.
+    let code = if context == "rotate federation keys" {
+        "federation_key_rotate_failed"
+    } else {
+        "federation_data_failed"
+    };
+    let mut body = AppError::public_json(federation_user_error(context, error));
+    body["code"] = json!(code);
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
 }
 
 /// `?limit=&cancelled_only=` 查询参数。
