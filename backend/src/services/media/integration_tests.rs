@@ -2108,3 +2108,56 @@ async fn dashboard_save_protects_sticker_urls_under_the_site_origin() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_producer_key_is_released_after_delete_and_missing() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ctx = || {
+        MediaContext::site(MediaActor::admin(1).unwrap(), MediaSource::Generated)
+            .with_producer_key("ai-task:t1:image")
+    };
+    let bytes = || NewMediaBytes {
+        bytes: png().into(),
+        claimed_mime: "image/png".into(),
+        filename: "generated.png".into(),
+        max_bytes: 1024 * 1024,
+        derived_from_id: None,
+        exposure: MediaExposure::Public,
+    };
+    let (first, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(created);
+    let (again, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(again.id, first.id);
+    f.service.delete(&f.db, first.id).await.unwrap();
+    let (second, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(created, "a deleted asset must not burn its producer key");
+    assert_ne!(second.id, first.id);
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET state = 'missing' WHERE id = {}",
+        second.id
+    ))
+    .await
+    .unwrap();
+    let third = f
+        .service
+        .create_from_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert_ne!(third.id, second.id);
+    f.close().await;
+}

@@ -96,7 +96,11 @@ impl MediaService {
         ctx.validate()?;
         let payload = validate_bytes(&input.bytes, &input.claimed_mime, input.max_bytes)?;
         if let Some(existing) = assets::find_by_producer(db, &ctx).await? {
-            return existing_producer_result(existing);
+            if !producer_row_is_terminal(&existing) {
+                return existing_producer_result(existing);
+            }
+            // A failed or deleted earlier attempt must not burn the key forever.
+            assets::release_producer_key(db, existing.id).await?;
         }
         let write_token = Uuid::new_v4();
         let row = match assets::insert_staging(
@@ -263,7 +267,16 @@ impl MediaService {
                             }
                             Ok(DeletePlan::Unlink(row.storage_key))
                         }
-                        MediaState::Staging | MediaState::Missing => Err(MediaError::NotReady),
+                        // Listed in the catalog, so it must be removable; the
+                        // bytes never landed and the name may still be cited.
+                        MediaState::Missing => {
+                            if references::has_active(txn, id, false).await? {
+                                return Err(MediaError::InUse);
+                            }
+                            assets::retire_missing(txn, id).await?;
+                            Ok(DeletePlan::AlreadyGone)
+                        }
+                        MediaState::Staging => Err(MediaError::NotReady),
                     }
                 })
             })
@@ -355,9 +368,16 @@ fn existing_producer_result(row: media_assets::Model) -> Result<MediaAsset, Medi
     let state = row.state.as_deref().unwrap_or("");
     match MediaState::parse(state) {
         Ok(MediaState::Ready) => assets::to_domain(row, 0),
-        Ok(MediaState::Staging) => Err(MediaError::NotReady),
+        Ok(MediaState::Staging | MediaState::Deleting) => Err(MediaError::NotReady),
         _ => Err(MediaError::conflict("Producer key already used")),
     }
+}
+
+fn producer_row_is_terminal(row: &media_assets::Model) -> bool {
+    matches!(
+        MediaState::parse(row.state.as_deref().unwrap_or("")),
+        Ok(MediaState::Missing | MediaState::Deleted)
+    )
 }
 
 fn txn_error(err: sea_orm::TransactionError<MediaError>) -> MediaError {

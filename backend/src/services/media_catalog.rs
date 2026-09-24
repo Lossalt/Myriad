@@ -225,6 +225,8 @@ pub async fn delete_asset(
             Ok(Err(vec!["pending".into()]))
         }
         Err(crate::services::media::MediaError::Missing) => Ok(Err(vec!["missing".into()])),
+        // Still being written: retry later instead of reporting a server error.
+        Err(crate::services::media::MediaError::NotReady) => Ok(Err(vec!["pending".into()])),
         Err(crate::services::media::MediaError::InUse)
         | Err(crate::services::media::MediaError::PublicInUse) => {
             Ok(Err(vec!["in_use".into()]))

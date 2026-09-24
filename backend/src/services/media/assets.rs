@@ -233,6 +233,25 @@ WHERE id = $1
     Ok(result.rows_affected() == 1)
 }
 
+/// Detach a terminal (missing/deleted) row from its producer key so the
+/// producer can write again; the unique index spans every state.
+pub async fn release_producer_key(db: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
+    let result = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+UPDATE media_assets
+SET producer_key = NULL,
+    updated_at = NOW()
+WHERE id = $1
+  AND state IN ('missing', 'deleted')
+"#,
+            [id.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn mark_deleting(txn: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
     let result = txn
         .execute_raw(Statement::from_sql_and_values(
@@ -244,6 +263,26 @@ SET state = 'deleting',
     state_since = NOW()
 WHERE id = $1
   AND state = 'ready'
+"#,
+            [id.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// A `missing` row has no file to unlink; retire it in one step.
+pub async fn retire_missing(txn: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
+    let result = txn
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+UPDATE media_assets
+SET state = 'deleted',
+    producer_key = NULL,
+    updated_at = NOW(),
+    state_since = NOW()
+WHERE id = $1
+  AND state = 'missing'
 "#,
             [id.into()],
         ))
