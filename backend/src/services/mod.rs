@@ -50,6 +50,7 @@ pub mod platform_cache; // Platform filtered-JSON cache
 pub mod platform_id; // PlatformId registry: ids, aliases, credentials/enabled rule
 pub mod platform_items; // Cache → uniform items[] projection
 pub mod platform_refresh; // Platform fetch/cache (profile HTTP + scheduler)
+pub mod principal; // 当前角色、站长、安装是否已认领：唯一来源
 pub mod profile_text; // 名称/简介文案来源（与 avatar 独立）
 pub mod retired_configuration; // Backup denylist for retired configuration keys
 pub mod see_through; // Remote See-through layered-PSD decomposition

@@ -348,6 +348,8 @@ fn claim_auth_load_slot(user_id: i32) -> AuthLoadSlot {
 /// from [`notify_auth_cache_invalidation`] so failed NOTIFY does not leave a
 /// stale local authorization decision behind.
 pub fn invalidate_auth_cache_local(user_id: i32) {
+    // Any role change can move the site owner's lowest-admin fallback.
+    crate::services::principal::invalidate_site_owner_cache();
     if user_id <= 0 {
         return;
     }
@@ -384,9 +386,12 @@ pub async fn notify_auth_cache_invalidation(
 
 /// Start one process-wide LISTEN task lazily, using the app's existing pool.
 /// A missed notification is safe because every entry expires after
-/// [`AUTH_CACHE_TTL`].
-async fn ensure_auth_cache_listener(db: &DatabaseConnection) {
-    if !matches!(db.get_database_backend(), DatabaseBackend::Postgres) {
+/// [`AUTH_CACHE_TTL`]. The site-owner cache in `services::principal` rides on
+/// the same channel.
+pub(crate) async fn ensure_auth_cache_listener(db: &DatabaseConnection) {
+    // Tests never start it: the listener detaches a pooled connection, which
+    // may be the single connection holding a test's TEMP fixtures.
+    if cfg!(test) || !matches!(db.get_database_backend(), DatabaseBackend::Postgres) {
         return;
     }
 
@@ -796,8 +801,8 @@ async fn load_auth_snapshot(
                 row.map(|row| {
                     Ok(AuthSnapshot {
                         token_version: row_session_epoch(&row)?,
-                        is_admin: row.try_get::<bool>("", "is_admin").unwrap_or(false),
-                        is_owner: row.try_get::<bool>("", "is_owner").unwrap_or(false),
+                        is_admin: row.try_get::<bool>("", "is_admin")?,
+                        is_owner: row.try_get::<bool>("", "is_owner")?,
                     })
                 })
                 .transpose()
@@ -820,6 +825,21 @@ async fn load_auth_snapshot(
 /// revoked sessions valid again.
 pub(crate) fn row_session_epoch(row: &sea_orm::QueryResult) -> Result<i64, sea_orm::DbErr> {
     row.try_get::<i32>("", "token_version").map(i64::from)
+}
+
+/// Current roles of `user_id` from the auth snapshot (same TTL and NOTIFY
+/// invalidation as request authorization). `None` for non-durable ids and
+/// deleted accounts. Callers go through `services::principal::current_roles`.
+pub(crate) async fn current_roles_snapshot(
+    db: &DatabaseConnection,
+    user_id: i32,
+) -> Result<Option<crate::services::principal::CurrentRoles>, sea_orm::DbErr> {
+    Ok(load_auth_snapshot(db, user_id).await?.map(|snapshot| {
+        crate::services::principal::CurrentRoles {
+            is_admin: snapshot.is_admin,
+            is_owner: snapshot.is_owner,
+        }
+    }))
 }
 
 /// Current roles of a session that is still live.
@@ -1770,13 +1790,16 @@ mod tests {
         let db = Database::connect(options).await.unwrap();
         let claims = super::mint_session_claims(2, "subject", true, false, 0);
         for sql in [
-            "CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, is_owner BOOLEAN)",
-            "INSERT INTO users VALUES (1, true, true), (2, NULL, false)",
+            "CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, is_owner BOOLEAN, \
+             token_version INTEGER)",
+            "INSERT INTO users VALUES (1, true, true, 0), (2, NULL, false, 0)",
         ] {
             db.execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
                 .await
                 .unwrap();
         }
+        // Fixture writes bypass admin_users, so drop the snapshot like it does.
+        super::invalidate_auth_cache_local(2);
         // A NULL result cannot be decoded as bool; it is not a false role.
         assert_eq!(
             super::ensure_current_admin_on(&claims, &db)
@@ -1785,10 +1808,9 @@ mod tests {
                 .0,
             StatusCode::INTERNAL_SERVER_ERROR
         );
-        assert!(matches!(
-            subject_is_admin(&db, 2).await,
-            Err(TappAccessError::Database)
-        ));
+        // The shared snapshot reads the NOT NULL column through COALESCE.
+        assert!(!subject_is_admin(&db, 2).await.unwrap());
+        super::invalidate_auth_cache_local(2);
         db.execute_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             "ALTER TABLE users RENAME COLUMN is_admin TO unavailable",
@@ -1819,6 +1841,7 @@ mod tests {
             ))
             .await
             .unwrap();
+            super::invalidate_auth_cache_local(2);
             assert_eq!(
                 super::ensure_current_admin_on(&claims, &db).await.is_ok(),
                 allowed
@@ -1831,6 +1854,7 @@ mod tests {
         ))
         .await
         .unwrap();
+        super::invalidate_auth_cache_local(2);
         assert_eq!(
             super::ensure_current_admin_on(&claims, &db)
                 .await

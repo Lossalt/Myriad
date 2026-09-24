@@ -7,14 +7,10 @@
 //! [`installation_conflict_owner_ids`], [`find_visible_tapp`],
 //! [`lock_tapp_lifecycle`]) for path stability.
 
-use once_cell::sync::Lazy;
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, EntityTrait,
     QueryFilter, Statement,
 };
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 use crate::models::entities::tapps;
 use crate::services::permission_service::{TappPermission, UserRole};
@@ -65,91 +61,15 @@ impl std::fmt::Display for TappAccessError {
 
 impl std::error::Error for TappAccessError {}
 
-/// Minimal single-value TTL cache (avoids depending on API-layer cache types).
-struct SingleCache {
-    value: Option<i32>,
-    cached_at: Option<Instant>,
-    ttl: Duration,
-}
-
-impl SingleCache {
-    fn new(ttl: Duration) -> Self {
-        Self {
-            value: None,
-            cached_at: None,
-            ttl,
-        }
-    }
-
-    fn get(&self) -> Option<i32> {
-        if let (Some(value), Some(cached_at)) = (self.value, self.cached_at) {
-            if cached_at.elapsed() < self.ttl {
-                return Some(value);
-            }
-        }
-        None
-    }
-
-    fn set(&mut self, value: i32) {
-        self.value = Some(value);
-        self.cached_at = Some(Instant::now());
-    }
-}
-
-/// Admin / site-owner ID cache (60s TTL).
-static ADMIN_ID_CACHE: Lazy<Arc<RwLock<SingleCache>>> =
-    Lazy::new(|| Arc::new(RwLock::new(SingleCache::new(Duration::from_secs(60)))));
-
-/// Optional site owner / admin id (cached). Fresh DBs before setup return `Ok(None)`.
+/// Optional site owner id ([`crate::services::principal::site_owner_id`]).
+/// Fresh DBs before setup return `Ok(None)`.
 pub async fn find_admin_user_id(db: &DatabaseConnection) -> Result<Option<i32>, TappAccessError> {
-    {
-        let cache = ADMIN_ID_CACHE.read().await;
-        if let Some(id) = cache.get() {
-            return Ok(Some(id));
-        }
-    }
-
-    // Prefer durable site owner; fall back to first admin.
-    // Same resolution as `site_owner_user_id`, but optional for pre-setup surfaces.
-    let mut result = db
-        .query_one_raw(Statement::from_string(
-            DatabaseBackend::Postgres,
-            "SELECT id FROM users WHERE is_owner = true ORDER BY id ASC LIMIT 1".to_string(),
-        ))
+    crate::services::principal::site_owner_id(db)
         .await
-        .map_err(|e| {
-            tracing::error!("[TAPP] Database error fetching owner ID: {}", e);
+        .map_err(|error| {
+            tracing::error!(%error, "[TAPP] Failed to resolve site owner");
             TappAccessError::Database
-        })?;
-
-    if result.is_none() {
-        result = db
-            .query_one_raw(Statement::from_string(
-                DatabaseBackend::Postgres,
-                "SELECT id FROM users WHERE is_admin = true ORDER BY id ASC LIMIT 1".to_string(),
-            ))
-            .await
-            .map_err(|e| {
-                tracing::error!("[TAPP] Database error fetching admin ID: {}", e);
-                TappAccessError::Database
-            })?;
-    }
-
-    let Some(result) = result else {
-        return Ok(None);
-    };
-
-    let id = result.try_get::<i32>("", "id").map_err(|e| {
-        tracing::error!("[TAPP] Error parsing admin ID: {}", e);
-        TappAccessError::Database
-    })?;
-
-    {
-        let mut cache = ADMIN_ID_CACHE.write().await;
-        cache.set(id);
-    }
-
-    Ok(Some(id))
+        })
 }
 
 /// Required site owner / admin id for control-plane paths that need setup complete.
@@ -159,39 +79,19 @@ pub async fn get_admin_user_id(db: &DatabaseConnection) -> Result<i32, TappAcces
         .ok_or(TappAccessError::NoAdmin)
 }
 
-/// Whether `user_id` is a site admin (`users.is_admin` or the site-owner id).
-/// Guests (`user_id < 0`) are never admin.
+/// Whether `user_id` is a site admin right now
+/// ([`crate::services::principal::is_current_admin`]). Guests are never admin.
+/// The site owner needs no special case: an owner cannot be demoted.
 pub async fn subject_is_admin(
     db: &DatabaseConnection,
     user_id: i32,
 ) -> Result<bool, TappAccessError> {
-    if user_id < 0 {
-        return Ok(false);
-    }
-    if let Some(site_owner_id) = find_admin_user_id(db).await? {
-        if user_id == site_owner_id {
-            return Ok(true);
-        }
-    }
-    let result = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-            vec![user_id.into()],
-        ))
+    crate::services::principal::is_current_admin(db, user_id)
         .await
-        .map_err(|e| {
-            tracing::error!(%e, "[TAPP] Database error checking is_admin");
+        .map_err(|error| {
+            tracing::error!(%error, "[TAPP] Failed to read current admin role");
             TappAccessError::Database
-        })?;
-    Ok(result
-        .map(|row| row.try_get::<bool>("", "is_admin"))
-        .transpose()
-        .map_err(|e| {
-            tracing::error!(%e, "[TAPP] Database error decoding is_admin");
-            TappAccessError::Database
-        })?
-        .unwrap_or(false))
+        })
 }
 
 /// Verify the subject may access the given Tapp install (public owner and/or private copy).
