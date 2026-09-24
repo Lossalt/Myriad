@@ -6,7 +6,10 @@ use axum::{
 };
 use chrono::{Duration, Local, NaiveDate, Utc};
 use myriad_error::AppError;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, Value as SeaValue};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait,
+    Value as SeaValue,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -760,58 +763,112 @@ async fn is_duplicate_view(visitor: &str, path: &str) -> bool {
 }
 
 // ── DB writes ──────────────────────────────────────────────────────────────
+//
+// Every "seen set + counter" pair is written by **one statement**: a
+// data-modifying CTE inserts into the seen set and the counter upsert adds
+// `count(*)` of what that insert actually returned. A failure anywhere rolls
+// back both halves, so a visitor can never be marked seen while the counter
+// misses them; a concurrent duplicate blocks on the seen key, then hits
+// `DO NOTHING`, returns no row and adds 0.
 
-async fn mark_visitor_seen(
-    db: &DatabaseConnection,
-    day: NaiveDate,
-    path: &str,
-    visitor: &str,
-) -> Result<bool, sea_orm::DbErr> {
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
-VALUES ($1, $2, $3)
-ON CONFLICT (day, path, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    Ok(insert.rows_affected() > 0)
-}
+const PAGEVIEW_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, path, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $2, $4, fresh.n, 0, 0
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+WHERE $4 > 0 OR fresh.n > 0
+ON CONFLICT (day, path) DO UPDATE SET
+  views = analytics_page_daily.views + EXCLUDED.views,
+  unique_visitors = analytics_page_daily.unique_visitors + EXCLUDED.unique_visitors
+"#;
 
-async fn bump_pageview(
+/// Site-unique bump. Returns the post-increment `unique_visitors` only when
+/// this call inserted the seen row; no row when the visitor was already seen.
+const SITE_UNIQUE_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, path, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $2, 0, 1, 0, 0 FROM ins
+ON CONFLICT (day, path) DO UPDATE SET
+  unique_visitors = analytics_page_daily.unique_visitors + 1
+RETURNING unique_visitors
+"#;
+
+const ENGAGEMENT_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
+    VALUES ($1, $2, $3, '', $4)
+    ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $3, 0, 0, $5, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+ON CONFLICT (day, path) DO UPDATE SET
+  engagement_ms = analytics_page_daily.engagement_ms + EXCLUDED.engagement_ms,
+  engaged_views = analytics_page_daily.engaged_views + EXCLUDED.engaged_views
+"#;
+
+const EVENT_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_event_daily (day, event_name, path, target, count, unique_visitors)
+SELECT $1, $2, $3, $4, 1, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+ON CONFLICT (day, event_name, path, target) DO UPDATE SET
+  count = analytics_event_daily.count + 1,
+  unique_visitors = analytics_event_daily.unique_visitors + EXCLUDED.unique_visitors
+"#;
+
+const COUNTRY_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_country_visitor (day, country_code, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, country_code, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_country_daily (day, country_code, country_name, views, unique_visitors)
+SELECT $1, $2, $4, $5, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+WHERE $5 > 0 OR fresh.n > 0
+ON CONFLICT (day, country_code) DO UPDATE SET
+  views = analytics_country_daily.views + EXCLUDED.views,
+  unique_visitors = analytics_country_daily.unique_visitors + EXCLUDED.unique_visitors,
+  country_name = CASE
+    WHEN EXCLUDED.country_name <> '' THEN EXCLUDED.country_name
+    ELSE analytics_country_daily.country_name
+  END
+"#;
+
+pub(super) async fn bump_pageview(
     db: &DatabaseConnection,
     day: NaiveDate,
     path: &str,
     visitor: &str,
     count_view: bool,
 ) -> Result<(), sea_orm::DbErr> {
-    let is_new = mark_visitor_seen(db, day, path, visitor).await?;
-    let unique_inc: i64 = if is_new { 1 } else { 0 };
     let view_inc: i64 = if count_view { 1 } else { 0 };
-    if view_inc == 0 && unique_inc == 0 {
-        return Ok(());
-    }
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, $3, $4, 0, 0)
-ON CONFLICT (day, path) DO UPDATE SET
-  views = analytics_page_daily.views + EXCLUDED.views,
-  unique_visitors = analytics_page_daily.unique_visitors + EXCLUDED.unique_visitors
-"#,
+        PAGEVIEW_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(path.to_string()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(view_inc),
-            SeaValue::from(unique_inc),
         ],
     ))
     .await?;
@@ -823,7 +880,7 @@ ON CONFLICT (day, path) DO UPDATE SET
 /// `0`/absent means unknown (no number to show). Non-`SITE_PATH` rows never store an ordinal.
 /// Callers treat unknown as "no number to show" rather than "visitor #0".
 pub(crate) async fn read_visitor_ordinal(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     day: NaiveDate,
     visitor: &str,
 ) -> Result<Option<i64>, sea_orm::DbErr> {
@@ -856,47 +913,54 @@ WHERE day = $1 AND path = $2 AND visitor_hash = $3
 /// `RETURNING` and written onto the visitor's row. `RETURNING` on the single
 /// counter row is atomic per statement, so concurrent first-visits can never
 /// come away holding the same number.
-async fn record_site_unique(
+///
+/// Seen row and counter are one statement ([`SITE_UNIQUE_SQL`]); the ordinal
+/// write shares its transaction, so a failure leaves nothing behind and the
+/// next pageview simply retries as a first visit.
+pub(super) async fn record_site_unique(
     db: &DatabaseConnection,
     day: NaiveDate,
     visitor: &str,
 ) -> Result<Option<i64>, sea_orm::DbErr> {
-    let is_new = mark_visitor_seen(db, day, SITE_PATH, visitor).await?;
-    if !is_new {
-        return read_visitor_ordinal(db, day, visitor).await;
-    }
-    let ordinal = db
+    let txn = db.begin().await?;
+    let bumped = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, 0, 1, 0, 0)
-ON CONFLICT (day, path) DO UPDATE SET
-  unique_visitors = analytics_page_daily.unique_visitors + 1
-RETURNING unique_visitors
-"#,
-            [SeaValue::from(day), SeaValue::from(SITE_PATH.to_string())],
-        ))
-        .await?
-        .and_then(|r| r.try_get::<i64>("", "unique_visitors").ok())
-        .filter(|n| *n > 0);
-
-    if let Some(n) = ordinal {
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-UPDATE analytics_visitor_seen SET ordinal = $4
-WHERE day = $1 AND path = $2 AND visitor_hash = $3
-"#,
+            SITE_UNIQUE_SQL,
             [
                 SeaValue::from(day),
                 SeaValue::from(SITE_PATH.to_string()),
                 SeaValue::from(visitor.to_string()),
-                SeaValue::from(n),
             ],
         ))
         .await?;
-    }
+    let ordinal = match bumped {
+        None => read_visitor_ordinal(&txn, day, visitor).await?,
+        Some(row) => {
+            let ordinal = row
+                .try_get::<i64>("", "unique_visitors")
+                .ok()
+                .filter(|n| *n > 0);
+            if let Some(n) = ordinal {
+                txn.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"
+UPDATE analytics_visitor_seen SET ordinal = $4
+WHERE day = $1 AND path = $2 AND visitor_hash = $3
+"#,
+                    [
+                        SeaValue::from(day),
+                        SeaValue::from(SITE_PATH.to_string()),
+                        SeaValue::from(visitor.to_string()),
+                        SeaValue::from(n),
+                    ],
+                ))
+                .await?;
+            }
+            ordinal
+        }
+    };
+    txn.commit().await?;
     Ok(ordinal)
 }
 
@@ -904,7 +968,9 @@ WHERE day = $1 AND path = $2 AND visitor_hash = $3
 /// for path today". Not shown in public event list.
 pub(crate) const ENGAGE_MARKER: &str = "__engage__";
 
-async fn bump_engagement(
+/// First engagement report for (day, path, visitor) → +1 engaged_views.
+/// Later soft-flushes only add ms (otherwise avg time and bounce break).
+pub(super) async fn bump_engagement(
     db: &DatabaseConnection,
     day: NaiveDate,
     path: &str,
@@ -915,47 +981,22 @@ async fn bump_engagement(
     if ms < MIN_ENGAGEMENT_MS {
         return Ok(());
     }
-    // First engagement report for (day, path, visitor) → +1 engaged_views.
-    // Later soft-flushes only add ms (otherwise avg time and bounce break).
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
-VALUES ($1, $2, $3, '', $4)
-ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(ENGAGE_MARKER.to_string()),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let engaged_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
-
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, 0, 0, $3, $4)
-ON CONFLICT (day, path) DO UPDATE SET
-  engagement_ms = analytics_page_daily.engagement_ms + EXCLUDED.engagement_ms,
-  engaged_views = analytics_page_daily.engaged_views + EXCLUDED.engaged_views
-"#,
+        ENGAGEMENT_SQL,
         [
             SeaValue::from(day),
+            SeaValue::from(ENGAGE_MARKER.to_string()),
             SeaValue::from(path.to_string()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(ms),
-            SeaValue::from(engaged_inc),
         ],
     ))
     .await?;
     Ok(())
 }
 
-async fn bump_event(
+pub(super) async fn bump_event(
     db: &DatabaseConnection,
     day: NaiveDate,
     name: &str,
@@ -963,39 +1004,15 @@ async fn bump_event(
     target: &str,
     visitor: &str,
 ) -> Result<(), sea_orm::DbErr> {
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(name.to_string()),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(target.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let unique_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_event_daily (day, event_name, path, target, count, unique_visitors)
-VALUES ($1, $2, $3, $4, 1, $5)
-ON CONFLICT (day, event_name, path, target) DO UPDATE SET
-  count = analytics_event_daily.count + 1,
-  unique_visitors = analytics_event_daily.unique_visitors + EXCLUDED.unique_visitors
-"#,
+        EVENT_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(name.to_string()),
             SeaValue::from(path.to_string()),
             SeaValue::from(target.to_string()),
-            SeaValue::from(unique_inc),
+            SeaValue::from(visitor.to_string()),
         ],
     ))
     .await?;
@@ -1021,7 +1038,7 @@ ON CONFLICT (day, host) DO UPDATE SET
     Ok(())
 }
 
-async fn bump_country(
+pub(super) async fn bump_country(
     db: &DatabaseConnection,
     day: NaiveDate,
     country: &CountryInfo,
@@ -1029,47 +1046,15 @@ async fn bump_country(
     count_view: bool,
 ) -> Result<(), sea_orm::DbErr> {
     let view_inc: i64 = if count_view { 1 } else { 0 };
-
-    // First (day, country, visitor) → +1 unique_visitors
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_country_visitor (day, country_code, visitor_hash)
-VALUES ($1, $2, $3)
-ON CONFLICT (day, country_code, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(country.code.clone()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let unique_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
-    if view_inc == 0 && unique_inc == 0 {
-        return Ok(());
-    }
-
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_country_daily (day, country_code, country_name, views, unique_visitors)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (day, country_code) DO UPDATE SET
-  views = analytics_country_daily.views + EXCLUDED.views,
-  unique_visitors = analytics_country_daily.unique_visitors + EXCLUDED.unique_visitors,
-  country_name = CASE
-    WHEN EXCLUDED.country_name <> '' THEN EXCLUDED.country_name
-    ELSE analytics_country_daily.country_name
-  END
-"#,
+        COUNTRY_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(country.code.clone()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(country.name.clone()),
             SeaValue::from(view_inc),
-            SeaValue::from(unique_inc),
         ],
     ))
     .await?;

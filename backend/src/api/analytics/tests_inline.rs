@@ -526,3 +526,154 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
     SUMMARY_CACHE.lock().await.clear();
     isolated.drop().await;
 }
+
+async fn analytics_scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap()
+}
+
+#[tokio::test]
+async fn failed_counter_write_leaves_no_seen_row() {
+    use sea_orm::ConnectionTrait;
+    let Ok(url) = std::env::var("ANALYTICS_TEST_DATABASE_URL") else {
+        return;
+    };
+    let isolated = crate::db::IsolatedSchema::migrated(&url, "analytics_atomic_test").await;
+    let db = isolated.db.clone();
+    let day = analytics_today();
+    let jp = CountryInfo {
+        code: "JP".into(),
+        name: "Japan".into(),
+    };
+    // Every counter table rejects writes: the seen half of each pair must roll back with it.
+    db.execute_unprepared(
+        r#"
+CREATE FUNCTION analytics_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'injected counter failure'; END $$;
+CREATE TRIGGER fail_page BEFORE INSERT OR UPDATE ON analytics_page_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+CREATE TRIGGER fail_event BEFORE INSERT OR UPDATE ON analytics_event_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+CREATE TRIGGER fail_country BEFORE INSERT OR UPDATE ON analytics_country_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+"#,
+    )
+    .await
+    .unwrap();
+    assert!(bump_pageview(&db, day, "/a", "v1", true).await.is_err());
+    assert!(record_site_unique(&db, day, "v1").await.is_err());
+    assert!(bump_engagement(&db, day, "/a", "v1", 5_000).await.is_err());
+    assert!(bump_event(&db, day, "click", "/a", "", "v1").await.is_err());
+    assert!(bump_country(&db, day, &jp, "v1", true).await.is_err());
+    for table in [
+        "analytics_visitor_seen",
+        "analytics_event_visitor",
+        "analytics_country_visitor",
+    ] {
+        let n = analytics_scalar(&db, &format!("SELECT COUNT(*) AS n FROM {table}")).await;
+        assert_eq!(n, 0, "{table} kept a seen row whose counter failed");
+    }
+
+    // Once the counters accept writes the same visitor is still a first visit.
+    db.execute_unprepared(
+        "DROP TRIGGER fail_page ON analytics_page_daily;
+         DROP TRIGGER fail_event ON analytics_event_daily;
+         DROP TRIGGER fail_country ON analytics_country_daily;",
+    )
+    .await
+    .unwrap();
+    bump_pageview(&db, day, "/a", "v1", true).await.unwrap();
+    assert_eq!(record_site_unique(&db, day, "v1").await.unwrap(), Some(1));
+    bump_engagement(&db, day, "/a", "v1", 5_000).await.unwrap();
+    bump_event(&db, day, "click", "/a", "", "v1").await.unwrap();
+    bump_country(&db, day, &jp, "v1", true).await.unwrap();
+    let q = |sql: &'static str| analytics_scalar(&db, sql);
+    assert_eq!(
+        q("SELECT (views * 10 + unique_visitors)::bigint AS n
+           FROM analytics_page_daily WHERE path = '/a'")
+        .await,
+        11
+    );
+    assert_eq!(
+        q("SELECT engaged_views::bigint AS n FROM analytics_page_daily WHERE path = '/a'").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '__site__'")
+            .await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_event_daily").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_country_daily").await,
+        1
+    );
+    drop(db);
+    isolated.drop().await;
+}
+
+#[tokio::test]
+async fn concurrent_duplicate_visits_count_once() {
+    let Ok(url) = std::env::var("ANALYTICS_TEST_DATABASE_URL") else {
+        return;
+    };
+    let isolated = crate::db::IsolatedSchema::migrated(&url, "analytics_race_test").await;
+    let db = isolated.db.clone();
+    let day = analytics_today();
+
+    let views = (0..16).map(|_| bump_pageview(&db, day, "/c", "same", true));
+    for result in futures::future::join_all(views).await {
+        result.unwrap();
+    }
+    let events = (0..8).map(|_| bump_event(&db, day, "click", "/c", "", "same"));
+    for result in futures::future::join_all(events).await {
+        result.unwrap();
+    }
+    let q = |sql: &'static str| analytics_scalar(&db, sql);
+    assert_eq!(
+        q("SELECT views::bigint AS n FROM analytics_page_daily WHERE path = '/c'").await,
+        16
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '/c'").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT (count * 10 + unique_visitors)::bigint AS n FROM analytics_event_daily").await,
+        81
+    );
+
+    // Distinct first visits get distinct ordinals 1..=N; duplicates share one.
+    let visitors: Vec<String> = (0..12).map(|i| format!("visitor-{i:02}")).collect();
+    let firsts = visitors.iter().map(|v| record_site_unique(&db, day, v));
+    let mut ordinals: Vec<i64> = futures::future::join_all(firsts)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap().unwrap())
+        .collect();
+    ordinals.sort_unstable();
+    assert_eq!(ordinals, (1..=12).collect::<Vec<i64>>());
+    let repeats = (0..8).map(|_| record_site_unique(&db, day, "late"));
+    for result in futures::future::join_all(repeats).await {
+        assert_eq!(result.unwrap(), Some(13));
+    }
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '__site__'")
+            .await,
+        13
+    );
+    assert_eq!(
+        q("SELECT COUNT(*) AS n FROM analytics_visitor_seen WHERE path = '__site__'").await,
+        13
+    );
+    drop(db);
+    isolated.drop().await;
+}
