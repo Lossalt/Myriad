@@ -365,12 +365,30 @@ pub(crate) mod tests {
                 let report = crate::api::reports::enabled_report_platforms(&config);
                 let fetchable_ids =
                     crate::services::platform_refresh::configured_platform_ids(&config);
+                let cards = crate::api::config::public_platform_cards(Some(&config));
+                assert_eq!(cards.len(), PlatformId::ALL.len(), "{name}");
+                let public: HashMap<PlatformId, bool> = cards
+                    .iter()
+                    .map(|card| {
+                        (
+                            PlatformId::parse(&card.name).expect(&card.name),
+                            card.enabled,
+                        )
+                    })
+                    .collect();
+                // Admin form with no env to fall back on = the runtime switch.
+                let admin: HashMap<PlatformId, bool> =
+                    crate::api::config::admin_platform_enabled(Some(&config), |_| None)
+                        .into_iter()
+                        .collect();
                 assert_eq!(flags.len(), PlatformId::ALL.len(), "{name}");
                 for id in PlatformId::ALL {
                     let slug = id.slug();
                     let fetchable = fetchable_ids.contains(&slug);
                     assert_eq!(fetchable, id.credentials_present(&config), "{name}: {slug}");
                     assert_eq!(flags[slug], id.enabled(&config), "{name}: {slug}");
+                    assert_eq!(public[&id], id.enabled(&config), "{name}: public {slug}");
+                    assert_eq!(admin[&id], id.enabled(&config), "{name}: admin {slug}");
                     assert_eq!(
                         report.iter().any(|p| p == slug),
                         id.enabled(&config),
@@ -382,6 +400,47 @@ pub(crate) mod tests {
                 }
             });
         }
+    }
+
+    /// Env for non-console platforms only reaches the admin form (prefill that a
+    /// save writes to the DB). The switch shows what that save would enable; the
+    /// public cards and every runtime view stay on the stored config.
+    #[test]
+    fn admin_form_env_prefill_matches_what_a_save_would_enable() {
+        use crate::api::config::{admin_platform_enabled, form_credentials, public_platform_cards};
+        let env = |key: &str| match key {
+            "GITHUB_USERNAME" => Some("octocat".to_string()),
+            "STEAM_API_KEY" => Some("key".to_string()),
+            _ => None,
+        };
+        let stored = DynamicConfig::default();
+        with_env(&[], || {
+            let admin: HashMap<_, _> = admin_platform_enabled(Some(&stored), env)
+                .into_iter()
+                .collect();
+            assert!(admin[&PlatformId::Github]);
+            assert!(!PlatformId::Github.enabled(&stored));
+            // The fetcher needs both Steam fields; env only fills one.
+            assert!(!admin[&PlatformId::Steam]);
+            let github_card = public_platform_cards(Some(&stored))
+                .into_iter()
+                .find(|card| PlatformId::parse(&card.name) == Some(PlatformId::Github))
+                .expect("github card");
+            assert!(!github_card.enabled);
+
+            let saved = form_credentials(&stored, env);
+            for id in PlatformId::ALL {
+                assert_eq!(admin[&id], id.enabled(&saved), "{id}");
+            }
+
+            // A stored empty value wins over env (the form shows it cleared).
+            let mut cleared = DynamicConfig::default();
+            cleared.github_username = Some(String::new());
+            let admin: HashMap<_, _> = admin_platform_enabled(Some(&cleared), env)
+                .into_iter()
+                .collect();
+            assert!(!admin[&PlatformId::Github]);
+        });
     }
 
     #[test]
