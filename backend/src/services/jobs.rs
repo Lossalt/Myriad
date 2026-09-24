@@ -16,6 +16,11 @@
 //! The persona runtime keeps its own supervisor (`persona::drivers`): there a
 //! stopped driver is a worker failure that restarts the process, which is a
 //! different contract from these best-effort maintenance loops.
+//!
+//! New long-lived loops register here instead of spawning their own `loop`;
+//! `long_lived_loops_are_not_spawned_outside_the_runner` scans the source and
+//! lists the exceptions (supervisors, LISTEN connections, per-connection and
+//! per-lease tasks) with their reasons.
 
 use futures::FutureExt;
 use std::future::Future;
@@ -435,5 +440,161 @@ mod tests {
         runner.shutdown(Duration::from_secs(1)).await;
         assert!(jitter_delay(Duration::from_millis(5)) <= Duration::from_millis(5));
         assert_eq!(jitter_delay(Duration::ZERO), Duration::ZERO);
+    }
+
+    /// Spawns that are allowed to hold a long-lived `loop` / interval outside
+    /// the runner, per file, with why. Counts are exact: migrating one onto the
+    /// runner means removing it here too.
+    const LOOP_SPAWN_ALLOWLIST: &[(&str, usize, &str)] = &[
+        (
+            "src/federation/worker.rs",
+            1,
+            "config refresh deliberately fails the worker: stale policy must stop claims",
+        ),
+        (
+            "src/persona/worker.rs",
+            1,
+            "config refresh deliberately fails the worker: stale policy must stop ticks",
+        ),
+        (
+            "src/middleware/auth.rs",
+            1,
+            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
+        ),
+        (
+            "src/federation/ws_gateway.rs",
+            1,
+            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
+        ),
+        (
+            "src/services/agent/notifications/bridge.rs",
+            1,
+            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
+        ),
+        (
+            "src/api/agent/notifications.rs",
+            1,
+            "per-SSE-connection forwarder; ends when the client disconnects",
+        ),
+        (
+            "src/federation/delivery/queue.rs",
+            1,
+            "per-row lease heartbeat; aborted when that delivery finishes",
+        ),
+        (
+            "src/services/agent/work_loop/store.rs",
+            1,
+            "per-task lease heartbeat; aborted when the lease drops",
+        ),
+        (
+            "src/services/bot_supervisor.rs",
+            1,
+            "credential watcher scoped to one supervised bot session (AbortTask)",
+        ),
+        (
+            "src/services/feishu_ws.rs",
+            1,
+            "per-connection ping; aborted with the connection (AbortTask)",
+        ),
+    ];
+
+    fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_sources(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Spawn sites in `source` whose body starts a `loop` or an interval
+    /// within a few lines. Test modules and test-only files are not scanned.
+    fn loop_spawns(source: &str) -> Vec<usize> {
+        let spawn =
+            regex::Regex::new(r"(tokio::spawn|task::spawn|task::spawn_blocking|thread::spawn)\(")
+                .unwrap();
+        let next_spawn = regex::Regex::new(r"spawn(_blocking)?\(").unwrap();
+        let looping = regex::Regex::new(r"\bloop\s*\{|time::interval(_at)?\(").unwrap();
+        let test_mod = regex::Regex::new(r"^\s*(pub(\(\w+\))?\s+)?mod \w+").unwrap();
+        let mut lines: Vec<&str> = source.lines().collect();
+        if let Some(cut) = lines
+            .windows(2)
+            .position(|pair| pair[0].trim() == "#[cfg(test)]" && test_mod.is_match(pair[1]))
+        {
+            lines.truncate(cut);
+        }
+        let mut hits = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            if line.trim_start().starts_with("//") || !spawn.is_match(line) {
+                continue;
+            }
+            let body = std::iter::once(*line).chain(
+                lines[index + 1..]
+                    .iter()
+                    .take(11)
+                    .copied()
+                    .take_while(|next| !next_spawn.is_match(next)),
+            );
+            if body.into_iter().any(|l| looping.is_match(l)) {
+                hits.push(index + 1);
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn scanner_flags_inline_loops_and_skips_test_modules() {
+        let source = "fn a() {\n    tokio::spawn(async move {\n        loop {\n        }\n    });\n}\n#[cfg(test)]\nmod tests {\n    fn b() { tokio::spawn(async { loop {} }); }\n}\n";
+        assert_eq!(loop_spawns(source), vec![2]);
+        assert!(loop_spawns("tokio::spawn(async move { work().await });\n").is_empty());
+    }
+
+    /// Long-lived background loops belong on the runner, which owns their
+    /// shutdown and contains their panics. A new bare `spawn` + `loop` must
+    /// either move onto [`JobRunner::periodic`] or be listed above with a reason.
+    #[test]
+    fn long_lived_loops_are_not_spawned_outside_the_runner() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        rust_sources(&root.join("src"), &mut files);
+        let mut found = std::collections::BTreeMap::new();
+        for path in files {
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name == "tests.rs" || name.ends_with("_tests.rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let hits = loop_spawns(&source);
+            if !hits.is_empty() {
+                let relative = path.strip_prefix(root).unwrap().to_string_lossy();
+                found.insert(relative.replace('\\', "/"), hits);
+            }
+        }
+        let mut problems = Vec::new();
+        for (file, hits) in &found {
+            let allowed = LOOP_SPAWN_ALLOWLIST
+                .iter()
+                .find(|(path, _, _)| path == file)
+                .map_or(0, |(_, count, _)| *count);
+            if hits.len() != allowed {
+                problems.push(format!(
+                    "{file}: loop spawns at lines {hits:?}, allowlisted {allowed}"
+                ));
+            }
+        }
+        for (file, _, _) in LOOP_SPAWN_ALLOWLIST {
+            if !found.contains_key(*file) {
+                problems.push(format!(
+                    "{file}: allowlisted but no loop spawn left; drop the entry"
+                ));
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "register long-lived loops on services::jobs::JobRunner (or allowlist with a reason):\n{}",
+            problems.join("\n")
+        );
     }
 }
