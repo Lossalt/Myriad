@@ -31,6 +31,7 @@ pub struct Every {
     period: Duration,
     first_delay: Duration,
     jitter: Duration,
+    spaced: bool,
 }
 
 impl Every {
@@ -40,6 +41,7 @@ impl Every {
             period,
             first_delay: Duration::ZERO,
             jitter: Duration::ZERO,
+            spaced: false,
         }
     }
 
@@ -53,6 +55,15 @@ impl Every {
     /// database lease do not all wake on the same instant.
     pub const fn jitter(mut self, jitter: Duration) -> Self {
         self.jitter = jitter;
+        self
+    }
+
+    /// Measure `period` from the end of each tick instead of its start, so a
+    /// long tick is always followed by a full pause rather than an immediate
+    /// catch-up tick. For batch jobs that should leave the database breathing
+    /// room between batches.
+    pub const fn spaced(mut self) -> Self {
+        self.spaced = true;
         self
     }
 }
@@ -227,6 +238,9 @@ async fn run_periodic<F, Fut>(
                 "background job tick panicked; resuming at next tick"
             );
         }
+        if every.spaced {
+            interval.reset();
+        }
     }
 }
 
@@ -376,6 +390,29 @@ mod tests {
         assert!(handle.is_cancelled());
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn spaced_job_pauses_a_full_period_after_a_long_tick() {
+        let runner = JobRunner::new();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let s = starts.clone();
+        runner.periodic(
+            "spaced",
+            Every::new(Duration::from_millis(40)).spaced(),
+            move || {
+                s.lock().unwrap().push(tokio::time::Instant::now());
+                tokio::time::sleep(Duration::from_millis(80))
+            },
+        );
+        wait_until(|| starts.lock().unwrap().len() >= 3).await;
+        runner.shutdown(Duration::from_secs(1)).await;
+        let starts = starts.lock().unwrap();
+        for pair in starts.windows(2) {
+            // Tick length plus a full period; an unspaced interval would
+            // start the next tick as soon as the long one returned.
+            assert!(pair[1] - pair[0] >= Duration::from_millis(120));
+        }
     }
 
     #[tokio::test]
