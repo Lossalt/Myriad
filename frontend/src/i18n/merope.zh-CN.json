@@ -51,8 +51,6 @@
   "rigImportFailed": "分层 PSD 导入失败",
   "rigCommitFailed": "导入的骨骼没能保存",
   "rigCompileFailed": "分层骨骼没能编译。",
-  "rigStoredInvalid": "已保存的骨骼无效，请重新导入。",
-  "portraitUnavailable": "当前主立绘不可用。",
   "portraitDownloadFailed": "主立绘没能下载。",
   "portraitUploadFailed": "主立绘没能上传。",
   "seeThroughStatusFailed": "See-through 状态没能加载。",

@@ -338,7 +338,6 @@ describe('userFacingError', () => {
     )
     assert.match(text, /502/)
     assert.notEqual(text, 'Could not load site face (HTTP 502)')
-    assert.match(text, /site face|形象|顔/)
   })
 
   it('maps leftover speech Chinese and dumps', () => {
@@ -434,13 +433,6 @@ describe('userFacingError', () => {
       new ApiError('Invalid Notion URL: Unknown resource type: workspace', 400, 'notion_url_invalid'),
     )
     assert.equal(/Unknown resource/i.test(text), false)
-  })
-
-  it('maps leftover channel status dumps', () => {
-    const text = userFacingError(
-      'Channel is pending, cannot send messages (must be accepted first)',
-    )
-    assert.equal(/pending/.test(text), false)
   })
 
   it('maps leftover feed name Chinese', () => {
@@ -1493,33 +1485,13 @@ describe('userFacingError', () => {
     assert.notEqual(missing, currentCopy().merope.visualFailed)
   })
 
-  it('maps leftover merope load see-through tripo and playback without unifying them', () => {
-    const face = userFacingError(new Error('Could not load site face (HTTP 502)'))
-    const seeThrough = userFacingError('Could not load See-through status')
-    const tokenSave = userFacingError('Could not save Hugging Face token')
-    const decompose = userFacingError('See-through decomposition failed')
-    const generate = userFacingError('Could not generate site portrait')
+  it('maps leftover merope portrait upload and tripo without unifying them', () => {
     const upload = userFacingError('Could not upload portrait')
-    const preview = userFacingError('Could not preview persona rig')
-    const commit = userFacingError('Could not commit persona rig')
     const tripo = userFacingError('Could not load Tripo status')
-    const webgl = userFacingError('WebGL2 is required for Anime2.5DRig playback')
-    const missing = userFacingError('Anime2.5DRig playback missing mouth-open')
-    const shader = userFacingError('Anime2.5DRig shader compile failed')
-    assert.match(face, /502/)
-    assert.notEqual(face, 'Could not load site face (HTTP 502)')
-    assert.notEqual(face, seeThrough)
-    assert.notEqual(tokenSave, seeThrough)
-    assert.notEqual(decompose, generate)
-    assert.notEqual(upload, generate)
-    assert.notEqual(preview, commit)
+    assert.equal(upload, currentCopy().merope.portraitUploadFailed)
     assert.match(tripo, /三维|3D|モデル/i)
     assert.equal(/Could not load Tripo/i.test(tripo), false)
-    assert.match(webgl, /WebGL2/)
-    assert.match(missing, /mouth-open/)
-    assert.equal(/shader compile/.test(shader), false)
-    assert.notEqual(webgl, shader)
-    assert.notEqual(generate, currentCopy().merope.loadFailed)
+    assert.notEqual(upload, tripo)
   })
 
   it('maps leftover store download config phantasi leftovers without unifying them', () => {
@@ -1545,20 +1517,12 @@ describe('userFacingError', () => {
     assert.equal(/Failed to reload/i.test(reload), false)
   })
 
-  it('maps leftover library analytics visitor and invite leftovers without calling them empty', () => {
+  it('maps leftover library and visitor leftovers without calling them empty', () => {
     const library = userFacingError('No library data available')
-    const analytics = userFacingError('Unable to load analytics')
     const visitor = userFacingError('visitor card unavailable')
-    const invite = userFacingError('Missing room_id')
-    const stream = userFacingError('Runtime event stream failed (502)')
     assert.notEqual(library, currentCopy().library.emptyLibrary)
     assert.match(library, /资料库|library|ライブラリ/i)
-    assert.match(analytics, /统计|analytics|統計/i)
-    assert.equal(/Unable to load analytics/i.test(analytics), false)
     assert.equal(/visitor card unavailable/i.test(visitor), false)
-    assert.equal(/room_id/.test(invite), false)
-    assert.match(stream, /502|流|stream|ストリーム/i)
-    assert.equal(/Runtime event stream failed/i.test(stream), false)
   })
 
   it('maps tapp runtime refusals by their code', () => {
@@ -1580,22 +1544,6 @@ describe('userFacingError', () => {
     assert.notEqual(already, currentCopy().tapp.installFailed)
     assert.equal(/reauthorization/i.test(reauth), false)
     assert.notEqual(missing, reauth)
-  })
-
-  it('maps leftover AI usage platform preview and password leftovers without unifying them', () => {
-    const usage = userFacingError('Unable to load AI usage (502)')
-    const preview = userFacingError('Unable to load platform data preview (403)')
-    const status = userFacingError('Unable to load platform data status (500)')
-    const cloud = userFacingError('Failed to save to cloud: HTTP 502')
-    assert.match(usage, /AI|使用/i)
-    assert.match(usage, /502/)
-    assert.equal(/Unable to load AI usage/i.test(usage), false)
-    assert.notEqual(preview, status)
-    assert.equal(/Unable to load platform data preview/i.test(preview), false)
-    assert.match(cloud, /方案|scheme|スキーム/i)
-    assert.match(cloud, /502/)
-    assert.equal(/Failed to save to cloud/i.test(cloud), false)
-    assert.notEqual(usage, currentCopy().errors.operationFailed)
   })
 
   it('maps setup window closed and secret mismatch without English labels', () => {
@@ -1687,10 +1635,6 @@ describe('userFacingError', () => {
     assert.equal(
       userFacingError('即将添加新的 RSS/Atom 订阅源'),
       currentCopy().errors.confirmAddFeed,
-    )
-    assert.equal(
-      userFacingError('正在加载网易云歌单...'),
-      fill(currentCopy().errors.loadingNamedPlaylist, { name: 'NetEase' }),
     )
     assert.equal(userFacingError('组件列表'), currentCopy().errors.tappWidgets)
     assert.equal(
@@ -1868,7 +1812,7 @@ describe('userFacingError', () => {
   })
 })
 
-const RULE_BUDGET = 338
+const RULE_BUDGET = 210
 
 describe('userFacingError is driven by codes', () => {
   before(async () => {

@@ -51,8 +51,6 @@
   "rigImportFailed": "Impossible d’importer ce PSD en calques.",
   "rigCommitFailed": "Impossible d’enregistrer le rig importé.",
   "rigCompileFailed": "Impossible de compiler le rig en calques.",
-  "rigStoredInvalid": "Le rig enregistré est invalide. Importez-le à nouveau.",
-  "portraitUnavailable": "Le portrait principal actuel n’est pas disponible.",
   "portraitDownloadFailed": "Impossible de télécharger le portrait principal.",
   "portraitUploadFailed": "Impossible d’envoyer le portrait principal.",
   "seeThroughStatusFailed": "Impossible de charger l’état See-through.",

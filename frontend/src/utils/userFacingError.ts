@@ -1452,10 +1452,13 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (webSearchNamed) {
     return fill(t.webSearchNamed, { name: webSearchNamed[1] })
   }
+  // legacy: zh reading-list name the agent stored before 7431f345c.
   const readingListNamed = raw.match(/^阅读列表\s*[—\-]\s*(\S.*)$/)
   if (readingListNamed) {
     return fill(t.readingListNamed, { name: readingListNamed[1] })
   }
+  // Confirmation text with the tool and server names in it
+  // (capability/mod.rs mcp_capability); the zh form is legacy.
   const mcpTool = raw.match(
     /^将调用外部 MCP 服务 '(.+)' 的工具 '(.+)'$|^This will call tool '(.+)' on MCP server '(.+)'$/i,
   )
@@ -1464,6 +1467,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     const tool = mcpTool[2] || mcpTool[3] || ''
     return fill(t.confirmMcpTool, { server, tool })
   }
+  // legacy: MCP notice bodies stored before 162557c21.
   const mcpToolsLoaded = raw.match(/^已加载 (\d+) 个工具$|^Loaded (\d+) tools$/i)
   if (mcpToolsLoaded) {
     return fill(t.noticeMcpToolsLoaded, {
@@ -1476,13 +1480,10 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (is('text_auto_restart_succeeded')) {
     return t.noticeMcpAutoRestart
   }
-  if (
-    raw.includes('状态监控超时') ||
-    /Status watch timed out/i.test(raw)
-  ) {
-    return t.noticeUpdaterWatchTimeout
-  }
-  if (/^未知艺术家$/.test(raw)) return currentCopy().library.unknownArtist
+  if (is('text_updater_watch_timeout')) return t.noticeUpdaterWatchTimeout
+  if (is('text_unknown_artist')) return currentCopy().library.unknownArtist
+  // Scheduled-task name stored in the database (platform_auto_refresh.rs);
+  // the zh form is legacy.
   const autoRefreshNamed = raw.match(
     /^自动刷新 (.+) 数据$|^Auto-refresh (.+) data$/i,
   )
@@ -1491,6 +1492,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       name: autoRefreshNamed[1] || autoRefreshNamed[2] || '',
     })
   }
+  // Stored notification title (notification_producers.rs); the zh form is legacy.
   const leftoverHeartbeatTask = raw.match(
     /^定时任务:\s*(\S.*)$|^Scheduled task:\s*(\S.*)$/i,
   )
@@ -1499,329 +1501,85 @@ export function userFacingError(reason: unknown, fallback?: string): string {
       name: leftoverHeartbeatTask[1] || leftoverHeartbeatTask[2] || '',
     })
   }
-  if (
-    /^即将添加新的 RSS|^This will add a new RSS/i.test(raw)
-  ) {
-    return t.confirmAddFeed
-  }
-  if (
-    /^即将控制 Phantasi|^This will start, stop, or refresh the Phantasi scheduler/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmPhantasiSchedule
-  }
-  if (
-    /^即将向外部 URL|^This will send an HTTP request to an external URL/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmHttpFetch
-  }
-  if (
-    /^即将创建 Tapp 定时任务|^This will create a scheduled Tapp task/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmCreateTappTask
-  }
-  if (
-    /^即将立即触发 Tapp 定时任务|^This will run a scheduled Tapp task now/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmTriggerTappTask
-  }
-  if (
-    /^即将提交后台平台数据处理任务|^This will submit a background platform data job/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmPlatformJob
-  }
-  if (
-    /^AI 将分析 Tapp UI|^AI will analyze the Tapp UI/i.test(raw)
-  ) {
-    return t.confirmAnalyzeTappUi
-  }
-  if (
-    /^即将向 Tapp 发起声明式交互|^This will send a declared interaction to the Tapp/i.test(
-      raw,
-    )
-  ) {
-    return t.confirmTappInteract
-  }
-  if (
-    /^即将与页面元素交互|^This will interact with a page element/i.test(raw)
-  ) {
-    return t.confirmPageInteract
-  }
-  if (
-    /^AI 将分析页面|^AI will analyze the page and may run actions/i.test(raw)
-  ) {
-    return t.confirmAnalyzePage
-  }
-  if (
-    /^即将写入内容到目标|^This will write content to the target/i.test(raw)
-  ) {
-    return t.confirmWriteTarget
-  }
-  const playlistLoad = raw.match(
-    /^正在加载(网易云|QQ音乐)歌单|^Loading (NetEase|QQ Music) playlist/i,
-  )
-  if (playlistLoad) {
-    const name =
-      playlistLoad[1] === '网易云' || playlistLoad[2] === 'NetEase'
-        ? 'NetEase'
-        : 'QQ Music'
-    return fill(t.loadingNamedPlaylist, { name })
-  }
-  if (/^好了，都处理完|^All done\.?$/i.test(raw)) return t.agentAllDone
+  if (is('text_confirm_add_feed')) return t.confirmAddFeed
+  if (is('text_confirm_phantasi_schedule')) return t.confirmPhantasiSchedule
+  if (is('text_confirm_http_fetch')) return t.confirmHttpFetch
+  if (is('text_confirm_create_tapp_task')) return t.confirmCreateTappTask
+  if (is('text_confirm_trigger_tapp_task')) return t.confirmTriggerTappTask
+  if (is('text_confirm_platform_job')) return t.confirmPlatformJob
+  if (is('text_confirm_analyze_tapp_ui')) return t.confirmAnalyzeTappUi
+  if (is('text_confirm_tapp_interact')) return t.confirmTappInteract
+  if (is('text_confirm_page_interact')) return t.confirmPageInteract
+  if (is('text_confirm_analyze_page')) return t.confirmAnalyzePage
+  if (is('text_confirm_write_target')) return t.confirmWriteTarget
+  if (is('text_agent_all_done')) return t.agentAllDone
   if (is('text_hi_how_can_i_help')) {
     return t.agentGreeting
   }
-  if (/^正在理解你的请求|^Understanding your request/i.test(raw)) {
-    return t.agentUnderstanding
-  }
-  if (/^正在规划执行步骤|^Planning steps/i.test(raw)) return t.agentPlanning
-  if (
-    /^需要你补充一些信息|^我需要更多信息来理解你的请求$|^I need more information to understand that\.?$/i.test(
-      raw,
-    )
-  ) {
-    return t.agentNeedClarification
-  }
+  if (is('text_agent_understanding')) return t.agentUnderstanding
+  if (is('text_agent_planning')) return t.agentPlanning
+  if (is('text_agent_need_clarification')) return t.agentNeedClarification
+  // Confirmation text naming the step (response_agent.rs); the zh form is legacy.
   const willRun = raw.match(/^This will run (.+)$|^此操作将执行\s*(\S.*)$/)
   if (willRun) {
     return fill(t.willExecute, { name: willRun[1] || willRun[2] || '' })
   }
+  // legacy: zh confirmation text stored before 9dd3f671f.
   if (raw.startsWith('此操作将')) return t.stepNeedsConfirm
-  if (/^数据读取$|^Data$/.test(raw)) return t.capCategoryData
-  if (/^数据写入$|^Write$/.test(raw)) return t.capCategoryWrite
-  if (/^AI处理$|^AI$/.test(raw)) return t.capCategoryAi
-  if (/^资源创建$|^Create$/.test(raw)) return t.capCategoryCreate
-  if (/^系统操作$|^System$/.test(raw)) return t.capCategorySystem
-  if (/^外部集成$|^External$/.test(raw)) return t.capCategoryExternal
-  if (/^界面控制$|^Interface$/.test(raw)) return t.capCategoryInterface
-  if (/^需要更多信息$|^More information is needed\.?$/i.test(raw)) {
-    return t.agentNeedMoreInfo
-  }
+  if (is('text_cap_category_data')) return t.capCategoryData
+  if (is('text_cap_category_write')) return t.capCategoryWrite
+  if (is('text_cap_category_ai')) return t.capCategoryAi
+  if (is('text_cap_category_create')) return t.capCategoryCreate
+  if (is('text_cap_category_system')) return t.capCategorySystem
+  if (is('text_cap_category_external')) return t.capCategoryExternal
+  if (is('text_cap_category_interface')) return t.capCategoryInterface
+  if (is('text_agent_need_more_info')) return t.agentNeedMoreInfo
   if (is('text_update_queued')) {
     return t.noticeUpdaterSubmitted
   }
-  if (
-    /^the task was interrupted$|任务因服务重启/i.test(raw)
-  ) {
-    return t.agentTaskInterrupted
+  // Agent step errors: plain copy, since a retry appends
+  // " (previous N attempts: …)" that the table's detail tail would echo.
+  if (is('agent_task_interrupted')) return t.agentTaskInterrupted
+  if (is('agent_step_timeout')) return t.agentStepTimeout
+  if (is('agent_input_empty')) return t.agentInputEmpty
+  if (is('agent_input_too_long')) return t.agentInputTooLong
+  if (is('agent_subscribe_failed')) return t.subscribeAllFailed
+  if (is('agent_write_items_over_cap')) return t.writeItemsOverCap
+  if (is('agent_speech_text_missing')) return t.emptyDialogueText
+  if (is('agent_feed_not_found')) return t.feedNotFound
+  if (is('phantasi_load_failed')) {
+    return classified(joinParts(t.phantasiLoadFailed, failedAction(raw)), raw, hint)
   }
-  if (
-    /^the step timed out$|执行超时/i.test(raw)
-  ) {
-    return t.agentStepTimeout
+  if (is('phantasi_reading_state_failed')) {
+    return classified(joinParts(t.readingStateFailed, failedAction(raw)), raw, hint)
   }
-  if (/^input is empty$|^输入不能为空$/.test(raw)) {
-    return t.agentInputEmpty
-  }
-  if (/^input is too long$|输入过长/.test(raw)) {
-    return t.agentInputTooLong
-  }
-  if (
-    /could not subscribe to any|尝试了 .* 个源都无法订阅/i.test(raw)
-  ) {
-    return t.subscribeAllFailed
-  }
-  if (
-    /this address is not allowed|不允许访问内网|不允许的 url scheme/i.test(
-      raw,
-    )
-  ) {
-    return t.privateNetworkBlocked
-  }
-  if (
-    /this url is missing a host|url 缺少 host/i.test(raw)
-  ) {
-    return t.invalidUrl
-  }
-  if (
-    /^missing url or feeds$|^no feed url to try$|缺少 url 或 feeds|没有可用的订阅源/i.test(
-      raw,
-    )
-  ) {
-    return t.subscribeAllFailed
-  }
-  if (
-    /^too many items to write at once$|单次最多写入/i.test(raw)
-  ) {
-    return t.writeItemsOverCap
-  }
-  if (
-    /^missing text for speech$|缺少 text 参数，无法进行文字转语音/.test(
-      raw,
-    )
-  ) {
-    return t.emptyDialogueText
-  }
-  if (/^missing music action$|缺少 action 参数/.test(raw)) {
-    return t.agentInputEmpty
-  }
-  if (
-    /^this article cannot be changed$|无权操作该文章/.test(raw)
-  ) {
-    return t.forbidden
-  }
-  if (
-    /^feed not found$|^no feeds are available$|^that feed or author was not found$|^that was not found in subscribed feeds$|^no matching rss feed was found$|未找到匹配|系统中暂无订阅源|未在已订阅源中找到|未能找到匹配的 RSS|未找到名为/.test(
-      raw,
-    )
-  ) {
-    return t.feedNotFound
-  }
-  if (
-    /^no matching articles were found$|未找到符合条件的文章/.test(raw)
-  ) {
-    return t.notFound
-  }
-  if (
-    /^no matching playlist was found$|没有找到相关歌单/.test(raw)
-  ) {
-    return t.notFound
-  }
-  if (/^article not found$|未找到文章/.test(raw)) {
-    return t.notFound
-  }
-  if (is('text_comment_not_found')) {
-    return t.notFound
-  }
-  if (/^failed to load comment replies/i.test(raw)) {
-    return classified(t.commentRepliesLoadFailed, raw, hint)
-  }
-  if (/^failed to (load comments|find comment)/i.test(raw)) {
-    return classified(t.commentLoadFailed, raw, hint)
-  }
-  if (/^failed to (save|update) comment/i.test(raw)) {
-    return classified(t.commentSaveFailed, raw, hint)
-  }
-  if (/^failed to delete comment/i.test(raw)) {
-    return classified(t.commentDeleteFailed, raw, hint)
-  }
-  if (/^failed to load (source|articles)(?:\s|:|$)/i.test(raw)) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.phantasiLoadFailed, action), raw, hint)
-  }
-  if (/^failed to (find|load) article(?:\s|:|$)/i.test(raw)) {
-    return classified(t.articleLoadFailed, raw, hint)
-  }
-  if (
-    /^failed to (create icons directory|create icon file|write icon file|read icon bytes)/i.test(
-      raw,
-    )
-  ) {
-    return classified(t.iconSaveFailed, raw, hint)
-  }
-  if (
-    /^failed to (check existing phantasi source|find phantasi source)/i.test(raw)
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.phantasiLoadFailed, action), raw, hint)
-  }
-  if (/^failed to (find|update|create) reading state/i.test(raw)) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.readingStateFailed, action), raw, hint)
-  }
-  if (/^failed to save content/i.test(raw)) {
-    return classified(t.contentSaveFailed, raw, hint)
-  }
-  if (/^failed to delete tapp storage/i.test(raw)) {
-    return classified(t.tappStorageFailed, raw, hint)
-  }
-  if (/^task not found$|任务不存在或无权访问/.test(raw)) {
-    return t.notFound
-  }
-  if (
-    /^only admins can /i.test(raw) ||
-    is('text_cannot_delete_the_default_global_instanc')
-  ) {
+  if (is('admin_only_action')) {
     return joinParts(t.forbidden, clip(raw), usefulExtra(hint, t.forbidden))
   }
-  if (is('text_instance_not_found')) {
-    return t.notFound
+  if (is('rsshub_save_failed')) {
+    return classified(joinParts(t.rsshubSaveFailed, failedAction(raw)), raw, hint)
   }
-  if (
-    /^failed to (fetch|check) rsshub instances/i.test(raw) ||
-    /^failed to (fetch global instances|fetch user instances|check existing instances)/i.test(
-      raw,
-    )
-  ) {
-    return classified(t.rsshubLoadFailed, raw, hint)
-  }
-  if (
-    /^failed to (create|update|delete|reset|find) rsshub instance/i.test(raw) ||
-    /^failed to (insert|find|update|delete|reset) instance/i.test(raw)
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.rsshubSaveFailed, action), raw, hint)
-  }
-  if (
-    /could not set up rsshub|could not read rsshub|no rsshub instances|unsafe rsshub url|初始化 RSSHub|读取 RSSHub|RSSHub 实例表为空/i.test(
-      raw,
-    )
-  ) {
-    return t.rsshubUnavailable
-  }
-  if (
-    /^too many pipeline steps$|管道步骤数不能超过/.test(raw)
-  ) {
-    return t.pipelineTooManySteps
-  }
-  if (
-    /^heartbeat admin required$|Heartbeat 管理需要管理员/.test(raw)
-  ) {
-    return t.heartbeatAdminRequired
-  }
-  if (
-    /^this step needs confirmation first$|需要人工确认|未经确认的高风险/.test(
-      raw,
-    )
-  ) {
-    return t.stepNeedsConfirm
-  }
-  if (
-    /^missing user intent$|Missing userIntent|请描述你想要执行的操作/.test(
-      raw,
-    )
-  ) {
-    return t.agentInputEmpty
-  }
-  if (
-    /^missing url or query$|需要提供 url 或 query/.test(raw)
-  ) {
-    return t.agentInputEmpty
-  }
-  if (
-    /^this url is invalid$|输入不是有效的 URL/.test(raw)
-  ) {
-    return t.invalidUrl
-  }
-  if (
-    /^this step cannot be called directly$|不应被直接调用/.test(raw)
-  ) {
-    return t.agentUnsupported
-  }
-  if (/^the system is shutting down$|系统正在关闭/.test(raw)) {
-    return t.agentTaskInterrupted
-  }
-  if (
-    /^agent is admin only$|^agent chat is not enabled|Agent 仅管理员|未对普通用户开放/.test(
-      raw,
-    )
-  ) {
-    return t.forbidden
-  }
-  if (
-    /^this service is not configured$|API Key 未配置/i.test(raw)
-  ) {
+  if (is('rsshub_unavailable')) return t.rsshubUnavailable
+  if (is('agent_pipeline_too_many_steps')) return t.pipelineTooManySteps
+  if (is('heartbeat_admin_required')) return t.heartbeatAdminRequired
+  if (is('agent_step_needs_confirm')) return t.stepNeedsConfirm
+  if (is('agent_service_not_configured')) return t.serviceNotConfigured
+  if (is('agent_feed_name_required')) return t.feedNameRequired
+  if (is('agent_task_submit_failed')) return t.taskSubmitFailed
+  // legacy: zh agent step errors with a dynamic middle, stored in tasks before
+  // 9dd3f671f (2026-09-11). Their fixed-text siblings are leftovers.
+  if (/执行超时/.test(raw)) return t.agentStepTimeout
+  if (/尝试了 .* 个源都无法订阅/.test(raw)) return t.subscribeAllFailed
+  if (/需要人工确认|未经确认的高风险/.test(raw)) return t.stepNeedsConfirm
+  if (/不应被直接调用/.test(raw)) return t.agentUnsupported
+  if (/未对普通用户开放/.test(raw)) return t.forbidden
+  if (/API Key 未配置/i.test(raw)) {
     return /TTS|语音|Speech/.test(raw) ? t.speechNotConfigured : t.serviceNotConfigured
   }
+  if (/无法访问或解析此 RSS|RSSHub 实例不存在/i.test(raw)) {
+    return currentCopy().phantasi.errorDiscoverFailed
+  }
+  if (/notion api key 未配置/i.test(raw)) return currentCopy().phantasi.errorNotionFetch
   if (raw.includes('图片生成完成，但无法提取')) {
     return currentCopy().agentPersona.onboarding.imageProviderInvalidResponse
   }
@@ -1837,37 +1595,21 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (code === 'media_mode_invalid') {
     return classified(t.mediaModeInvalid, raw, hint)
   }
-  if (
-    is('text_invalid_url') ||
-    raw.startsWith('无效的 URL')
-  ) {
+  if (is('text_invalid_url')) {
     return t.invalidUrl
   }
-  if (
-    code === 'federation_move_failed' ||
-    /failed to move federation identity|shared keys \(G\)|local rewrite \(E\)/i.test(
-      raw,
-    )
-  ) {
-    return t.federationMoveFailed
-  }
+  // Both labels share `actor_unavailable`, the code remote servers see.
   if (/failed to initialize federation identity/i.test(raw)) {
     return classified(t.federationInitFailed, raw, hint)
   }
-  if (/^failed to rotate federation keys/i.test(raw)) {
-    return classified(t.federationKeyRotateFailed, raw, hint)
-  }
-  if (
-    /^failed to (list following|list followers|list follows|load timeline|load delivery stats|list delivery)/i.test(
-      raw,
-    )
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.federationDataFailed, action), raw, hint)
+  if (is('federation_data_failed')) {
+    return classified(joinParts(t.federationDataFailed, failedAction(raw)), raw, hint)
   }
   if (/failed to read user id/i.test(raw)) {
     return classified(t.database, raw, hint)
   }
+  // external: remote federation peers answer with these texts, and delivery
+  // records keep them inside "HTTP 5xx: {…}" / "PERMANENT HTTP …" strings.
   if (/activity not ready/i.test(raw)) {
     return classified(t.inboxNotReady, raw, hint)
   }
@@ -1904,76 +1646,18 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return t.requestRejected
   }
-  if (
-    /^(channel|room|ring|transfer|activity|object|user) not found$/i.test(
-      raw,
-    )
-  ) {
-    return t.notFound
-  }
-  // Legacy peer text; the MIME after the colon is not shown.
+  // external: legacy peer text; the MIME after the colon is not shown.
   if (/^unsupported attachment mime\b/i.test(raw)) {
     return t.byCode.attachment_type_unsupported
   }
+  // Catch-all for code-less "X is required" text from agent handlers.
   if (
     / is required$| are required$|key rotation requires confirm/i.test(raw)
   ) {
     return t.agentInputEmpty
   }
-  if (
-    code === 'notion_url_invalid' ||
-    /invalid notion url|unknown resource type/i.test(raw)
-  ) {
-    return t.notionUrlInvalid
-  }
-  if (
-    code === 'channel_not_ready' ||
-    /channel is .+, cannot (send|transfer)/i.test(raw)
-  ) {
-    return t.channelNotReady
-  }
-  if (
-    code === 'invite_invalid_status' ||
-    /cannot accept (invite|this invite)|channel is .+, cannot accept/i.test(raw)
-  ) {
-    return t.inviteInvalid
-  }
-  if (
-    /^feed name is required$|订阅源名称不能为空/.test(raw)
-  ) {
-    return t.feedNameRequired
-  }
-  if (
-    /unable to reach or parse this rss|无法访问或解析此 RSS|no rsshub instance|rsshub instance not found|没有配置的 RSSHub|RSSHub 实例不存在/i.test(
-      raw,
-    )
-  ) {
-    return currentCopy().phantasi.errorDiscoverFailed
-  }
-  if (
-    /notion is not configured|notion api key 未配置/i.test(raw)
-  ) {
-    return currentCopy().phantasi.errorNotionFetch
-  }
-  if (/^failed to submit refresh$|^提交失败/.test(raw)) {
-    return t.taskSubmitFailed
-  }
-  const agentPanel = currentCopy().agentPanel
-  if (code === 'preset_title_too_long' || /标题过长|title is too long/i.test(raw)) {
-    return agentPanel.presetTitleTooLong
-  }
-  if (code === 'preset_summary_too_long' || /摘要过长|summary is too long/i.test(raw)) {
-    return agentPanel.presetSummaryTooLong
-  }
-  if (code === 'preset_steps_too_large' || /解析步骤数据过大|parsed steps are too large/i.test(raw)) {
-    return agentPanel.presetStepsTooLarge
-  }
-  if (
-    code === 'preset_history_too_long' ||
-    /对话历史过长|conversation history is too long/i.test(raw)
-  ) {
-    return agentPanel.presetHistoryTooLong
-  }
+  // Plain copy: the tail names the Notion parser's reason.
+  if (is('notion_url_invalid')) return t.notionUrlInvalid
   if (
     code === 'notification_unavailable'
   ) {
@@ -2011,268 +1695,23 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return setup.secretMismatch
   }
-  if (
-    code === 'schedule_invalid' ||
-    /^invalid schedule (config|type)/i.test(raw) ||
-    /^invalid (execution target|missed policy|scope)/i.test(raw)
-  ) {
-    return classified(t.scheduleInvalid, raw, hint)
-  }
+  // Agent handlers name the task id (heartbeat.rs, system_op.rs); HTTP
+  // labels of this shape already arrive as `not_found`.
   if (/^task ['"]?[^'"]+['"]? not found$/i.test(raw)) {
     return t.notFound
   }
   if (is('text_no_library_data_available')) {
     return currentCopy().library.loadFailed
   }
-  if (/unable to load analytics/i.test(raw)) {
-    return joinParts(
-      currentCopy().config.analytics.loadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().config.analytics.loadFailed),
-    )
-  }
-  if (/unable to load ai usage/i.test(raw)) {
-    return joinParts(
-      currentCopy().config.analytics.aiUsageLoadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().config.analytics.aiUsageLoadFailed),
-    )
-  }
-  if (/unable to load platform data preview/i.test(raw)) {
-    return joinParts(
-      currentCopy().dataManagement.previewLoadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().dataManagement.previewLoadFailed),
-    )
-  }
-  if (/unable to load platform previews/i.test(raw)) {
-    return joinParts(
-      currentCopy().dataManagement.previewLoadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().dataManagement.previewLoadFailed),
-    )
-  }
-  if (/unable to load platform data status/i.test(raw)) {
-    return joinParts(
-      currentCopy().dataManagement.statusUnavailable,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().dataManagement.statusUnavailable),
-    )
-  }
-  if (/unable to load visitor stats|visitor card unavailable/i.test(raw)) {
-    return joinParts(
-      currentCopy().visitorStats.loadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().visitorStats.loadFailed),
-    )
-  }
-  if (/missing (room_id|channel_id)/i.test(raw)) {
-    return t.inviteInvalid
-  }
-  if (/runtime event stream/i.test(raw)) {
-    return joinParts(
-      t.streamUnreadable,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, t.streamUnreadable),
-    )
-  }
-  if (/failed to save to cloud/i.test(raw)) {
-    return joinParts(
-      currentCopy().tapp.schemeSaveFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, currentCopy().tapp.schemeSaveFailed),
-    )
-  }
-  if (/hitokoto response missing text field/i.test(raw)) {
-    return currentCopy().config.hitokotoLoadFailed
-  }
-  if (/identity not found/i.test(raw)) {
-    return t.notFound
-  }
-  if (
-    /^media upload failed/i.test(raw) ||
-    /failed to upload (federation )?media/i.test(raw)
-  ) {
-    return classified(t.federationMediaUploadFailed, raw, hint)
-  }
-  const merope = currentCopy().merope
-  if (
-    code === 'see_through_token_required' ||
-    /hugging face api token is not configured/i.test(raw)
-  ) {
-    return merope.motionSeeThroughTokenRequired
-  }
-  if (
-    code === 'see_through_busy' ||
-    /see-through decomposition is already running/i.test(raw)
-  ) {
-    return merope.motionSeeThroughBusy
-  }
-  if (
-    code === 'see_through_auth_failed' ||
-    /hugging face rejected the (configured )?api token/i.test(raw)
-  ) {
-    return merope.motionSeeThroughAuthFailed
-  }
-  if (
-    code === 'see_through_quota_unavailable' ||
-    /zerogpu (quota is exhausted|is unavailable)/i.test(raw)
-  ) {
-    return merope.motionSeeThroughQuota
-  }
-  if (
-    code === 'see_through_timeout' ||
-    /see-through inference timed out/i.test(raw)
-  ) {
-    return merope.motionSeeThroughTimeout
-  }
-  if (
-    code === 'see_through_upstream_failed' ||
-    code === 'see_through_invalid_input' ||
-    /see-through (returned|event stream)/i.test(raw) ||
-    /hugging face token must be a valid/i.test(raw)
-  ) {
-    return classified(merope.motionSeeThroughUpstream, raw, hint)
-  }
-  if (
-    /stored rig is invalid|active rig is missing|active rig atlas is missing|invalid rig asset id/i.test(
-      raw,
-    )
-  ) {
-    return classified(merope.rigStoredInvalid, raw, hint)
-  }
-  if (
-    /rig compilation failed|rig character asset|rig manifest migration|merope_rig_failed/i.test(
-      raw,
-    )
-  ) {
-    return classified(merope.rigCompileFailed, raw, hint)
-  }
-  if (/rig atlas|invalid rig atlas/i.test(raw)) {
-    return classified(merope.rigAtlasFailed, raw, hint)
-  }
-  if (
-    /invalid rig (import|source|analysis)|rig import|rig source exceeds|rig analysis reference|rig preview is missing/i.test(
-      raw,
-    )
-  ) {
-    return classified(merope.rigImportFailed, raw, hint)
-  }
-  if (
-    /master portrait is not available|the current master portrait/i.test(raw)
-  ) {
-    return merope.portraitUnavailable
-  }
-  if (
-    /invalid portrait|portrait image exceeds|portrait upload|portrait is missing image|could not upload portrait/i.test(
-      raw,
-    )
-  ) {
-    return classified(merope.portraitUploadFailed, raw, hint)
-  }
-  if (/could not generate site portrait/i.test(raw)) {
-    return joinParts(
-      merope.visualFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, merope.visualFailed),
-    )
-  }
-  if (/could not load site face/i.test(raw)) {
-    return joinParts(
-      merope.loadFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, merope.loadFailed),
-    )
-  }
-  if (/could not load see-through status/i.test(raw)) {
-    return joinParts(
-      merope.seeThroughStatusFailed,
-      status ? `HTTP ${status}` : '',
-      usefulExtra(hint, merope.seeThroughStatusFailed),
-    )
-  }
-  if (/could not save hugging face token/i.test(raw)) {
-    return classified(merope.motionSeeThroughTokenFailed, raw, hint)
-  }
-  if (/see-through decomposition failed/i.test(raw)) {
-    return classified(merope.motionSeeThroughUpstream, raw, hint)
-  }
-  if (/could not commit persona rig/i.test(raw)) {
-    return classified(merope.rigCommitFailed, raw, hint)
-  }
-  if (/could not (preview|import|diagnose) persona rig/i.test(raw)) {
-    return classified(merope.rigImportFailed, raw, hint)
-  }
-  if (/persona rig .+ manifest is invalid/i.test(raw)) {
-    return classified(merope.rigCompileFailed, raw, hint)
-  }
-  if (/webgl2 is required/i.test(raw)) {
-    return merope.anime25dWebglFailed
-  }
-  if (/anime2\.5drig playback missing/i.test(raw)) {
-    const role = raw.match(/missing (\S+)/i)?.[1] || ''
-    return fill(merope.anime25dMissingLayer, { role: role || '?' })
-  }
-  if (
-    /anime2\.5drig (mesh buffers|layer crop|layer texture|program|shader|link)/i.test(
-      raw,
-    ) ||
-    /^missing uniform /i.test(raw)
-  ) {
-    return merope.anime25dPlaybackFailed
-  }
-  if (
-    code === 'GAME_CONFIG_INVALID' ||
-    /invalid game (tapp id|protocol)|game\.max_players|game\.max_message_bytes/i.test(
-      raw,
-    )
-  ) {
-    return t.gameConfigInvalid
-  }
-  if (
-    code === 'GAME_MESSAGE_INVALID' ||
-    /game_message_invalid|invalid game message|game message_type|game session messages|not a game session|game payload too large/i.test(
-      raw,
-    )
-  ) {
-    return t.gameMessageInvalid
-  }
-  if (/^failed to fetch feed/i.test(raw)) {
-    return classified(t.phantasiRefreshFailed, raw, hint)
-  }
-  if (
-    /^failed to (fetch|count) phantasi /i.test(raw) ||
-    /^failed to count (starred|read) items/i.test(raw) ||
-    /^failed to (list sources|find source|list categories|find category|list articles|export sources)/i.test(
-      raw,
-    )
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.phantasiLoadFailed, action), raw, hint)
-  }
-  if (
-    /^failed to (save|update) source/i.test(raw) ||
-    /^failed to import sources/i.test(raw) ||
-    /^failed to (check existing items|update source counts|query sources|batch insert items)/i.test(
-      raw,
-    )
-  ) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
+  if (is('phantasi_source_save_failed')) {
     return classified(
-      joinParts(t.phantasiSourceSaveFailed, action),
+      joinParts(t.phantasiSourceSaveFailed, failedAction(raw)),
       raw,
       hint,
     )
   }
-  if (/^failed to delete source/i.test(raw)) {
-    return classified(t.phantasiSourceDeleteFailed, raw, hint)
-  }
-  if (/^failed to (save|update) category/i.test(raw)) {
-    const action = raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
-    return classified(joinParts(t.phantasiCategorySaveFailed, action), raw, hint)
-  }
-  if (/^failed to delete category/i.test(raw)) {
-    return classified(t.phantasiCategoryDeleteFailed, raw, hint)
+  if (is('phantasi_category_save_failed')) {
+    return classified(joinParts(t.phantasiCategorySaveFailed, failedAction(raw)), raw, hint)
   }
 
   const byStatus = status > 0 ? httpStatusMessage(status) : ''
@@ -2283,6 +1722,7 @@ export function userFacingError(reason: unknown, fallback?: string): string {
     if (status >= 400) return joinParts(byStatus, extraHint)
     return joinParts(t.operationFailed, extraHint)
   }
+  // Catch-all for code-less "Failed to …" text (agent handlers, frontend).
   if (useful && /^failed to\b/i.test(useful)) {
     if (status >= 400) return joinParts(byStatus, extraHint)
     return joinParts(t.operationFailed, extraHint)
@@ -2293,6 +1733,11 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   if (useful) return joinParts(useful, extraHint)
   if (byStatus) return joinParts(byStatus, extraHint)
   return joinParts(fallbackText, extraHint)
+}
+
+/** The step a "Failed to <step>" label names, shown next to its category. */
+function failedAction(raw: string): string {
+  return raw.match(/^failed to ([^:]+)/i)?.[1]?.trim() || ''
 }
 
 function usefulExtra(text: string, ...known: string[]): string {
