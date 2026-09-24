@@ -881,7 +881,7 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             return Vec::new();
         }
 
-        // 未指定调用者时不做隔离扫描。默认值曾经是「查全部分片」，这里改成空结果。
+        // 未指定调用者时返回空结果，不扫描全部分片。
         let Some(uid) = params.user_id else {
             return Vec::new();
         };
