@@ -278,8 +278,14 @@ pub async fn reclaim_stranded_running_intentions(db: &DatabaseConnection) {
         let has_work_checkpoint = persisted_task.as_ref().is_some_and(|task| {
             task.recipe
                 .as_ref()
-                .and_then(|r| r.pointer("/metadata/work_loop_version"))
-                == Some(&json!(1))
+                .and_then(|r| r.get("engine"))
+                .and_then(|engine| {
+                    serde_json::from_value::<crate::services::agent::types::AgentEngine>(
+                        engine.clone(),
+                    )
+                    .ok()
+                })
+                == Some(crate::services::agent::types::AgentEngine::WorkLoop)
         });
         match classify_stranded_running(
             attached_waiting,

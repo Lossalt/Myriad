@@ -235,6 +235,44 @@ pub struct Recipe {
     pub lane_key: Option<String>,
     #[serde(default)]
     pub autonomy_permission_cap: Option<Vec<String>>,
+    /// Which engine owns this run, and so which one resumes it.
+    #[serde(default)]
+    pub engine: AgentEngine,
+}
+
+/// The engine a run belongs to. Persisted inside `agent_tasks.recipe`;
+/// SQL filters on it through [`AgentEngine::WORK_LOOP_SQL`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentEngine {
+    /// A planned Recipe run by the Executor.
+    #[default]
+    Executor,
+    /// A model-driven Work loop with its own checkpoint.
+    WorkLoop,
+}
+
+impl AgentEngine {
+    /// `agent_tasks` predicate for rows owned by the Work loop.
+    pub const WORK_LOOP_SQL: &'static str = "recipe->>'engine' = 'work_loop'";
+}
+
+#[cfg(test)]
+mod agent_engine_tests {
+    use super::AgentEngine;
+
+    #[test]
+    fn sql_predicate_matches_the_serialized_engine() {
+        let tag = serde_json::to_value(AgentEngine::WorkLoop).unwrap();
+        assert_eq!(
+            AgentEngine::WORK_LOOP_SQL,
+            format!("recipe->>'engine' = '{}'", tag.as_str().unwrap())
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentEngine>(serde_json::json!("executor")).unwrap(),
+            AgentEngine::Executor
+        );
+    }
 }
 
 /// 执行类型
@@ -833,6 +871,7 @@ impl Recipe {
             conversation_context: None,
             lane_key: None,
             autonomy_permission_cap: None,
+            engine: AgentEngine::Executor,
         }
     }
 }

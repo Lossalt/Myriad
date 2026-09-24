@@ -636,6 +636,7 @@ impl Agent {
             conversation_context,
             lane_key,
             autonomy_permission_cap,
+            engine: AgentEngine::Executor,
         }
     }
 

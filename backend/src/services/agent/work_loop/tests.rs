@@ -9,7 +9,7 @@ pub(super) fn checkpoint() -> Checkpoint {
         context: None,
     };
     let mut recipe = Agent::build_recipe_from_steps(vec![], "Time comparison".into(), &request);
-    recipe.metadata.insert("work_loop_version".into(), json!(1));
+    recipe.engine = AgentEngine::WorkLoop;
     let mut task = TaskState::new(&recipe);
     task.status = TaskStatus::Running;
     task.execution_context = Some(ExecutionContext::default());

@@ -886,6 +886,18 @@ pub(crate) async fn ensure_agent_tasks_status_check(db: &DatabaseConnection) -> 
     Ok(())
 }
 
+/// Runs saved before `Recipe.engine` existed marked the Work loop with
+/// `metadata.work_loop_version = 1`; rewrite them so every reader sees `engine`.
+pub(crate) async fn ensure_agent_task_engine(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(
+        r#"UPDATE agent_tasks
+              SET recipe = jsonb_set(recipe #- '{metadata,work_loop_version}', '{engine}', '"work_loop"')
+            WHERE recipe->'metadata'->>'work_loop_version' = '1'"#,
+    )
+    .await?;
+    Ok(())
+}
+
 /// 云端笔记文档。草稿 / 定时不进 `phantasi_items`，发布时才落文章。
 pub(crate) async fn ensure_phantasi_note_docs_table(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(

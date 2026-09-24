@@ -190,7 +190,7 @@ pub(super) fn operation_key(id: &str, params: &Value) -> String {
 }
 
 pub(crate) fn is_work_recipe(recipe: &Recipe) -> bool {
-    recipe.metadata.get("work_loop_version") == Some(&json!(1))
+    recipe.engine == AgentEngine::WorkLoop
 }
 
 #[cfg(test)]

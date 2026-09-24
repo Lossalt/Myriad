@@ -198,7 +198,7 @@ impl Agent {
         let mut recipe = recipe.clone();
         // Saving a Work execution log as a preset creates a fixed Recipe. Its
         // future confirmations must resume Executor, not the original loop.
-        recipe.metadata.remove("work_loop_version");
+        recipe.engine = AgentEngine::Executor;
         let template_id = recipe.id.clone();
         recipe.id = uuid::Uuid::new_v4().to_string();
 

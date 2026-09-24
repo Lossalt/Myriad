@@ -272,6 +272,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     // Ongoing object/data heals, plus recent (~1 month) CREATE IF NOT EXISTS.
     ensure_tapp_storage_credential_constraint(db).await?;
     ensure_agent_tasks_status_check(db).await?;
+    ensure_agent_task_engine(db).await?;
     ensure_tapp_storage_quota(db).await?;
     ensure_timeline_unique(db).await?;
     ensure_delivery_queue_unique(db).await?;

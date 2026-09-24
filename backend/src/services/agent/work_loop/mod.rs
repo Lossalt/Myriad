@@ -53,7 +53,7 @@ impl Agent {
             request.raw_input.chars().take(120).collect(),
             &request,
         );
-        recipe.metadata.insert("work_loop_version".into(), json!(1));
+        recipe.engine = AgentEngine::WorkLoop;
         let mut task = TaskState::new(&recipe);
         task.status = TaskStatus::Running;
         task.lane_id = recipe.lane_key.clone();

@@ -187,7 +187,7 @@ pub(crate) async fn recover(db: &sea_orm::DatabaseConnection) -> Result<(), Stri
     // Expire abandoned waits through the same revision fence as answers. The
     // legacy in-memory cleanup must not overwrite a resumed Work checkpoint.
     let abandoned = crate::models::entities::agent_tasks::Model::find_by_statement(Statement::from_string(DatabaseBackend::Postgres,
-        "SELECT * FROM agent_tasks WHERE status = 'waiting_for_input' AND recipe->'metadata'->>'work_loop_version' = '1' AND (pending_question->>'expires_at')::timestamptz < NOW() LIMIT 64"))
+        format!("SELECT * FROM agent_tasks WHERE status = 'waiting_for_input' AND {} AND (pending_question->>'expires_at')::timestamptz < NOW() LIMIT 64", crate::services::agent::types::AgentEngine::WORK_LOOP_SQL)))
         .all(db).await.map_err(|_| "Unable to find abandoned Work tasks")?;
     for task in abandoned {
         if let Some(question_id) = task
@@ -199,7 +199,7 @@ pub(crate) async fn recover(db: &sea_orm::DatabaseConnection) -> Result<(), Stri
         }
     }
     let tasks = crate::models::entities::agent_tasks::Model::find_by_statement(Statement::from_string(DatabaseBackend::Postgres,
-        "SELECT * FROM agent_tasks WHERE status = 'running' AND recipe->'metadata'->>'work_loop_version' = '1' AND updated_at < NOW() - INTERVAL '90 seconds' LIMIT 64"))
+        format!("SELECT * FROM agent_tasks WHERE status = 'running' AND {} AND updated_at < NOW() - INTERVAL '90 seconds' LIMIT 64", crate::services::agent::types::AgentEngine::WORK_LOOP_SQL)))
         .all(db).await.map_err(|_| "Unable to find interrupted Work tasks")?;
     for task in tasks {
         let Ok(mut state) = load(db, &task.id, task.user_id).await else {

@@ -981,7 +981,7 @@ pub(super) async fn waiting_work_result_payloads(
         payload: Value,
     }
     let rows = ResultRow::find_by_statement(Statement::from_string(DatabaseBackend::Postgres,
-        "SELECT r.payload FROM tapp_runtime_registry r JOIN agent_tasks t ON t.id = r.payload #>> '{snapshot,source,taskId}' AND t.user_id = (r.payload->>'subject_id')::integer WHERE r.namespace='agent_interaction' AND r.expires_at > EXTRACT(EPOCH FROM NOW())::bigint AND r.payload #>> '{snapshot,state}' IN ('completed','rejected','expired','cancelled') AND t.status='waiting_for_input' AND t.recipe->'metadata'->>'work_loop_version'='1' AND t.pending_question->>'question_id' = 'tapp_interaction:' || (r.payload #>> '{snapshot,interactionId}') LIMIT 64"))
+        format!("SELECT r.payload FROM tapp_runtime_registry r JOIN agent_tasks t ON t.id = r.payload #>> '{{snapshot,source,taskId}}' AND t.user_id = (r.payload->>'subject_id')::integer WHERE r.namespace='agent_interaction' AND r.expires_at > EXTRACT(EPOCH FROM NOW())::bigint AND r.payload #>> '{{snapshot,state}}' IN ('completed','rejected','expired','cancelled') AND t.status='waiting_for_input' AND t.{} AND t.pending_question->>'question_id' = 'tapp_interaction:' || (r.payload #>> '{{snapshot,interactionId}}') LIMIT 64", crate::services::agent::types::AgentEngine::WORK_LOOP_SQL)))
         .all(db).await.map_err(|_| "Unable to redeliver Work interaction results")?;
     Ok(rows.into_iter().map(|row| row.payload).collect())
 }

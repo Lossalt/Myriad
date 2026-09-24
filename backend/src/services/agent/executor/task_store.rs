@@ -312,15 +312,18 @@ async fn load_pending_tasks_from_db(db: &DatabaseConnection) -> Result<(), Strin
     let interrupted = db
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"
+            &format!(
+                r#"
 UPDATE agent_tasks
 SET status = 'cancelled',
     error = $1,
     completed_at = COALESCE(completed_at, NOW()),
     updated_at = NOW()
 WHERE status IN ('pending', 'running')
-  AND COALESCE(recipe->'metadata'->>'work_loop_version', '') != '1'
+  AND NOT COALESCE({}, false)
 "#,
+                crate::services::agent::types::AgentEngine::WORK_LOOP_SQL
+            ),
             vec![crate::services::agent::response_agent::task_interrupted().into()],
         ))
         .await
