@@ -152,6 +152,18 @@ _Avoid_: 私有存储（那是 Tapp.storage）、Tapp.vault、把站点 token �
 四种 KV 的写入成功只表示落盘。跨沙箱同步靠各自的 `onChanged`；重跑 Widget `render()`
 靠显式 `invalidate`，或 storage / shared 仍保留的兼容 remount。`Tapp.private` 与 settings 一样只广播，不拆卡。不要把落盘当成刷新指令。
 
+### 站长与认领
+
+**站长（site owner）**：
+站点唯一的所有者账号，也是公开安装与站点数据所属的命名空间。站长一定是管理员，不能被
+降级或删除；反过来，管理员不一定是站长。旧库里尚未标出站长时，由最早的管理员暂代。
+_Avoid_: 第一个管理员、admin 用户（那是角色，不是身份）
+
+**认领（installation claim）**：
+站点已经有管理员或站长这件事。认领之后安装向导关闭。读不出是否已认领时按已认领处理——
+不能确认没有主人，就不放行初始化。
+_Avoid_: 有没有用户、有人登录过
+
 ### 联邦闸门
 
 **出口地理位置（egress location）**：
