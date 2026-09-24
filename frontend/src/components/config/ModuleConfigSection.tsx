@@ -35,7 +35,6 @@ import {
   MODULE_VISIBILITY_LEVELS,
   normalizeModuleVisibilityPreferences,
 } from '../../utils/moduleVisibility'
-import { LocalMusicManager } from './LocalMusicManager'
 import { clearPlaylistCache } from '../../utils/musicPlayer'
 import { normalizeMusicPlaylistId } from '../../utils/musicPlaylistId'
 import PlatformIcon from '../PlatformIcon'
@@ -53,6 +52,7 @@ import {
   useSettingGuide,
 } from '../settings'
 import { Spinner } from '../Spinner'
+import { LocalMusicManager } from './LocalMusicManager'
 import { MyriadConfigIcon } from './MyriadConfigIcon'
 
 interface UiConfigField {

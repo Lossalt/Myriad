@@ -1,3 +1,4 @@
+import type { LocalTrack } from '../../services/localMusicApi'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigI18n } from '../../contexts/I18nContext'
 import { updateConfig } from '../../services/configApi'
@@ -8,12 +9,11 @@ import {
   listLocalTracks,
   updateLocalTrack,
   uploadLocalTrack,
-  type LocalTrack,
 } from '../../services/localMusicApi'
 import { emitAppEvent } from '../../utils/appEvents'
 import { clearPlaylistCache } from '../../utils/musicPlayer'
-import { SettingsButton } from '../settings'
 import { userFacingError } from '../../utils/userFacingError'
+import { SettingsButton } from '../settings'
 
 const EXT_FILTERS = ['all', 'mp3', 'flac', 'ogg'] as const
 const ACCEPT = '.mp3,.flac,.ogg,audio/mpeg,audio/flac,audio/ogg'

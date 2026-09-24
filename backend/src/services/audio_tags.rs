@@ -41,12 +41,14 @@ fn decode_id3_text(enc: u8, data: &[u8]) -> Option<String> {
                     (false, &data[2..])
                 };
                 let units: Vec<u16> = body
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| {
                         if be {
-                            u16::from_be_bytes([c[0], c[1]])
+                            u16::from_be_bytes(*c)
                         } else {
-                            u16::from_le_bytes([c[0], c[1]])
+                            u16::from_le_bytes(*c)
                         }
                     })
                     .collect();
@@ -57,8 +59,10 @@ fn decode_id3_text(enc: u8, data: &[u8]) -> Option<String> {
         }
         2 => {
             let units: Vec<u16> = data
-                .chunks_exact(2)
-                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_be_bytes(*c))
                 .collect();
             String::from_utf16_lossy(&units)
         }
@@ -162,21 +166,17 @@ fn parse_id3v2(bytes: &[u8]) -> AudioTags {
                     }
                 }
             }
-            b"USLT" | b"ULT" => {
-                // encoding + lang(3) + desc\0 + text
-                if data.len() > 4 {
-                    let enc = data[0];
-                    let body = &data[4..];
-                    let text = if let Some(pos) = find_nul_terminator(body, enc) {
-                        decode_id3_text(enc, &body[pos + 1..])
-                    } else {
-                        decode_id3_text(enc, body)
-                    };
-                    if let Some(text) = text {
-                        if !text.trim().is_empty() {
-                            tags.lyrics = Some(text);
-                        }
-                    }
+            // encoding + lang(3) + desc\0 + text
+            b"USLT" | b"ULT" if data.len() > 4 => {
+                let enc = data[0];
+                let body = &data[4..];
+                let text = if let Some(pos) = find_nul_terminator(body, enc) {
+                    decode_id3_text(enc, &body[pos + 1..])
+                } else {
+                    decode_id3_text(enc, body)
+                };
+                if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+                    tags.lyrics = Some(text);
                 }
             }
             _ => {}
