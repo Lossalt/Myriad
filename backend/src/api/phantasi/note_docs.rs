@@ -29,7 +29,7 @@ use crate::services::note_authors::{
     remove_note_author, sync_published_author_line,
 };
 use crate::services::note_publish::{
-    datetime_to_millis, millis_to_datetime, publish_doc, upsert_doc_for_published_item,
+    datetime_to_millis, millis_to_datetime, publish_doc_on, upsert_doc_for_published_item,
 };
 
 #[derive(Debug, Deserialize)]
@@ -560,11 +560,18 @@ pub(crate) async fn publish_note_doc(
     active.updated_at = Set(Utc::now().into());
     active.revision = Set(expected + 1);
     active.last_edited_by = Set(Some(user_id));
+    // Claim, author and publish commit together: a failed publish must not
+    // leave the claimed edit stored without its media bound, and history is
+    // bound from `expected`, the snapshot the claim itself captured.
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| phantasi_store_http("begin note publish", e))?;
     let claimed = phantasi_note_docs::Entity::update_many()
         .set(active)
         .filter(phantasi_note_docs::Column::Id.eq(id))
         .filter(phantasi_note_docs::Column::Revision.eq(expected))
-        .exec(&db)
+        .exec(&txn)
         .await
         .map_err(|e| phantasi_store_http("claim note publish", e))?;
     if claimed.rows_affected == 0 {
@@ -574,8 +581,11 @@ pub(crate) async fn publish_note_doc(
         ));
     }
     doc.revision = expected + 1;
-    ensure_note_author(&db, doc.id, user_id, doc.user_id).await?;
-    let (item, saved) = publish_doc(&db, doc, published_at).await?;
+    ensure_note_author(&txn, doc.id, user_id, doc.user_id).await?;
+    let (item, saved) = publish_doc_on(&txn, doc, published_at, expected).await?;
+    txn.commit()
+        .await
+        .map_err(|e| phantasi_store_http("commit note publish", e))?;
     broadcast_saved_doc(&saved, user_id, req.client_request_id);
     Ok(Json(json!({
         "success": true,
@@ -1098,6 +1108,11 @@ mod tests {
             "publish must keep the original owner"
         );
         assert!(publish.contains("ensure_note_author"));
+        // Claim and publish share one transaction, and history is bound from
+        // the revision the claim captured.
+        assert!(publish.contains("db\n        .begin()") || publish.contains("db.begin()"));
+        assert!(publish.contains("txn.commit()"));
+        assert!(publish.contains("publish_doc_on(&txn, doc, published_at, expected)"));
         assert!(publish.contains("expected_revision"));
         assert!(publish.contains("update_many()"));
         assert!(publish.contains("Column::Revision.eq(expected)"));
