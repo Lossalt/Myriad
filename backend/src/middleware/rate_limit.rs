@@ -194,24 +194,33 @@ impl RateLimiter {
 
 /// Global rate limiter instance
 static RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> = once_cell::sync::Lazy::new(|| {
-    // Spawn cleanup task
     let limiter = RateLimiter::new(RateLimitConfig::default());
-    let limiter_clone = RateLimiter {
+    // 每2分钟清理一次（优化内存）
+    start_cleanup(
+        crate::services::jobs::jobs(),
+        &limiter,
+        crate::services::jobs::Every::new(Duration::from_secs(120)),
+    );
+    limiter
+});
+
+/// Expired-window reclamation runs on the process job runner, so shutdown
+/// stops it with the other background jobs.
+fn start_cleanup(
+    runner: &crate::services::jobs::JobRunner,
+    limiter: &RateLimiter,
+    every: crate::services::jobs::Every,
+) -> crate::services::jobs::JobHandle {
+    let limiter = RateLimiter {
         shards: Arc::clone(&limiter.shards),
         config: limiter.config.clone(),
     };
-
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(120)); // 每2分钟清理一次（优化内存）
-        loop {
-            interval.tick().await;
-            limiter_clone.cleanup();
-            tracing::debug!("🧹 Rate limiter cleanup completed");
-        }
-    });
-
-    limiter
-});
+    runner.periodic("rate limit cleanup", every, move || {
+        limiter.cleanup();
+        tracing::debug!("🧹 Rate limiter cleanup completed");
+        std::future::ready(())
+    })
+}
 
 /// Rate limiting middleware
 pub async fn rate_limit_middleware(req: Request, next: Next) -> Response {
@@ -707,5 +716,45 @@ mod tests {
             ));
         }
         assert!(!limiter.check_bucket(ip, IMAGE_PROXY_BUCKET, IMAGE_PROXY_MAX, IMAGE_PROXY_WINDOW));
+    }
+
+    fn insert_stale(limiter: &RateLimiter, ip: IpAddr, key: &str) {
+        let window_start = Instant::now()
+            .checked_sub(Duration::from_secs(600))
+            .expect("monotonic clock older than ten minutes");
+        limiter
+            .lock_shard(ip)
+            .records
+            .entry(ip)
+            .or_default()
+            .insert(
+                key.to_string(),
+                RequestRecord {
+                    count: 1,
+                    window_start,
+                },
+            );
+    }
+
+    #[tokio::test]
+    async fn cleanup_runs_on_the_job_runner_and_stops_with_it() {
+        use crate::services::jobs::{Every, JobRunner};
+        let runner = JobRunner::new();
+        let limiter = RateLimiter::new(RateLimitConfig::default());
+        let ip = IpAddr::from([10, 7, 7, 7]);
+        insert_stale(&limiter, ip, "/api/stale");
+        let handle = start_cleanup(&runner, &limiter, Every::new(Duration::from_millis(1)));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while limiter.bucket_count(ip, "/api/stale").is_some() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not reclaim the stale window");
+        runner.shutdown(Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        insert_stale(&limiter, ip, "/api/after");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(limiter.bucket_count(ip, "/api/after"), Some(1));
     }
 }
