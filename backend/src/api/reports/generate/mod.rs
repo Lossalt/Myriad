@@ -24,6 +24,7 @@ use crate::config::DynamicConfig;
 use crate::error::HttpError;
 use crate::middleware::auth::Claims;
 use crate::models::entities::platform_reports;
+use crate::services::platform_id::PlatformId;
 use crate::services::smart_filter::SmartFilteredData;
 use myriad_error::AppError;
 
@@ -140,6 +141,16 @@ pub async fn generate_platform_reports(
     })))
 }
 
+/// generate-all 的平台集合：[`PlatformId::enabled`]（显式开关，否则凭据是否齐备），
+/// 与 Agent 接通判定、刷新闸门同源。
+pub(crate) fn enabled_report_platforms(config: &DynamicConfig) -> Vec<String> {
+    PlatformId::ALL
+        .into_iter()
+        .filter(|id| id.enabled(config))
+        .map(|id| id.slug().to_string())
+        .collect()
+}
+
 /// 一键生成所有启用平台的平台报告
 /// POST /api/reports/generate-all
 pub async fn generate_all_reports(
@@ -156,95 +167,7 @@ pub async fn generate_all_reports(
 
     // 1. 获取用户启用的所有平台（AppState.dynamic_config，与 GLOBAL_* 同 Arc）
     let config = dynamic_config.read().await;
-    let enabled_platforms = [
-        (
-            "bilibili",
-            config
-                .bilibili_enabled
-                .unwrap_or(config.bilibili_uid.as_ref().is_some()),
-        ),
-        (
-            "steam",
-            config
-                .steam_enabled
-                .unwrap_or(config.steam_api_key.as_ref().is_some()),
-        ),
-        (
-            "github",
-            config
-                .github_enabled
-                .unwrap_or(config.github_username.as_ref().is_some()),
-        ),
-        (
-            "youtube",
-            config.youtube_enabled.unwrap_or(
-                config.youtube_api_key.as_ref().is_some()
-                    && config.youtube_channel_id.as_ref().is_some(),
-            ),
-        ),
-        (
-            "netease",
-            config
-                .netease_enabled
-                .unwrap_or(config.netease_user_id.as_ref().is_some()),
-        ),
-        (
-            "bangumi",
-            config.bangumi_enabled.unwrap_or(
-                config.bangumi_username.as_ref().is_some()
-                    || config.bangumi_access_token.as_ref().is_some(),
-            ),
-        ),
-        (
-            "x",
-            config.x_enabled.unwrap_or(
-                config.x_username.as_ref().is_some() && config.x_bearer_token.as_ref().is_some(),
-            ),
-        ),
-        (
-            "discord",
-            config
-                .discord_enabled
-                .unwrap_or(config.discord_access_token.as_ref().is_some()),
-        ),
-        (
-            "mal",
-            config
-                .mal_enabled
-                .unwrap_or(config.mal_username.as_ref().is_some()),
-        ),
-        ("xbox", {
-            let has_gamertag = config
-                .xbox_gamertag
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("XBOX_GAMERTAG").is_ok();
-            let has_key = config
-                .openxbl_api_key
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("OPENXBL_API_KEY").is_ok()
-                || std::env::var("XBL_API_KEY").is_ok();
-            config.xbox_enabled.unwrap_or(has_gamertag && has_key)
-        }),
-        ("psn", {
-            let has_id = config
-                .psn_online_id
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("PSN_ONLINE_ID").is_ok();
-            let has_npsso = config
-                .psn_npsso
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("PSN_NPSSO").is_ok();
-            config.psn_enabled.unwrap_or(has_id && has_npsso)
-        }),
-    ]
-    .into_iter()
-    .filter(|&(_, enabled)| enabled)
-    .map(|(platform, _)| platform.to_string())
-    .collect::<Vec<_>>();
+    let enabled_platforms = enabled_report_platforms(&config);
     drop(config);
 
     // generate_platform_reports_internal (same persist path as single-platform).

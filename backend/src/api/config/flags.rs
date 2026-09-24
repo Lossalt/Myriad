@@ -5,6 +5,7 @@
 use serde_json::{Value, json};
 
 use super::types::PlatformConfig;
+use crate::services::platform_id::PlatformId;
 
 pub(crate) fn resolve_platform_enabled(
     explicit_enabled: Option<bool>,
@@ -42,86 +43,15 @@ pub(crate) fn nonempty_env(key: &str) -> bool {
 }
 
 /// Agent `config.get` / `platform.connection` / `auth.status` 共用：平台是否按配置视为已接通。
+///
+/// 与报告一键生成、刷新闸门同源：[`PlatformId::enabled`]。
 pub(crate) fn platform_configured_flags(
     config: &crate::config::DynamicConfig,
 ) -> Vec<(&'static str, bool)> {
-    let nonempty = nonempty_db;
-    let enabled = resolve_platform_enabled;
-    vec![
-        (
-            "steam",
-            enabled(
-                config.steam_enabled,
-                nonempty(config.steam_api_key.as_ref()),
-            ),
-        ),
-        (
-            "bilibili",
-            enabled(
-                config.bilibili_enabled,
-                nonempty(config.bilibili_uid.as_ref()),
-            ),
-        ),
-        (
-            "github",
-            enabled(
-                config.github_enabled,
-                nonempty(config.github_username.as_ref()),
-            ),
-        ),
-        (
-            "youtube",
-            enabled(
-                config.youtube_enabled,
-                nonempty(config.youtube_api_key.as_ref())
-                    && nonempty(config.youtube_channel_id.as_ref()),
-            ),
-        ),
-        (
-            "netease",
-            enabled(
-                config.netease_enabled,
-                nonempty(config.netease_user_id.as_ref()),
-            ),
-        ),
-        (
-            "bangumi",
-            enabled(
-                config.bangumi_enabled,
-                nonempty(config.bangumi_username.as_ref())
-                    || nonempty(config.bangumi_access_token.as_ref()),
-            ),
-        ),
-        (
-            "x",
-            enabled(
-                config.x_enabled,
-                nonempty(config.x_username.as_ref()) && nonempty(config.x_bearer_token.as_ref()),
-            ),
-        ),
-        (
-            "discord",
-            enabled(
-                config.discord_enabled,
-                nonempty(config.discord_access_token.as_ref()),
-            ),
-        ),
-        (
-            "mal",
-            enabled(config.mal_enabled, nonempty(config.mal_username.as_ref())),
-        ),
-        (
-            "xbox",
-            enabled(
-                config.xbox_enabled,
-                nonempty(config.openxbl_api_key.as_ref()),
-            ),
-        ),
-        (
-            "psn",
-            enabled(config.psn_enabled, nonempty(config.psn_npsso.as_ref())),
-        ),
-    ]
+    PlatformId::ALL
+        .into_iter()
+        .map(|id| (id.slug(), id.enabled(config)))
+        .collect()
 }
 
 /// Agent `config.get` ui 段：与公开 UI 运行时同类的非密钥字段。

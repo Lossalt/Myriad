@@ -8,6 +8,7 @@ use super::errors::{platform_data_warning, resolve_platform_fetch_message};
 use crate::config::DynamicConfig;
 use crate::services::fetcher::PlatformFetcher;
 use crate::services::metadata_service::MetadataService;
+use crate::services::platform_id::PlatformId;
 use crate::services::site_owner::site_owner_user_id;
 use sea_orm::DatabaseConnection;
 use serde_json::{Value, json};
@@ -31,51 +32,15 @@ pub(super) struct FetchCtx<'a> {
     pub db: &'a DatabaseConnection,
 }
 
-fn has_cfg(v: &Option<String>) -> bool {
-    v.as_ref().is_some_and(|s| !s.trim().is_empty())
-}
-
-pub const PLATFORM_IDS: &[&str] = &[
-    "github", "bilibili", "steam", "youtube", "netease", "bangumi", "x", "discord", "mal",
-    "xbox", "psn",
-];
-
+/// Platforms whose fetch arm would run. Fetch/refresh needs configured credentials
+/// ([`PlatformId::credentials_present`]); it does not read `*_enabled` (that flag
+/// also gates report generation, public cards, Agent connection, Steam presence).
 pub fn configured_platform_ids(config: &DynamicConfig) -> Vec<&'static str> {
-    PLATFORM_IDS
-        .iter()
-        .copied()
-        .filter(|platform| is_platform_configured(config, platform))
+    PlatformId::ALL
+        .into_iter()
+        .filter(|id| id.credentials_present(config))
+        .map(PlatformId::slug)
         .collect()
-}
-
-/// Fetch/refresh needs configured credentials. Does not read `*_enabled`
-/// (that flag also gates report generation, public cards, Agent connection, Steam presence).
-pub(super) fn is_platform_configured(config: &DynamicConfig, p: &str) -> bool {
-    match p {
-        "github" => has_cfg(&config.github_username),
-        "bilibili" => has_cfg(&config.bilibili_uid),
-        "steam" => has_cfg(&config.steam_api_key) && has_cfg(&config.steam_id),
-        "youtube" => has_cfg(&config.youtube_api_key) && has_cfg(&config.youtube_channel_id),
-        "netease" => has_cfg(&config.netease_user_id),
-        "bangumi" => has_cfg(&config.bangumi_username) || has_cfg(&config.bangumi_access_token),
-        "x" => has_cfg(&config.x_username) && has_cfg(&config.x_bearer_token),
-        "discord" => has_cfg(&config.discord_access_token),
-        "mal" => has_cfg(&config.mal_username),
-        "xbox" => {
-            let has_gamertag =
-                has_cfg(&config.xbox_gamertag) || std::env::var("XBOX_GAMERTAG").is_ok();
-            let has_key = has_cfg(&config.openxbl_api_key)
-                || std::env::var("OPENXBL_API_KEY").is_ok()
-                || std::env::var("XBL_API_KEY").is_ok();
-            has_gamertag && has_key
-        }
-        "psn" => {
-            let has_id = has_cfg(&config.psn_online_id) || std::env::var("PSN_ONLINE_ID").is_ok();
-            let has_npsso = has_cfg(&config.psn_npsso) || std::env::var("PSN_NPSSO").is_ok();
-            has_id && has_npsso
-        }
-        _ => false,
-    }
 }
 
 /// 刷新单个平台数据
@@ -152,49 +117,31 @@ pub async fn fetch_fresh_platform_data(
             db,
         };
 
-        // 获取GitHub数据（包含仓库信息）
-        if should_fetch("github") && is_platform_configured(ctx.config, "github") {
-            arms_core::fetch_github(&mut ctx).await;
-        }
-        // 获取Bilibili数据
-        if should_fetch("bilibili") && is_platform_configured(ctx.config, "bilibili") {
-            arms_core::fetch_bilibili(&mut ctx).await;
-        }
-        // 获取Steam数据（只保留游玩时间>=3小时的游戏）
-        if should_fetch("steam") && is_platform_configured(ctx.config, "steam") {
-            arms_core::fetch_steam(&mut ctx).await;
-        }
-        // 获取网易云音乐数据
-        if should_fetch("netease") && is_platform_configured(ctx.config, "netease") {
-            arms_core::fetch_netease(&mut ctx).await;
-        }
-        // 获取 Bangumi 收藏数据
-        if should_fetch("bangumi") && is_platform_configured(ctx.config, "bangumi") {
-            arms_core::fetch_bangumi(&mut ctx).await;
-        }
-        // 获取 X (Twitter) 数据
-        if should_fetch("x") && is_platform_configured(ctx.config, "x") {
-            arms_extended::fetch_x(&mut ctx).await;
-        }
-        // 获取 Discord 数据（用户 OAuth：画像 + 服务器 + 连接）
-        if should_fetch("discord") && is_platform_configured(ctx.config, "discord") {
-            arms_extended::fetch_discord(&mut ctx).await;
-        }
-        // 获取 MyAnimeList 数据（双模式：有 client_id 走官方 API，否则公开 load.json）
-        if should_fetch("mal") && is_platform_configured(ctx.config, "mal") {
-            arms_extended::fetch_mal(&mut ctx).await;
-        }
-        // 获取 Xbox 数据（成就向：Gamerscore + 各游戏成就进度）
-        if should_fetch("xbox") && is_platform_configured(ctx.config, "xbox") {
-            arms_extended::fetch_xbox(&mut ctx).await;
-        }
-        // 获取 PSN 数据（奖杯向：奖杯等级 + 各游戏奖杯完成度）
-        if should_fetch("psn") && is_platform_configured(ctx.config, "psn") {
-            arms_extended::fetch_psn(&mut ctx).await;
-        }
-        // YouTube（公开频道；API key + channel id/handle，无 OAuth）
-        if should_fetch("youtube") && is_platform_configured(ctx.config, "youtube") {
-            arms_extended::fetch_youtube(&mut ctx).await;
+        for id in PlatformId::ALL {
+            if !should_fetch(id.slug()) || !id.credentials_present(ctx.config) {
+                continue;
+            }
+            match id {
+                // GitHub（含仓库信息）
+                PlatformId::Github => arms_core::fetch_github(&mut ctx).await,
+                PlatformId::Bilibili => arms_core::fetch_bilibili(&mut ctx).await,
+                // Steam（只保留游玩时间>=3小时的游戏）
+                PlatformId::Steam => arms_core::fetch_steam(&mut ctx).await,
+                // YouTube（公开频道；API key + channel id/handle，无 OAuth）
+                PlatformId::Youtube => arms_extended::fetch_youtube(&mut ctx).await,
+                PlatformId::Netease => arms_core::fetch_netease(&mut ctx).await,
+                // Bangumi 收藏数据
+                PlatformId::Bangumi => arms_core::fetch_bangumi(&mut ctx).await,
+                PlatformId::X => arms_extended::fetch_x(&mut ctx).await,
+                // Discord（用户 OAuth：画像 + 服务器 + 连接）
+                PlatformId::Discord => arms_extended::fetch_discord(&mut ctx).await,
+                // MyAnimeList（双模式：有 client_id 走官方 API，否则公开 load.json）
+                PlatformId::Mal => arms_extended::fetch_mal(&mut ctx).await,
+                // Xbox（成就向：Gamerscore + 各游戏成就进度）
+                PlatformId::Xbox => arms_extended::fetch_xbox(&mut ctx).await,
+                // PSN（奖杯向：奖杯等级 + 各游戏奖杯完成度）
+                PlatformId::Psn => arms_extended::fetch_psn(&mut ctx).await,
+            }
         }
     }
 

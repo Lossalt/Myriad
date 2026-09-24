@@ -434,19 +434,10 @@ pub async fn test_platform(
             let gamertag = if !form_gamertag.is_empty() {
                 form_gamertag.to_string()
             } else {
-                cfg.xbox_gamertag
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .or_else(|| std::env::var("XBOX_GAMERTAG").ok())
-                    .unwrap_or_default()
+                crate::services::platform_id::xbox_gamertag(&cfg).unwrap_or_default()
             };
             let api_key = form_key.unwrap_or_else(|| {
-                cfg.openxbl_api_key
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .or_else(|| std::env::var("OPENXBL_API_KEY").ok())
-                    .or_else(|| std::env::var("XBL_API_KEY").ok())
-                    .unwrap_or_default()
+                crate::services::platform_id::openxbl_api_key(&cfg).unwrap_or_default()
             });
             drop(cfg);
 
@@ -496,18 +487,10 @@ pub async fn test_platform(
             let online_id = if !form_online_id.is_empty() {
                 form_online_id.to_string()
             } else {
-                cfg.psn_online_id
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .or_else(|| std::env::var("PSN_ONLINE_ID").ok())
-                    .unwrap_or_default()
+                crate::services::platform_id::psn_online_id(&cfg).unwrap_or_default()
             };
             let npsso = form_npsso.unwrap_or_else(|| {
-                cfg.psn_npsso
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .or_else(|| std::env::var("PSN_NPSSO").ok())
-                    .unwrap_or_default()
+                crate::services::platform_id::psn_npsso(&cfg).unwrap_or_default()
             });
             drop(cfg);
 

@@ -1062,7 +1062,13 @@ mod settings_backup_tests {
                 .all(|(_, on)| !*on)
         );
 
+        // The fetcher needs both; an API key alone never produces data.
         config.steam_api_key = Some("k".into());
+        let map: std::collections::HashMap<_, _> =
+            platform_configured_flags(&config).into_iter().collect();
+        assert_eq!(map.get("steam"), Some(&false));
+
+        config.steam_id = Some("7656".into());
         let map: std::collections::HashMap<_, _> =
             platform_configured_flags(&config).into_iter().collect();
         assert_eq!(map.get("steam"), Some(&true));

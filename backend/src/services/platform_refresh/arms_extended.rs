@@ -2,6 +2,7 @@
 
 use super::errors::note_fetch_error;
 use super::fetch::FetchCtx;
+use crate::services::platform_id;
 use serde_json::json;
 
 pub(super) async fn fetch_x(ctx: &mut FetchCtx<'_>) {
@@ -250,23 +251,10 @@ pub(super) async fn fetch_mal(ctx: &mut FetchCtx<'_>) {
 }
 
 /// 获取 Xbox 数据（成就向：Gamerscore + 各游戏成就进度）
-/// 凭据：DB 优先，env 回退（与 game_presence / 配置页展示一致）
+/// 凭据：DB 优先，env 回退（`platform_id` 解析，与凭据判定同源）
 pub(super) async fn fetch_xbox(ctx: &mut FetchCtx<'_>) {
-    let gamertag = ctx
-        .config
-        .xbox_gamertag
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("XBOX_GAMERTAG").ok())
-        .unwrap_or_default();
-    let api_key = ctx
-        .config
-        .openxbl_api_key
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("OPENXBL_API_KEY").ok())
-        .or_else(|| std::env::var("XBL_API_KEY").ok())
-        .unwrap_or_default();
+    let gamertag = platform_id::xbox_gamertag(ctx.config).unwrap_or_default();
+    let api_key = platform_id::openxbl_api_key(ctx.config).unwrap_or_default();
 
     if !gamertag.trim().is_empty() && !api_key.trim().is_empty() {
         match ctx
@@ -303,20 +291,8 @@ pub(super) async fn fetch_xbox(ctx: &mut FetchCtx<'_>) {
 }
 
 pub(super) async fn fetch_psn(ctx: &mut FetchCtx<'_>) {
-    let online_id = ctx
-        .config
-        .psn_online_id
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("PSN_ONLINE_ID").ok())
-        .unwrap_or_default();
-    let npsso = ctx
-        .config
-        .psn_npsso
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("PSN_NPSSO").ok())
-        .unwrap_or_default();
+    let online_id = platform_id::psn_online_id(ctx.config).unwrap_or_default();
+    let npsso = platform_id::psn_npsso(ctx.config).unwrap_or_default();
 
     if !online_id.trim().is_empty() && !npsso.trim().is_empty() {
         match ctx

@@ -47,6 +47,7 @@ pub mod outbound_security; // Outbound URL validation, DNS pinning, redirect pol
 pub mod permission_service;
 pub mod platform_auto_refresh; // Core platform auto-refresh via Tapp scheduler
 pub mod platform_cache; // Platform filtered-JSON cache
+pub mod platform_id; // PlatformId registry: ids, aliases, credentials/enabled rule
 pub mod platform_items; // Cache → uniform items[] projection
 pub mod platform_refresh; // Platform fetch/cache (profile HTTP + scheduler)
 pub mod profile_text; // 名称/简介文案来源（与 avatar 独立）
