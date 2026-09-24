@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::services::fetcher::{PlatformFetcher, SteamUserInfo};
+use crate::services::platform_id::PlatformId;
 
 #[derive(Debug, Deserialize)]
 pub struct SteamQuery {
@@ -232,43 +233,29 @@ pub(crate) fn reject_query_api_key(api_key: &Option<String>) -> Result<(), HttpE
     Ok(())
 }
 
+/// Stored, trimmed, non-blank value. Steam credentials are DB-only, like the
+/// fetch arm: [`PlatformId::credentials_present`] is the gate for both.
+fn stored(value: Option<&String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 async fn server_steam_credentials(
     steam_id_override: Option<String>,
 ) -> Result<(String, String), HttpError> {
     let cfg = crate::GLOBAL_DYNAMIC_CONFIG.read().await;
-    let api_key = cfg
-        .steam_api_key
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::env::var("STEAM_API_KEY")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "success": false,
-                    "message": "Steam API key not configured"
-                })),
-            ))
-        })?;
-    let steam_id = steam_id_override
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            cfg.steam_id
-                .as_ref()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .or_else(|| {
-            std::env::var("STEAM_ID")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
+    let api_key = stored(cfg.steam_api_key.as_ref()).ok_or_else(|| {
+        HttpError::from((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "success": false,
+                "message": "Steam API key not configured"
+            })),
+        ))
+    })?;
+    let steam_id = stored(steam_id_override.as_ref())
+        .or_else(|| stored(cfg.steam_id.as_ref()))
         .ok_or_else(|| {
             HttpError::from((
                 StatusCode::BAD_REQUEST,
@@ -281,24 +268,15 @@ async fn server_steam_credentials(
     Ok((api_key, steam_id))
 }
 
-fn non_empty(value: Option<String>, env_key: &str) -> String {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| std::env::var(env_key).unwrap_or_default())
-}
-
 /// 获取当前配置对应的 Steam 在线状态
 pub async fn get_steam_presence(
     State(db): State<DatabaseConnection>,
 ) -> Result<Json<ApiResponse<SteamPresenceResponse>>, HttpError> {
     let config_service = crate::services::config_service::ConfigService::new(db);
-    let config = config_service.load_config().await.ok();
+    let config = config_service.load_config().await.ok().unwrap_or_default();
 
-    if config
-        .as_ref()
-        .and_then(|config| config.steam_enabled)
-        .is_some_and(|enabled| !enabled)
-    {
+    // Same switch as reports / public cards / Agent.
+    if PlatformId::Steam.explicit_enabled(&config) == Some(false) {
         return Ok(Json(ApiResponse {
             success: false,
             data: None,
@@ -306,24 +284,16 @@ pub async fn get_steam_presence(
         }));
     }
 
-    let api_key = non_empty(
-        config
-            .as_ref()
-            .and_then(|config| config.steam_api_key.clone()),
-        "STEAM_API_KEY",
-    );
-    let steam_id = non_empty(
-        config.as_ref().and_then(|config| config.steam_id.clone()),
-        "STEAM_ID",
-    );
-
-    if api_key.is_empty() || steam_id.is_empty() {
+    let (Some(api_key), Some(steam_id)) = (
+        stored(config.steam_api_key.as_ref()),
+        stored(config.steam_id.as_ref()),
+    ) else {
         return Ok(Json(ApiResponse {
             success: false,
             data: None,
             message: "Steam is not configured".to_string(),
         }));
-    }
+    };
 
     // stale-while-revalidate：Fresh/Stale 立刻返回；冷缓存同步拉一次
     match read_presence(&steam_id) {
@@ -835,5 +805,47 @@ mod steam_secret_gate_tests {
         assert!(reject_query_api_key(&None).is_ok());
         assert!(reject_query_api_key(&Some(String::new())).is_ok());
         assert!(reject_query_api_key(&Some("   ".into())).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod credential_source_tests {
+    use super::stored;
+    use crate::config::DynamicConfig;
+    use crate::services::platform_id::PlatformId;
+
+    /// Presence / Steam proxy credentials are the fetch arm's: stored values
+    /// only, blank = missing. No env fallback.
+    #[test]
+    fn steam_credentials_follow_platform_id() {
+        let mut config = DynamicConfig::default();
+        let pair = |c: &DynamicConfig| {
+            stored(c.steam_api_key.as_ref()).is_some() && stored(c.steam_id.as_ref()).is_some()
+        };
+        crate::services::platform_id::tests::with_env(
+            &[("STEAM_API_KEY", "key"), ("STEAM_ID", "7656")],
+            || {
+                for (api_key, steam_id) in [
+                    (None, None),
+                    (Some(" "), Some("7656")),
+                    (Some("key"), None),
+                    (Some("key"), Some("7656")),
+                ] {
+                    config.steam_api_key = api_key.map(str::to_string);
+                    config.steam_id = steam_id.map(str::to_string);
+                    assert_eq!(
+                        pair(&config),
+                        PlatformId::Steam.credentials_present(&config),
+                        "{api_key:?} {steam_id:?}"
+                    );
+                }
+            },
+        );
+        let src = include_str!("steam.rs");
+        let body = src
+            .split("mod credential_source_tests")
+            .next()
+            .expect("body");
+        assert!(!body.contains("env::var(\"STEAM_"));
     }
 }
