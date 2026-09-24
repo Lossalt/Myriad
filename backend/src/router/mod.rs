@@ -407,7 +407,10 @@ pub(crate) async fn start_unified_server(
         }
     });
 
-    // 每 60s 探测数据库与存储，并写回 /health 快照。失败会尝试重连。
+    // 每 60s 探测数据库与存储，并写回 /health 快照。
+    // A failed probe is only reported. The pool reconnects by itself; swapping
+    // in a new pool would split the process across pools (schedulers and
+    // listeners keep the old one) and leak the old pool's connections.
     tokio::spawn(async {
         let mut health_check_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
         loop {
@@ -419,29 +422,6 @@ pub(crate) async fn start_unified_server(
                         tracing::debug!("💚 Database health check passed");
                     } else {
                         tracing::error!("❌ Database health check failed");
-
-                        let config = GLOBAL_CONFIG.read().await;
-                        if !config.database_url.is_empty() {
-                            tracing::info!("🔄 Attempting to reconnect to database...");
-                            match crate::db::connection::establish_connection(&config.database_url)
-                                .await
-                            {
-                                Ok(new_db) => {
-                                    services::tapp_registry::set_process_database(new_db.clone());
-                                    if crate::db::health::probe_database(&new_db).await {
-                                        tracing::info!("✅ Database reconnected successfully");
-                                    } else {
-                                        tracing::error!(
-                                            "❌ Reconnected handle failed the live SELECT 1 probe"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    crate::db::health::record_db_probe(false, false);
-                                    tracing::error!("❌ Failed to reconnect to database: {}", e);
-                                }
-                            }
-                        }
                     }
                 }
                 _ => {
