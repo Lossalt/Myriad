@@ -133,7 +133,9 @@ pub async fn handle_component(event: DiscordPrivateComponent, token: &str) {
         &event.channel_id,
         &event.custom_id,
         &session_key("discord", &event.author_id),
-        &event.message_id,
+        // Dedupe per click. The prompt's message id repeats for every button
+        // press on it, so a second answer would be dropped as a duplicate.
+        &event.interaction_id,
         token,
     )
     .await;
@@ -167,5 +169,17 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn button_clicks_dedupe_per_interaction_not_per_prompt() {
+        let src = include_str!("discord_pairing.rs");
+        let callback = src
+            .split("start_paired_callback(")
+            .nth(1)
+            .and_then(|rest| rest.split(".await").next())
+            .expect("callback call");
+        assert!(callback.contains("&event.interaction_id"));
+        assert!(!callback.contains(concat!("&event.", "message_id")));
     }
 }
