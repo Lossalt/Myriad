@@ -7,7 +7,45 @@ pub async fn maintain(db: &DatabaseConnection) -> Result<(), MediaError> {
     let service = MediaService::from_data_paths(crate::services::data_paths::paths());
     let recovery = service.recover_expired(db, 16).await;
     let deletions = retry_deletions(&service, db, 16).await;
-    recovery.map(|_| ()).and(deletions)
+    let urls = normalize_catalog_urls(db, 64).await;
+    recovery.map(|_| ()).and(deletions).and(urls.map(|_| ()))
+}
+
+/// Private assets written before every asset had one permanent address kept
+/// `/api/media/{id}/content` in the catalog row. That alias is still served;
+/// the row itself should carry the permanent address. Bounded and idempotent.
+pub(super) async fn normalize_catalog_urls(
+    db: &DatabaseConnection,
+    limit: u64,
+) -> Result<u64, MediaError> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let rows = media_assets::Entity::find()
+        .filter(media_assets::Column::State.eq("ready"))
+        .filter(media_assets::Column::Url.starts_with("/api/media/"))
+        .order_by_asc(media_assets::Column::Id)
+        .limit(limit.clamp(1, 256))
+        .all(db)
+        .await?;
+    let mut updated = 0;
+    for row in rows {
+        let Some(public_id) = row.public_id else {
+            continue;
+        };
+        let filename = super::urls::filename_for_mime(&row.name, &row.mime, public_id)?;
+        let result = db
+            .execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "UPDATE media_assets SET url = $1 WHERE id = $2 AND url = $3",
+                [
+                    super::urls::compatible_url(public_id, &filename).into(),
+                    row.id.into(),
+                    row.url.clone().into(),
+                ],
+            ))
+            .await?;
+        updated += result.rows_affected();
+    }
+    Ok(updated)
 }
 
 pub(super) async fn retry_deletions(

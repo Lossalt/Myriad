@@ -52,7 +52,7 @@ pub use references::{NewReference, active_count, parse_consumer_type, replace_fo
 pub use scan::catalog_labels_for_assets;
 pub use serve::{
     FileServe, NO_STORE, ServeOutcome, resolve_alias_or_legacy, resolve_authenticated_content,
-    resolve_public_asset,
+    resolve_private_asset, resolve_public_asset,
 };
 pub use store::MediaStore;
 pub use types::{
@@ -144,10 +144,8 @@ impl MediaService {
                 }
             }
             let filename = filename_for_mime(&row.name, &payload.mime, public_id)?;
-            let catalog_url = match input.exposure {
-                MediaExposure::Public => compatible_url(public_id, &filename),
-                MediaExposure::Private => content_path(row.id),
-            };
+            // One permanent address for either exposure; serving decides access.
+            let catalog_url = compatible_url(public_id, &filename);
             self.commit_staged(db, row.id, write_token, &key, &catalog_url)
                 .await
         }
@@ -334,7 +332,9 @@ impl MediaService {
                 if !row.references_complete || references::has_active(txn, id, true).await? {
                     return Err(MediaError::PublicInUse);
                 }
-                assets::mark_private(txn, id, &content_path(id)).await?;
+                let public_id = row.public_id.ok_or(MediaError::NotReady)?;
+                let filename = filename_for_mime(&row.name, &row.mime, public_id)?;
+                assets::mark_private(txn, id, &compatible_url(public_id, &filename)).await?;
                 let saved = assets::find_by_id(txn, id)
                     .await?
                     .ok_or(MediaError::Missing)?;

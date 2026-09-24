@@ -2364,3 +2364,69 @@ async fn postgres_unpublish_waits_for_reference_scan_like_delete() {
     f.service.unpublish(&f.db, image.id).await.unwrap();
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_one_permanent_address_for_private_and_public() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let image = f.image().await;
+    assert!(image.url.starts_with("/media/assets/"), "{}", image.url);
+    assert_eq!(image.catalog_url(), image.url);
+    let file = image.url.rsplit('/').next().unwrap().to_string();
+    let store = f.service.store();
+    let anonymous = resolve_public_asset(&f.db, store, image.public_id, &file)
+        .await
+        .unwrap();
+    assert!(matches!(anonymous, ServeOutcome::NotFound { .. }));
+    let stranger = MediaActor::user(2).unwrap();
+    let denied = resolve_private_asset(&f.db, store, image.public_id, &file, &stranger)
+        .await
+        .unwrap();
+    assert!(matches!(denied, ServeOutcome::NotFound { .. }));
+    let admin = MediaActor::admin(1).unwrap();
+    match resolve_private_asset(&f.db, store, image.public_id, &file, &admin)
+        .await
+        .unwrap()
+    {
+        ServeOutcome::File(served) => assert_eq!(served.cache_control, NO_STORE),
+        other => panic!("owner must read private asset: {other:?}"),
+    }
+    let published = f.service.publish(&f.db, image.id).await.unwrap();
+    assert_eq!(published.url, image.url, "publishing never moves the asset");
+    let private = f.service.unpublish(&f.db, image.id).await.unwrap();
+    assert_eq!(private.url, image.url);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_catalog_rows_move_to_the_permanent_address() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET url = '/api/media/{0}/content' WHERE id = {0}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        maintenance::normalize_catalog_urls(&f.db, 16)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        maintenance::normalize_catalog_urls(&f.db, 16)
+            .await
+            .unwrap(),
+        0
+    );
+    let row = assets::find_by_id(&f.db, image.id).await.unwrap().unwrap();
+    assert_eq!(row.url, image.url);
+    f.close().await;
+}

@@ -95,6 +95,30 @@ pub async fn resolve_public_asset(
     file_from_row(store, &row, PUBLIC_CACHE_CONTROL)
 }
 
+/// The permanent address of a private asset, for a reader who is signed in.
+/// Public assets never reach this: [`resolve_public_asset`] serves them first.
+pub async fn resolve_private_asset(
+    db: &impl ConnectionTrait,
+    store: &MediaStore,
+    public_id: Uuid,
+    filename: &str,
+    actor: &MediaActor,
+) -> Result<ServeOutcome, MediaError> {
+    let Some(row) = assets::find_by_public_id(db, public_id).await? else {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    };
+    if !public_filename_ok(&row.name, &row.mime, public_id, filename) {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    }
+    let Ok(asset) = assets::to_domain(row.clone(), 0) else {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    };
+    if !can_read(actor, &asset) {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    }
+    file_from_row(store, &row, NO_STORE)
+}
+
 pub async fn resolve_alias_or_legacy(
     db: &impl ConnectionTrait,
     store: &MediaStore,

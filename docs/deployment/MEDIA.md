@@ -3,7 +3,10 @@
 持久媒体在 `DATA_DIR/media`（compose 里是 `backend_data` 的 `media` 子路径）。
 外链抓取缓存在 `CACHE_DIR/images`（`backend_cache`），可再生，不进灾备。
 
-新上传、生成、编辑和联邦附件都写入媒体服务。Web 进程提供公开与鉴权读取；
+新上传、生成、编辑和联邦附件都写入媒体服务。每个资产只有一个地址
+`/media/assets/{uuid}/{文件名}`：公开资产带公共缓存头返回，未公开资产只对有权限的
+登录者返回且不可缓存。发布与撤回不改地址。旧的 `/api/media/{id}/content` 仍可读，
+维护循环会把目录记录里的旧写法逐步改成永久地址。Web 进程提供公开与鉴权读取；
 联邦 worker 停掉不影响本站媒体。历史 `/media/federation/…` 与
 `/api/phantasi/image-cache/…` 只通过已登记别名读取，不再从请求 URL 拼接磁盘路径。
 

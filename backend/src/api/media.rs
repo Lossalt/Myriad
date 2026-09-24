@@ -187,7 +187,7 @@ pub async fn unpublish_media(
     ))
 }
 
-fn actor_from_claims(claims: &Claims) -> Result<MediaActor, HttpError> {
+pub(crate) fn actor_from_claims(claims: &Claims) -> Result<MediaActor, HttpError> {
     let user_id: i32 = claims
         .sub
         .parse()

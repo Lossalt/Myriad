@@ -209,7 +209,15 @@ impl ChannelTransport {
         url: &str,
         markup: Option<Value>,
     ) -> Result<(), String> {
-        let image = load_channel_image_bytes(url).await?;
+        // Unreadable media (a private asset, an expired link) is skipped so the
+        // rest of the reply still goes out; delivery failures still propagate.
+        let image = match load_channel_image_bytes(url).await {
+            Ok(image) => image,
+            Err(error) => {
+                tracing::warn!(%error, "channel reply image skipped");
+                return Ok(());
+            }
+        };
         match self {
             Self::Telegram { token, chat_id } => crate::services::telegram_bot::send_photo(
                 token,

@@ -20,7 +20,7 @@ use crate::extract::Db;
 use crate::services::data_paths::paths;
 use crate::services::media::{
     FileServe, LegacyPaths, MediaStore, NO_STORE, ServeOutcome, resolve_alias_or_legacy,
-    resolve_public_asset,
+    resolve_private_asset, resolve_public_asset,
 };
 
 pub fn public_media_routes() -> Router<crate::state::AppState> {
@@ -58,10 +58,33 @@ async fn serve_public_asset(
         return hide();
     };
     let store = MediaStore::new(paths().media.clone());
-    match resolve_public_asset(&db, &store, public_id, &filename).await {
-        Ok(outcome) => send(req, outcome).await,
-        Err(_) => hide(),
-    }
+    let outcome = match resolve_public_asset(&db, &store, public_id, &filename).await {
+        Ok(outcome @ ServeOutcome::File(_)) => outcome,
+        Ok(ServeOutcome::NotFound { .. }) => {
+            // Same address for a private asset: only a signed-in reader who may
+            // read it gets the bytes, never cacheable. Anonymous requests stop
+            // before any session lookup.
+            let Some(actor) = reader(&db, req.headers()).await else {
+                return hide();
+            };
+            match resolve_private_asset(&db, &store, public_id, &filename, &actor).await {
+                Ok(outcome) => outcome,
+                Err(_) => return hide(),
+            }
+        }
+        Err(_) => return hide(),
+    };
+    send(req, outcome).await
+}
+
+async fn reader(
+    db: &sea_orm::DatabaseConnection,
+    headers: &axum::http::HeaderMap,
+) -> Option<crate::services::media::MediaActor> {
+    let claims = crate::middleware::auth::authenticate_optional_request(headers, db)
+        .await
+        .ok()??;
+    crate::api::media::actor_from_claims(&claims).ok()
 }
 
 async fn serve_federation_media(

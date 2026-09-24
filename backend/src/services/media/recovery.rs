@@ -110,11 +110,7 @@ pub async fn recover_expired(
             RecoverPlan::CompleteReady => {
                 let public_id = claimed.row.public_id.ok_or(MediaError::StoreFailed)?;
                 let filename = filename_for_mime(&claimed.row.name, &claimed.row.mime, public_id)?;
-                let catalog = if claimed.row.exposure.as_deref() == Some("public") {
-                    super::urls::compatible_url(public_id, &filename)
-                } else {
-                    super::urls::content_path(claimed.row.id)
-                };
+                let catalog = super::urls::compatible_url(public_id, &filename);
                 if assets::commit_ready(db, claimed.row.id, new_token, &catalog).await? {
                     report.completed += 1;
                 } else {

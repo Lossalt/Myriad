@@ -347,8 +347,9 @@ pub fn to_domain(row: media_assets::Model, usage_count: i64) -> Result<MediaAsse
         .unwrap_or(MediaSource::Legacy.as_str());
     let filename = filename_for_mime(&row.name, &row.mime, public_id)?;
     let state = MediaState::parse(state)?;
+    let url = compatible_url(public_id, &filename);
     let public_path = (state == MediaState::Ready && exposure == MediaExposure::Public.as_str())
-        .then(|| compatible_url(public_id, &filename));
+        .then(|| url.clone());
     Ok(MediaAsset {
         id: row.id,
         public_id,
@@ -361,6 +362,7 @@ pub fn to_domain(row: media_assets::Model, usage_count: i64) -> Result<MediaAsse
         state,
         exposure: MediaExposure::parse(exposure)?,
         kind: row.kind,
+        url,
         content_path: content_path(row.id),
         public_path,
         created_at: row.created_at.with_timezone(&Utc),
