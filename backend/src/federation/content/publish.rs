@@ -5,7 +5,8 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, T
 use serde_json::json;
 
 use super::ap_object::{
-    build_ap_object, fan_out_to_followers, fan_out_to_room_peers, resolve_audience,
+    StagedFanOut, build_ap_object, deliver_to_local_followers, fan_out_to_followers,
+    resolve_audience, stage_follower_fan_out, stage_room_peer_fan_out,
 };
 use super::timeline::{insert_author_timeline, published_fields_from_activity_json};
 use super::types::{CreateNoteRequest, PublishRequest, PublishResponse, PublishedItem};
@@ -206,37 +207,16 @@ pub async fn publish_content(
         &activity_json,
     )
     .await?;
+    // 扇出意图随内容同一事务落进投递队列：提交成功即由投递 worker 送达，
+    // 提交失败则什么都不留，重试不会产生重复帖子。
+    let staged = stage_fan_out(&txn, &base_url, user_id, act_db_id, visibility_kind, true)
+        .await
+        .map_err(db_err)?;
     txn.commit().await.map_err(db_err)?;
 
-    // Direct 走 ExplicitRecipientsOnly —— 没有收件人就一个 inbox 都不投。
-    let mut delivered_queued = match crate::federation::audience::fan_out_scope(visibility_kind) {
-        FanOutScope::AllFollowers => fan_out_to_followers(db, user_id, act_db_id, &activity_json)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "publish follower fan-out failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": "Failed to enqueue follower delivery",
-                        "code": "delivery_enqueue_failed",
-                    })),
-                )
-            })?,
-        FanOutScope::ExplicitRecipientsOnly => {
-            tracing::info!(
-                user_id,
-                visibility,
-                "Skipping follower fan-out for non-broadcast visibility"
-            );
-            0
-        }
-    };
-
-    // 群邻实例扇出：只有 Public 走这条。`Followers` 虽然也 fan-out，但收件人是
-    // 粉丝集合，不是 Public —— 投给群邻会把只给粉丝看的内容送出寻址范围。
-    if visibility_kind == Visibility::Public {
-        delivered_queued += fan_out_to_room_peers(db, act_db_id, &activity_json).await;
-    }
+    // 同实例粉丝走提交后的本地捷径；逐个尽力而为，不影响已提交的发布结果。
+    let delivered_queued = staged.queued
+        + deliver_to_local_followers(db, &staged.local_followers, &activity_json).await;
 
     tracing::info!(
         "📢 Published {} #{} as {} ({}); delivered_queued={}",
@@ -256,6 +236,45 @@ pub async fn publish_content(
         delivered_queued,
         author_timeline: true,
     })
+}
+
+/// 在调用方事务内按 visibility 排队扇出：Direct 不投粉丝，Public 另投群邻。
+async fn stage_fan_out(
+    txn: &impl ConnectionTrait,
+    base_url: &str,
+    user_id: i32,
+    activity_db_id: i32,
+    visibility: Visibility,
+    room_peers: bool,
+) -> Result<StagedFanOut, sea_orm::DbErr> {
+    // Direct 走 ExplicitRecipientsOnly —— 没有收件人就一个 inbox 都不投。
+    let mut staged = match crate::federation::audience::fan_out_scope(visibility) {
+        FanOutScope::AllFollowers => {
+            stage_follower_fan_out(txn, base_url, user_id, activity_db_id).await?
+        }
+        FanOutScope::ExplicitRecipientsOnly => {
+            tracing::info!(
+                user_id,
+                visibility = visibility.as_str(),
+                "Skipping follower fan-out for non-broadcast visibility"
+            );
+            StagedFanOut::default()
+        }
+    };
+    // 群邻实例扇出：只有 Public 走这条。`Followers` 虽然也 fan-out，但收件人是
+    // 粉丝集合，不是 Public —— 投给群邻会把只给粉丝看的内容送出寻址范围。
+    if room_peers && visibility == Visibility::Public {
+        staged.queued += stage_room_peer_fan_out(txn, base_url, activity_db_id).await?;
+    }
+    if staged.skipped > 0 {
+        tracing::warn!(
+            user_id,
+            activity_db_id,
+            skipped = staged.skipped,
+            "Fan-out skipped unusable followers"
+        );
+    }
+    Ok(staged)
 }
 
 /// 创建 freeform Note（Aro 发帖）
@@ -701,10 +720,115 @@ mod tests {
         assert!(publish.contains("txn.commit()"));
         assert!(publish.contains("services::media::bind("));
         assert!(publish.contains("federation_activity"));
-        assert!(publish.contains("delivery_enqueue_failed"));
+        // 扇出在提交前随事务落队列；提交后只剩逐个尽力的本地捷径，
+        // 响应不再取决于扇出结果。
+        let staged = publish.find("stage_fan_out(&txn").expect("staged fan-out");
+        let commit = publish.find("txn.commit()").expect("commit");
+        let local = publish.find("deliver_to_local_followers(").expect("local");
+        assert!(staged < commit && commit < local);
+        assert!(!publish.contains("fan_out_to_followers"));
+        assert!(!publish.contains("delivery_enqueue_failed"));
         assert!(
             !publish.contains("SELECT id FROM federation_published_content WHERE content_type")
         );
+    }
+
+    fn note(visibility: &str) -> PublishRequest {
+        PublishRequest {
+            content_type: "note".into(),
+            content_id: None,
+            visibility: Some(visibility.into()),
+            text: Some("hello".into()),
+            attachments: None,
+            in_reply_to: None,
+        }
+    }
+
+    async fn count(db: &DatabaseConnection, sql: &str) -> i64 {
+        db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    }
+
+    /// alice(1) 有四个粉丝：一个正常远端、一个空 inbox 的坏远端、本地 bob、
+    /// 已不存在的本地用户 ghost。坏粉丝只跳过自己，发布照常成功。
+    async fn seed_followers(db: &DatabaseConnection) -> String {
+        let base = get_base_url().await;
+        db.execute_unprepared(&format!(
+            r#"
+            INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+            INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+                (11, 'https://good.example/users/g', 'good.example', 'https://good.example/users/g/inbox'),
+                (12, 'https://bad.example/users/b', 'bad.example', ''),
+                (13, '{base}/users/bob', 'local', '{base}/users/bob/inbox'),
+                (14, '{base}/users/ghost', 'local', '{base}/users/ghost/inbox');
+            INSERT INTO federation_follows (user_id, remote_actor_id, direction, status) VALUES
+                (1, 11, 'incoming', 'accepted'), (1, 12, 'incoming', 'accepted'),
+                (1, 13, 'incoming', 'accepted'), (1, 14, 'incoming', 'accepted');
+            "#
+        ))
+        .await
+        .unwrap();
+        base
+    }
+
+    #[tokio::test]
+    async fn publish_stages_fan_out_and_skips_bad_followers() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        seed_followers(db).await;
+
+        let published = publish_content(1, false, "alice", db, &note("public"))
+            .await
+            .expect("one bad follower must not fail the publish");
+        // 1 条远端排队 + bob 的本地时间线；空 inbox 与 ghost 被跳过。
+        assert_eq!(published.delivered_queued, 2);
+        let aid = &published.activity_id;
+        assert_eq!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM federation_delivery_queue q \
+                     JOIN federation_activities a ON a.id = q.activity_id \
+                     WHERE a.activity_id = '{aid}' AND q.status = 'pending' \
+                     AND q.target_inbox = 'https://good.example/users/g/inbox'"
+                )
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM federation_delivery_queue WHERE target_inbox = ''"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM federation_timeline \
+                     WHERE activity_id = '{aid}' AND user_id = 2"
+                )
+            )
+            .await,
+            1
+        );
+
+        // Direct 不投任何粉丝。
+        let direct = publish_content(1, false, "alice", db, &note("direct"))
+            .await
+            .unwrap();
+        assert_eq!(direct.delivered_queued, 0);
+
+        fixture.close().await;
     }
 
     #[test]
