@@ -263,6 +263,12 @@ async fn load_channel_image_bytes(url: &str) -> Result<ChannelImageBytes, String
         let (bytes, mime) = cache.read_local_public_url(url).await?;
         return Ok(ChannelImageBytes { bytes, mime });
     }
+    if url.starts_with("/media/assets/") {
+        let (bytes, mime) = crate::services::image_generation::read_public_local_media(url)
+            .await
+            .ok_or("imageUrl is not readable")?;
+        return Ok(ChannelImageBytes { bytes, mime });
+    }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("imageUrl is not a sendable path".to_string());
     }
@@ -312,8 +318,7 @@ async fn resolve_inbound_image(
     cache: &crate::services::image_cache::ImageCacheService,
 ) -> Result<(String, String, usize, String), String> {
     if cache.local_path_for_public_url(&image.url).is_some() {
-        let (bytes, mime) = cache.read_local_public_url(&image.url).await?;
-        return Ok((image.url.clone(), mime, bytes.len(), image.name.clone()));
+        return persist_cached(db, user_id, sink.platform(), cache, image, &image.url).await;
     }
     if image.url.starts_with("/media/assets/") {
         return Ok((image.url.clone(), image.mime.clone(), 0, image.name.clone()));
@@ -365,7 +370,7 @@ async fn resolve_inbound_image(
         }
     }
     let cached = cache.cache_image(&image.url).await?;
-    finish_cached(cache, image, cached).await
+    persist_cached(db, user_id, sink.platform(), cache, image, &cached).await
 }
 
 async fn persist_channel_asset(
@@ -405,22 +410,25 @@ async fn persist_channel_asset(
     Ok((asset.catalog_url(), mime, size, image.name.clone()))
 }
 
-async fn finish_cached(
+/// Image-cache paths are not citable media: message binding would reject them
+/// as not ready and abort the turn. Promote the cached bytes to an asset.
+async fn persist_cached(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    platform: &str,
     cache: &crate::services::image_cache::ImageCacheService,
     image: &ChannelImageRef,
-    cached: String,
+    cached: &str,
 ) -> Result<(String, String, usize, String), String> {
-    let (bytes, mime) = cache.read_local_public_url(&cached).await?;
-    Ok((
-        cached,
-        if image.mime.starts_with("image/") {
-            image.mime.clone()
-        } else {
-            mime
-        },
-        bytes.len(),
-        image.name.clone(),
-    ))
+    let (bytes, mime) = cache.read_local_public_url(cached).await?;
+    let stored_mime = if image.mime.starts_with("image/") {
+        image.mime.clone()
+    } else {
+        mime
+    };
+    // Cache file names are derived from the source, so the key stays stable.
+    let producer = format!("cache:{}", cached.rsplit('/').next().unwrap_or(cached));
+    persist_channel_asset(db, user_id, platform, &producer, bytes, stored_mime, image).await
 }
 
 /// Persistable routing information. No token or credential can enter the registry.

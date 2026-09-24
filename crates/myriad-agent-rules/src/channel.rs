@@ -2776,7 +2776,7 @@ pub fn discord_private_component_from_create(
 }
 
 /// Final-turn image URLs from `data` plus `task.stepHistory`.
-/// Only site image-cache paths and `http(s)` URLs; `javascript:` / data URLs drop.
+/// Only site image-cache paths, public media assets and `http(s)` URLs; `javascript:` / data URLs drop.
 /// Capped at [`CHANNEL_IMAGE_LIMIT`] to mirror inbound attachment take.
 pub fn collect_channel_image_urls(response: &serde_json::Value) -> Vec<String> {
     let mut urls = Vec::new();
@@ -2815,9 +2815,12 @@ fn push_channel_image_url(urls: &mut Vec<String>, candidate: Option<&str>) {
     let Some(url) = candidate.map(str::trim).filter(|url| !url.is_empty()) else {
         return;
     };
+    // Generated images persist as public media assets; drop only paths the
+    // host cannot read without a login (private `/api/media/{id}/content`).
     if !(url.starts_with("http://")
         || url.starts_with("https://")
-        || url.starts_with("/api/phantasi/image-cache/"))
+        || url.starts_with("/api/phantasi/image-cache/")
+        || url.starts_with("/media/assets/"))
     {
         return;
     }

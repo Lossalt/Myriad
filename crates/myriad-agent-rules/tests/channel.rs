@@ -394,6 +394,22 @@ fn collect_channel_image_urls_reads_envelope_and_step_history() {
 }
 
 #[test]
+fn collect_channel_image_urls_keeps_public_assets_and_drops_private_content() {
+    let urls = collect_channel_image_urls(&serde_json::json!({
+        "task": {
+            "stepHistory": [
+                { "imageUrl": "/media/assets/11111111-1111-1111-1111-111111111111/generated.png" },
+                { "imageUrl": "/api/media/7/content" }
+            ]
+        }
+    }));
+    assert_eq!(
+        urls,
+        vec!["/media/assets/11111111-1111-1111-1111-111111111111/generated.png"]
+    );
+}
+
+#[test]
 fn qq_file_info_comes_from_upload_json() {
     assert_eq!(
         parse_qq_file_info(200, r#"{"file_info":"INFO_1","ttl":600}"#).unwrap(),
