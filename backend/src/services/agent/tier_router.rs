@@ -31,11 +31,6 @@ impl TaskComplexity {
             TaskComplexity::Critical => ModelTier::Pro,
         }
     }
-
-    /// Simple 级别的能力不使用 LLM，不需要 tier 标注和计量
-    pub fn requires_llm(&self) -> bool {
-        !matches!(self, TaskComplexity::Simple)
-    }
 }
 
 /// ModelTier 路由器
@@ -175,11 +170,6 @@ impl TierRouter {
     /// 根据能力 ID 推断 ModelTier
     pub fn resolve_tier(capability_id: &str) -> ModelTier {
         Self::assess_complexity(capability_id).to_tier()
-    }
-
-    /// 该能力是否需要 LLM（不需要 LLM 的能力不参与 tier 标注和计量）
-    pub fn requires_llm(capability_id: &str) -> bool {
-        Self::assess_complexity(capability_id).requires_llm()
     }
 
     /// 带显式覆盖的 tier 解析
@@ -407,58 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn ai_dependent_phantasi_rules_win_over_the_phantasi_prefix() {
-        assert!(TierRouter::requires_llm("phantasi.generateReadingList"));
-        assert!(TierRouter::requires_llm("phantasi.discover"));
-        assert!(!TierRouter::requires_llm("phantasi.items"));
-        assert!(!TierRouter::requires_llm("phantasi.subscribe"));
-    }
-
-    #[test]
-    fn ai_dependent_tapp_rules_win_over_the_tapp_rules_below_them() {
-        assert!(TierRouter::requires_llm("tapp.understand"));
-        assert!(TierRouter::requires_llm("tapp.interact"));
-        assert!(!TierRouter::requires_llm("tapp.list"));
-        assert!(!TierRouter::requires_llm("tapp.install"));
-    }
-
-    #[test]
-    fn non_llm_capabilities_are_not_billed_as_llm_steps() {
-        for id in [
-            "image.cache",
-            "task.submit",
-            "web.scrape",
-            "tapp.window.open",
-            "tapp.window.close",
-            "tapp.window.focus",
-            "model3d.status",
-            "model3d.generate",
-            "model3d.rig",
-            "model3d.retarget",
-        ] {
-            assert!(
-                TierRouter::has_explicit_rule(id),
-                "{id} must not rely on the default"
-            );
-            assert!(!TierRouter::requires_llm(id), "{id} does not call a model");
-        }
-    }
-
-    #[test]
-    fn dynamic_namespaces_are_classified_explicitly() {
-        // Skills run an AI pass to turn their instructions into a call sequence.
-        assert!(TierRouter::requires_llm("skill:_auto_daily_digest"));
-        // MCP tools execute in an external process; they cost no local tokens.
-        assert!(!TierRouter::requires_llm("mcp.docs.lookup"));
-    }
-
-    #[test]
-    fn tapp_windows_query_is_not_matched_by_the_window_action_prefix() {
-        assert!(TierRouter::has_explicit_rule("tapp.windows"));
-        assert!(!TierRouter::requires_llm("tapp.windows"));
-    }
-
-    #[test]
     fn test_simple_capabilities_use_standard() {
         assert_eq!(
             TierRouter::resolve_tier("platform.read"),
@@ -509,5 +447,29 @@ mod tests {
             TierRouter::resolve_with_override("ai.chat", None),
             ModelTier::Pro
         );
+    }
+}
+
+/// 带熔断器的 tier 解析。两档都熔断时仍按 `resolve_with_override` 走（warn）。
+pub(crate) fn resolve_tier_with_breaker(
+    capability_id: &str,
+    explicit_tier: Option<ModelTier>,
+) -> ModelTier {
+    resolve_with_circuit_breaker(capability_id, explicit_tier).unwrap_or_else(|| {
+        tracing::warn!(
+            capability_id = capability_id,
+            "[Work] Both tiers circuit-broken, falling back to default resolve"
+        );
+        TierRouter::resolve_with_override(capability_id, explicit_tier)
+    })
+}
+
+/// 记录一次调用结果到该 tier 的熔断器。
+pub(crate) fn record_step_to_breaker(tier: ModelTier, success: bool) {
+    let breaker = get_circuit_breaker(tier);
+    if success {
+        breaker.record_success();
+    } else {
+        breaker.record_failure();
     }
 }

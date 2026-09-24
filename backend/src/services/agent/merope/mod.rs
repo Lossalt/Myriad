@@ -82,19 +82,6 @@ pub async fn resolve_speaking_soul() -> Option<String> {
         .and_then(|id| id.soul)
 }
 
-/// Analyzer for lines spoken in character.
-/// Merope + Lite → Lite. Otherwise Standard so chat still answers.
-pub async fn create_speaking_analyzer() -> Option<crate::services::analyzer::AiAnalyzer> {
-    if is_enabled().await {
-        if let Some(analyzer) =
-            crate::services::ai::create_ai_analyzer_for_tier(crate::config::ModelTier::Lite).await
-        {
-            return Some(analyzer);
-        }
-    }
-    crate::services::ai::create_ai_analyzer_for_tier(crate::config::ModelTier::Standard).await
-}
-
 pub fn refuse_new_task_message(mood_before: Option<f64>) -> Option<String> {
     if mood_before.is_some_and(is_extremely_low) {
         Some(

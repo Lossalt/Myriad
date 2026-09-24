@@ -118,14 +118,7 @@ pub enum ModelTierHint {
     Standard,
 }
 
-impl ModelTierHint {
-    pub fn to_model_tier(&self) -> ModelTier {
-        match self {
-            ModelTierHint::Pro => ModelTier::Pro,
-            ModelTierHint::Standard => ModelTier::Standard,
-        }
-    }
-}
+impl ModelTierHint {}
 
 /// Skill 注册表
 pub struct SkillRegistry {

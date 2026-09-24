@@ -135,12 +135,6 @@ pub async fn is_cancelled(task_id: &str) -> bool {
         .is_some()
 }
 
-/// 清除取消标记（任务完成或已处理取消后）
-pub async fn clear_cancellation(task_id: &str) {
-    let mut tokens = CANCELLATION_TOKENS.lock().unwrap();
-    tokens.remove(task_id);
-}
-
 /// 任务存储
 pub struct TaskStore {
     /// 任务 ID -> 任务状态
@@ -596,16 +590,6 @@ RETURNING id
     Ok(())
 }
 
-/// 异步持久化任务（fire-and-forget）
-pub fn persist_task_async(user_id: i32, task: TaskState) {
-    let persist_at = next_recipe_persist_at();
-    tokio::spawn(async move {
-        if let Err(e) = save_task_to_db_at(user_id, &task, persist_at).await {
-            tracing::warn!("异步保存任务失败: {}", e);
-        }
-    });
-}
-
 // 公共 API
 
 /// 获取任务状态（带所有权校验）
@@ -651,33 +635,6 @@ pub async fn refresh_task_for_user(task_id: &str, user_id: i32) -> Option<TaskSt
     let mut store = TASK_STORE.write().await;
     store.cache_committed(user_id, task.clone());
     Some(task)
-}
-
-/// Claim one persisted waiting task for resume. The database transition is the
-/// cross-replica mutex; local TASK_STORE locks alone cannot prevent two
-/// backends from executing the same continuation.
-pub async fn claim_task_for_resume(task_id: &str, user_id: i32) -> Result<bool, String> {
-    let db = DB_FOR_TASKS
-        .read()
-        .await
-        .clone()
-        .ok_or("Database is not connected")?;
-    let result = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-UPDATE agent_tasks
-SET status = 'running', updated_at = NOW()
-WHERE id = $1 AND user_id = $2 AND status = 'waiting_for_input'
-"#,
-            vec![task_id.to_string().into(), user_id.into()],
-        ))
-        .await
-        .map_err(|error| {
-            tracing::error!("Failed to resume task: {error}");
-            "Failed to resume task".to_string()
-        })?;
-    Ok(result.rows_affected() == 1)
 }
 
 /// 取消任务（带所有权校验）

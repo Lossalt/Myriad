@@ -38,7 +38,7 @@ pub use engine::{
 pub use grant::{
     AutonomyGrantView, AutonomyGrantWriteError, AutonomyVerdict, autonomy_cap_still_allows,
     autonomy_execute_permission_error, effective_granted_permissions, evaluate_autonomy_grant,
-    intention_may_enter_work, prepare_personal_grant, required_permissions_within_cap,
+    intention_may_enter_work, prepare_personal_grant,
     revoke_personal_grant, skips_user_review,
 };
 pub use grant_store::AutonomyGrantStore;

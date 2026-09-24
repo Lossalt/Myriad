@@ -11,10 +11,7 @@ use super::{capability, executor, response_agent, types};
 impl Agent {
     /// 创建新的 Agent 实例
     pub async fn new(db: DatabaseConnection) -> Self {
-        Self {
-            executor: executor::Executor::new(db.clone()).await,
-            db,
-        }
+        Self { db }
     }
 
     /// 处理用户请求

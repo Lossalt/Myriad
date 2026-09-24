@@ -9,8 +9,6 @@ use super::task_store::is_cancelled;
 use crate::services::agent::error_analyzer_pure::StepError;
 
 #[cfg(test)]
-use super::Executor;
-#[cfg(test)]
 use super::task_store;
 #[cfg(test)]
 use serde_json::json;
@@ -165,78 +163,6 @@ mod cancel_during_step_tests {
             started.elapsed() < std::time::Duration::from_secs(2),
             "cancel should win quickly, elapsed {:?}",
             started.elapsed()
-        );
-    }
-}
-
-#[cfg(test)]
-mod resolve_id_tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn dynamic_risk_gate_aligns_with_system_sensitive_gate() {
-        let heartbeat = crate::services::agent::SYSTEM_USER_ID;
-        let gate = Executor::should_block_unconfirmed_dynamic_step;
-        assert!(gate(heartbeat, "system.shutdown", RiskLevel::Critical));
-        assert!(gate(heartbeat, "cache.clear", RiskLevel::High));
-        // Heartbeat Medium auto-runs unless it can spread (matches system_sensitive_gate).
-        assert!(!gate(heartbeat, "http.fetch", RiskLevel::Medium));
-        assert!(gate(heartbeat, "heartbeat.create", RiskLevel::Medium));
-        assert!(gate(7, "http.fetch", RiskLevel::Medium));
-        assert!(!gate(7, "storage.set", RiskLevel::Low));
-    }
-
-    /// 复现歌单播放链路：搜索步骤输出被整对象引用为 playlistIdFrom 时，
-    /// 必须取到 playlists[0].id，而不是 message 文案
-    #[test]
-    fn id_param_extracts_from_search_output() {
-        let output = json!({
-            "success": true,
-            "message": "找到 10 个「凉宫春日」相关歌单",
-            "keyword": "凉宫春日",
-            "playlists": [
-                { "id": 12597740641u64, "name": "悲情篇章" },
-                { "id": 12764048642u64, "name": "アニサマ" }
-            ]
-        });
-        let got = Executor::extract_id_from_output(&output, "playlistId");
-        assert_eq!(got, Some(json!(12597740641u64)));
-    }
-
-    #[test]
-    fn id_param_prefers_same_name_field() {
-        let output = json!({ "playlistId": "abc123", "id": "other", "message": "文案" });
-        let got = Executor::extract_id_from_output(&output, "playlistId");
-        assert_eq!(got, Some(json!("abc123")));
-    }
-
-    #[test]
-    fn id_param_falls_back_to_top_level_id() {
-        let output = json!({ "id": 42, "message": "文案" });
-        assert_eq!(
-            Executor::extract_id_from_output(&output, "songId"),
-            Some(json!(42))
-        );
-    }
-
-    #[test]
-    fn id_param_array_input_takes_first_element() {
-        let output = json!([{ "id": "first" }, { "id": "second" }]);
-        assert_eq!(
-            Executor::extract_id_from_output(&output, "itemId"),
-            Some(json!("first"))
-        );
-    }
-
-    /// 提取不到 ID 必须返回 None（上层按未解析处理并让步骤报错），
-    /// 绝不能兜底成 message 文案
-    #[test]
-    fn id_param_without_id_yields_none() {
-        let output = json!({ "message": "找到 10 个歌单", "success": true });
-        assert_eq!(
-            Executor::extract_id_from_output(&output, "playlistId"),
-            None
         );
     }
 }

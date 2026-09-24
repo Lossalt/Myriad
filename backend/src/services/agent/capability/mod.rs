@@ -276,15 +276,6 @@ pub async fn get_capabilities_by_ids(ids: &[String]) -> Vec<Capability> {
     capabilities
 }
 
-/// Resolve either a built-in capability or a currently advertised MCP tool.
-/// Whether running this capability changes something (the work loop's rule:
-/// anything that is not a data read). Unknown ids count as effectful.
-pub async fn is_effectful(id: &str) -> bool {
-    get_capability_by_id(id)
-        .await
-        .is_none_or(|capability| capability.category != CapabilityCategory::DataRead)
-}
-
 pub async fn get_capability_by_id(id: &str) -> Option<Capability> {
     if let Some(capability) = get_registry().get(id) {
         return Some(capability.clone());

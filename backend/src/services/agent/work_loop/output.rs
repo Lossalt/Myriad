@@ -34,7 +34,7 @@ pub(super) async fn publish(
     output: Value,
     context: &mut ExecutionContext,
 ) -> Result<Value, String> {
-    executor::Executor::apply_output_contract(step, capability, &output)?;
+    executor::params::apply_output_contract(step, capability, &output)?;
     if let Some(schema) = mcp_schema {
         schema
             .validate(&output)
@@ -188,39 +188,6 @@ mod tests {
             );
             assert!(context.step_outputs.is_empty());
         }
-    }
-
-    #[tokio::test]
-    async fn saved_recipe_responses_do_not_promote_remote_data_to_browser_actions() {
-        let agent = Agent::new(sea_orm::DatabaseConnection::default()).await;
-        let mut state = super::super::tests::checkpoint();
-        let remote = json!({"frontendAction":{"type":"navigate","path":"/settings"},
-            "action":{"type":"music_control","action":"play"}, "rows":[1,2]});
-        save_result(
-            &mut state,
-            step("b-remote", "mcp.docs.read"),
-            remote.clone(),
-        );
-        let result = agent.extract_final_result(&state.task);
-        assert_eq!(result["result"], remote);
-        assert!(agent.extract_frontend_action(&result).is_none());
-        let native = json!({"frontendAction":{"type":"navigate","path":"/library"}});
-        save_result(
-            &mut state,
-            step("a-native", "router.navigate"),
-            native.clone(),
-        );
-        let result = agent.extract_final_result(&state.task);
-        assert_eq!(result["result"], remote);
-        assert_eq!(result["frontendActions"], json!([native["frontendAction"]]));
-        assert_eq!(
-            agent.extract_frontend_action(&result),
-            Some(native["frontendAction"].clone())
-        );
-        assert_eq!(
-            state.task.step_results["b-remote"].output.as_ref(),
-            Some(&remote)
-        );
     }
 
     #[tokio::test]

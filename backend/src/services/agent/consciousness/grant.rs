@@ -164,23 +164,6 @@ pub fn autonomy_execute_permission_error(
     })
 }
 
-/// True when every required permission is inside the autonomy ceiling.
-///
-/// `None` means this turn is not autonomy-capped (user-accepted Work).
-/// Empty `required` is always allowed; execute time still re-reads current
-/// granted permissions.
-pub fn required_permissions_within_cap(
-    required_permissions: &[String],
-    autonomy_permission_cap: Option<&[String]>,
-) -> bool {
-    let Some(cap) = autonomy_permission_cap else {
-        return true;
-    };
-    required_permissions
-        .iter()
-        .all(|permission| cap.iter().any(|allowed| allowed == permission))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutonomyGrantWriteError {
     HeartbeatIdentity,
@@ -484,16 +467,6 @@ mod tests {
                 .any(|p| p == "mail:send")
         );
         assert_eq!(effective_granted_permissions(&granted, None), granted);
-        assert!(required_permissions_within_cap(
-            &["calendar:read".into()],
-            Some(&cap)
-        ));
-        assert!(!required_permissions_within_cap(
-            &["mail:send".into()],
-            Some(&cap)
-        ));
-        assert!(required_permissions_within_cap(&["mail:send".into()], None));
-        assert!(required_permissions_within_cap(&[], Some(&cap)));
     }
 
     #[test]

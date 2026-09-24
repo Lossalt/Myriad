@@ -40,14 +40,6 @@ impl<'a> CapabilityRef<'a> {
             _ => None,
         }
     }
-
-    /// `{server_id}.{tool}` of an MCP id.
-    pub fn mcp_tool(self) -> Option<&'a str> {
-        match self {
-            Self::Mcp(tool) => Some(tool),
-            _ => None,
-        }
-    }
 }
 
 pub fn skill_capability_id(skill_id: &str) -> String {
@@ -70,10 +62,7 @@ mod tests {
             CapabilityRef::Skill("daily-brief")
         );
         let mcp = mcp_capability_id("files.local", "read");
-        assert_eq!(
-            CapabilityRef::parse(&mcp).mcp_tool(),
-            Some("files.local.read")
-        );
+        assert!(CapabilityRef::parse(&mcp).is_mcp());
         assert_eq!(
             CapabilityRef::parse("phantasi.search"),
             CapabilityRef::Builtin("phantasi.search")

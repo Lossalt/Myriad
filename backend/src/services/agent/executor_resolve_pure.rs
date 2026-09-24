@@ -32,48 +32,23 @@ pub fn unattended_may_auto_run(capability_id: &str, risk: RiskLevel) -> bool {
         && !UNATTENDED_DENIED_CAPABILITIES.contains(&capability_id)
 }
 
-/// Whether an unconfirmed dynamically-generated step must be blocked.
-///
-/// Aligns with [`Agent::system_sensitive_gate`]: heartbeat follows
-/// [`unattended_may_auto_run`]; interactive users block Medium and above until
-/// confirmed.
-pub fn should_block_unconfirmed_dynamic_step(
-    user_id: i32,
-    capability_id: &str,
-    risk: RiskLevel,
-) -> bool {
-    if user_id == SYSTEM_USER_ID {
-        !unattended_may_auto_run(capability_id, risk)
-    } else {
-        matches!(
-            risk,
-            RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn dynamic_risk_gate_aligns_with_system_sensitive_gate() {
-        let gate = should_block_unconfirmed_dynamic_step;
-        // Heartbeat: High+ and self-spreading capabilities blocked; Low and
-        // Medium otherwise auto-run.
-        assert!(gate(SYSTEM_USER_ID, "cache.clear", RiskLevel::High));
-        assert!(gate(SYSTEM_USER_ID, "system.shutdown", RiskLevel::Critical));
-        assert!(!gate(SYSTEM_USER_ID, "http.fetch", RiskLevel::Medium));
-        assert!(!gate(SYSTEM_USER_ID, "storage.set", RiskLevel::Low));
+    fn heartbeat_auto_runs_low_and_medium_but_never_self_spreading_work() {
+        assert!(!unattended_may_auto_run("cache.clear", RiskLevel::High));
+        assert!(!unattended_may_auto_run(
+            "system.shutdown",
+            RiskLevel::Critical
+        ));
+        assert!(unattended_may_auto_run("http.fetch", RiskLevel::Medium));
+        assert!(unattended_may_auto_run("storage.set", RiskLevel::Low));
         for id in UNATTENDED_DENIED_CAPABILITIES {
-            assert!(gate(SYSTEM_USER_ID, id, RiskLevel::Medium), "{id}");
-            assert!(gate(SYSTEM_USER_ID, id, RiskLevel::Low), "{id}");
+            assert!(!unattended_may_auto_run(id, RiskLevel::Medium), "{id}");
+            assert!(!unattended_may_auto_run(id, RiskLevel::Low), "{id}");
         }
-        // Interactive: Medium+ blocked until confirmed, whatever the capability.
-        assert!(gate(7, "cache.clear", RiskLevel::High));
-        assert!(gate(7, "http.fetch", RiskLevel::Medium));
-        assert!(!gate(7, "storage.set", RiskLevel::Low));
-        assert!(!gate(7, "heartbeat.toggle", RiskLevel::Low));
     }
 }

@@ -820,20 +820,6 @@ pub struct PendingConfirmation {
     pub impact: Vec<String>,
 }
 
-/// 用户确认响应
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserConfirmation {
-    /// 确认 ID
-    pub confirmation_id: String,
-    /// 是否确认执行
-    pub confirmed: bool,
-    /// 用户备注（可选）
-    pub user_note: Option<String>,
-    /// 操作发起者的用户 ID（用于归属校验）
-    #[serde(default)]
-    pub user_id: i32,
-}
-
 impl Default for Capability {
     fn default() -> Self {
         Self {
@@ -903,18 +889,6 @@ impl TaskState {
         question.ensure_expires_at();
         self.pending_question = Some(question);
         self.status = TaskStatus::WaitingForInput;
-    }
-
-    /// 清除待回答问题，恢复执行状态
-    pub fn clear_pending_question(&mut self) {
-        self.pending_question = None;
-        self.status = TaskStatus::Running;
-    }
-
-    pub fn update_progress(&mut self, total_steps: usize) {
-        if total_steps > 0 {
-            self.progress = ((self.current_step as f32 / total_steps as f32) * 100.0) as u8;
-        }
     }
 }
 
@@ -1105,112 +1079,6 @@ impl ExecutionContext {
     pub fn add_output(&mut self, step_id: &str, output: Value) {
         self.step_outputs.insert(step_id.to_string(), output);
     }
-
-    /// 获取所有步骤输出（用于向后续步骤共享已有结果）
-    pub fn get_all_outputs(&self) -> &HashMap<String, Value> {
-        &self.step_outputs
-    }
-
-    /// 设置变量
-    pub fn set_var(&mut self, key: &str, value: Value) {
-        self.variables.insert(key.to_string(), value);
-    }
-
-    /// 添加待执行的动态步骤（`MAX_DYNAMIC_QUEUE`=15 累计 `dynamic_steps_generated`，ID 去重，自依赖整步拒绝）
-    pub fn queue_dynamic_steps(&mut self, steps: Vec<RecipeStep>) {
-        const MAX_DYNAMIC_QUEUE: usize = 15;
-        let remaining = MAX_DYNAMIC_QUEUE.saturating_sub(self.dynamic_steps_generated);
-        if remaining == 0 {
-            tracing::warn!(
-                "[ExecutionContext] Dynamic steps queue full ({}/{}), rejecting {} new steps",
-                self.dynamic_steps_generated,
-                MAX_DYNAMIC_QUEUE,
-                steps.len()
-            );
-            return;
-        }
-
-        // 收集已有的 step_id（已完成 + 待执行队列）
-        let existing_ids: std::collections::HashSet<&str> = self
-            .step_outputs
-            .keys()
-            .map(|s| s.as_str())
-            .chain(self.pending_dynamic_steps.iter().map(|s| s.id.as_str()))
-            .collect();
-
-        let accepted: Vec<RecipeStep> = steps
-            .into_iter()
-            .take(remaining)
-            .filter(|step| {
-                // 去重：跳过 ID 已存在的步骤
-                if existing_ids.contains(step.id.as_str()) {
-                    tracing::warn!(
-                        step_id = %step.id,
-                        "[ExecutionContext] Rejecting dynamic step with duplicate ID"
-                    );
-                    return false;
-                }
-                // 自依赖：depends_on 含自身则整步拒绝
-                if step.depends_on.iter().any(|d| d == &step.id) {
-                    tracing::warn!(
-                        step_id = %step.id,
-                        "[ExecutionContext] Dynamic step has self-dependency, rejecting"
-                    );
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        let accepted_count = accepted.len();
-        self.dynamic_steps_generated += accepted_count;
-        for step in &accepted {
-            self.dynamic_step_ids.insert(step.id.clone());
-        }
-        self.pending_dynamic_steps.extend(accepted);
-    }
-
-    /// 是否在 `dynamic_step_ids`（技能展开 / 动态分析 / 重试前置）
-    pub fn is_dynamic_step(&self, step_id: &str) -> bool {
-        self.dynamic_step_ids.contains(step_id)
-    }
-
-    /// 取出下一个待执行的动态步骤
-    pub fn pop_dynamic_step(&mut self) -> Option<RecipeStep> {
-        if !self.pending_dynamic_steps.is_empty() {
-            Some(self.pending_dynamic_steps.remove(0))
-        } else {
-            None
-        }
-    }
-
-    /// 检查是否有待执行的动态步骤
-    pub fn has_pending_steps(&self) -> bool {
-        !self.pending_dynamic_steps.is_empty()
-    }
-
-    /// 记录用户回答
-    pub fn record_answer(&mut self, question_id: &str, answer: &str) {
-        self.answered_questions
-            .insert(question_id.to_string(), answer.to_string());
-    }
-
-    /// 记录执行决策
-    pub fn record_decision(
-        &mut self,
-        decision_type: DecisionType,
-        description: &str,
-        reasoning: &str,
-        step_id: Option<&str>,
-    ) {
-        self.decision_history.push(ExecutionDecision {
-            timestamp: chrono::Utc::now(),
-            decision_type,
-            description: description.to_string(),
-            reasoning: reasoning.to_string(),
-            related_step: step_id.map(|s| s.to_string()),
-        });
-    }
 }
 
 impl UserQuestion {
@@ -1222,28 +1090,6 @@ impl UserQuestion {
             question: question.to_string(),
             context: context.to_string(),
             options: None,
-            required,
-            default_value: None,
-            created_at: chrono::Utc::now(),
-            expires_at: Some(
-                chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_QUESTION_TTL_MINUTES),
-            ),
-        }
-    }
-
-    /// 创建单选问题
-    pub fn single_choice(
-        question: &str,
-        context: &str,
-        options: Vec<QuestionOption>,
-        required: bool,
-    ) -> Self {
-        Self {
-            question_id: uuid::Uuid::new_v4().to_string(),
-            question_type: QuestionType::SingleChoice,
-            question: question.to_string(),
-            context: context.to_string(),
-            options: Some(options),
             required,
             default_value: None,
             created_at: chrono::Utc::now(),
@@ -1325,21 +1171,6 @@ mod question_ttl_tests {
             expires_at: None,
         };
         assert!(q.is_expired(chrono::Utc::now()));
-    }
-}
-
-impl QuestionOption {
-    pub fn new(value: &str, label: &str) -> Self {
-        Self {
-            value: value.to_string(),
-            label: label.to_string(),
-            description: None,
-        }
-    }
-
-    pub fn with_description(mut self, description: &str) -> Self {
-        self.description = Some(description.to_string());
-        self
     }
 }
 

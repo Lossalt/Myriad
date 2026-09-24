@@ -154,10 +154,7 @@ pub(super) fn abort(state: &mut Checkpoint, reason: &str) {
 }
 
 /// Returns true when the frame changed and should be checkpointed before work.
-pub(super) fn advance(
-    state: &mut Checkpoint,
-    executor: &executor::Executor,
-) -> Result<bool, String> {
+pub(super) fn advance(state: &mut Checkpoint) -> Result<bool, String> {
     let Some(frame) = state.recipe_run.as_mut() else {
         return Ok(false);
     };
@@ -199,7 +196,7 @@ pub(super) fn advance(
         return Ok(true);
     }
     let step = &frame.steps[frame.cursor];
-    let (params, unresolved) = executor.resolve_params(&step.params, &frame.outputs);
+    let (params, unresolved) = executor::params::resolve_params(&step.params, &frame.outputs);
     if !unresolved.is_empty() {
         abort(state, "Saved recipe has unresolved input references");
         return Ok(true);

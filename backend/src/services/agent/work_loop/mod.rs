@@ -1,4 +1,4 @@
-//! Work is an observation-driven tool loop. Fixed Recipes retain their executor.
+//! Work is an observation-driven tool loop. Saved recipes run as frames inside it.
 //! Model messages are server-only; public task state is a projection, not the
 //! continuation. Waiting, effects and model boundaries are durable checkpoints.
 #[cfg(test)]
@@ -427,7 +427,7 @@ impl Agent {
                 }
                 store::save(&self.db, state).await?;
             }
-            if recipes::advance(state, &self.executor)? {
+            if recipes::advance(state)? {
                 store::save(&self.db, state).await?;
                 continue;
             }
@@ -701,7 +701,7 @@ impl Agent {
                 return Ok(false);
             }
         }
-        executor::execute_step::inject_request_context_params(
+        executor::params::inject_request_context_params(
             id,
             &mut params_map,
             context.variables.get("_current_route"),
@@ -793,7 +793,7 @@ impl Agent {
             )
             .await;
         let started = std::time::Instant::now();
-        let tier = executor::Executor::resolve_tier_with_breaker(id, step.model_tier);
+        let tier = super::tier_router::resolve_tier_with_breaker(id, step.model_tier);
         let analyzer = crate::services::ai::create_ai_analyzer_for_tier(tier).await;
         let handler = executor::handlers::HandlerContext {
             db: &self.db,
@@ -850,7 +850,7 @@ impl Agent {
             Err(error) => Err(error.message),
         };
         state.task.execution_context = Some(context);
-        executor::Executor::record_step_to_breaker(tier, output.is_ok());
+        super::tier_router::record_step_to_breaker(tier, output.is_ok());
         if let Ok(output) = &output {
             state
                 .task
