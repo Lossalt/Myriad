@@ -469,8 +469,9 @@ async fn summary_cache_miss_aggregates_in_one_wave_and_fails_whole_on_error() {
     db.execute_unprepared(&format!(
         r#"
 INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views) VALUES
-    ('{d0}', '/a', 5, 0, 100, 2), ('{d0}', '/b', 3, 0, 0, 0), ('{d0}', '__site__', 0, 2, 0, 0),
-    ('{d1}', '/a', 4, 0, 0, 0), ('{d9}', '/a', 7, 0, 0, 0);
+    ('{d0}', '/a', 5, 0, 100, 2), ('{d0}', '/b', 3, 0, 0, 0), ('{d0}', '__site__', 0, 1, 0, 0),
+    ('{d1}', '/a', 4, 0, 0, 0), ('{d1}', '__site__', 0, 5, 0, 0), ('{d9}', '/a', 7, 0, 0, 0),
+    ('{d120}', '__site__', 0, 4, 0, 0);
 INSERT INTO analytics_visitor_seen (day, path, visitor_hash) VALUES
     ('{d0}', '__site__', 'v1'), ('{d0}', '__site__', 'v2'), ('{d1}', '__site__', 'v1'),
     ('{d9}', '__site__', 'v3'), ('{d0}', '/a', 'v1'), ('{d0}', '/a', 'v2');
@@ -486,6 +487,7 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         d0 = day(0),
         d1 = day(1),
         d9 = day(9),
+        d120 = day(120),
     ))
     .await
     .unwrap();
@@ -499,7 +501,11 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(body["range"]["views"], 12);
     assert_eq!(body["range"]["unique_visitors"], 2);
+    // Day UV comes from the seen set like range UV, not from the (drifted) counter.
     assert_eq!(body["today"]["unique_visitors"], 2);
+    assert_eq!(body["daily"][5]["unique_visitors"], 1);
+    assert_eq!(body["compare"]["day"]["unique_visitors"]["current"], 2);
+    assert_eq!(body["compare"]["day"]["unique_visitors"]["previous"], 1);
     assert_eq!(body["compare"]["day"]["views"]["previous"], 4);
     assert_eq!(body["compare"]["range"]["views"]["previous"], 7);
     assert_eq!(body["compare"]["range"]["unique_visitors"]["previous"], 1);
@@ -512,6 +518,24 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
     assert_eq!(body["events"][0]["targets"][0]["target"], "buy");
     assert_eq!(body["events"][0]["targets"][0]["unique_visitors"], 1);
     assert_eq!(body["countries"][0]["unique_visitors"], 1);
+
+    // Past visitor-seen retention only the counter rollup is left.
+    let old = day(120);
+    let (_, axum::Json(body)) = super::admin_api::build_analytics_summary(
+        &db,
+        SummaryQuery {
+            days: None,
+            from: Some(old.clone()),
+            to: Some(old),
+        },
+    )
+    .await;
+    assert_eq!(body["daily"][0]["unique_visitors"], 4);
+
+    invalidate_summary_cache().await;
+    let card = super::admin_api::visitor_card_aggregate(&db).await.unwrap();
+    assert_eq!(card["today"]["unique_visitors"], 2);
+    assert_eq!(card["daily"][3]["unique_visitors"], 1);
 
     invalidate_summary_cache().await;
     db.execute_unprepared("ALTER TABLE analytics_country_visitor RENAME TO country_visitor_off")
