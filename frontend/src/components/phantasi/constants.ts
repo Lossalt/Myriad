@@ -1,5 +1,4 @@
-import { API_URL as CONFIG_API_URL } from '../../config'
-import { proxyImageUrl } from '../../utils/proxyImageUrl'
+import { displayMediaUrl } from '../../utils/displayMediaUrl'
 
 /** Canonical stored values. Display copy lives in locale JSON. */
 const PHANTASI_FRIEND_LINK_CATEGORY = '友情链接'
@@ -77,22 +76,13 @@ export function phantasiMainCategory(
 
 export const DEFAULT_THEME_COLOR = '#6b7280'
 
-const API_URL = CONFIG_API_URL
-
 const phantasiImageUrls = new Map<string, string | null>()
 const PHANTASI_IMAGE_URL_CAP = 400
 
 function resolvePhantasiImageUrl(imageUrl: string | null): string | null {
   if (!imageUrl) return null
   if (phantasiImageUrls.has(imageUrl)) return phantasiImageUrls.get(imageUrl) ?? null
-  let next: string | null
-  if (imageUrl.startsWith(`${API_URL}/api/`)) {
-    next = imageUrl
-  } else if (imageUrl.startsWith('/api/')) {
-    next = `${API_URL}${imageUrl}`
-  } else {
-    next = proxyImageUrl(imageUrl) ?? imageUrl
-  }
+  const next: string | null = displayMediaUrl(imageUrl)
   if (phantasiImageUrls.size >= PHANTASI_IMAGE_URL_CAP) {
     const first = phantasiImageUrls.keys().next().value
     if (first != null) phantasiImageUrls.delete(first)

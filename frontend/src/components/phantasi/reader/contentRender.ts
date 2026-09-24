@@ -3,12 +3,11 @@ import type { CommentItem } from '../../../services/phantasiApi'
 import type { PhantasiItem } from '../../../types/phantasi'
 import type { ReaderCopy, ThemeKey } from './types'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { API_URL as CONFIG_API_URL } from '../../../config'
 import { processEmbeds } from '../../../utils/embedProcessor'
 import { escapeHtml } from '../../../utils/inputSanitizer'
 import { processRssContentAsync } from '../../../utils/rssContentProcessor'
 import { yieldIfSliceExceeded } from '../../../utils/yieldToMain'
-import { displayImageUrl, prepareNoteReaderHtml } from '../notes/noteImageUrl'
+import { prepareNoteReaderHtml } from '../notes/noteImageUrl'
 import { decorateNoteReadSurface } from '../notes/noteReadSurface'
 import { replaceNoteHtml } from '../notes/noteWidgetMount'
 import {
@@ -20,13 +19,7 @@ import {
 import '../../settings/GitHubProjectBadge.css'
 import '../../github/githubRepoCard.css'
 
-const API_URL = CONFIG_API_URL
-
-// 本站媒体（/api、/media/federation）改走当前 API origin；外站图仅 must-proxy 走 `/api/proxy/image`。
-export function getImageUrl(imageUrl: string | null): string | null {
-  if (!imageUrl) return null
-  return displayImageUrl(imageUrl, API_URL)
-}
+export { getImageUrl } from '../constants'
 
 interface BuildBaseContentOptions {
   contentReady: boolean
