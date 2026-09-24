@@ -1,7 +1,7 @@
 // Work confirmation.
 
 use chrono::{Duration, Utc};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::super::agent_footer::*;
@@ -339,8 +339,8 @@ impl Agent {
     /// 系统任务对敏感步骤的自动确认门控（不遍历 recipe）
     ///
     /// 无人值守场景（Heartbeat 定时任务）等待人工确认只会让任务静默空跑，因此：
-    /// - High / Critical：拒绝自动执行，返回说明性响应
-    /// - Low / Medium：自动确认放行并留痕
+    /// - Medium / High / Critical：拒绝自动执行，返回说明性响应
+    /// - Low：自动确认放行并留痕
     ///
     /// 返回 `None` = 非系统用户，走正常确认流程；
     /// `Some(Ok(()))` = 已自动确认，继续执行；
@@ -352,10 +352,12 @@ impl Agent {
         if user_id != SYSTEM_USER_ID {
             return None;
         }
-        if let Some(blocked) = sensitive_steps
-            .iter()
-            .find(|s| matches!(s.risk_level, RiskLevel::High | RiskLevel::Critical))
-        {
+        if let Some(blocked) = sensitive_steps.iter().find(|s| {
+            matches!(
+                s.risk_level,
+                RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
+            )
+        }) {
             let msg = format!(
                 "定时任务包含敏感操作 '{}'（{}，风险 {:?}），已拒绝自动执行。请手动操作或调整任务指令。",
                 blocked.capability_name, blocked.capability_id, blocked.risk_level
@@ -363,7 +365,7 @@ impl Agent {
             tracing::warn!(
                 capability = %blocked.capability_id,
                 risk = ?blocked.risk_level,
-                "[Agent] System task blocked: High/Critical operation requires human confirmation"
+                "[Agent] System task blocked: Medium+ operation requires human confirmation"
             );
             return Some(Err(AgentResponse {
                 response_type: AgentResponseType::Answer,

@@ -8,13 +8,13 @@ use crate::services::analyzer::AiAnalyzer;
 use sea_orm::DatabaseConnection;
 use serde_json::Value;
 
+use super::run_state::{RunState, StepFlow, MAX_TOTAL_STEPS};
 use super::Executor;
-use super::run_state::{MAX_TOTAL_STEPS, RunState, StepFlow};
-use super::{TASK_STORE, is_cancelled, task_store};
+use super::{is_cancelled, task_store, TASK_STORE};
 
 impl Executor {
     pub(crate) fn should_block_unconfirmed_dynamic_step(user_id: i32, risk: RiskLevel) -> bool {
-        // Aligned with system_sensitive_gate: system Medium auto-run; High+ blocked.
+        // Aligned with system_sensitive_gate: Medium and above blocked, including heartbeat.
         crate::services::agent::executor_resolve_pure::should_block_unconfirmed_dynamic_step(
             user_id, risk,
         )

@@ -610,17 +610,11 @@ impl Agent {
         }
         if let Some((message, risk)) = capability::capability_requires_confirmation_async(id).await
         {
-            if state.user_id == super::SYSTEM_USER_ID {
-                if matches!(risk, RiskLevel::High | RiskLevel::Critical) {
-                    finish_call(
-                        state,
-                        &pending,
-                        Err("Unattended execution cannot authorize this operation".into()),
-                        0,
-                    );
-                    return Ok(false);
-                }
-            } else if pending.approval.as_deref() != Some(&fingerprint) {
+            if reject_unattended_confirmation(state, &pending, risk) {
+                return Ok(false);
+            } else if state.user_id != super::SYSTEM_USER_ID
+                && pending.approval.as_deref() != Some(&fingerprint)
+            {
                 let mut question = UserQuestion::confirmation(
                     &message,
                     &format!("{}\n{}", capability.name, preview(&json!(params_map), 6000)),
@@ -805,6 +799,32 @@ fn request_evidence(request: &UserRequest, recipe: &Recipe, task: &TaskState) ->
         "platforms":context.map(|c| &c.active_platforms),
         "preferences":context.and_then(|c|c.preferences.as_ref()),
         "music":recipe.metadata.get("music_status"),"windows":recipe.metadata.get("window_state")})
+}
+
+/// Heartbeat cannot authorize Medium and above. The call is recorded as a
+/// tool error and the handler is not entered, so there is no effect.
+/// Low still returns false and auto-runs. Interactive users are unchanged.
+pub(super) fn reject_unattended_confirmation(
+    state: &mut Checkpoint,
+    pending: &PendingCall,
+    risk: RiskLevel,
+) -> bool {
+    if state.user_id != super::SYSTEM_USER_ID {
+        return false;
+    }
+    if !matches!(
+        risk,
+        RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
+    ) {
+        return false;
+    }
+    finish_call(
+        state,
+        pending,
+        Err("Unattended execution cannot authorize this operation".into()),
+        0,
+    );
+    true
 }
 
 fn finish_call(

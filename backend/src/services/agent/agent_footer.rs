@@ -1,7 +1,7 @@
 use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::agent_header::*;
@@ -924,16 +924,22 @@ mod tests {
     }
 
     #[test]
-    fn test_system_gate_auto_confirms_low_and_medium() {
-        for risk in [RiskLevel::Low, RiskLevel::Medium] {
-            let steps = vec![pending("storage.set", risk)];
-            match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-                Some(Ok(())) => {}
-                other => panic!(
-                    "系统任务应自动确认 {risk:?}，got {:?}",
-                    other.map(|r| r.is_ok())
-                ),
+    fn test_system_gate_auto_confirms_low_and_blocks_medium() {
+        let steps = vec![pending("storage.set", RiskLevel::Low)];
+        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
+            Some(Ok(())) => {}
+            other => panic!("系统任务应自动确认 Low，got {:?}", other.map(|r| r.is_ok())),
+        }
+        let steps = vec![pending("heartbeat.create", RiskLevel::Medium)];
+        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
+            Some(Err(resp)) => {
+                assert!(
+                    resp.message.contains("heartbeat.create"),
+                    "{}",
+                    resp.message
+                );
             }
+            other => panic!("Medium 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
         }
     }
 

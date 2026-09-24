@@ -9,9 +9,9 @@ use super::task_store::is_cancelled;
 use crate::services::agent::error_analyzer_pure::StepError;
 
 #[cfg(test)]
-use super::Executor;
-#[cfg(test)]
 use super::task_store;
+#[cfg(test)]
+use super::Executor;
 #[cfg(test)]
 use serde_json::json;
 
@@ -63,7 +63,11 @@ pub(crate) async fn execute_capability_with_timeout_and_cancel(
 ) -> Result<Value, StepError> {
     // Keep the large handler dispatch future out of every enclosing Work frame.
     let mut work = Box::pin(handlers::execute_capability(
-        capability_id, action, category, params, handler_ctx,
+        capability_id,
+        action,
+        category,
+        params,
+        handler_ctx,
     ));
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -184,8 +188,8 @@ mod resolve_id_tests {
             crate::services::agent::SYSTEM_USER_ID,
             RiskLevel::High
         ));
-        // System Medium must auto-run (matches system_sensitive_gate).
-        assert!(!Executor::should_block_unconfirmed_dynamic_step(
+        // Heartbeat Medium is blocked (matches system_sensitive_gate).
+        assert!(Executor::should_block_unconfirmed_dynamic_step(
             crate::services::agent::SYSTEM_USER_ID,
             RiskLevel::Medium
         ));

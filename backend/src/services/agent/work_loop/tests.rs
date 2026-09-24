@@ -68,6 +68,69 @@ fn answer(state: &Checkpoint, text: &str) -> UserAnswer {
     }
 }
 
+#[tokio::test]
+async fn unattended_heartbeat_create_is_rejected_without_effects() {
+    let (message, risk) = capability::capability_requires_confirmation_async("heartbeat.create")
+        .await
+        .expect("heartbeat.create requires confirmation");
+    assert_eq!(risk, RiskLevel::Medium);
+    assert!(!message.is_empty());
+
+    let before = match crate::services::agent::heartbeat::get_heartbeat() {
+        Some(manager) => Some(manager.get_tasks().await.len()),
+        None => None,
+    };
+
+    let mut state = checkpoint();
+    assert_eq!(state.user_id, crate::services::agent::SYSTEM_USER_ID);
+    let pending = PendingCall {
+        call: ToolCall {
+            id: "hb-create".into(),
+            name: tools::tool_name("heartbeat.create"),
+            arguments:
+                r#"{"name":"spread","schedule":"0 * * * *","action":"create another heartbeat"}"#
+                    .into(),
+        },
+        capability_id: Some("heartbeat.create".into()),
+        approval: None,
+    };
+    state.pending.push_back(pending.clone());
+    assert!(
+        reject_unattended_confirmation(&mut state, &pending, risk),
+        "user 0 must not auto-run heartbeat.create"
+    );
+    assert!(state.inflight.is_none());
+    assert!(state.attempted_effects.is_empty());
+    assert!(state.wait.is_none());
+    assert!(state.pending.is_empty());
+    let result = state
+        .task
+        .step_results
+        .get("hb-create")
+        .expect("rejection is recorded on the call");
+    assert!(!result.success);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Unattended execution cannot authorize this operation")
+    );
+
+    let after = match crate::services::agent::heartbeat::get_heartbeat() {
+        Some(manager) => Some(manager.get_tasks().await.len()),
+        None => None,
+    };
+    assert_eq!(before, after, "rejection must not write HEARTBEAT.md");
+
+    let mut low = checkpoint();
+    low.pending.push_back(pending.clone());
+    assert!(!reject_unattended_confirmation(
+        &mut low,
+        &pending,
+        RiskLevel::Low
+    ));
+    assert!(low.task.step_results.is_empty());
+    assert_eq!(low.pending.len(), 1);
+}
+
 #[test]
 fn persisted_spend_blocks_even_pending_tools_after_resume() {
     let mut value = serde_json::to_value(checkpoint()).unwrap();

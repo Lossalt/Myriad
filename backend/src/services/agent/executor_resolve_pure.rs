@@ -6,27 +6,21 @@ use crate::services::agent::SYSTEM_USER_ID;
 
 use chrono::{DateTime, Utc};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use std::collections::HashMap;
 
 /// Whether an unconfirmed dynamically-generated step must be blocked.
 ///
-/// Aligns with [`Agent::system_sensitive_gate`]:
-/// - **System / heartbeat** (`SYSTEM_USER_ID`): Medium auto-runs (same as plan-time
-/// gate); High / Critical hard-block with a clear error (not silent skip).
-/// - **Interactive users**: Medium and above block until confirmed.
-///
-/// Only Low may auto-run for normal users without an extra confirmation gate.
+/// Aligns with [`Agent::system_sensitive_gate`]: Medium and above block for every
+/// identity, including heartbeat (`SYSTEM_USER_ID`). Low may still auto-run.
+/// `user_id` stays so callers and the plan-time gate keep one shape.
 pub fn should_block_unconfirmed_dynamic_step(user_id: i32, risk: RiskLevel) -> bool {
-    if user_id == SYSTEM_USER_ID {
-        matches!(risk, RiskLevel::High | RiskLevel::Critical)
-    } else {
-        matches!(
-            risk,
-            RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
-        )
-    }
+    let _ = user_id;
+    matches!(
+        risk,
+        RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
+    )
 }
 
 #[cfg(test)]
@@ -36,7 +30,7 @@ mod tests {
 
     #[test]
     fn dynamic_risk_gate_aligns_with_system_sensitive_gate() {
-        // System/heartbeat: Medium auto-run; High+ blocked (matches system_sensitive_gate).
+        // Heartbeat: Medium and above blocked; Low still auto-runs.
         assert!(should_block_unconfirmed_dynamic_step(
             SYSTEM_USER_ID,
             RiskLevel::Critical
@@ -45,7 +39,7 @@ mod tests {
             SYSTEM_USER_ID,
             RiskLevel::High
         ));
-        assert!(!should_block_unconfirmed_dynamic_step(
+        assert!(should_block_unconfirmed_dynamic_step(
             SYSTEM_USER_ID,
             RiskLevel::Medium
         ));
