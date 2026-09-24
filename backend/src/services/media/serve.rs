@@ -119,12 +119,16 @@ pub async fn resolve_private_asset(
     file_from_row(store, &row, NO_STORE)
 }
 
+/// A local path that is not a permanent asset address. A registered alias
+/// (a migrated legacy file, or a cached file that content cited) serves its
+/// asset and never falls back to disk. Otherwise the raw file is served: the
+/// live image cache (RSS pictures, proxied downloads) and legacy federation
+/// files that nothing has cited yet.
 pub async fn resolve_alias_or_legacy(
     db: &impl ConnectionTrait,
     store: &MediaStore,
     paths: &LegacyPaths,
     local_path: &str,
-    allow_unmigrated: bool,
 ) -> Result<ServeOutcome, MediaError> {
     let Some(local_path) = registered_local_path(local_path) else {
         return Ok(ServeOutcome::NotFound { no_store: true });
@@ -141,9 +145,6 @@ pub async fn resolve_alias_or_legacy(
             return Ok(ServeOutcome::NotFound { no_store: true });
         }
         return file_from_row(store, &row, PUBLIC_CACHE_CONTROL);
-    }
-    if !allow_unmigrated {
-        return Ok(ServeOutcome::NotFound { no_store: true });
     }
     let Some(disk) = legacy_serve_path(paths, &local_path) else {
         return Ok(ServeOutcome::NotFound { no_store: true });

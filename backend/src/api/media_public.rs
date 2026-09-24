@@ -93,7 +93,7 @@ async fn serve_federation_media(
     req: Request,
 ) -> Response {
     let local_path = format!("/media/federation/{user}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_phantasi_cache(
@@ -102,7 +102,7 @@ async fn serve_phantasi_cache(
     req: Request,
 ) -> Response {
     let local_path = format!("/api/phantasi/image-cache/{subdir}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_brew_cache(
@@ -111,19 +111,18 @@ async fn serve_brew_cache(
     req: Request,
 ) -> Response {
     let local_path = format!("/api/brew/image-cache/{subdir}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_alias(
     db: sea_orm::DatabaseConnection,
     local_path: String,
-    allow_unmigrated: bool,
     req: Request,
 ) -> Response {
     let data = paths();
     let store = MediaStore::new(data.media.clone());
     let legacy = LegacyPaths::from_data_paths(data);
-    match resolve_alias_or_legacy(&db, &store, &legacy, &local_path, allow_unmigrated).await {
+    match resolve_alias_or_legacy(&db, &store, &legacy, &local_path).await {
         Ok(outcome) => send(req, outcome).await,
         Err(_) => hide(),
     }

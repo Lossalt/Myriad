@@ -530,7 +530,7 @@ pub(crate) async fn read_public_local_media(url: &str) -> Option<(Vec<u8>, Strin
             .ok()?
     } else {
         let legacy = LegacyPaths::from_data_paths(paths());
-        resolve_alias_or_legacy(&db, &store, &legacy, &path, true)
+        resolve_alias_or_legacy(&db, &store, &legacy, &path)
             .await
             .ok()?
     };

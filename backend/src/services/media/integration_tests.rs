@@ -728,7 +728,7 @@ async fn postgres_upgrade_repairs_preexisting_duplicate_cache_catalog() {
         Some(owner)
     );
     assert!(matches!(
-        resolve_alias_or_legacy(&f.db, f.service.store(), &paths, &phantasi, true)
+        resolve_alias_or_legacy(&f.db, f.service.store(), &paths, &phantasi)
             .await
             .unwrap(),
         ServeOutcome::File(_)
