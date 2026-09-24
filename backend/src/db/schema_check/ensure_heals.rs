@@ -1309,7 +1309,6 @@ pub(crate) async fn ensure_phantasi_source_url_keys(db: &DatabaseConnection) -> 
     db.execute_unprepared(
         "ALTER TABLE phantasi_sources ADD COLUMN IF NOT EXISTS url_key TEXT;
         ALTER TABLE phantasi_sources ADD COLUMN IF NOT EXISTS site_url_key TEXT;
-        CREATE INDEX IF NOT EXISTS idx_phantasi_sources_url_key ON phantasi_sources (url_key);
         CREATE INDEX IF NOT EXISTS idx_phantasi_sources_site_url_key ON phantasi_sources (site_url_key);",
     )
     .await?;

@@ -136,13 +136,14 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 索引：按规范化 URL 去重查找
+        // 唯一索引：订阅源是全站目录，规范化 URL 只能有一行
         manager
             .create_index(
                 Index::create()
                     .name("idx_phantasi_sources_url_key")
                     .table(PhantasiSources::Table)
                     .col(PhantasiSources::UrlKey)
+                    .unique()
                     .if_not_exists()
                     .to_owned(),
             )

@@ -8,6 +8,7 @@ use super::ensure_heals::*;
 use super::expected_indexes::get_expected_indexes;
 use super::expected_schema::get_expected_schema;
 use super::introspect::*;
+use super::phantasi_source_dedupe::ensure_phantasi_source_url_key_unique;
 use super::seeds::{ensure_default_config, ensure_default_platforms};
 
 /// Schema 版本号
@@ -260,6 +261,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
                     ensure_channels_active_relationship_unique(db).await
                 }
                 "idx_platform_metadata_user_platform" => ensure_platform_metadata_unique(db).await,
+                "idx_phantasi_sources_url_key" => ensure_phantasi_source_url_key_unique(db).await,
                 _ => db.execute_unprepared(ddl).await.map(|_| ()),
             };
             result.map_err(|e| DbErr::Custom(format!("schema repair DDL failed: {ddl}: {e}")))?;
@@ -293,6 +295,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_phantasi_source_applications_table(db).await?;
     ensure_media_assets_table(db).await?;
     ensure_phantasi_note_source_unique(db).await?;
+    ensure_phantasi_source_url_key_unique(db).await?;
     ensure_rsshub_global_url_unique(db).await?;
     ensure_phantasi_application_pending_unique(db).await?;
     ensure_tapp_shortcut_chord_unique(db).await?;

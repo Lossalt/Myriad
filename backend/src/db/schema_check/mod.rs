@@ -19,6 +19,7 @@ mod expected_indexes;
 mod expected_schema;
 mod introspect;
 mod orchestrator;
+mod phantasi_source_dedupe;
 mod seeds;
 mod tables_agent;
 mod tables_analytics;

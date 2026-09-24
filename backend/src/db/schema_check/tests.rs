@@ -166,6 +166,7 @@ fn uniqueness_heals_are_invoked_and_partial() {
     let orchestrator = include_str!("orchestrator.rs");
     for heal in [
         "ensure_phantasi_note_source_unique",
+        "ensure_phantasi_source_url_key_unique",
         "ensure_rsshub_global_url_unique",
         "ensure_phantasi_application_pending_unique",
         "ensure_tapp_shortcut_chord_unique",
