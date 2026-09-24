@@ -23,7 +23,6 @@ import {
   setSessionHint,
 } from '../utils/sessionDetection'
 import { beginTappSubjectChange, finishTappSubjectChange } from '../utils/tappSubject'
-import TokenManager from '../utils/tokenManager'
 
 export interface AuthIdentity {
   id: number
@@ -148,10 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [beginSubjectChange])
 
   const finishSubject = useCallback((key: string, authenticated: boolean) => {
-    if (!authenticated) {
-      TokenManager.removeToken()
-      clearCSRFToken()
-    }
+    if (!authenticated) clearCSRFToken()
     confirmedSubject.current = key
     const transition = pendingSubject.current
     pendingSubject.current = null

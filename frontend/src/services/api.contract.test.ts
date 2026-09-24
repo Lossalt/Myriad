@@ -4,7 +4,6 @@ import { getSiteFace, getWardrobeFace } from '../features/merope/api'
 import { ensureSessionStoragePolyfill } from '../test/sessionStoragePolyfill'
 import { clearCSRFToken } from '../utils/csrf'
 import { HOST_SESSION_RECHECK_EVENT } from '../utils/hostSessionFailure'
-import TokenManager from '../utils/tokenManager'
 import { ApiError, apiService } from './api'
 import { updateConfig } from './configApi'
 
@@ -71,13 +70,11 @@ describe('shared HTTP failures', () => {
   }
 
   it('requests authoritative session validation on 401 before discarding identity', async () => {
-    const remove = mock.method(TokenManager, 'removeToken', () => {})
     let checks = 0
     window.addEventListener(HOST_SESSION_RECHECK_EVENT, () => { checks++ })
     sessionStorage.setItem('csrf_token', token)
     replies.push({ status: 401, body: { error: 'Session expired' } })
     await assert.rejects(apiService.get('/private'), /Session expired/)
-    assert.equal(remove.mock.callCount(), 0)
     assert.equal(sessionStorage.getItem('csrf_token'), token)
     assert.equal(checks, 1)
   })
