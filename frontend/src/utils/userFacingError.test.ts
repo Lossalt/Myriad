@@ -1914,7 +1914,28 @@ describe('userFacingError is driven by codes', () => {
   })
 
   // Answers to remote federation servers, never shown in this UI.
-  const SERVER_TO_SERVER = new Set(['gone', 'activity_not_ready', 'inbox_failed'])
+  const SERVER_TO_SERVER = new Set([
+    'gone',
+    'activity_not_ready',
+    'inbox_failed',
+    // Inbox: HTTP signature / Digest / Date gate before parsing.
+    'http_signature_missing',
+    'http_signature_invalid',
+    // Inbox: body buffering and activity shape.
+    'inbox_body_unreadable',
+    'inbox_busy',
+    'activity_invalid',
+    'inbox_preflight_incomplete',
+    'inbox_ownership_mismatch',
+    'inbox_trust_rejected',
+    // Inbound FileChunk from a peer.
+    'transfer_chunk_invalid',
+    'transfer_chunk_gone',
+    // Public actor document and /.well-known/webfinger served to peers.
+    'actor_unavailable',
+    'webfinger_resource_invalid',
+    'webfinger_user_not_found',
+  ])
 
   it('gives every code the backend infers its own copy, whatever the text says', () => {
     const codes = new Set(Object.values(errorCodeSpec.labels))

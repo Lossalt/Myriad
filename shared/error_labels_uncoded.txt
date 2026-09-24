@@ -1,19 +1,13 @@
 # Public error labels that still reach clients as code "unmapped".
 # This list may only shrink: give a label a code in error_codes.json and delete it here.
 A durable user account is required
-Actor is already a room member
 Admin account already exists
-Already the owner
 An accepted intention must enter Work mode
 An application is already pending
 Article has no content
 Authentication context is missing
 Authentication is not configured
-Avatar must be http(s) URL or data:image
 Bangumi credentials required
-Cannot add this instance as its own ring peer
-Cannot change the owner's role; use transfer ownership
-Cannot create a channel with your own federation actor
 Cannot delete favorite preset, please unfavorite first
 Cannot delete the last administrator
 Cannot delete your own account
@@ -21,63 +15,30 @@ Cannot demote the last administrator
 Cannot disable local login: user has no linked OAuth identity
 Cannot fetch internal URLs
 Cannot fetch unsafe URLs
-Cannot follow your own federation actor
-Cannot remove the room owner
-Cannot resolve internal domains
-Cannot resolve unsafe domains
 Cannot revoke your own admin role
-Cannot transfer ownership to an observer
 Cannot unlink the user's only sign-in method
-Channel already closed
-Channel must be closed before delete
-Chunk conflicts with stored data
-Chunk retry content does not match stored bytes
 Comment too long (max 2000 chars)
-Committed chunk is no longer stored
-Content actor preflight was not completed
-Content already published
-Content not published
-Could not accept room invite
-Could not demote previous owner
-Could not dismiss delivery (status changed)
-Could not join room
-Could not leave room
 Could not load Agent run
 Could not load Agent session
 Could not prepare Agent session
 Could not prepare Chat session
 Could not prepare durable Agent session
 Could not read 3D asset
-Could not reject room invite
-Could not remove member
 Could not save Agent message
 Could not save durable Agent message
-Could not update member role
-Delivery currently in progress
-Description must be at most 5000 characters
-Digest verification failed
 Edited image exceeds 5 MB; reduce its resolution
 Expected an inline image
 Failed to check Tapp install permission
 Failed to collect runtime metrics
 Failed to collect scheduler metrics
 Failed to create admin account
-Failed to initialize federation identity
 Failed to load Tapp settings
-Failed to promote new owner membership row
-Failed to read body
-Failed to read file field
 Failed to read media
-Failed to read user ID
 Failed to resolve site owner
 Failed to store media
 Failed to suggest a name
 Failed to write setup claim marker
 Federation feed is unavailable
-File storage error
-Final file exists before the last chunk
-Follow actor preflight was not completed
-Follow.object is required
 Guest session signing is unavailable
 Heartbeat not initialized
 Hitokoto response too large or unreadable
@@ -87,18 +48,10 @@ Image editing failed; please try again
 Image editor is busy; please try again
 Image generation is not configured
 Image must be at most 10 MB
-Inbox concurrent memory budget exhausted; retry later
 Instruction must be non-empty and within length limits
-Insufficient permissions
 Invalid GitHub repository
 Invalid URL scheme
-Invalid acct format
-Invalid attachment URL
-Invalid avatar (empty or too large)
 Invalid cache file structure
-Invalid channel_type
-Invalid file chunk
-Invalid governance_type
 Invalid image
 Invalid image data
 Invalid item id
@@ -106,18 +59,10 @@ Invalid or disallowed hitokoto url
 Invalid payload
 Invalid playlist ID
 Invalid preset type, must be 'favorite' or 'history'
-Invalid request header encoding
-Invalid resource format. Expected acct:user@domain
-Invalid ring_type. Must be one of: tapp-store, phantasi-recommend, library-exchange, instance-directory
-Invalid role
 Invalid runtime grant subject
-Invalid signature
-Invalid sticker id
 Invalid tapp id
-Invalid transport
 Invalid visibility, must be 'all' or 'admin'
 Live run unavailable
-Local user not found. Use Actor URL or @user@domain for remote users
 Login required
 MCP manager not initialized
 Media is not ready
@@ -125,60 +70,21 @@ Memory not initialized
 Method not found
 Missing 'input' field
 Missing 'instruction' field
-Missing Date header
-Missing Digest header for request with body
-Missing Signature header
-Missing actor in activity
-Missing actor or type in activity
 Missing field: content
-Missing multipart field 'file'
-Move preflight was not completed
 Multiple tasks are running; taskId is required
-New owner must already be a room member
 No articles found for this source
 No feeds found in OPML
 No fields to update
-No local membership for this room
-No membership for this room
 No messages in session
 No running task to steer
-Not a member
-Not a member of this room
-Not your channel
-Note requires text and/or attachments
 Notion source requires extra_config with token
-Object ownership check failed
-Observers cannot publish E2E keys
-Observers cannot send messages
-Observers cannot upload files
 Only PNG, JPEG and WebP images can be edited
-Only active members can manage stickers
-Only admins can invite
-Only admins can remove members
-Only owner or admin can pin messages
-Only owner or admin can update room
-Only pending invites can be rejected
-Only room owner or admin can edit the group sticker pack
-Only the room owner can change member roles
-Only the room owner can delete room
-Only the room owner can transfer ownership
-Owner cannot leave. Transfer ownership or delete the room.
-Peer already in ring
 Personal autonomy cannot run as the heartbeat identity
 Personal autonomy is no longer granted; review is required
-Pinned message id is empty
 Preset has no saved recipe, please run the task first
-Provide activity_id, or content_type + content_id
 Reference image is too large
-Rejected by trust policy
-Remote actor has no public key
-Request body too large or unreadable
 Rig image validation failed
 Rig image validation is busy; retry shortly
-Role must be admin or member
-Room name is missing; cannot send invite with empty name
-Room name must be 1-500 characters
-Room not found or access denied
 Run not found, expired, or access denied
 Scheduler not initialized
 Seek action requires a position value
@@ -189,53 +95,31 @@ Skill evolution not initialized
 Skill registry not initialized
 Source image is missing
 Source image is unavailable
-Sticker image too large
-Sticker must be a data:image URL
 Sticker processing failed
 Sticker processing is busy
 Storage value too large
 Tapp installation is disabled for this account
 Tapp package is not usable
 Tapp requires permission re-authorization before it can be started
-Target is not an active member
 Task not found or access denied
 The intention is not awaiting Work
 This file is still in use and cannot be deleted.
 This file is still published and cannot be made private.
 This note is edited through its document; reopen it
 This site is already listed
-Transfer file is empty
-Transfer file missing on disk
-Transfer finalization state is inconsistent
-Transfer is not ready
-Transfer not found while finalizing
-Transfer path is not a file
-Transfer progress changed while uploading chunk
-Transfer state changed while finalizing
 URL too long
 Unable to load generated image
-Unsupported attachment type
-Unsupported content type
 Unsupported image format
 Use a prompt of 1–2000 characters and dimensions between 256 and 2048 pixels
-User not found on this instance
 Volume must be between 0 and 100
-WebFinger lookup failed
-WebFinger response too large or unreadable
 Work input does not match the accepted intention
-You are already a member of this room
 channel_id is required
-content_id is ambiguous; provide content_type
-content_type required
 could not store font
 empty
 exists
 export_hash_failed
 export_integrity_failed
-filter_type must be block_activity_type | block_keyword | require_trust_level
 gone
-invalid filter_type
-invalid id
 invalid job id
 invalid snapshot id
 invalid_body
@@ -243,18 +127,9 @@ invalid_json
 invalid_mode
 invalid_path
 keyword required
-library content_id must be platform_metadata id or platform name
-max_members must be between 2 and 5000
-min_trust_level must be 0..=4
 missing
-name, filter_type, and value are required
-new_owner is required
-old_base_url and new_base_url must differ
 page must be >= 1
 pagination offset overflow
-rate_max_requests must be 1..=1000000
-rate_trusted_multiplier must be 1..=100
-rate_window_seconds must be 1..=86400
 site_title or hint is required
 sticker prompt must be 1 to 2000 characters
 too_many_rows
