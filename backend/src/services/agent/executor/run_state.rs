@@ -136,9 +136,10 @@ impl<'r> RunState<'r> {
     }
 
     /// 把 `step_index` 推进到原始步骤列表中该步骤之后
+    /// Parallel steps finish out of order; the cursor only moves forward.
     pub(super) fn advance_past(&mut self, step_id: &str) {
         if let Some(idx) = self.all_steps.iter().position(|s| s.id == step_id) {
-            self.step_index = idx + 1;
+            self.step_index = self.step_index.max(idx + 1);
         }
     }
 
