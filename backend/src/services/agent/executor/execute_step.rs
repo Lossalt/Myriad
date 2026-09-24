@@ -93,8 +93,11 @@ impl Executor {
                 )
                 .await
             {
-                let blocked =
-                    Self::should_block_unconfirmed_dynamic_step(handler_ctx.user_id, risk);
+                let blocked = Self::should_block_unconfirmed_dynamic_step(
+                    handler_ctx.user_id,
+                    &step.capability_id,
+                    risk,
+                );
                 if blocked {
                     tracing::warn!(
                         step_id = %step.id,

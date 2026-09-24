@@ -610,7 +610,7 @@ impl Agent {
         }
         if let Some((message, risk)) = capability::capability_requires_confirmation_async(id).await
         {
-            if reject_unattended_confirmation(state, &pending, risk) {
+            if reject_unattended_confirmation(state, &pending, id, risk) {
                 return Ok(false);
             } else if state.user_id != super::SYSTEM_USER_ID
                 && pending.approval.as_deref() != Some(&fingerprint)
@@ -801,21 +801,21 @@ fn request_evidence(request: &UserRequest, recipe: &Recipe, task: &TaskState) ->
         "music":recipe.metadata.get("music_status"),"windows":recipe.metadata.get("window_state")})
 }
 
-/// Heartbeat cannot authorize Medium and above. The call is recorded as a
-/// tool error and the handler is not entered, so there is no effect.
-/// Low still returns false and auto-runs. Interactive users are unchanged.
+/// Heartbeat cannot authorize High and above, nor capabilities that create or
+/// trigger further automatic runs (`unattended_may_auto_run`). The call is
+/// recorded as a tool error and the handler is not entered, so there is no
+/// effect. Other Low / Medium calls return false and auto-run. Interactive
+/// users are unchanged.
 pub(super) fn reject_unattended_confirmation(
     state: &mut Checkpoint,
     pending: &PendingCall,
+    capability_id: &str,
     risk: RiskLevel,
 ) -> bool {
     if state.user_id != super::SYSTEM_USER_ID {
         return false;
     }
-    if !matches!(
-        risk,
-        RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
-    ) {
+    if super::executor_resolve_pure::unattended_may_auto_run(capability_id, risk) {
         return false;
     }
     finish_call(

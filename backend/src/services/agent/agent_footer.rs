@@ -945,11 +945,19 @@ mod tests {
     }
 
     #[test]
-    fn test_system_gate_auto_confirms_low_and_blocks_medium() {
-        let steps = vec![pending("storage.set", RiskLevel::Low)];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Ok(())) => {}
-            other => panic!("系统任务应自动确认 Low，got {:?}", other.map(|r| r.is_ok())),
+    fn test_system_gate_auto_confirms_low_and_medium_but_not_self_spreading() {
+        for (id, risk) in [
+            ("storage.set", RiskLevel::Low),
+            ("http.fetch", RiskLevel::Medium),
+        ] {
+            let steps = vec![pending(id, risk)];
+            match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
+                Some(Ok(())) => {}
+                other => panic!(
+                    "系统任务应自动确认 {id}，got {:?}",
+                    other.map(|r| r.is_ok())
+                ),
+            }
         }
         let steps = vec![pending("heartbeat.create", RiskLevel::Medium)];
         match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
@@ -960,7 +968,10 @@ mod tests {
                     resp.message
                 );
             }
-            other => panic!("Medium 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
+            other => panic!(
+                "heartbeat.create 应被拒绝，got {:?}",
+                other.map(|r| r.is_ok())
+            ),
         }
     }
 

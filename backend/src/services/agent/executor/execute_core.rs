@@ -13,10 +13,17 @@ use super::run_state::{MAX_TOTAL_STEPS, RunState, StepFlow};
 use super::{TASK_STORE, is_cancelled, task_store};
 
 impl Executor {
-    pub(crate) fn should_block_unconfirmed_dynamic_step(user_id: i32, risk: RiskLevel) -> bool {
-        // Aligned with system_sensitive_gate: Medium and above blocked, including heartbeat.
+    pub(crate) fn should_block_unconfirmed_dynamic_step(
+        user_id: i32,
+        capability_id: &str,
+        risk: RiskLevel,
+    ) -> bool {
+        // Aligned with system_sensitive_gate: heartbeat blocks High+ and
+        // self-spreading capabilities; interactive users block Medium+.
         crate::services::agent::executor_resolve_pure::should_block_unconfirmed_dynamic_step(
-            user_id, risk,
+            user_id,
+            capability_id,
+            risk,
         )
     }
 

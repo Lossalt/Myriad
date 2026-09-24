@@ -96,7 +96,7 @@ async fn unattended_heartbeat_create_is_rejected_without_effects() {
     };
     state.pending.push_back(pending.clone());
     assert!(
-        reject_unattended_confirmation(&mut state, &pending, risk),
+        reject_unattended_confirmation(&mut state, &pending, "heartbeat.create", risk),
         "user 0 must not auto-run heartbeat.create"
     );
     assert!(state.inflight.is_none());
@@ -120,15 +120,40 @@ async fn unattended_heartbeat_create_is_rejected_without_effects() {
     };
     assert_eq!(before, after, "rejection must not write HEARTBEAT.md");
 
-    let mut low = checkpoint();
-    low.pending.push_back(pending.clone());
+    // A Medium read such as http.fetch still auto-runs for the heartbeat.
+    let fetch = PendingCall {
+        call: ToolCall {
+            id: "hb-fetch".into(),
+            name: tools::tool_name("http.fetch"),
+            arguments: r#"{"url":"https://example.com"}"#.into(),
+        },
+        capability_id: Some("http.fetch".into()),
+        approval: None,
+    };
+    let (_, fetch_risk) = capability::capability_requires_confirmation_async("http.fetch")
+        .await
+        .expect("http.fetch requires confirmation");
+    assert_eq!(fetch_risk, RiskLevel::Medium);
+    let mut medium = checkpoint();
+    medium.pending.push_back(fetch.clone());
     assert!(!reject_unattended_confirmation(
-        &mut low,
+        &mut medium,
+        &fetch,
+        "http.fetch",
+        fetch_risk
+    ));
+    assert!(medium.task.step_results.is_empty());
+    assert_eq!(medium.pending.len(), 1);
+
+    // heartbeat.* stays blocked even at Low risk.
+    let mut toggle = checkpoint();
+    toggle.pending.push_back(pending.clone());
+    assert!(reject_unattended_confirmation(
+        &mut toggle,
         &pending,
+        "heartbeat.toggle",
         RiskLevel::Low
     ));
-    assert!(low.task.step_results.is_empty());
-    assert_eq!(low.pending.len(), 1);
 }
 
 #[test]

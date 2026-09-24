@@ -339,8 +339,9 @@ impl Agent {
     /// 系统任务对敏感步骤的自动确认门控（不遍历 recipe）
     ///
     /// 无人值守场景（Heartbeat 定时任务）等待人工确认只会让任务静默空跑，因此：
-    /// - Medium / High / Critical：拒绝自动执行，返回说明性响应
-    /// - Low：自动确认放行并留痕
+    /// - High / Critical，以及会自我扩散的能力（`UNATTENDED_DENIED_CAPABILITIES`，
+    ///   如 `heartbeat.create`）：拒绝自动执行，返回说明性响应
+    /// - 其余 Low / Medium：自动确认放行并留痕
     ///
     /// 返回 `None` = 非系统用户，走正常确认流程；
     /// `Some(Ok(()))` = 已自动确认，继续执行；
@@ -353,9 +354,9 @@ impl Agent {
             return None;
         }
         if let Some(blocked) = sensitive_steps.iter().find(|s| {
-            matches!(
+            !crate::services::agent::executor_resolve_pure::unattended_may_auto_run(
+                &s.capability_id,
                 s.risk_level,
-                RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
             )
         }) {
             let msg = format!(
@@ -365,7 +366,7 @@ impl Agent {
             tracing::warn!(
                 capability = %blocked.capability_id,
                 risk = ?blocked.risk_level,
-                "[Agent] System task blocked: Medium+ operation requires human confirmation"
+                "[Agent] System task blocked: operation requires human confirmation"
             );
             return Some(Err(AgentResponse {
                 response_type: AgentResponseType::Answer,

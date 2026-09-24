@@ -176,27 +176,15 @@ mod resolve_id_tests {
 
     #[test]
     fn dynamic_risk_gate_aligns_with_system_sensitive_gate() {
-        assert!(Executor::should_block_unconfirmed_dynamic_step(
-            crate::services::agent::SYSTEM_USER_ID,
-            RiskLevel::Critical
-        ));
-        assert!(Executor::should_block_unconfirmed_dynamic_step(
-            crate::services::agent::SYSTEM_USER_ID,
-            RiskLevel::High
-        ));
-        // Heartbeat Medium is blocked (matches system_sensitive_gate).
-        assert!(Executor::should_block_unconfirmed_dynamic_step(
-            crate::services::agent::SYSTEM_USER_ID,
-            RiskLevel::Medium
-        ));
-        assert!(Executor::should_block_unconfirmed_dynamic_step(
-            7,
-            RiskLevel::Medium
-        ));
-        assert!(!Executor::should_block_unconfirmed_dynamic_step(
-            7,
-            RiskLevel::Low
-        ));
+        let heartbeat = crate::services::agent::SYSTEM_USER_ID;
+        let gate = Executor::should_block_unconfirmed_dynamic_step;
+        assert!(gate(heartbeat, "system.shutdown", RiskLevel::Critical));
+        assert!(gate(heartbeat, "cache.clear", RiskLevel::High));
+        // Heartbeat Medium auto-runs unless it can spread (matches system_sensitive_gate).
+        assert!(!gate(heartbeat, "http.fetch", RiskLevel::Medium));
+        assert!(gate(heartbeat, "heartbeat.create", RiskLevel::Medium));
+        assert!(gate(7, "http.fetch", RiskLevel::Medium));
+        assert!(!gate(7, "storage.set", RiskLevel::Low));
     }
 
     /// 复现歌单播放链路：搜索步骤输出被整对象引用为 playlistIdFrom 时，
