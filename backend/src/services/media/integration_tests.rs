@@ -2206,3 +2206,37 @@ async fn postgres_publishing_ids_requires_managing_private_assets() {
         .unwrap();
     f.close().await;
 }
+
+#[tokio::test]
+async fn postgres_note_history_skips_dead_media_the_author_removed() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let live = f.image().await;
+    let dead = format!("/api/phantasi/image-cache/ab/ab{}.png", "0".repeat(62));
+    let body = format!("![live]({}) ![dead]({dead})", live.content_path);
+    let doc: i32 = f
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO phantasi_note_docs(user_id, title, content_md) VALUES (1, 'n', $1) RETURNING id",
+            [body.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    // The author removes the dead image; the trigger snapshots the old body.
+    f.db.execute_unprepared(&format!(
+        "UPDATE phantasi_note_docs SET content_md = 'clean', revision = 2 WHERE id = {doc}"
+    ))
+    .await
+    .unwrap();
+    cite::sync_note_history_refs(&f.db, doc, 0, &[])
+        .await
+        .unwrap();
+    let refs = references::active_count(&f.db, live.id).await.unwrap();
+    assert_eq!(refs, 1, "live media in history stays protected");
+    f.close().await;
+}

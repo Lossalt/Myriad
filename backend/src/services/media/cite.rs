@@ -520,10 +520,55 @@ pub(crate) async fn sync_note_history_refs(
             .and_then(Value::as_str)
             .unwrap_or("");
         let image = snapshot.get("image").and_then(Value::as_str);
-        let refs = references_from_fields(txn, origins, image, md, false).await?;
+        let refs = history_refs_from_fields(txn, origins, image, md).await?;
         replace_for_consumer(txn, "note_history", &format!("{doc_id}:{revision}"), &refs).await?;
     }
     Ok(())
+}
+
+/// History snapshots hold the content *before* each save, so a dead image the
+/// author just removed would otherwise keep failing every later save with
+/// MEDIA_NOT_READY. Past versions cannot be edited: protect what is live and
+/// skip the rest. Unmigrated assets stay protected by `references_complete`.
+async fn history_refs_from_fields(
+    txn: &impl ConnectionTrait,
+    origins: &[String],
+    cover: Option<&str>,
+    body: &str,
+) -> Result<Vec<NewReference>, MediaError> {
+    let mut paths: Vec<(String, String)> = Vec::new();
+    if let Some(path) = cover.and_then(|cover| cite_local_path(cover, origins)) {
+        paths.push((path, "cover".into()));
+    }
+    for (index, path) in extract_registered_paths(body, origins)
+        .into_iter()
+        .enumerate()
+    {
+        paths.push((path, format!("body:{index}")));
+    }
+    let mut refs = Vec::new();
+    for (path, slot) in paths {
+        let Some(asset_id) = resolve_asset_id(txn, &path).await? else {
+            continue;
+        };
+        let ready = assets::find_by_id(txn, asset_id)
+            .await?
+            .is_some_and(|row| row.state.as_deref() == Some(MediaState::Ready.as_str()));
+        if !ready
+            || refs
+                .iter()
+                .any(|item: &NewReference| item.asset_id == asset_id && item.slot == slot)
+        {
+            continue;
+        }
+        refs.push(NewReference {
+            asset_id,
+            slot,
+            requires_public: false,
+            expires_at: None,
+        });
+    }
+    Ok(refs)
 }
 
 async fn clear_history_prefix(txn: &impl ConnectionTrait, doc_id: i32) -> Result<(), MediaError> {
