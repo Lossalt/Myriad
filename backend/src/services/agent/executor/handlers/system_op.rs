@@ -151,7 +151,7 @@ async fn execute_scheduler_create(
         );
     }
 
-    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         UserRole::Admin
     } else {
         UserRole::User
@@ -317,7 +317,7 @@ async fn execute_scheduler_trigger(
 // Agent Heartbeat（HEARTBEAT.md，非 Tapp scheduler）
 
 async fn require_heartbeat_admin(ctx: &HandlerContext<'_>) -> Result<(), String> {
-    if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         Ok(())
     } else {
         Err("Heartbeat admin required".to_string())

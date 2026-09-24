@@ -68,7 +68,7 @@ async fn persist_agent_tapp(
         .await
         .map_err(str::to_owned)?;
     let approved_permissions = select_install_approved_permissions(&requested_permissions, &[]);
-    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         UserRole::Admin
     } else {
         UserRole::User

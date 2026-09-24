@@ -263,7 +263,9 @@ pub(crate) async fn install_generated(
     modules: std::collections::HashMap<String, String>,
 ) -> Result<(), HttpError> {
     ensure_tapp_install_allowed(db, user_id).await?;
-    let is_current_admin = crate::services::agent::user_is_current_admin(db, user_id).await;
+    let is_current_admin = crate::services::agent::user_is_current_admin(db, user_id)
+        .await
+        .map_err(|error| HttpError(myriad_error::AppError::internal(error)))?;
     let role = if is_current_admin {
         UserRole::Admin
     } else {

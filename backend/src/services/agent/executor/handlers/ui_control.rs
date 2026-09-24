@@ -341,7 +341,7 @@ async fn find_accessible_tapp(
     }
 
     let mut query = tapps::Entity::find().filter(tapps::Column::TappId.eq(tapp_id));
-    if !crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    if !crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         let admin_id = crate::services::tapp_ownership::get_admin_user_id(ctx.db)
             .await
             .map_err(|err| err.to_string())?;
@@ -381,7 +381,7 @@ pub(super) async fn execute_tapp_page_content(
             let admin_id = crate::services::tapp_ownership::get_admin_user_id(ctx.db)
                 .await
                 .map_err(|err| err.to_string())?;
-            let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await;
+            let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await?;
             if !is_admin {
                 query = query.filter(
                     tapps::Column::UserId
@@ -475,7 +475,7 @@ pub(super) async fn execute_tapp_page_content(
             let app = find_accessible_tapp(ctx, tapp_id_str).await?;
             let role = role_from_user_id(
                 ctx.user_id,
-                crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await,
+                crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?,
             );
             let approved: Vec<String> =
                 serde_json::from_value(app.approved_permissions.clone()).unwrap_or_default();

@@ -54,7 +54,7 @@ pub(super) async fn execute_permission_check(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
     let role = role_from_user_id(ctx.user_id, is_admin);
 
     let Some(parsed) = TappPermission::from_str(permission) else {

@@ -186,6 +186,7 @@ mod tests {
                 for needle in [
                     "SELECT id FROM users WHERE is_owner = true ORDER BY id",
                     "ADMIN_ID_CACHE",
+                    "SELECT is_admin FROM users WHERE id = $1",
                     // Lowest-admin-as-owner subqueries (scheduler audience).
                     "WHERE is_admin = true\n              ORDER BY id\n              LIMIT 1",
                 ] {

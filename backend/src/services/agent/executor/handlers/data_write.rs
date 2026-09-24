@@ -496,7 +496,7 @@ async fn execute_phantasi_mark(
         _ => return Err(format!("Unknown mark action: {}", action)),
     };
     // 共享订阅库：按可见源标状态，不按创建者；星标只属于站长身份。
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await?;
     if is_starred.is_some() && !is_admin {
         return Err("Forbidden".to_string());
     }

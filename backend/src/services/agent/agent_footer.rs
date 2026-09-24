@@ -233,7 +233,7 @@ impl AgentTurnBudget {
     ) -> Result<Self, String> {
         let role = crate::services::tapp_context::role_for_subject(
             user_id,
-            user_is_current_admin(db, user_id).await,
+            user_is_current_admin(db, user_id).await?,
         );
         let reservation = crate::services::ai_quota::reserve_ai_quota_with_options(
             db,
@@ -381,7 +381,9 @@ pub async fn get_capabilities_summary_for_user(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
 ) -> serde_json::Value {
-    if user_is_current_admin(db, user_id).await {
+    // Informational listing: an unreadable role (already logged) shows the
+    // non-admin summary, whose grants are computed separately below.
+    if user_is_current_admin(db, user_id).await == Ok(true) {
         capability::get_capability_summary_filtered(None).await
     } else {
         let granted = get_user_permissions(db, user_id).await;
@@ -389,34 +391,23 @@ pub async fn get_capabilities_summary_for_user(
     }
 }
 
-/// Query the current database role. Agent recipes can execute long after a
-/// token was issued, so a hard-coded "first user is admin" rule is unsafe.
-pub async fn user_is_current_admin(db: &sea_orm::DatabaseConnection, user_id: i32) -> bool {
-    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-
-    if user_id == 0 {
-        return true;
+/// Query the current role ([`crate::services::principal::is_current_admin`]).
+/// Agent recipes can execute long after a token was issued, so a hard-coded
+/// "first user is admin" rule is unsafe. The system user (0) is admin. A failed
+/// read is an error; callers decide, it is never reported as "not an admin".
+pub async fn user_is_current_admin(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+) -> Result<bool, String> {
+    if user_id == SYSTEM_USER_ID {
+        return Ok(true);
     }
-
-    match db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-            [user_id.into()],
-        ))
+    crate::services::principal::is_current_admin(db, user_id)
         .await
-    {
-        Ok(Some(row)) => row.try_get::<bool>("", "is_admin").unwrap_or(false),
-        Ok(None) => false,
-        Err(error) => {
-            tracing::warn!(
-                user_id,
-                %error,
-                "[Agent] Failed to refresh current user role; using least privilege"
-            );
-            false
-        }
-    }
+        .map_err(|error| {
+            tracing::warn!(user_id, %error, "[Agent] Failed to read current user role");
+            "Could not verify current administrator status".to_string()
+        })
 }
 
 /// 非管理员 Agent 能力候选全集；之后按当前授予权限过滤。
@@ -483,7 +474,7 @@ pub async fn ensure_agent_usage_allowed(
 ) -> Result<bool, String> {
     use crate::services::permission_service::{TappPermission, TappPermissionService, UserRole};
 
-    let is_admin = user_is_current_admin(db, user_id).await;
+    let is_admin = user_is_current_admin(db, user_id).await?;
     if is_admin || user_id == SYSTEM_USER_ID {
         return Ok(true);
     }
@@ -630,8 +621,12 @@ pub async fn get_user_permissions(
     use crate::services::permission_service::{TappPermissionService, UserRole};
     use std::collections::HashSet;
 
-    // 系统用户或管理员：全部权限
-    if user_is_current_admin(db, user_id).await {
+    // 系统用户或管理员：全部权限。角色读不出与下方可见性读不出一样按最小权限。
+    let is_admin = match user_is_current_admin(db, user_id).await {
+        Ok(is_admin) => is_admin,
+        Err(_) => return HashSet::new(),
+    };
+    if is_admin {
         let registry = capability::get_registry();
         let mut permissions: HashSet<String> = registry
             .get_all()
@@ -869,6 +864,18 @@ async fn load_mcp_tool_schemas() -> HashMap<String, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The system user and guests are answered without the database; a real
+    /// account whose role cannot be read is an error, not "not an admin".
+    #[tokio::test]
+    async fn current_admin_role_read_failure_is_an_error() {
+        let db = sea_orm::DatabaseConnection::default();
+        assert_eq!(user_is_current_admin(&db, SYSTEM_USER_ID).await, Ok(true));
+        assert_eq!(user_is_current_admin(&db, -4).await, Ok(false));
+        crate::middleware::auth::invalidate_auth_cache_local(910_401);
+        assert!(user_is_current_admin(&db, 910_401).await.is_err());
+        assert!(get_user_permissions(&db, 910_401).await.is_empty());
+    }
 
     fn pending(cap: &str, risk: RiskLevel) -> PendingConfirmation {
         PendingConfirmation {

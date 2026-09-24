@@ -22,7 +22,7 @@ pub(super) async fn execute_fuzzy_search(
 
     let query_lower = query.to_lowercase();
     let mut results: Vec<Value> = Vec::new();
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
 
     // 搜索 Phantasi 订阅源
     if scope == "all" || scope == "phantasi" {

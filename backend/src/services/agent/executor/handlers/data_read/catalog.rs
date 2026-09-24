@@ -378,7 +378,7 @@ pub(super) async fn execute_tapp_list(
     let admin_id = crate::services::tapp_ownership::get_admin_user_id(ctx.db)
         .await
         .map_err(|e| e.to_string())?;
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
     let mut query = tapps::Entity::find();
     if !is_admin {
         query = query.filter(
@@ -511,7 +511,7 @@ pub(super) async fn execute_heartbeat_list(
     params: &HashMap<String, Value>,
     ctx: &HandlerContext<'_>,
 ) -> Result<Value, String> {
-    if !crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    if !crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         return Err("Heartbeat admin required".to_string());
     }
     let manager = crate::services::agent::heartbeat::get_heartbeat()

@@ -132,7 +132,10 @@ pub(crate) async fn require_current_admin(
     db: &DatabaseConnection,
 ) -> Result<i32, HttpError> {
     let user_id = parse_user_id(claims)?;
-    if !crate::services::agent::user_is_current_admin(db, user_id).await {
+    let is_admin = crate::services::agent::user_is_current_admin(db, user_id)
+        .await
+        .map_err(|error| HttpError(myriad_error::AppError::internal(error)))?;
+    if !is_admin {
         return Err(HttpError::from((
             StatusCode::FORBIDDEN,
             Json(json!({ "error": "Administrator access required", "code": "admin_required" })),
