@@ -1,25 +1,21 @@
-import { useSyncExternalStore } from 'react'
 import { emitAppEvent } from './appEvents'
+import { createStore, useStore } from './store'
 
-let snapshot = { epoch: 0, ready: true }
-const listeners = new Set<() => void>()
-function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } }
-export const getTappSubjectSnapshot = () => snapshot
+const tappSubject = createStore({ epoch: 0, ready: true })
+export const getTappSubjectSnapshot = tappSubject.get
 
 /** Identity changes, unlike visibility changes, invalidate every old TAPP consumer. */
 export function beginTappSubjectChange(): number {
-  snapshot = { epoch: snapshot.epoch + 1, ready: false }
-  listeners.forEach(listener => listener())
-  return snapshot.epoch
+  tappSubject.set(({ epoch }) => ({ epoch: epoch + 1, ready: false }))
+  return tappSubject.get().epoch
 }
 
 export function finishTappSubjectChange(epoch: number, isAuthenticated: boolean): void {
-  if (epoch !== snapshot.epoch) return
-  snapshot = { epoch, ready: true }
-  listeners.forEach(listener => listener())
+  if (epoch !== tappSubject.get().epoch) return
+  tappSubject.set({ epoch, ready: true })
   emitAppEvent('tapp-subject-ready', { isAuthenticated })
 }
 
 export function useTappSubject() {
-  return useSyncExternalStore(subscribe, getTappSubjectSnapshot, getTappSubjectSnapshot)
+  return useStore(tappSubject)
 }
