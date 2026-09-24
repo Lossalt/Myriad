@@ -69,7 +69,13 @@ pub(super) fn build_authenticated_router(
             "/api/media",
             get(api::media::list_media)
                 .post(api::media::upload_media)
-                .layer(axum::extract::DefaultBodyLimit::max(24 * 1024 * 1024))
+                // Uploads accept videos up to note_video_limit(); a fixed 24 MiB
+                // cap failed them as "Failed to read file field" instead of
+                // MEDIA_TOO_LARGE. Size follows the live memory profile.
+                .layer(axum::extract::DefaultBodyLimit::disable())
+                .layer(axum::middleware::from_fn(
+                    crate::federation::limits::live_note_media_body_limit,
+                ))
                 .route_layer(from_fn_with_state(
                     app_state.clone(),
                     middleware::auth::admin_middleware,
@@ -1370,6 +1376,11 @@ mod security_route_wiring_tests {
         assert!(
             route_has_middleware(src, "/api/media/{id}/content", "auth_middleware"),
             "private media content must be authenticated"
+        );
+        assert!(
+            route_has_middleware(src, "/api/media", "live_note_media_body_limit")
+                && route_has_middleware(src, "/api/media", "DefaultBodyLimit::disable"),
+            "media uploads follow the live video limit, not a fixed cap"
         );
         assert!(
             route_has_middleware(src, "/api/media/{id}/publication", "admin_middleware"),
