@@ -136,6 +136,21 @@ pub(crate) async fn update_note(
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let user_id = admin_user_id(&admin)?;
     find_catalog_note(&db, id).await?;
+    // This revision-less write would overwrite the editor document without a
+    // conflict check or a collaboration broadcast, silently discarding a draft
+    // being edited elsewhere. Notes that have a document are edited through it.
+    let has_document = crate::models::entities::phantasi_note_docs::Entity::find()
+        .filter(crate::models::entities::phantasi_note_docs::Column::ItemId.eq(id))
+        .one(&db)
+        .await
+        .map_err(|e| phantasi_store_http("find note doc", e))?
+        .is_some();
+    if has_document {
+        return Err(HttpError(
+            myriad_error::AppError::conflict("This note is edited through its document; reopen it")
+                .with_code("NOTE_HAS_DOCUMENT"),
+        ));
+    }
     let item = crate::services::note_publish::write_note_with_doc(
         &db,
         user_id,
@@ -227,6 +242,15 @@ mod tests {
                 "{name} must not look up the creating admin"
             );
         }
+        let update = src
+            .split("pub(crate) async fn update_note")
+            .nth(1)
+            .and_then(|rest| rest.split("\npub(crate) async fn ").next())
+            .expect("update_note");
+        assert!(
+            update.contains("NOTE_HAS_DOCUMENT"),
+            "the revision-less write must not overwrite an editor document"
+        );
     }
 
     #[test]
