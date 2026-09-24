@@ -131,6 +131,25 @@ impl IntentStore {
         models.into_iter().map(model_to_record).collect()
     }
 
+    /// Move a skipped Accepted autonomy row to the tail of the oldest-first
+    /// queue. Status stays Accepted so the user can still open the card.
+    /// A concurrent user accept or claim is left alone.
+    pub async fn defer_autonomy_skip(&self, intent_id: &str, user_id: i32) -> Result<bool, DbErr> {
+        let update = agent_intentions::ActiveModel {
+            updated_at: Set(to_fixed(Utc::now())),
+            ..Default::default()
+        };
+        let result = agent_intentions::Entity::update_many()
+            .set(update)
+            .filter(agent_intentions::Column::Id.eq(intent_id))
+            .filter(agent_intentions::Column::UserId.eq(user_id))
+            .filter(agent_intentions::Column::Status.eq(IntentStatus::Accepted.as_str()))
+            .filter(agent_intentions::Column::AcceptSource.eq(AcceptSource::Autonomy.as_str()))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected == 1)
+    }
+
     pub async fn latest_work_source_event(&self, user_id: i32) -> Result<Option<String>, DbErr> {
         let model = agent_intentions::Entity::find()
             .filter(agent_intentions::Column::UserId.eq(user_id))
@@ -482,6 +501,55 @@ mod ledger_db_tests {
         );
     }
 
+    #[tokio::test]
+    async fn deferred_skips_let_the_next_batch_reach_a_later_row() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut options = sea_orm::ConnectOptions::new(url);
+        options.max_connections(1).sqlx_logging(false);
+        let db = sea_orm::Database::connect(options).await.unwrap();
+        db.execute_unprepared(
+            r#"CREATE TEMP TABLE agent_intentions (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, source_event_id TEXT NOT NULL,
+                summary TEXT NOT NULL, reason_code TEXT NOT NULL, status TEXT NOT NULL,
+                proposal JSONB NOT NULL, work_session_id TEXT, work_run_id TEXT,
+                result_summary TEXT, expires_at TIMESTAMPTZ, accept_source TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+            INSERT INTO agent_intentions
+            SELECT format('blocked-%s', n), 8, 'e', 's', 'r', 'accepted',
+                   '{"title":"t","instruction":"i","expected_outcome":"o","source_event_id":"e"}',
+                   NULL, NULL, NULL, NOW() + INTERVAL '1 day', 'autonomy',
+                   NOW() - INTERVAL '2 hours',
+                   NOW() - INTERVAL '2 hours' + (n::text || ' seconds')::interval
+            FROM generate_series(1, 4) AS n;
+            INSERT INTO agent_intentions
+            SELECT 'ready-later', 9, 'e', 's', 'r', 'accepted',
+                   '{"title":"t","instruction":"i","expected_outcome":"o","source_event_id":"e"}',
+                   NULL, NULL, NULL, NOW() + INTERVAL '1 day', 'autonomy',
+                   NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour';"#,
+        )
+        .await
+        .unwrap();
+        let store = IntentStore::new(db);
+        let blocked = store.list_autonomy_accepted(4).await.unwrap();
+        assert_eq!(blocked.len(), 4);
+        assert!(blocked.iter().all(|row| row.id.starts_with("blocked-")));
+        for row in &blocked {
+            assert!(store
+                .defer_autonomy_skip(&row.id, row.user_id)
+                .await
+                .unwrap());
+            let kept = store.find(&row.id, row.user_id).await.unwrap();
+            assert_eq!(
+                (kept.status, kept.accept_source),
+                (IntentStatus::Accepted, AcceptSource::Autonomy)
+            );
+        }
+        let next = store.list_autonomy_accepted(4).await.unwrap();
+        assert_eq!(next[0].id, "ready-later");
+    }
+
     async fn connect() -> Option<(DatabaseConnection, i32)> {
         let url = std::env::var("AGENT_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("NOTIFICATION_TEST_DATABASE_URL"))
@@ -573,12 +641,10 @@ mod ledger_db_tests {
             .reattach_work(&first.id, user_id, "ses_empty".into(), "run_empty".into())
             .await
             .expect("attach");
-        assert!(
-            store
-                .reclaim_running_to_accepted(&first.id, user_id)
-                .await
-                .expect("reclaim")
-        );
+        assert!(store
+            .reclaim_running_to_accepted(&first.id, user_id)
+            .await
+            .expect("reclaim"));
         let reclaimed = store.find(&first.id, user_id).await.expect("reload");
         assert_eq!(reclaimed.status, IntentStatus::Accepted);
         assert_eq!(reclaimed.accept_source, AcceptSource::Autonomy);

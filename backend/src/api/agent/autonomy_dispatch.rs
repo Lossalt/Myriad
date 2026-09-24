@@ -2,16 +2,16 @@
 
 use super::*;
 use crate::services::agent::consciousness::{
-    AcceptSource, AutonomyClaim, AutonomyGrantStore, IntentRecord, IntentStatus, IntentStore,
-    autonomy_claim_decision, build_autonomy_work_request,
+    autonomy_claim_decision, build_autonomy_work_request, AcceptSource, AutonomyClaim,
+    AutonomyGrantStore, IntentRecord, IntentStatus, IntentStore,
 };
 use crate::services::agent::queue::LaneQueue;
 use crate::services::agent::run_hub::create_run;
 use crate::services::agent::{
-    Agent, AgentProgressEvent, AgentResponse, AgentResponseType, LANE_QUEUE, SYSTEM_USER_ID,
-    TaskStatus,
+    Agent, AgentProgressEvent, AgentResponse, AgentResponseType, TaskStatus, LANE_QUEUE,
+    SYSTEM_USER_ID,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub async fn tick_autonomy_work(db: DatabaseConnection) {
     let store = IntentStore::new(db.clone());
@@ -34,6 +34,8 @@ pub async fn tick_autonomy_work(db: DatabaseConnection) {
 
 async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(), String> {
     if intent.user_id == SYSTEM_USER_ID || intent.accept_source != AcceptSource::Autonomy {
+        // A row the query still returned must not keep the head of the queue.
+        defer_skipped_autonomy(db, &intent).await;
         return Ok(());
     }
     let grant = AutonomyGrantStore::new(db.clone())
@@ -52,6 +54,9 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
         grant.as_ref(),
         &granted,
     ) else {
+        // Keep Accepted so the user can still click the card, but leave the
+        // oldest-first batch. expires_at is what expiry uses, not updated_at.
+        defer_skipped_autonomy(db, &intent).await;
         return Ok(());
     };
 
@@ -187,6 +192,19 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
         }
     }
     Ok(())
+}
+
+async fn defer_skipped_autonomy(db: &DatabaseConnection, intent: &IntentRecord) {
+    if let Err(error) = IntentStore::new(db.clone())
+        .defer_autonomy_skip(&intent.id, intent.user_id)
+        .await
+    {
+        tracing::warn!(
+            %error,
+            intent_id = %intent.id,
+            "[Autonomy] could not defer skipped proposal"
+        );
+    }
 }
 
 async fn forward_autonomy_progress(
@@ -400,6 +418,89 @@ fn intention_status_from_response(response: &AgentResponse) -> IntentStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::agent::consciousness::AutonomyGrantView;
+
+    /// Oldest-first batch of 4. A skip stamps `updated_at` so the row leaves
+    /// the head; a claim is a dispatch. This is the queue contract
+    /// `defer_autonomy_skip` implements.
+    fn advance_batch(
+        rows: &mut [(String, chrono::DateTime<chrono::Utc>, AutonomyClaim, bool)],
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<String> {
+        let mut order: Vec<usize> = (0..rows.len()).filter(|index| !rows[*index].3).collect();
+        order.sort_by_key(|index| rows[*index].1);
+        let mut dispatched = Vec::new();
+        for index in order.into_iter().take(4) {
+            match &rows[index].2 {
+                AutonomyClaim::Claim { .. } => {
+                    rows[index].3 = true;
+                    dispatched.push(rows[index].0.clone());
+                }
+                AutonomyClaim::Skip => {
+                    rows[index].1 = now;
+                }
+            }
+        }
+        dispatched
+    }
+
+    #[test]
+    fn revoked_rows_do_not_block_the_next_autonomy_tick() {
+        let start = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let granted = vec!["calendar:read".to_string()];
+        let mut rows = Vec::new();
+        for index in 0..4 {
+            let grant = AutonomyGrantView {
+                user_id: 10 + index,
+                allowed_permissions: granted.clone(),
+                revoked: true,
+            };
+            rows.push((
+                format!("revoked-{index}"),
+                start + chrono::Duration::seconds(index as i64),
+                autonomy_claim_decision(10 + index, AcceptSource::Autonomy, Some(&grant), &granted),
+                false,
+            ));
+            assert!(
+                matches!(rows[index as usize].2, AutonomyClaim::Skip),
+                "revoked grant must be skipped"
+            );
+        }
+        let live = AutonomyGrantView {
+            user_id: 42,
+            allowed_permissions: granted.clone(),
+            revoked: false,
+        };
+        rows.push((
+            "live".into(),
+            start + chrono::Duration::seconds(10),
+            autonomy_claim_decision(42, AcceptSource::Autonomy, Some(&live), &granted),
+            false,
+        ));
+        assert!(matches!(rows[4].2, AutonomyClaim::Claim { .. }));
+
+        let first = advance_batch(&mut rows, start + chrono::Duration::minutes(1));
+        assert!(
+            first.is_empty(),
+            "the first tick only sees the four revoked heads"
+        );
+        let second = advance_batch(&mut rows, start + chrono::Duration::minutes(2));
+        assert_eq!(second, vec!["live".to_string()]);
+        assert!(rows[4].3, "the live proposal was dispatched");
+        assert!(rows[..4].iter().all(|row| !row.3));
+        assert!(rows[..4].iter().all(|row| row.1 > rows[4].1));
+    }
+
+    #[test]
+    fn skipped_dispatch_defers_instead_of_returning_unchanged() {
+        let src = include_str!("autonomy_dispatch.rs");
+        assert!(
+            src.matches("defer_skipped_autonomy(db, &intent)").count() >= 2,
+            "both skip returns must leave the queue head"
+        );
+    }
 
     #[tokio::test]
     async fn autonomy_producer_error_closes_running_run() {
@@ -584,12 +685,10 @@ mod tests {
         assert_eq!(meta["pendingQuestion"]["confirmationId"], "c1");
         assert_eq!(meta["pendingQuestion"]["questionType"], "confirmation");
         assert_eq!(meta["taskId"], "confirmation:c1");
-        assert!(
-            meta["pendingQuestion"]["context"]
-                .as_str()
-                .unwrap()
-                .contains("mail.send")
-        );
+        assert!(meta["pendingQuestion"]["context"]
+            .as_str()
+            .unwrap()
+            .contains("mail.send"));
         let parked = park_confirmation_run(&response, "confirmation:c1");
         assert_eq!(parked["task"]["status"], "waiting_for_input");
         assert_eq!(parked["streamTerminal"], false);
