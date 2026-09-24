@@ -64,12 +64,17 @@ impl Agent {
             recipe.conversation_context.clone(),
         );
         context.autonomy_permission_cap = recipe.autonomy_permission_cap.clone();
+        for (key, value) in &recipe.metadata {
+            // Recipe metadata is data; it must not be able to name the task.
+            if key != "task_id" {
+                context.variables.insert(format!("_{key}"), value.clone());
+            }
+        }
+        // Written last: the executor's identity for this task, which handler
+        // contexts (and retries) read back from `_task_id`.
         context
             .variables
             .insert("_task_id".into(), json!(task.task_id));
-        for (key, value) in &recipe.metadata {
-            context.variables.insert(format!("_{key}"), value.clone());
-        }
         if let Some(memory) = super::memory::get_memory() {
             let memories = memory
                 .recall_with_params(super::memory::RecallQuery {
