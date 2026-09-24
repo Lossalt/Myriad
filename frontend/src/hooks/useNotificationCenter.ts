@@ -4,6 +4,7 @@ import type {
   LiveSpeechEvent,
   NotificationStreamEvent,
 } from '../services/notificationApi'
+import type { NotificationHistoryJournal } from './notificationHistory'
 
 import {
   useCallback,
@@ -18,6 +19,13 @@ import notificationApi from '../services/notificationApi'
 import { authSubject } from '../utils/authSubject'
 import { formatUserFacingError } from '../utils/formatUserFacingError'
 import { showError } from '../utils/toastManager'
+import {
+  createNotificationHistoryJournal,
+  journalCleared,
+  journalLive,
+  journalRemoved,
+  mergeNotificationHistory,
+} from './notificationHistory'
 
 /** 历史/SSE 增量封顶，防止长会话无限增长。 */
 const MAX_ITEMS = 100
@@ -71,12 +79,20 @@ export function useNotificationCenter({
   const userIdRef = useRef(userId)
   userIdRef.current = userId
 
+  // 在途历史请求各自的变更日志：请求期间到达的 SSE/本地删改比历史快照新。
+  const journalsRef = useRef(new Set<NotificationHistoryJournal>())
+  const journal = useCallback((record: (j: NotificationHistoryJournal) => void) => {
+    for (const j of journalsRef.current) record(j)
+  }, [])
+
   const loadHistory = useCallback(async () => {
     const requestedSubject = authSubject.revision
+    const changes = createNotificationHistoryJournal()
+    journalsRef.current.add(changes)
     try {
       const res = await notificationApi.list(50)
       if (!enabledRef.current || authSubject.revision !== requestedSubject) return
-      setItems(res.notifications)
+      setItems((prev) => mergeNotificationHistory(prev, res.notifications, changes, MAX_ITEMS))
       setLoaded(true)
     } catch (e) {
       console.warn('[NotificationCenter] Failed to load history:', e)
@@ -88,6 +104,8 @@ export function useNotificationCenter({
         ),
       )
       setLoaded(true)
+    } finally {
+      journalsRef.current.delete(changes)
     }
   }, [subject])
 
@@ -116,6 +134,7 @@ export function useNotificationCenter({
           // 旧 EventSource cleanup 窗口内再按 payload owner 校验一次。
           if (n.user_id !== userIdRef.current) return
 
+          journal(j => journalLive(j, n.id))
           setItems((prev) =>
             // 运行中任务用稳定通知 ID；新进度替换旧快照并移到顶部。
             [n, ...prev.filter((p) => p.id !== n.id)].slice(0, MAX_ITEMS),
@@ -125,9 +144,11 @@ export function useNotificationCenter({
           onNewRef.current?.(n)
         } else if (event.event === 'notification_deleted') {
           if (event.user_id !== userIdRef.current) return
+          journal(j => journalRemoved(j, event.id))
           setItems((prev) => prev.filter((p) => p.id !== event.id))
         } else if (event.event === 'notifications_cleared') {
           if (event.user_id !== userIdRef.current) return
+          journal(journalCleared)
           setItems([])
         } else if (event.event === 'live_speech') {
           if (event.user_id !== userIdRef.current) return
@@ -158,7 +179,7 @@ export function useNotificationCenter({
       active = false
       close()
     }
-  }, [enabled, userId, subject])
+  }, [enabled, userId, subject, journal])
 
   useEffect(() => {
     // 启用即拉历史：刷新后不能等打开通知页才加载。
@@ -167,6 +188,7 @@ export function useNotificationCenter({
 
   const removeItem = useCallback(
     async (n: AppNotification) => {
+      journal(j => journalRemoved(j, n.id))
       setItems((prev) => prev.filter((p) => p.id !== n.id))
       try {
         await notificationApi.remove(n.id)
@@ -181,10 +203,11 @@ export function useNotificationCenter({
         void loadHistory()
       }
     },
-    [loadHistory],
+    [loadHistory, journal],
   )
 
   const clearAll = useCallback(async () => {
+    journal(journalCleared)
     setItems([])
     try {
       await notificationApi.clearAll()
@@ -198,7 +221,7 @@ export function useNotificationCenter({
       )
       void loadHistory()
     }
-  }, [loadHistory])
+  }, [loadHistory, journal])
 
   const panelItems = useMemo(
     () =>
