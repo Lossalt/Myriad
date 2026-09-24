@@ -238,28 +238,33 @@ impl<'r> RunState<'r> {
             ..
         } = self;
 
-        emitter
-            .waiting_for_input(&task_state.task_id, &question)
-            .await;
-
         // 保存任务状态为 WaitingForInput
         task_state.status = TaskStatus::WaitingForInput;
-        task_state.set_pending_question(question);
+        task_state.set_pending_question(question.clone());
         task_state.recipe = Some(recipe.clone());
         context.retry_budget_remaining = global_retry_budget;
         task_state.execution_context = Some(context);
 
-        sync_task_store(&task_state).await;
-        match persist {
-            PausePersist::Background => persist_task_async(user_id, task_state.clone()),
-            PausePersist::AwaitTappWait => {
-                task_store::save_task_to_db(user_id, &task_state)
-                    .await
-                    .map_err(|error| {
-                        tracing::error!(%error, "persist Tapp interaction wait state failed");
-                        "Failed to persist Tapp interaction wait state".to_string()
-                    })?;
+        // A Tapp interaction wait must be durable before anyone is told the
+        // task is waiting: its answer arrives through the database.
+        if let PausePersist::AwaitTappWait = persist {
+            if let Err(error) = task_store::save_task_to_db(user_id, &task_state).await {
+                tracing::error!(%error, "persist Tapp interaction wait state failed");
+                let message = "Failed to persist Tapp interaction wait state".to_string();
+                task_state.status = TaskStatus::Failed;
+                task_state.error = Some(message.clone());
+                task_state.completed_at = Some(chrono::Utc::now());
+                sync_task_store(&task_state).await;
+                return Err(message);
             }
+        }
+
+        emitter
+            .waiting_for_input(&task_state.task_id, &question)
+            .await;
+        sync_task_store(&task_state).await;
+        if let PausePersist::Background = persist {
+            persist_task_async(user_id, task_state.clone());
         }
 
         Ok(task_state)

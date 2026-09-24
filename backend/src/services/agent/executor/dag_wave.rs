@@ -327,6 +327,8 @@ impl Executor {
         let post_dynamic_count = run.context.pending_dynamic_steps.len();
         if post_dynamic_count > pre_dynamic_count {
             let new_count = post_dynamic_count - pre_dynamic_count;
+            // Same count as the serial path, so the displayed total agrees.
+            run.dynamic_steps_queued += new_count;
             if new_count > 1 {
                 let new_steps: Vec<RecipeStep> =
                     run.context.pending_dynamic_steps[pre_dynamic_count..].to_vec();
