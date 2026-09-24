@@ -26,7 +26,6 @@ import {
 } from '../../lib/icons'
 import adminUsersApi from '../../services/adminUsersApi'
 import { TappIconBadge } from '../../tapp/components/TappIconBadge'
-import { messageForAdminUserError } from '../../utils/authErrorMessages'
 import { getOAuthIconAsset } from '../../utils/oauthIcons'
 import { passwordValidationCode } from '../../utils/passwordValidation'
 import { userFacingError } from '../../utils/userFacingError'
@@ -229,10 +228,9 @@ export const UsersConfigSection: React.FC<UsersConfigSectionProps> = ({
 
   const notifyError = useCallback(
     (error: unknown, fallback: string) => {
-      const message = messageForAdminUserError(error, t, fallback)
-      onMessage?.(message, 'error')
+      onMessage?.(userFacingError(error, fallback), 'error')
     },
-    [onMessage, t],
+    [onMessage],
   )
 
   const loadUsers = useCallback(async () => {

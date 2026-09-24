@@ -122,10 +122,10 @@ async fn postgres_recipe_orders_dependencies_and_resumes_without_duplicate_note(
             .await
             .unwrap()
     );
-    assert!(recipes::advance(&mut state, &agent.executor).unwrap());
+    assert!(recipes::advance(&mut state).unwrap());
     let read = state.pending.front().unwrap().clone();
     agent.work_tool(&mut state, read, &emitter).await.unwrap();
-    assert!(recipes::advance(&mut state, &agent.executor).unwrap());
+    assert!(recipes::advance(&mut state).unwrap());
     let save = state.pending.front().unwrap().clone();
     agent.work_tool(&mut state, save, &emitter).await.unwrap();
     store::save(&db, &mut state).await.unwrap();
@@ -193,7 +193,7 @@ async fn postgres_recipe_confirmation_denial_revocation_and_owner_isolation() {
             .work_tool(&mut state, pending, &emitter)
             .await
             .unwrap();
-        recipes::advance(&mut state, &agent.executor).unwrap();
+        recipes::advance(&mut state).unwrap();
         let pending = state.pending.front().unwrap().clone();
         assert!(
             agent

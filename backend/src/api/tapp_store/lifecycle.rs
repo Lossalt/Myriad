@@ -42,13 +42,12 @@ pub(super) async fn start_tapp(
     Path(tapp_id): Path<String>,
 ) -> Result<Json<ApiResponse<()>>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     validate_tapp_id(&tapp_id).map_err(|_| HttpError(AppError::bad_request("Bad request")))?;
     let admin_id = find_admin_user_id(&db).await?;
     let now = Utc::now().fixed_offset();
-    let is_current_admin = current_is_admin(&claims, &db).await;
+    let is_current_admin = current_is_admin(&claims, &db).await?;
 
     let private_tapp = if admin_id != Some(user_id) {
         tapps::Entity::find()
@@ -181,12 +180,11 @@ pub(super) async fn stop_tapp(
     Path(tapp_id): Path<String>,
 ) -> Result<Json<ApiResponse<()>>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     validate_tapp_id(&tapp_id).map_err(|_| HttpError(AppError::bad_request("Bad request")))?;
     let admin_id = find_admin_user_id(&db).await?;
-    let is_current_admin = current_is_admin(&claims, &db).await;
+    let is_current_admin = current_is_admin(&claims, &db).await?;
 
     let private_tapp = if admin_id != Some(user_id) {
         tapps::Entity::find()
@@ -271,9 +269,8 @@ pub(super) async fn get_recent_tapps(
     Query(query): Query<GetRecentTappsQuery>,
 ) -> Result<Json<ApiResponse<Vec<RecentTappItem>>>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     let limit = clamp_recent_limit(query.limit);
 
     // 获取用户活动记录
@@ -310,7 +307,7 @@ pub(super) async fn get_recent_tapps(
         Vec::new()
     };
 
-    let is_admin = current_is_admin(&claims, &db).await;
+    let is_admin = current_is_admin(&claims, &db).await?;
 
     // 合并 Tapp 列表：先插公开再 `or_insert` 私有（同 id 公开胜出）
     let mut tapp_map: std::collections::HashMap<String, &tapps::Model> =

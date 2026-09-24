@@ -9,7 +9,7 @@ pub(super) fn checkpoint() -> Checkpoint {
         context: None,
     };
     let mut recipe = Agent::build_recipe_from_steps(vec![], "Time comparison".into(), &request);
-    recipe.metadata.insert("work_loop_version".into(), json!(1));
+    recipe.engine = AgentEngine::WorkLoop;
     let mut task = TaskState::new(&recipe);
     task.status = TaskStatus::Running;
     task.execution_context = Some(ExecutionContext::default());
@@ -66,6 +66,94 @@ fn answer(state: &Checkpoint, text: &str) -> UserAnswer {
         answer: text.into(),
         skipped: false,
     }
+}
+
+#[tokio::test]
+async fn unattended_heartbeat_create_is_rejected_without_effects() {
+    let (message, risk) = capability::capability_requires_confirmation_async("heartbeat.create")
+        .await
+        .expect("heartbeat.create requires confirmation");
+    assert_eq!(risk, RiskLevel::Medium);
+    assert!(!message.is_empty());
+
+    let before = match crate::services::agent::heartbeat::get_heartbeat() {
+        Some(manager) => Some(manager.get_tasks().await.len()),
+        None => None,
+    };
+
+    let mut state = checkpoint();
+    assert_eq!(state.user_id, crate::services::agent::SYSTEM_USER_ID);
+    let pending = PendingCall {
+        call: ToolCall {
+            id: "hb-create".into(),
+            name: tools::tool_name("heartbeat.create"),
+            arguments:
+                r#"{"name":"spread","schedule":"0 * * * *","action":"create another heartbeat"}"#
+                    .into(),
+        },
+        capability_id: Some("heartbeat.create".into()),
+        approval: None,
+    };
+    state.pending.push_back(pending.clone());
+    assert!(
+        reject_unattended_confirmation(&mut state, &pending, "heartbeat.create", risk),
+        "user 0 must not auto-run heartbeat.create"
+    );
+    assert!(state.inflight.is_none());
+    assert!(state.attempted_effects.is_empty());
+    assert!(state.wait.is_none());
+    assert!(state.pending.is_empty());
+    let result = state
+        .task
+        .step_results
+        .get("hb-create")
+        .expect("rejection is recorded on the call");
+    assert!(!result.success);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Unattended execution cannot authorize this operation")
+    );
+
+    let after = match crate::services::agent::heartbeat::get_heartbeat() {
+        Some(manager) => Some(manager.get_tasks().await.len()),
+        None => None,
+    };
+    assert_eq!(before, after, "rejection must not write HEARTBEAT.md");
+
+    // A Medium read such as http.fetch still auto-runs for the heartbeat.
+    let fetch = PendingCall {
+        call: ToolCall {
+            id: "hb-fetch".into(),
+            name: tools::tool_name("http.fetch"),
+            arguments: r#"{"url":"https://example.com"}"#.into(),
+        },
+        capability_id: Some("http.fetch".into()),
+        approval: None,
+    };
+    let (_, fetch_risk) = capability::capability_requires_confirmation_async("http.fetch")
+        .await
+        .expect("http.fetch requires confirmation");
+    assert_eq!(fetch_risk, RiskLevel::Medium);
+    let mut medium = checkpoint();
+    medium.pending.push_back(fetch.clone());
+    assert!(!reject_unattended_confirmation(
+        &mut medium,
+        &fetch,
+        "http.fetch",
+        fetch_risk
+    ));
+    assert!(medium.task.step_results.is_empty());
+    assert_eq!(medium.pending.len(), 1);
+
+    // heartbeat.* stays blocked even at Low risk.
+    let mut toggle = checkpoint();
+    toggle.pending.push_back(pending.clone());
+    assert!(reject_unattended_confirmation(
+        &mut toggle,
+        &pending,
+        "heartbeat.toggle",
+        RiskLevel::Low
+    ));
 }
 
 #[test]

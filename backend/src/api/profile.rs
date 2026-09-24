@@ -18,7 +18,7 @@ use crate::services::platform_refresh::{
     PLATFORM_CACHE_HOURS, configured_platform_ids, fetch_fresh_platform_data,
     load_platform_cache_files, load_platform_data_cache, platform_cache_from_files,
     platform_data_warning_for, platform_fetch_details, platform_has_usable_data,
-    required_platforms_are_fresh, resolve_platform_fetch_message_for, save_platform_data_cache,
+    required_platforms_are_fresh, resolve_platform_fetch_message_for,
 };
 pub use crate::services::site_owner::site_owner_user_id;
 
@@ -73,11 +73,6 @@ pub async fn fetch_all_data(State(db): State<DatabaseConnection>) -> (StatusCode
     tracing::info!("🔄 Fetching fresh platform data...");
     match fetch_fresh_platform_data(&db, None).await {
         Ok(outcome) => {
-            // 保存到缓存
-            if let Err(e) = save_platform_data_cache(&outcome.data) {
-                tracing::error!("Failed to save platform cache: {}", e);
-            }
-
             let message = if outcome.errors.is_empty() {
                 "Data fetched successfully".to_string()
             } else {
@@ -142,11 +137,6 @@ pub async fn refresh_platform_data(
     tracing::info!("🔄 Force refreshing platform data...");
     match fetch_fresh_platform_data(&db, None).await {
         Ok(outcome) => {
-            // 保存到缓存
-            if let Err(e) = save_platform_data_cache(&outcome.data) {
-                tracing::error!("Failed to save platform cache: {}", e);
-            }
-
             let message = if outcome.errors.is_empty() {
                 "Data refreshed successfully".to_string()
             } else {
@@ -192,16 +182,6 @@ pub async fn fetch_single_platform_data(
 
     match fetch_fresh_platform_data(&db, Some(&req.platform)).await {
         Ok(outcome) => {
-            // 只保存请求的平台数据，而不是所有平台
-            if let Some(platform_data) = outcome.data.get(&req.platform) {
-                let single_platform_data = json!({
-                    &req.platform: platform_data
-                });
-                if let Err(e) = save_platform_data_cache(&single_platform_data) {
-                    tracing::error!("Failed to save platform cache: {}", e);
-                }
-            }
-
             let remote_err = outcome.errors.get(&req.platform).map(String::as_str);
             // 远程失败或数据为空：优先透传真实错误（如 X 402 额度耗尽）
             if let Some(message) = resolve_platform_fetch_message_for(

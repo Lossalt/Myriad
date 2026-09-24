@@ -22,11 +22,10 @@ use crate::federation::types::*;
 
 use super::activities::{
     distribute_to_followers, extract_accept_object_id, extract_activity_actor_id, handle_accept,
-    handle_content_activity, handle_follow, handle_reject, handle_undo, handle_verified_move,
-    move_preflight_error, record_room_peer_activity,
+    handle_content_activity, handle_follow, handle_reject, handle_shared_update, handle_undo,
+    handle_verified_move, move_preflight_error, record_room_peer_activity,
 };
 use super::{PostCommit, inbox_err};
-use super::local_deliver::DeliveryMode;
 use super::mfp::{ensure_allowed_mfp_type, handle_mfp_activity};
 use super::receipt::{
     ReceiptClaim, ReceiptKey, ReceiptOutcome, claim_receipt, finish_receipt, receipt_key,
@@ -94,7 +93,7 @@ fn room_join_member_actor(
 /// KeyExchange fanout then uses only DB state and can roll back atomically with
 /// the membership write. Local-member spoof attempts are left to the handler's
 /// permanent authorization rejection and must not trigger an HTTP self-fetch.
-async fn preflight_room_join_member(
+pub(super) async fn preflight_room_join_member(
     db: &DatabaseConnection,
     activity_type: &str,
     actor_url: &str,
@@ -350,13 +349,55 @@ pub async fn post_inbox(
         username
     );
 
-    let inbox_scope = format!("user:{user_id}");
-    let key = receipt_key(&actor_url_str, activity_id, &inbox_scope, &body);
+    let key = receipt_key(
+        &actor_url_str,
+        activity_id,
+        &personal_inbox_scope(user_id),
+        &body,
+    );
+    execute_personal_activity(
+        &db,
+        user_id,
+        &key,
+        &actor_url_str,
+        &activity_type,
+        &activity,
+        follow_remote,
+        content_remote,
+        move_verified.as_ref(),
+    )
+    .await
+}
+
+/// Receipt scope of a user's personal inbox. The in-process path uses the same
+/// scope, so one activity is processed once per recipient whichever way it came.
+pub(super) fn personal_inbox_scope(user_id: i32) -> String {
+    format!("user:{user_id}")
+}
+
+/// Everything after transport checks and preflight for a personal inbox: claim
+/// the receipt, run [`dispatch_personal_activity`] inside the receipt
+/// transaction, record the outcome, commit, then run post-commit effects.
+///
+/// Shared by `post_inbox` (after HTTP Signature + trust policy) and
+/// `deliver_activity_locally` (local signer, no transport).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn execute_personal_activity(
+    db: &DatabaseConnection,
+    user_id: i32,
+    key: &ReceiptKey,
+    actor_url_str: &str,
+    activity_type: &str,
+    activity: &serde_json::Value,
+    follow_remote: Option<&RemoteActorInfo>,
+    content_remote: Option<&RemoteActorInfo>,
+    move_verified: Option<&VerifiedMove>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     let txn = db
         .begin()
         .await
         .map_err(|e| inbox_err("begin inbox receipt transaction", e.to_string()))?;
-    match claim_or_respond(&txn, &key).await {
+    match claim_or_respond(&txn, key).await {
         Ok(Some(status)) => {
             rollback_receipt_transaction(txn).await;
             return Ok(status);
@@ -376,23 +417,22 @@ pub async fn post_inbox(
     let result = dispatch_personal_activity(
         &txn,
         user_id,
-        &actor_url_str,
-        &activity_type,
-        &activity,
+        actor_url_str,
+        activity_type,
+        activity,
         follow_remote,
         content_remote,
-        move_verified.as_ref(),
-        DeliveryMode::QueueOnly,
-        &db,
+        move_verified,
+        db,
         &mut post_commit,
     )
     .await;
     match result {
         Ok(status) => {
             let committed =
-                finish_and_commit(txn, &key, ReceiptOutcome::Accepted, status, None).await;
+                finish_and_commit(txn, key, ReceiptOutcome::Accepted, status, None).await;
             if committed.is_ok() {
-                post_commit.run().await;
+                post_commit.run(db).await;
             }
             committed
         }
@@ -407,7 +447,7 @@ pub async fn post_inbox(
                 rollback_receipt_transaction(txn).await;
                 return Err(error);
             }
-            finish_and_commit(txn, &key, ReceiptOutcome::Rejected, status, Some(&message))
+            finish_and_commit(txn, key, ReceiptOutcome::Rejected, status, Some(&message))
                 .await
                 .and(Err((status, Json(body.0))))
         }
@@ -427,7 +467,6 @@ async fn dispatch_personal_activity<C: ConnectionTrait>(
     follow_remote: Option<&RemoteActorInfo>,
     content_remote: Option<&RemoteActorInfo>,
     move_verified: Option<&VerifiedMove>,
-    delivery_mode: DeliveryMode<'_>,
     pool: &DatabaseConnection,
     post_commit: &mut PostCommit,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
@@ -439,7 +478,7 @@ async fn dispatch_personal_activity<C: ConnectionTrait>(
                 actor_url_str,
                 activity,
                 follow_remote,
-                delivery_mode,
+                post_commit,
             )
             .await
         }
@@ -630,7 +669,7 @@ pub async fn post_shared_inbox(
             let committed =
                 finish_and_commit(txn, &key, ReceiptOutcome::Accepted, status, None).await;
             if committed.is_ok() {
-                post_commit.run().await;
+                post_commit.run(&db).await;
             }
             committed
         }
@@ -683,10 +722,16 @@ async fn dispatch_shared_activity<C: ConnectionTrait>(
         return handle_verified_move(db, move_verified, activity).await;
     }
 
+    // Update 改的是已有条目，不依赖解析出某个本地收件人（公开帖的 to / cc
+    // 里没有本地用户，多用户实例上解析不出来）。
+    if activity_type == "Update" {
+        return handle_shared_update(db, actor_url_str, activity, content_remote).await;
+    }
+
     if activity_type.starts_with("myriad:")
         || matches!(
             activity_type,
-            "Follow" | "Accept" | "Undo" | "Delete" | "Update" | "Like"
+            "Follow" | "Accept" | "Undo" | "Delete" | "Like"
         )
     {
         if let Some(uid) = resolve_shared_inbox_local_user(db, activity_type, activity).await {
@@ -711,7 +756,7 @@ async fn dispatch_shared_activity<C: ConnectionTrait>(
                         actor_url_str,
                         activity,
                         follow_remote,
-                        DeliveryMode::QueueOnly,
+                        post_commit,
                     )
                     .await
                 }

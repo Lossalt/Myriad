@@ -1288,17 +1288,6 @@ impl DynamicConfig {
         }
     }
 
-    pub fn vendor_kind_supports(kind: &str, capability: &str) -> bool {
-        match (kind, capability) {
-            ("openrouter" | "openai" | "openai_compatible", "text" | "image" | "speech") => true,
-            ("gemini", "text" | "image" | "speech") => true,
-            ("volcengine", "text" | "image") => true,
-            ("tencent", "speech") => true,
-            ("agora", "realtime") => true,
-            _ => false,
-        }
-    }
-
     pub fn nonempty_opt(value: Option<&String>) -> Option<String> {
         value
             .map(|s| s.trim().to_string())

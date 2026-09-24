@@ -344,7 +344,7 @@ pub async fn start_session(
     language: &str,
     llm: &LlmEndpoint,
 ) -> Result<ConvoSession, AgoraConvoError> {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&chat.claims.sub) else {
+    let Some(user_id) = chat.claims.durable_user_id() else {
         return Err(AgoraConvoError::SessionUnavailable);
     };
     let config = GLOBAL_DYNAMIC_CONFIG.read().await;

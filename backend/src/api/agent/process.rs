@@ -241,7 +241,6 @@ pub async fn process(
         .task
         .as_ref()
         .is_some_and(|task| task.status == crate::services::agent::TaskStatus::WaitingForInput)
-        || response.confirmation.is_some()
     {
         crate::services::agent::consciousness::IntentStatus::Waiting
     } else {
@@ -456,9 +455,21 @@ pub(crate) async fn start_process_run(
             .begin()
             .await
             .map_err(|_| agent_turn_error("Could not save media references".into()))?;
-        crate::services::media::bind_channel_message(&txn, &run_id_for_meta, payload, &[])
-            .await
-            .map_err(|error| HttpError(error.into()))?;
+        let actor = if claims.is_admin {
+            crate::services::media::MediaActor::admin(user_id)
+        } else {
+            crate::services::media::MediaActor::user(user_id)
+        }
+        .ok();
+        crate::services::media::bind_run_input(
+            &txn,
+            &run_id_for_meta,
+            payload,
+            &[],
+            actor.as_ref(),
+        )
+        .await
+        .map_err(|error| HttpError(error.into()))?;
         txn.commit()
             .await
             .map_err(|_| agent_turn_error("Could not save media references".into()))?;
@@ -757,32 +768,17 @@ pub(crate) async fn start_process_run(
                     let _ = lane_guard.take();
                     // 非 waiting：先落会话元数据，再发 TaskCompleted
 
-                    let is_confirmation = api_response.confirmation.is_some()
-                        || api_response.response_type == "confirmation_required";
-                    let parked_task_id = api_response
-                        .confirmation
-                        .as_ref()
-                        .map(|c| format!("confirmation:{}", c.confirmation_id))
-                        .filter(|_| is_confirmation)
-                        .unwrap_or_else(|| task_id.clone());
+                    let parked_task_id = task_id.clone();
                     if !session_id_clone.is_empty() {
-                        let metadata = if is_confirmation {
-                            work_turn_session_metadata(
-                                &api_response,
-                                &run_id_for_meta,
-                                &parked_task_id,
-                            )
-                        } else {
-                            json!({
-                                "suggestions": &api_response.suggestions,
-                                "dataDisplay": &api_response.data_display,
-                                "frontendAction": &api_response.frontend_action,
-                                "data": &api_response.data,
-                                "runId": run_id_for_meta,
-                                "taskId": if task_id.is_empty() { Value::Null } else { json!(task_id) },
-                                "task": &api_response.task,
-                            })
-                        };
+                        let metadata = json!({
+                            "suggestions": &api_response.suggestions,
+                            "dataDisplay": &api_response.data_display,
+                            "frontendAction": &api_response.frontend_action,
+                            "data": &api_response.data,
+                            "runId": run_id_for_meta,
+                            "taskId": if task_id.is_empty() { Value::Null } else { json!(task_id) },
+                            "task": &api_response.task,
+                        });
                         if let Err(e) = persist_assistant_message(
                             &db_clone,
                             &session_id_clone,
@@ -802,12 +798,8 @@ pub(crate) async fn start_process_run(
                             );
                         }
                     }
-                    let response_value = if is_confirmation {
-                        park_confirmation_run(&api_response, &parked_task_id)
-                    } else {
-                        serde_json::to_value(&api_response)
-                            .unwrap_or_else(|_| AppError::public_json("serialization failed"))
-                    };
+                    let response_value = serde_json::to_value(&api_response)
+                        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
                     advance_intention_work(
                         &db_clone,
                         source_intent_id_for_work.as_deref(),
@@ -1512,281 +1504,6 @@ pub async fn clarify(
     Ok(Json(response.into()))
 }
 
-/// 确认敏感操作并通过可重连 run stream 执行续跑。
-/// POST /api/agent/confirm/stream
-pub async fn confirm_operation_stream(
-    State(db): State<DatabaseConnection>,
-    Extension(claims): Extension<Claims>,
-    Json(req): Json<ConfirmRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, HttpError> {
-    let run = start_confirm_run(db, claims, req.confirmation_id, req.confirmed, req.note).await?;
-    Ok(Sse::new(agent_run_event_stream(run))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
-}
-
-pub(crate) async fn start_confirm_run(
-    db: DatabaseConnection,
-    claims: Claims,
-    confirmation_id: String,
-    confirmed: bool,
-    note: Option<String>,
-) -> Result<Arc<AgentRun>, HttpError> {
-    let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
-    let confirmation = crate::services::agent::types::UserConfirmation {
-        confirmation_id: confirmation_id.clone(),
-        confirmed,
-        user_note: note,
-        user_id,
-    };
-
-    // Peek session/lane before consume so the resume run stays attached to the
-    // original conversation (history persistence + WAITING_TASKS answers).
-    let agent_for_lookup = Agent::new(db.clone()).await;
-    let resume_ctx = agent_for_lookup
-        .confirmation_resume_context(&confirmation_id, user_id)
-        .await
-        .map_err(|error| {
-            HttpError::from((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(AppError::public_json(error)),
-            ))
-        })?;
-    let session_id = resume_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.session_id.clone())
-        .filter(|s| !s.is_empty());
-    let original_run_id = resume_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.run_id.clone())
-        .filter(|s| !s.is_empty());
-    let source_intent_id = resume_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.source_intent_id.clone())
-        .filter(|id| !id.is_empty());
-    let lane_key = resume_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.lane_key.clone())
-        .unwrap_or_else(|| LaneQueue::make_lane_key(user_id, session_id.as_deref()));
-
-    // Prefer the original process run so notifications/UI stay on one identity.
-    // Rehydrate errors must not look like a missing run (that would mint a second identity).
-    let run = if let Some(ref rid) = original_run_id {
-        match get_run_for_user(rid, user_id).await {
-            Ok(Some(existing)) => existing,
-            Ok(None) => create_run(user_id, session_id.clone()).await,
-            Err(error) => {
-                tracing::error!(%error, "[Agent API] Failed to rehydrate Agent run");
-                return Err(HttpError::from((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(AppError::public_json("Could not load Agent run")),
-                )));
-            }
-        }
-    } else {
-        create_run(user_id, session_id.clone()).await
-    };
-    let run_for_task = run.clone();
-    let db_clone = db.clone();
-    let execution = tokio::spawn(async move {
-        // Session and result events publish into the original run hub.
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
-        let run_for_forwarder = run_for_task.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                run_for_forwarder.publish(event).await;
-            }
-        });
-
-        let agent = Agent::new(db_clone.clone()).await;
-        let _guard = match LANE_QUEUE
-            .acquire_timeout(
-                &lane_key,
-                std::time::Duration::from_secs(LaneQueue::DEFAULT_ACQUIRE_TIMEOUT_SECS),
-            )
-            .await
-        {
-            Ok(guard) => guard,
-            Err(error) => {
-                let _ = tx
-                    .send(AgentProgressEvent::Error {
-                        task_id: None,
-                        message: error,
-                        code: "QUEUE_FULL".to_string(),
-                    })
-                    .await;
-                return;
-            }
-        };
-
-        if let Some(ref sid) = session_id {
-            let _ = tx
-                .send(AgentProgressEvent::SessionCreated {
-                    session_id: sid.clone(),
-                })
-                .await;
-        }
-
-        advance_intention_work(
-            &db_clone,
-            source_intent_id.as_deref(),
-            user_id,
-            if confirmed {
-                crate::services::agent::consciousness::IntentStatus::Running
-            } else {
-                crate::services::agent::consciousness::IntentStatus::Abandoned
-            },
-            None,
-        )
-        .await;
-
-        match agent.process_confirmation(confirmation).await {
-            Ok(response) => {
-                let api_response: ApiResponse = response.into();
-                let task_id = api_response
-                    .task
-                    .as_ref()
-                    .map(|task| task.task_id.clone())
-                    .unwrap_or_default();
-                let success = api_response.success;
-                let is_waiting = api_response
-                    .task
-                    .as_ref()
-                    .map(|t| t.status == "waiting_for_input")
-                    .unwrap_or(false);
-                if confirmed {
-                    advance_intention_work(
-                        &db_clone,
-                        source_intent_id.as_deref(),
-                        user_id,
-                        if is_waiting {
-                            crate::services::agent::consciousness::IntentStatus::Waiting
-                        } else if success {
-                            crate::services::agent::consciousness::IntentStatus::Completed
-                        } else {
-                            crate::services::agent::consciousness::IntentStatus::Failed
-                        },
-                        Some(api_response.message.clone()),
-                    )
-                    .await;
-                }
-
-                // Persist confirmation result (or missing-param question) into the
-                // original session history so refresh keeps the full thread.
-                if let Some(ref sid) = session_id {
-                    let mut metadata =
-                        work_turn_session_metadata(&api_response, run_for_task.run_id(), &task_id);
-                    if let Some(object) = metadata.as_object_mut() {
-                        object.insert("confirmationResume".into(), json!(true));
-                    }
-                    if let Err(e) = persist_assistant_message(
-                        &db_clone,
-                        sid,
-                        if task_id.is_empty() {
-                            None
-                        } else {
-                            Some(&task_id)
-                        },
-                        &api_response.message,
-                        Some(metadata),
-                    )
-                    .await
-                    {
-                        tracing::warn!("[Agent API] Failed to persist confirmation result: {}", e);
-                    }
-                }
-
-                if is_waiting && !task_id.is_empty() {
-                    // Surface the first missing-param / Q&A prompt on the run
-                    // hub, then keep the run alive for answer/resume rounds.
-                    let mut waiting_response = serde_json::to_value(&api_response)
-                        .unwrap_or_else(|_| json!({ "success": true, "message": "" }));
-                    if let Some(object) = waiting_response.as_object_mut() {
-                        object.insert("streamTerminal".to_string(), Value::Bool(false));
-                        if let Some(ref sid) = session_id {
-                            object.insert("sessionId".to_string(), Value::String(sid.clone()));
-                        }
-                    }
-                    let _ = tx
-                        .send(AgentProgressEvent::TaskCompleted {
-                            task_id: task_id.clone(),
-                            success: true,
-                            response: Box::new(waiting_response),
-                        })
-                        .await;
-
-                    spawn_restored_wait_loop(
-                        user_id,
-                        task_id.clone(),
-                        session_id.clone().unwrap_or_default(),
-                        run_for_task.run_id().to_string(),
-                        tx.clone(),
-                        db_clone.clone(),
-                        source_intent_id.clone(),
-                    )
-                    .await;
-                } else {
-                    let mut response_value = serde_json::to_value(api_response).unwrap_or_else(
-                        |_| json!({ "success": false, "message": "Serialization failed" }),
-                    );
-                    if let Some(object) = response_value.as_object_mut() {
-                        object.insert("streamTerminal".to_string(), Value::Bool(true));
-                        if let Some(ref sid) = session_id {
-                            object.insert("sessionId".to_string(), Value::String(sid.clone()));
-                        }
-                    }
-                    let _ = tx
-                        .send(AgentProgressEvent::TaskCompleted {
-                            task_id,
-                            success,
-                            response: Box::new(response_value),
-                        })
-                        .await;
-                }
-            }
-            Err(error) => {
-                advance_intention_work(
-                    &db_clone,
-                    source_intent_id.as_deref(),
-                    user_id,
-                    crate::services::agent::consciousness::IntentStatus::Failed,
-                    Some(error.clone()),
-                )
-                .await;
-                if let Some(ref sid) = session_id {
-                    let _ = persist_assistant_message(
-                        &db_clone,
-                        sid,
-                        None,
-                        "Confirmation failed",
-                        Some(json!({ "error": true, "confirmationResume": true })),
-                    )
-                    .await;
-                }
-                let _ = tx
-                    .send(AgentProgressEvent::Error {
-                        task_id: None,
-                        message: error,
-                        code: "CONFIRMATION_EXECUTION_FAILED".to_string(),
-                    })
-                    .await;
-            }
-        }
-    });
-
-    run.register_execution(execution.abort_handle());
-
-    Ok(run)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfirmRequest {
-    #[serde(rename = "confirmationId")]
-    pub confirmation_id: String,
-    pub confirmed: bool,
-    #[serde(default)]
-    pub note: Option<String>,
-}
-
 /// 健康检查
 /// GET /api/agent/health
 pub async fn health() -> Json<Value> {
@@ -1814,7 +1531,6 @@ mod quota_error_tests {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance: None,
             session_id: None,

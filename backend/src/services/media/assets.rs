@@ -233,6 +233,25 @@ WHERE id = $1
     Ok(result.rows_affected() == 1)
 }
 
+/// Detach a terminal (missing/deleted) row from its producer key so the
+/// producer can write again; the unique index spans every state.
+pub async fn release_producer_key(db: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
+    let result = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+UPDATE media_assets
+SET producer_key = NULL,
+    updated_at = NOW()
+WHERE id = $1
+  AND state IN ('missing', 'deleted')
+"#,
+            [id.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn mark_deleting(txn: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
     let result = txn
         .execute_raw(Statement::from_sql_and_values(
@@ -244,6 +263,26 @@ SET state = 'deleting',
     state_since = NOW()
 WHERE id = $1
   AND state = 'ready'
+"#,
+            [id.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// A `missing` row has no file to unlink; retire it in one step.
+pub async fn retire_missing(txn: &impl ConnectionTrait, id: i32) -> Result<bool, MediaError> {
+    let result = txn
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+UPDATE media_assets
+SET state = 'deleted',
+    producer_key = NULL,
+    updated_at = NOW(),
+    state_since = NOW()
+WHERE id = $1
+  AND state = 'missing'
 "#,
             [id.into()],
         ))
@@ -308,8 +347,9 @@ pub fn to_domain(row: media_assets::Model, usage_count: i64) -> Result<MediaAsse
         .unwrap_or(MediaSource::Legacy.as_str());
     let filename = filename_for_mime(&row.name, &row.mime, public_id)?;
     let state = MediaState::parse(state)?;
+    let url = compatible_url(public_id, &filename);
     let public_path = (state == MediaState::Ready && exposure == MediaExposure::Public.as_str())
-        .then(|| compatible_url(public_id, &filename));
+        .then(|| url.clone());
     Ok(MediaAsset {
         id: row.id,
         public_id,
@@ -322,6 +362,7 @@ pub fn to_domain(row: media_assets::Model, usage_count: i64) -> Result<MediaAsse
         state,
         exposure: MediaExposure::parse(exposure)?,
         kind: row.kind,
+        url,
         content_path: content_path(row.id),
         public_path,
         created_at: row.created_at.with_timezone(&Utc),

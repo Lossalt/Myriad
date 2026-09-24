@@ -108,7 +108,10 @@ fn validate_edit_request(prompt: &str, width: u32, height: u32) -> Result<(), Ht
     Ok(())
 }
 
-async fn editable_asset(db: &DatabaseConnection, id: i32) -> Result<media_assets::Model, HttpError> {
+async fn editable_asset(
+    db: &DatabaseConnection,
+    id: i32,
+) -> Result<media_assets::Model, HttpError> {
     let asset = media_assets::Entity::find_by_id(id)
         .one(db)
         .await
@@ -265,9 +268,8 @@ pub async fn save_edit(
         .map_err(|_| HttpError(AppError::bad_request("Invalid image data")))?;
     validate_candidate(&bytes, mime)?;
     let user_id = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Invalid user")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Invalid user")))?;
     let stem = std::path::Path::new(&source.name)
         .file_stem()
         .and_then(|s| s.to_str())

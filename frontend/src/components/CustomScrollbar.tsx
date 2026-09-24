@@ -90,7 +90,6 @@ function CustomScrollbarInner() {
   const isDraggingRef = useRef(false)
   const dragMetricsRef = useRef<LockedDragMetrics | null>(null)
   const savedScrollBehaviorRef = useRef({ html: '', body: '' })
-  const lastScrollTopRef = useRef(0)
   const cachedDocumentHeightRef = useRef(0)
   const lastHeightCheckRef = useRef(0)
 
@@ -139,7 +138,6 @@ function CustomScrollbarInner() {
     }
 
     paintThumb(layout.thumbTop, layout.thumbHeight)
-    lastScrollTopRef.current = window.scrollY
   }, [paintThumb, readDocumentHeight])
 
   const handleUpdate = useCallback(() => {
@@ -283,7 +281,6 @@ function CustomScrollbarInner() {
         scrollableHeight,
       )
       applyPageScroll(nextScrollTop)
-      lastScrollTopRef.current = nextScrollTop
       paintThumb(thumbTop, drag.thumbHeight)
     },
     [paintThumb],
@@ -337,7 +334,6 @@ function CustomScrollbarInner() {
           layout.scrollableHeight,
         )
         applyPageScroll(nextScrollTop)
-        lastScrollTopRef.current = nextScrollTop
         paintThumb(thumbTop, thumbRect.height)
       }
 

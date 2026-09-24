@@ -3,6 +3,9 @@
 //! 将业务事件翻译为统一通知；持久化、用户隔离和 SSE 广播由 `NotificationManager`
 //! 负责，生产者不直接操作数据库通知表。
 
+use super::notification_preferences::{
+    ACTION_OPEN_AGENT, ACTION_OPEN_AGENT_MANAGE, NotificationEventKey,
+};
 use super::notifications::{
     Notification, NotificationManager, NotificationPriority, NotificationType,
 };
@@ -22,14 +25,20 @@ impl NotificationManager {
                 format!("Scheduled task: {task_name}"),
                 result,
             )
-            .with_metadata(serde_json::json!({
-                "event_key": if success { "heartbeat.succeeded" } else { "heartbeat.failed" },
-                "action": "open_agent_manage",
-                "tab": "heartbeat",
-                "task_name": task_name,
-                "success": success,
-                "status": if success { "completed" } else { "failed" },
-            }));
+            .with_event(
+                if success {
+                    NotificationEventKey::HeartbeatSucceeded
+                } else {
+                    NotificationEventKey::HeartbeatFailed
+                },
+                serde_json::json!({
+                    "action": ACTION_OPEN_AGENT_MANAGE,
+                    "tab": "heartbeat",
+                    "task_name": task_name,
+                    "success": success,
+                    "status": if success { "completed" } else { "failed" },
+                }),
+            );
             self.notify(notification).await;
         }
     }
@@ -61,7 +70,6 @@ impl NotificationManager {
 
         for user_id in self.admin_user_ids().await {
             let mut metadata = serde_json::json!({
-                "event_key": "heartbeat.seo_review",
                 "task_name": "SEO review",
                 "actions": [{ "id": "apply" }],
             });
@@ -81,7 +89,7 @@ impl NotificationManager {
                 "Agent SEO",
                 body.clone(),
             )
-            .with_metadata(metadata);
+            .with_event(NotificationEventKey::HeartbeatSeoReview, metadata);
             notification.id = format!("seo_review_draft_u{user_id}");
             notification.read = false;
             self.upsert(notification).await;
@@ -108,13 +116,15 @@ impl NotificationManager {
             format!("{source_name} · {new_count} new items"),
             body,
         )
-        .with_metadata(serde_json::json!({
-            "event_key": "phantasi.new_items",
-            "route": "/journal",
-            "source_id": source_id,
-            "source_name": source_name,
-            "new_count": new_count,
-        }));
+        .with_event(
+            NotificationEventKey::PhantasiNewItems,
+            serde_json::json!({
+                "route": "/journal",
+                "source_id": source_id,
+                "source_name": source_name,
+                "new_count": new_count,
+            }),
+        );
         self.notify(notification).await;
     }
 
@@ -126,7 +136,8 @@ impl NotificationManager {
         error: &str,
     ) {
         let summary = format!("{source_name} feed failed repeatedly");
-        crate::services::agent::merope::spawn_ingest(user_id, "phantasi.source_error", &summary);
+        let event = NotificationEventKey::PhantasiSourceError;
+        crate::services::agent::merope::spawn_ingest(user_id, event.key(), &summary);
         if !crate::services::agent::merope::allow_existing_notify(user_id).await {
             return;
         }
@@ -134,13 +145,12 @@ impl NotificationManager {
         // conversation, otherwise the old deep link stands. Carrying both would
         // leave `route` dead, since the panel resolves `action` first.
         let mut metadata = serde_json::json!({
-            "event_key": "phantasi.source_error",
             "source_id": source_id,
             "source_name": source_name,
             "status": "failed",
         });
         if crate::services::agent::merope::is_enabled().await {
-            metadata["action"] = serde_json::json!("open_agent");
+            metadata["action"] = serde_json::json!(ACTION_OPEN_AGENT);
             metadata["session_id"] = serde_json::json!(
                 crate::services::agent::merope::ingest::latest_session_id_for(user_id).await
             );
@@ -154,23 +164,23 @@ impl NotificationManager {
             format!("{source_name} feed failed repeatedly"),
             error,
         )
-        .with_metadata(metadata);
+        .with_event(event, metadata);
         self.notify(notification).await;
     }
 
     pub async fn notify_platform_sync_error(&self, user_id: i32, platform: &str, error: &str) {
         let summary = format!("{platform} auto-refresh failed");
-        crate::services::agent::merope::spawn_ingest(user_id, "platform.sync.failed", &summary);
+        let event = NotificationEventKey::PlatformSyncFailed;
+        crate::services::agent::merope::spawn_ingest(user_id, event.key(), &summary);
         if !crate::services::agent::merope::allow_existing_notify(user_id).await {
             return;
         }
         let mut metadata = serde_json::json!({
-            "event_key": "platform.sync.failed",
             "platform": platform,
             "status": "failed",
         });
         if crate::services::agent::merope::is_enabled().await {
-            metadata["action"] = serde_json::json!("open_agent");
+            metadata["action"] = serde_json::json!(ACTION_OPEN_AGENT);
             metadata["session_id"] = serde_json::json!(
                 crate::services::agent::merope::ingest::latest_session_id_for(user_id).await
             );
@@ -184,26 +194,26 @@ impl NotificationManager {
             format!("{platform} auto-refresh failed"),
             error,
         )
-        .with_metadata(metadata);
+        .with_event(event, metadata);
         self.notify(notification).await;
     }
 
     /// Skill 自动淘汰 / AI 改进完成时通知管理员
     pub async fn notify_skill_evolution(&self, skill_id: &str, action: &str, detail: &str) {
-        let (title, event_key, priority) = match action {
+        let (title, event, priority) = match action {
             "pruned" => (
                 format!("Skill removed: {skill_id}"),
-                "skill.pruned",
+                NotificationEventKey::SkillPruned,
                 NotificationPriority::Normal,
             ),
             "improved" => (
                 format!("Skill improved: {skill_id}"),
-                "skill.improved",
+                NotificationEventKey::SkillImproved,
                 NotificationPriority::Low,
             ),
             other => (
                 format!("Skill changed ({other}): {skill_id}"),
-                "skill.changed",
+                NotificationEventKey::SkillChanged,
                 NotificationPriority::Low,
             ),
         };
@@ -215,13 +225,15 @@ impl NotificationManager {
                 title.clone(),
                 detail,
             )
-            .with_metadata(serde_json::json!({
-                "event_key": event_key,
-                "action": "open_agent_manage",
-                "tab": "skills",
-                "skill_id": skill_id,
-                "status": action,
-            }));
+            .with_event(
+                event,
+                serde_json::json!({
+                    "action": ACTION_OPEN_AGENT_MANAGE,
+                    "tab": "skills",
+                    "skill_id": skill_id,
+                    "status": action,
+                }),
+            );
             self.notify(notification).await;
         }
     }
@@ -243,13 +255,19 @@ impl NotificationManager {
                 },
                 detail,
             )
-            .with_metadata(serde_json::json!({
-                "event_key": if connected { "mcp.connected" } else { "mcp.disconnected" },
-                // route: About section (Updater lives there; MCP panel is Advanced).
-                "route": "/config?section=about",
-                "server_id": server_id,
-                "status": if connected { "connected" } else { "failed" },
-            }));
+            .with_event(
+                if connected {
+                    NotificationEventKey::McpConnected
+                } else {
+                    NotificationEventKey::McpDisconnected
+                },
+                serde_json::json!({
+                    // route: About section (Updater lives there; MCP panel is Advanced).
+                    "route": "/config?section=about",
+                    "server_id": server_id,
+                    "status": if connected { "connected" } else { "failed" },
+                }),
+            );
             notification.id = format!("mcp_{:x}_u{}", md5::compute(server_id.as_bytes()), user_id);
             self.upsert(notification).await;
         }
@@ -275,16 +293,18 @@ impl NotificationManager {
             title.unwrap_or("App notification"),
             message,
         )
-        .with_metadata(serde_json::json!({
-            "event_key": match notification_type {
-                "error" | "danger" => "tapp.error",
-                "warning" => "tapp.warning",
-                _ => "tapp.message",
+        .with_event(
+            match notification_type {
+                "error" | "danger" => NotificationEventKey::TappError,
+                "warning" => NotificationEventKey::TappWarning,
+                _ => NotificationEventKey::TappMessage,
             },
-            "route": format!("/tapp/run/{}", tapp_id),
-            "tapp_id": tapp_id,
-            "tapp_notification_type": notification_type,
-        }));
+            serde_json::json!({
+                "route": format!("/tapp/run/{}", tapp_id),
+                "tapp_id": tapp_id,
+                "tapp_notification_type": notification_type,
+            }),
+        );
         let notification_id = notification.id.clone();
         self.notify(notification).await;
         notification_id
@@ -316,21 +336,23 @@ impl NotificationManager {
             title,
             detail,
         )
-        .with_metadata(serde_json::json!({
-            "event_key": match status {
-                "succeeded" => "updater.succeeded",
-                "failed" => "updater.failed",
-                "needs_manual" => "updater.needs_manual",
-                "running" => "updater.running",
-                "unknown" => "updater.unknown",
-                _ => "updater.submitted",
+        .with_event(
+            match status {
+                "succeeded" => NotificationEventKey::UpdaterSucceeded,
+                "failed" => NotificationEventKey::UpdaterFailed,
+                "needs_manual" => NotificationEventKey::UpdaterNeedsManual,
+                "running" => NotificationEventKey::UpdaterRunning,
+                "unknown" => NotificationEventKey::UpdaterUnknown,
+                _ => NotificationEventKey::UpdaterSubmitted,
             },
-            // Deep-link into About (Updater panel lives there)
-            "route": "/config?section=about",
-            "job_id": job_id,
-            "kind": kind,
-            "status": status,
-        }));
+            serde_json::json!({
+                // Deep-link into About (Updater panel lives there)
+                "route": "/config?section=about",
+                "job_id": job_id,
+                "kind": kind,
+                "status": status,
+            }),
+        );
         notification.id = format!("upd_{:x}_u{}", md5::compute(job_id.as_bytes()), user_id);
         self.upsert(notification).await;
     }

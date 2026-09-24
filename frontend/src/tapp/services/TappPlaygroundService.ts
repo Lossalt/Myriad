@@ -89,6 +89,8 @@ export interface PlaygroundStreamDoneEvent {
 export interface PlaygroundStreamErrorEvent {
   type: 'error'
   message: string
+  /** Stable `playground_*` code, same as the HTTP error body. */
+  code?: string
 }
 
 export type PlaygroundStreamEvent =
@@ -240,6 +242,7 @@ async function generateViaStream(
   let buffer = ''
   let finalResponse: GeneratePlaygroundResponse | null = null
   let streamError: string | null = null
+  let streamErrorCode: string | undefined
 
   while (true) {
     const { done, value } = await reader.read()
@@ -259,6 +262,7 @@ async function generateViaStream(
         finalResponse = raw.response
       } else if (raw.type === 'error') {
         streamError = raw.message || currentCopy().tapp.playgroundGenerateFailed
+        streamErrorCode = raw.code
       }
     }
     if (finalResponse || streamError) {
@@ -284,15 +288,19 @@ async function generateViaStream(
         finalResponse = raw.response
       } else if (raw.type === 'error') {
         streamError = raw.message || currentCopy().tapp.playgroundGenerateFailed
+        streamErrorCode = raw.code
       }
     }
   }
 
   if (streamError) {
-    if (/cancelled/i.test(streamError) && signal.aborted) {
+    if (
+      (streamErrorCode === 'playground_cancelled' || /cancelled/i.test(streamError)) &&
+      signal.aborted
+    ) {
       throw new DOMException('The operation was aborted.', 'AbortError')
     }
-    throw new Error(streamError)
+    throw Object.assign(new Error(streamError), { code: streamErrorCode })
   }
   if (!finalResponse) {
     if (signal.aborted) {

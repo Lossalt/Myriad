@@ -150,6 +150,7 @@ pub async fn run() -> anyhow::Result<()> {
         }
     }
     super::shutdown().await;
+    crate::services::jobs::shutdown(crate::services::jobs::SHUTDOWN_DRAIN).await;
     result
 }
 

@@ -104,7 +104,7 @@ test('task polling waits for completion, stops at terminal states, and discards 
     assert.equal(timers.size, 0, 'cancelled transport does not reschedule the old task')
     assert.equal(errors.length, 0, 'cancelled requests stay silent')
     await act(async () => requests[7].resolve(Response.json({ error: 'Task not found' }, { status: 404 })))
-    assert.match(dom.window.document.body.textContent, /Task not found/)
+    assert.match(dom.window.document.body.textContent, /not found/)
     assert.equal(timers.size, 0, 'HTTP failure stops polling')
     assert.equal(errors.length, 1)
     const sameTask = (key: string) => createElement(module.exports.TaskStatus, { key, taskId: 'same', autoClose: false })

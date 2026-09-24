@@ -11,10 +11,7 @@ use super::{capability, executor, response_agent, types};
 impl Agent {
     /// 创建新的 Agent 实例
     pub async fn new(db: DatabaseConnection) -> Self {
-        Self {
-            executor: executor::Executor::new(db.clone()).await,
-            db,
-        }
+        Self { db }
     }
 
     /// 处理用户请求
@@ -168,202 +165,27 @@ impl Agent {
         .await
     }
 
-    /// 执行已保存的 Recipe（跳过意图分析）
+    /// 运行已保存的预设（`POST /presets/{id}/execute`）。
     ///
-    /// 用于从预设中直接执行任务，避免重复的意图解析。
-    /// Work path: skip intent, never Chat.
-    pub async fn execute_saved_recipe(
+    /// 与普通回合一样跑在一次 AI 配额预留里；步骤由工具循环逐步执行。
+    pub async fn execute_preset(
         &self,
-        recipe: &Recipe,
-        user_id: i32,
+        request: UserRequest,
+        preset_id: i32,
         progress_tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
     ) -> Result<AgentResponse, String> {
+        let user_id = request.user_id;
         AgentTurnBudget::run(
             &self.db,
             user_id,
-            "agent.execute_saved_recipe",
-            recipe.id.clone(),
-            Box::pin(self.execute_saved_recipe_inner(recipe, user_id, progress_tx)),
+            "agent.execute_preset",
+            format!(
+                "preset_{preset_id}_{}",
+                request.timestamp.timestamp_millis()
+            ),
+            Box::pin(self.start_preset_work_loop(request, preset_id, Some(progress_tx))),
         )
         .await
-    }
-
-    async fn execute_saved_recipe_inner(
-        &self,
-        recipe: &Recipe,
-        user_id: i32,
-        progress_tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
-    ) -> Result<AgentResponse, String> {
-        // 每次运行 mint 新 id，保证 TaskState.task_id 与 TaskCreated 唯一且可取消
-        let mut recipe = recipe.clone();
-        // Saving a Work execution log as a preset creates a fixed Recipe. Its
-        // future confirmations must resume Executor, not the original loop.
-        recipe.metadata.remove("work_loop_version");
-        let template_id = recipe.id.clone();
-        recipe.id = uuid::Uuid::new_v4().to_string();
-
-        tracing::info!(
-            user_id = user_id,
-            recipe_id = %recipe.id,
-            template_id = %template_id,
-            recipe_name = %recipe.name,
-            steps_count = recipe.steps.len(),
-            "[Agent] Executing saved recipe directly"
-        );
-
-        Self::validate_saved_recipe(&recipe)?;
-        let granted = crate::services::agent::get_user_permissions(&self.db, user_id).await;
-        for step in &recipe.steps {
-            crate::services::agent::tool_permissions::capability_allowed_for_grants(
-                &step.capability_id,
-                &step.params,
-                &granted,
-            )
-            .await?;
-        }
-
-        if let Some(response) = self
-            .mood_refuse_response(
-                user_id,
-                crate::services::agent::merope::maybe_refuse_new_task(&self.db, user_id).await,
-                Some(&progress_tx),
-            )
-            .await
-        {
-            return Ok(response);
-        }
-
-        // Saved recipes are an execution shortcut, not a security shortcut.
-        // Re-run the same sensitive-operation gate used by newly planned work.
-        let sensitive_steps = self.check_sensitive_steps(&recipe).await;
-        if !sensitive_steps.is_empty() {
-            match Self::system_sensitive_gate(user_id, &sensitive_steps) {
-                Some(Ok(())) => {}
-                Some(Err(response)) => return Ok(response),
-                None => {
-                    let planner_output = Self::planner_output_for_saved_recipe(&recipe);
-                    let session_id = recipe
-                        .lane_key
-                        .as_deref()
-                        .and_then(session_id_from_lane_key);
-                    // Saved recipes don't carry the original process run_id.
-                    return self
-                        .request_confirmation_v2(
-                            &recipe,
-                            &planner_output,
-                            user_id,
-                            sensitive_steps,
-                            session_id,
-                            None,
-                            None,
-                        )
-                        .await;
-                }
-            }
-        }
-
-        // TaskCreated 在 mint 新 run id 后发送，保证与 TaskState.task_id 一致
-        let step_descs: Vec<String> = recipe
-            .steps
-            .iter()
-            .map(capability::get_step_description)
-            .collect();
-        let _ = progress_tx
-            .send(AgentProgressEvent::TaskCreated {
-                task_id: recipe.id.clone(),
-                message: response_agent::executing_preset(&recipe.name),
-                total_steps: recipe.steps.len() as u32,
-                step_descriptions: step_descs,
-            })
-            .await;
-
-        // 直接执行 recipe
-        crate::services::agent::merope::mark_activity(&self.db, user_id, "working").await;
-        let task_result = self
-            .executor
-            .execute_with_progress(&recipe, user_id, Some(progress_tx))
-            .await;
-        crate::services::agent::merope::mark_activity(&self.db, user_id, "idle").await;
-        let task_state = task_result?;
-
-        // extract_final_result: successful step outputs (not execution-type).
-        let mut result = self.extract_final_result(&task_state);
-        let frontend_action = self.extract_frontend_action(&result);
-
-        // 添加 recipe 到结果
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert(
-                "recipe".to_string(),
-                serde_json::to_value(&recipe).unwrap_or_default(),
-            );
-        }
-
-        // 为已保存的 recipe 生成消息（委托 response_agent）
-        let message = match task_state.status {
-            types::TaskStatus::Completed => response_agent::recipe_completed(&recipe.name),
-            types::TaskStatus::Failed => response_agent::recipe_failed(
-                &recipe.name,
-                &task_state.error.clone().unwrap_or_default(),
-            ),
-            _ => response_agent::in_progress(&recipe.name),
-        };
-
-        // record_execution_memory (saved recipe)
-        {
-            let ok = task_state.status == types::TaskStatus::Completed;
-            record_execution_memory(MemoryRecordParams {
-                user_id,
-                user_input: &recipe.name,
-                recipe: &recipe,
-                planner_steps_len: recipe.steps.len(),
-                success: ok,
-                error_msg: task_state.error.as_deref(),
-                log_prefix: "saved:",
-                conversation_context: None,
-                step_results: Some(&task_state.step_results),
-            })
-            .await;
-        }
-
-        Ok(AgentResponse {
-            response_type: AgentResponseType::Answer,
-            message,
-            data: Some(result),
-            data_display: None,
-            suggestions: vec![],
-            task: Some(task_state),
-            confirmation: None,
-            frontend_action,
-            performance: None,
-        })
-    }
-
-    pub(crate) fn planner_output_for_saved_recipe(recipe: &Recipe) -> PlannerOutput {
-        PlannerOutput {
-            status: PlannerStatus::Plan,
-            confidence: 1.0,
-            reasoning: Some("Saved recipe execution".to_string()),
-            steps: recipe
-                .steps
-                .iter()
-                .map(|step| AiRecipeStep {
-                    id: step.id.clone(),
-                    capability_id: step.capability_id.clone(),
-                    action: step.action.clone(),
-                    params: step.params.clone(),
-                    depends_on: step.depends_on.clone(),
-                    on_failure: match step.on_failure {
-                        FailureStrategy::Skip => "skip".to_string(),
-                        _ => "abort".to_string(),
-                    },
-                    retry: step.retry.clone(),
-                    timeout_ms: step.timeout_ms,
-                })
-                .collect(),
-            clarification: None,
-            unsupported_reason: None,
-            chat_reply: None,
-        }
     }
 
     pub(crate) fn validate_saved_recipe(recipe: &Recipe) -> Result<(), String> {
@@ -425,39 +247,6 @@ impl Agent {
 
         Ok(())
     }
-
-    /// Peek confirmation resume context without consuming the pending entry.
-    pub async fn confirmation_resume_context(
-        &self,
-        confirmation_id: &str,
-        user_id: i32,
-    ) -> Result<Option<ConfirmationResumeContext>, String> {
-        let pending = crate::services::tapp_registry::get::<PendingRecipeConfirmation>(
-            &self.db,
-            CONFIRMATION_REGISTRY_NAMESPACE,
-            confirmation_id,
-        )
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "Failed to load confirmation");
-            "Failed to load confirmation".to_string()
-        })?;
-        Ok(pending
-            .filter(|pending| pending.user_id == user_id)
-            .map(|pending| ConfirmationResumeContext {
-                lane_key: pending.recipe.lane_key.clone(),
-                session_id: pending.session_id.clone().or_else(|| {
-                    // `session_id` 为空时从 `lane_key` 解析。
-                    pending
-                        .recipe
-                        .lane_key
-                        .as_deref()
-                        .and_then(session_id_from_lane_key)
-                }),
-                run_id: pending.run_id.clone(),
-                source_intent_id: pending.source_intent_id.clone(),
-            }))
-    }
 }
 
 /// 本回合在配额 / 成本账里的 task id。
@@ -490,24 +279,6 @@ mod split_path_contract_tests {
         assert!(
             !inner[..work].contains("planner"),
             "Planner must not run before the Chat/Work split"
-        );
-    }
-
-    #[test]
-    fn execute_saved_recipe_stays_on_work_path() {
-        let src = include_str!("process_and_recipe.rs");
-        let inner = src
-            .split("async fn execute_saved_recipe_inner")
-            .nth(1)
-            .and_then(|rest| rest.split("fn turn_task_id").next())
-            .expect("execute_saved_recipe_inner body");
-        assert!(
-            !inner.contains("process_chat"),
-            "saved recipe must not enter Chat"
-        );
-        assert!(
-            !inner.contains("AgentInteractionMode::Chat"),
-            "saved recipe must not branch on Chat mode"
         );
     }
 }

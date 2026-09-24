@@ -232,14 +232,6 @@ export function ReadingListProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export function useReadingList() {
-  const context = useContext(ReadingListContext)
-  if (!context) {
-    throw new Error('useReadingList must be used within a ReadingListProvider')
-  }
-  return context
-}
-
 /** Returns null outside the provider. */
 export function useReadingListOptional() {
   return useContext(ReadingListContext)

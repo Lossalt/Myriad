@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
@@ -44,11 +43,18 @@ const MAX_USED_NONCES: usize = 10_000;
 #[derive(Debug, Clone, PartialEq)]
 pub enum OAuthPurpose {
     Login,
-    /// LinkAccount 时携带"当前已登录用户 id"
-    LinkAccount(i32),
-    /// 数据平台授权（如 Discord 同步）：写入平台 token，不登录/不绑 identity
+    /// Bind a provider identity to the signed-in user who started the flow.
+    /// `session_epoch` is that session's `tv`: the callback acts only while
+    /// the session is still live (no logout, password change or deletion).
+    LinkAccount {
+        user_id: i32,
+        session_epoch: i64,
+    },
+    /// 数据平台授权（如 Discord 同步）：写入平台 token，不登录/不绑 identity。
+    /// The callback also requires the starter to still be an admin.
     PlatformData {
         user_id: i32,
+        session_epoch: i64,
         platform: String,
     },
 }
@@ -176,7 +182,7 @@ pub fn oauth_pkce_clear_cookie_value(is_production: bool) -> String {
 /// PKCE verifier from the request `Cookie` header, if present.
 pub fn oauth_pkce_from_cookie(cookie_header: Option<&str>) -> Option<String> {
     let header = cookie_header?;
-    cookie_value_from_header(header, OAUTH_PKCE_COOKIE)
+    crate::middleware::auth::cookie_from_header(header, OAUTH_PKCE_COOKIE)
         .filter(|value| {
             (43..=128).contains(&value.len())
                 && value
@@ -184,22 +190,6 @@ pub fn oauth_pkce_from_cookie(cookie_header: Option<&str>) -> Option<String> {
                     .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
         })
         .map(str::to_string)
-}
-
-/// Read a single cookie value from a raw `Cookie` header string.
-pub fn cookie_value_from_header<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookie_header.split(';') {
-        let part = part.trim();
-        if let Some((n, v)) = part.split_once('=') {
-            if n.trim() == name {
-                let v = v.trim();
-                if !v.is_empty() && v != "deleted" {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    None
 }
 
 /// True when the request `Cookie` header carries `oauth_tx` equal to `expected`
@@ -211,7 +201,7 @@ pub fn oauth_tx_cookie_matches(cookie_header: Option<&str>, expected: &str) -> b
     let Some(header) = cookie_header else {
         return false;
     };
-    let Some(got) = cookie_value_from_header(header, OAUTH_TX_COOKIE) else {
+    let Some(got) = crate::middleware::auth::cookie_from_header(header, OAUTH_TX_COOKIE) else {
         return false;
     };
     let a = got.as_bytes();
@@ -253,6 +243,8 @@ struct StatePayload {
     uid: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plat: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tv: Option<i64>,
     exp: i64,
 }
 
@@ -307,28 +299,24 @@ impl UsedNonceStore {
 }
 
 /// Used nonces for optional anti-replay within this process.
-static USED_NONCES: Lazy<Arc<RwLock<UsedNonceStore>>> = Lazy::new(|| {
-    let store: Arc<RwLock<UsedNonceStore>> = Arc::new(RwLock::new(UsedNonceStore::new()));
-    let store_clone = store.clone();
+///
+/// The initializer must not spawn: it runs wherever the static is first
+/// touched, which need not be inside a tokio runtime. Expiry is swept by
+/// [`cleanup_used_nonces`] on the process memory-cleanup job.
+static USED_NONCES: Lazy<RwLock<UsedNonceStore>> = Lazy::new(|| RwLock::new(UsedNonceStore::new()));
 
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let mut nonces = store_clone.write().await;
-            let removed = nonces.retain_live(Instant::now());
-            if removed > 0 {
-                tracing::debug!(
-                    "🧹 OAuth used-nonce cleanup: removed {}, {} remain",
-                    removed,
-                    nonces.len()
-                );
-            }
-        }
-    });
-
-    store
-});
+/// Drop expired used-nonce entries.
+pub(crate) async fn cleanup_used_nonces() {
+    let mut nonces = USED_NONCES.write().await;
+    let removed = nonces.retain_live(Instant::now());
+    if removed > 0 {
+        tracing::debug!(
+            "🧹 OAuth used-nonce cleanup: removed {}, {} remain",
+            removed,
+            nonces.len()
+        );
+    }
+}
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -338,10 +326,13 @@ fn unix_now() -> i64 {
 }
 
 fn state_secret() -> Result<Vec<u8>, String> {
+    // A blank value is no secret: it must neither sign nor block the fallback.
     env::var("OAUTH_STATE_SECRET")
-        .or_else(|_| env::var("JWT_SECRET"))
-        .map(|s| s.into_bytes())
-        .map_err(|_| {
+        .ok()
+        .filter(|secret| !secret.trim().is_empty())
+        .or_else(crate::middleware::auth::session_secret)
+        .map(String::into_bytes)
+        .ok_or_else(|| {
             "OAUTH_STATE_SECRET or JWT_SECRET must be set for OAuth state signing".to_string()
         })
 }
@@ -369,28 +360,52 @@ fn state_prefix(state: &str) -> &str {
     }
 }
 
-fn purpose_to_payload_parts(purpose: &OAuthPurpose) -> (String, Option<i32>, Option<String>) {
+type PayloadParts = (String, Option<i32>, Option<String>, Option<i64>);
+
+fn purpose_to_payload_parts(purpose: &OAuthPurpose) -> PayloadParts {
     match purpose {
-        OAuthPurpose::Login => ("login".to_string(), None, None),
-        OAuthPurpose::LinkAccount(uid) => ("link".to_string(), Some(*uid), None),
-        OAuthPurpose::PlatformData { user_id, platform } => (
+        OAuthPurpose::Login => ("login".to_string(), None, None, None),
+        OAuthPurpose::LinkAccount {
+            user_id,
+            session_epoch,
+        } => (
+            "link".to_string(),
+            Some(*user_id),
+            None,
+            Some(*session_epoch),
+        ),
+        OAuthPurpose::PlatformData {
+            user_id,
+            session_epoch,
+            platform,
+        } => (
             "platform".to_string(),
             Some(*user_id),
             Some(platform.clone()),
+            Some(*session_epoch),
         ),
     }
 }
 
-fn purpose_from_payload(p: &str, uid: Option<i32>, plat: Option<String>) -> Option<OAuthPurpose> {
-    match p {
-        "login" => Some(OAuthPurpose::Login),
-        "link" => uid.map(OAuthPurpose::LinkAccount),
-        "platform" => match (uid, plat) {
-            (Some(user_id), Some(platform)) => {
-                Some(OAuthPurpose::PlatformData { user_id, platform })
-            }
-            _ => None,
-        },
+fn purpose_from_payload(
+    p: &str,
+    uid: Option<i32>,
+    plat: Option<String>,
+    tv: Option<i64>,
+) -> Option<OAuthPurpose> {
+    match (p, uid, plat, tv) {
+        ("login", ..) => Some(OAuthPurpose::Login),
+        ("link", Some(user_id), _, Some(session_epoch)) => Some(OAuthPurpose::LinkAccount {
+            user_id,
+            session_epoch,
+        }),
+        ("platform", Some(user_id), Some(platform), Some(session_epoch)) => {
+            Some(OAuthPurpose::PlatformData {
+                user_id,
+                session_epoch,
+                platform,
+            })
+        }
         _ => None,
     }
 }
@@ -424,7 +439,7 @@ fn verify_signature(payload_b64: &str, sig_b64: &str, secret: &[u8]) -> bool {
 }
 
 fn stored_to_payload(stored: &StoredState, nonce: String, exp: i64) -> StatePayload {
-    let (p, uid, plat) = purpose_to_payload_parts(&stored.purpose);
+    let (p, uid, plat, tv) = purpose_to_payload_parts(&stored.purpose);
     StatePayload {
         v: 1,
         n: nonce,
@@ -432,6 +447,7 @@ fn stored_to_payload(stored: &StoredState, nonce: String, exp: i64) -> StatePayl
         p,
         uid,
         plat,
+        tv,
         exp,
     }
 }
@@ -440,7 +456,7 @@ fn payload_to_stored(payload: StatePayload) -> Result<StoredState, ConsumeStateE
     if payload.v != 1 {
         return Err(ConsumeStateError::Missing);
     }
-    let purpose = purpose_from_payload(&payload.p, payload.uid, payload.plat)
+    let purpose = purpose_from_payload(&payload.p, payload.uid, payload.plat, payload.tv)
         .ok_or(ConsumeStateError::Missing)?;
     Ok(StoredState {
         provider_slug: payload.s,
@@ -663,10 +679,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn used_nonce_store_initializes_outside_a_runtime() {
+        // A plain #[test] has no tokio runtime; spawning in the initializer panicked.
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let _ = USED_NONCES.try_read().map(|store| store.len());
+    }
+
     fn sample_link(uid: i32) -> StoredState {
         StoredState {
             provider_slug: "google".to_string(),
-            purpose: OAuthPurpose::LinkAccount(uid),
+            purpose: OAuthPurpose::LinkAccount {
+                user_id: uid,
+                session_epoch: 3,
+            },
         }
     }
 
@@ -675,6 +701,7 @@ mod tests {
             provider_slug: "discord-platform".to_string(),
             purpose: OAuthPurpose::PlatformData {
                 user_id: 7,
+                session_epoch: 3,
                 platform: "discord".to_string(),
             },
         }
@@ -855,6 +882,7 @@ mod tests {
             p: "login".to_string(),
             uid: None,
             plat: None,
+            tv: None,
             exp: unix_now() + 600,
         };
         let fake_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&fake).unwrap());
@@ -874,6 +902,7 @@ mod tests {
             p: "login".to_string(),
             uid: None,
             plat: None,
+            tv: None,
             exp: unix_now() - 10,
         };
         let json = serde_json::to_vec(&payload).unwrap();
@@ -895,7 +924,13 @@ mod tests {
             .expect("consume")
             .into_stored();
         assert_eq!(stored.provider_slug, "google");
-        assert_eq!(stored.purpose, OAuthPurpose::LinkAccount(42));
+        assert_eq!(
+            stored.purpose,
+            OAuthPurpose::LinkAccount {
+                user_id: 42,
+                session_epoch: 3,
+            }
+        );
     }
 
     #[tokio::test]
@@ -911,6 +946,7 @@ mod tests {
             stored.purpose,
             OAuthPurpose::PlatformData {
                 user_id: 7,
+                session_epoch: 3,
                 platform: "discord".to_string(),
             }
         );
@@ -922,7 +958,13 @@ mod tests {
         let issued = issue_state(sample_link(99)).await.expect("issue");
         let first = consume_state(&issued.token).await.expect("first");
         assert!(matches!(first, ConsumeOutcome::Fresh { .. }));
-        assert_eq!(first.stored().purpose, OAuthPurpose::LinkAccount(99));
+        assert_eq!(
+            first.stored().purpose,
+            OAuthPurpose::LinkAccount {
+                user_id: 99,
+                session_epoch: 3,
+            }
+        );
         assert_eq!(first.browser_tx(), issued.browser_tx);
 
         let second = consume_state(&issued.token)
@@ -930,7 +972,13 @@ mod tests {
             .expect("replay is Ok(Replay)");
         assert!(second.is_replay());
         assert_eq!(second.stored().provider_slug, "google");
-        assert_eq!(second.stored().purpose, OAuthPurpose::LinkAccount(99));
+        assert_eq!(
+            second.stored().purpose,
+            OAuthPurpose::LinkAccount {
+                user_id: 99,
+                session_epoch: 3,
+            }
+        );
         assert_eq!(second.browser_tx(), issued.browser_tx);
         // Still one-shot for Fresh: third consume remains Replay, never Fresh again.
         let third = consume_state(&issued.token).await.expect("still replay");
@@ -1002,23 +1050,34 @@ mod tests {
 
     #[test]
     fn purpose_payload_helpers() {
-        let (p, uid, plat) = purpose_to_payload_parts(&OAuthPurpose::Login);
-        assert_eq!(p, "login");
-        assert!(uid.is_none());
-        assert!(plat.is_none());
+        let (p, uid, plat, tv) = purpose_to_payload_parts(&OAuthPurpose::Login);
+        assert_eq!((p.as_str(), uid, plat, tv), ("login", None, None, None));
 
-        let (p, uid, plat) = purpose_to_payload_parts(&OAuthPurpose::LinkAccount(9));
-        assert_eq!((p.as_str(), uid, plat), ("link", Some(9), None));
+        let link = OAuthPurpose::LinkAccount {
+            user_id: 9,
+            session_epoch: 4,
+        };
+        let (p, uid, plat, tv) = purpose_to_payload_parts(&link);
+        assert_eq!(
+            (p.as_str(), uid, plat.clone(), tv),
+            ("link", Some(9), None, Some(4))
+        );
+        assert_eq!(purpose_from_payload(&p, uid, plat, tv), Some(link));
 
-        let purpose = purpose_from_payload("platform", Some(1), Some("discord".into())).unwrap();
+        let purpose =
+            purpose_from_payload("platform", Some(1), Some("discord".into()), Some(2)).unwrap();
         assert_eq!(
             purpose,
             OAuthPurpose::PlatformData {
                 user_id: 1,
+                session_epoch: 2,
                 platform: "discord".into()
             }
         );
-        assert!(purpose_from_payload("link", None, None).is_none());
+        assert!(purpose_from_payload("link", None, None, None).is_none());
+        // A link or platform state without its session epoch is refused.
+        assert!(purpose_from_payload("link", Some(9), None, None).is_none());
+        assert!(purpose_from_payload("platform", Some(1), Some("discord".into()), None).is_none());
     }
 
     #[test]
@@ -1039,7 +1098,7 @@ mod tests {
 
         let header = "auth_token=jwt; oauth_tx=deadbeef; other=1";
         assert_eq!(
-            cookie_value_from_header(header, OAUTH_TX_COOKIE),
+            crate::middleware::auth::cookie_from_header(header, OAUTH_TX_COOKIE),
             Some("deadbeef")
         );
         assert!(oauth_tx_cookie_matches(Some(header), "deadbeef"));

@@ -15,6 +15,7 @@ use crate::models::entities::tapp_scheduled_tasks::{
     self, ExecutionTarget, MissedPolicy, ScheduleType, TaskScope,
 };
 
+/// In the host-reserved namespace, so no installed package can claim it.
 pub const CORE_PLATFORM_SYNC_TAPP_ID: &str = "myriad.core.platform-sync";
 const CORE_PLATFORM_SYNC_TASK_PREFIX: &str = "platform-sync:";
 const MIN_INTERVAL_HOURS: i32 = 1;
@@ -32,20 +33,7 @@ pub fn clamp_interval_hours(interval_hours: i32) -> i32 {
 }
 
 pub fn normalize_platform_name(name: &str) -> Option<&'static str> {
-    match name.trim().to_ascii_lowercase().as_str() {
-        "github" => Some("github"),
-        "bilibili" => Some("bilibili"),
-        "steam" => Some("steam"),
-        "youtube" | "yt" => Some("youtube"),
-        "netease" | "netease music" | "netease_music" => Some("netease"),
-        "bangumi" => Some("bangumi"),
-        "x" | "twitter" => Some("x"),
-        "discord" => Some("discord"),
-        "mal" | "myanimelist" => Some("mal"),
-        "xbox" => Some("xbox"),
-        "psn" | "playstation" | "playstation network" => Some("psn"),
-        _ => None,
-    }
+    crate::services::platform_id::PlatformId::parse(name).map(|id| id.slug())
 }
 
 pub fn core_platform_from_task(task: &tapp_scheduled_tasks::Model) -> Option<&str> {
@@ -234,6 +222,13 @@ pub async fn reconcile_platform_auto_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_sync_id_cannot_be_claimed_by_a_package() {
+        assert!(myriad_tapp_contract::paths::is_reserved_tapp_id(
+            CORE_PLATFORM_SYNC_TAPP_ID
+        ));
+    }
 
     #[test]
     fn normalizes_config_and_api_platform_names() {

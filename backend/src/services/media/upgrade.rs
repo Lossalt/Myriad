@@ -1,6 +1,6 @@
 //! Automatic, resumable media upgrade with an optional admin retry endpoint.
 //! No schema-startup I/O and no filesystem crawl: only catalogued or cited files.
-use super::{LegacyPaths, MediaError, MediaStore, cite, migration};
+use super::{LegacyPaths, MediaError, MediaStore, binding, cite, migration};
 use crate::models::entities::{media_assets, media_migration_jobs};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
@@ -537,20 +537,8 @@ async fn import_cited(
         if copy {
             return Err(MediaError::NotReady);
         }
-        let ext = std::path::Path::new(url)
-            .extension()
-            .and_then(|v| v.to_str())
-            .unwrap_or("");
-        let mime = match ext.to_ascii_lowercase().as_str() {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "mp4" => "video/mp4",
-            "webm" => "video/webm",
-            "mov" => "video/quicktime",
-            _ => return Err(MediaError::invalid("Unsupported legacy media")),
-        };
+        let mime = migration::legacy_mime(url)
+            .ok_or_else(|| MediaError::invalid("Unsupported legacy media"))?;
         let asset = media_assets::ActiveModel {
             kind: Set("upload".into()),
             url: Set(url.clone()),
@@ -738,6 +726,20 @@ fn parse_layout(table: &str, payload: &Value) -> Option<Value> {
     }
 }
 
+/// Clear a site image setting's references (nothing live to protect).
+async fn bind_empty(db: &impl ConnectionTrait, key: &str) -> Result<(), MediaError> {
+    let consumer = binding::Consumer::site_image(key).ok_or(MediaError::StoreFailed)?;
+    binding::bind(
+        db,
+        &consumer,
+        &binding::Citations::new(),
+        binding::Authority::Site,
+        binding::Unresolved::Skip,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn bind_row(
     db: &impl ConnectionTrait,
     store: &MediaStore,
@@ -761,7 +763,7 @@ async fn bind_row(
         record_unresolved(db, table, cursor, &unresolved).await?;
         if !unresolved.is_empty() {
             // Nothing here to protect; keep the stored value and drop stale refs.
-            return cite::bind_consumer(db, "site_wallpaper", "site", &[]).await;
+            return bind_empty(db, WALLPAPER_KEY).await;
         }
         import_cited(db, store, paths, origins, &cited, true, &[]).await?;
         // Same binder as saving the setting; clears stale references when unset.
@@ -818,34 +820,41 @@ async fn bind_row(
         }
         "phantasi_note_history" => {
             let snapshot = payload.get("snapshot").unwrap_or(&Value::Null);
-            let refs = cite::references_from_fields(
+            let doc_id = payload["doc_id"].as_i64().ok_or(MediaError::StoreFailed)?;
+            let revision = payload["revision"]
+                .as_i64()
+                .ok_or(MediaError::StoreFailed)?;
+            // Unlike live saves, the upgrade rejects: an unimported dependency
+            // must keep this record in the retry queue, not be skipped.
+            binding::bind(
                 db,
-                origins,
-                snapshot.get("image").and_then(Value::as_str),
-                snapshot
-                    .get("content_md")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
-                false,
-            )
-            .await?;
-            cite::bind_consumer(
-                db,
-                "note_history",
-                format!("{}:{}", payload["doc_id"], payload["revision"]),
-                &refs,
+                &binding::Consumer::note_history(
+                    i32::try_from(doc_id).map_err(|_| MediaError::StoreFailed)?,
+                    revision,
+                ),
+                &binding::Citations::fields(
+                    origins,
+                    snapshot.get("image").and_then(Value::as_str),
+                    snapshot
+                        .get("content_md")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                ),
+                binding::Authority::Site,
+                binding::Unresolved::Reject,
             )
             .await
+            .map(|_| ())
         }
         "agent_persona" => {
             let persona: crate::models::entities::agent_persona::Model =
                 serde_json::from_value(payload.clone()).map_err(|_| MediaError::StoreFailed)?;
             let portrait = match persona.portrait_asset_id.as_deref() {
-                Some(url) => Some(cite::publish_local_url(db, url, origins).await?),
+                Some(url) => Some(cite::normalize_local_url(db, url, origins).await?),
                 None => None,
             };
             let avatar = match persona.avatar_asset_id.as_deref() {
-                Some(url) => Some(cite::publish_local_url(db, url, origins).await?),
+                Some(url) => Some(cite::normalize_local_url(db, url, origins).await?),
                 None => None,
             };
             let saved = crate::services::agent::merope::rewrite_persona_media_urls(
@@ -907,32 +916,31 @@ async fn bind_row(
                 .transpose()?
                 .unwrap_or(Value::Null);
             let urls = import_cited(db, store, paths, origins, &value, true, &[]).await?;
-            let refs =
-                cite::references_from_urls(db, origins, &urls, |i| format!("attachment:{i}"), true)
-                    .await?;
-            cite::bind_consumer(db, "federation_outbox", cursor, &refs).await
+            binding::bind(
+                db,
+                &binding::Consumer::federation_outbox(cursor),
+                &binding::Citations::urls(origins, &urls, |i| format!("attachment:{i}")),
+                binding::Authority::Site,
+                binding::Unresolved::Reject,
+            )
+            .await
+            .map(|_| ())
         }
         _ => {
-            let public = table == "federation_activities";
-            let refs = cite::references_from_urls(
+            let consumer = if table == "federation_activities" {
+                binding::Consumer::federation_activity(text("activity_id").unwrap_or(cursor))
+            } else {
+                binding::Consumer::channel_message(format!("{table}:{cursor}"))
+            };
+            binding::bind(
                 db,
-                origins,
-                &urls,
-                |i| format!("attachment:{i}"),
-                public,
+                &consumer,
+                &binding::Citations::urls(origins, &urls, |i| format!("attachment:{i}")),
+                binding::Authority::Site,
+                binding::Unresolved::Reject,
             )
-            .await?;
-            let consumer = if public {
-                "federation_activity"
-            } else {
-                "channel_message"
-            };
-            let identity = if public {
-                text("activity_id").unwrap_or(cursor).to_owned()
-            } else {
-                format!("{table}:{cursor}")
-            };
-            cite::bind_consumer(db, consumer, identity, &refs).await
+            .await
+            .map(|_| ())
         }
     }
 }

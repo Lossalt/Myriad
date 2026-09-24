@@ -68,7 +68,7 @@ async fn persist_agent_tapp(
         .await
         .map_err(str::to_owned)?;
     let approved_permissions = select_install_approved_permissions(&requested_permissions, &[]);
-    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         UserRole::Admin
     } else {
         UserRole::User
@@ -79,89 +79,27 @@ async fn persist_agent_tapp(
     }
     .map_err(|error| format!("{}: {}", error.code(), error.message()))?;
 
-    let tapp_dir = paths().tapp_user_dir(ctx.user_id).join(tapp_id);
     let core_entry = installed_core_entry(&manifest)
         .ok_or_else(|| "Tapp core.entry is required after normalize".to_string())?;
     let page_entry = installed_page_entry(&manifest)
         .ok_or_else(|| "Tapp page.entry is required after normalize".to_string())?;
     let page_source = agent_page_require_core_source(&page_entry, &core_entry)?;
-    let code_path = tapp_dir.join(&core_entry);
-    let page_path = tapp_dir.join(&page_entry);
-    let manifest_path = tapp_dir.join("manifest.json");
-    if let Some(parent) = code_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to create Tapp directory");
-            "Failed to create Tapp directory".to_string()
-        })?;
-    }
-    if let Some(parent) = page_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to create Tapp directory");
-            "Failed to create Tapp directory".to_string()
-        })?;
-    }
-    tokio::fs::write(&code_path, code).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to write Tapp core");
-        "Failed to write Tapp core".to_string()
+    let typed_manifest = serde_json::from_value(manifest).map_err(|error| {
+        tracing::error!(%error, "Generated Tapp manifest does not parse");
+        "Generated Tapp manifest is invalid".to_string()
     })?;
-    tokio::fs::write(&page_path, page_source)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to write Tapp page entry");
-            "Failed to write Tapp page entry".to_string()
-        })?;
-    let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| {
-        tracing::error!(error = %e, "Failed to serialize Tapp manifest");
-        "Failed to serialize Tapp manifest".to_string()
-    })?;
-    tokio::fs::write(&manifest_path, manifest_json)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to write Tapp manifest");
-            "Failed to write Tapp manifest".to_string()
-        })?;
-
-    let version = manifest
-        .get("version")
-        .and_then(Value::as_str)
-        .unwrap_or("1.0.0")
-        .to_string();
-    let icon = manifest
-        .get("icon")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let theme_color = manifest
-        .get("themeColor")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let now = Utc::now();
-    let new_tapp = tapps::ActiveModel {
-        tapp_id: Set(tapp_id.to_string()),
-        user_id: Set(ctx.user_id),
-        name: Set(name.to_string()),
-        version: Set(version),
-        description: Set(description),
-        author: Set(Some(author)),
-        icon: Set(icon),
-        theme_color: Set(theme_color),
-        manifest: Set(manifest),
-        status: Set(tapps::TappStatus::Running),
-        approved_permissions: Set(json!(approved_permissions)),
-        file_path: Set(manifest_path.to_string_lossy().to_string()),
-        code_path: Set(code_path.to_string_lossy().to_string()),
-        installed_at: Set(now.into()),
-        last_run_at: Set(None),
-        updated_at: Set(now.into()),
-        error_message: Set(None),
-        ..Default::default()
-    };
-    if let Err(error) = new_tapp.insert(ctx.db).await {
-        let _ = tokio::fs::remove_dir_all(&tapp_dir).await;
-        tracing::error!(%error, "Failed to persist Tapp");
-        return Err("Failed to persist Tapp".to_string());
-    }
-
-    Ok(now)
+    // The same install core as any direct install: validation, conflict
+    // check, canonical owner and staged activation instead of writing the
+    // live directory and inserting the row by hand.
+    crate::api::tapp_store::install_generated(
+        ctx.db,
+        ctx.user_id,
+        typed_manifest,
+        HashMap::from([(core_entry, code.to_string()), (page_entry, page_source)]),
+    )
+    .await
+    .map_err(|error| error.0.to_string())?;
+    Ok(Utc::now())
 }
 
 async fn execute_tapp_generate(
@@ -603,6 +541,19 @@ async fn execute_bookmark_save(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_tapps_install_through_the_install_core() {
+        let src = include_str!("resource_create.rs");
+        let persist = src
+            .split("async fn persist_agent_tapp(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("persist_agent_tapp");
+        assert!(persist.contains("install_generated("));
+        assert!(!persist.contains(concat!("tapps::", "ActiveModel")));
+        assert!(!persist.contains(concat!("tapp_user_", "dir")));
+    }
+
     use super::*;
     use crate::config::DynamicConfig;
 

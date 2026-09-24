@@ -3,6 +3,13 @@
 
 use serde_json::{Value, json};
 
+/// `data[platform][key]` without creating either level. Indexing with `[]` on a
+/// missing key would insert `{key: null}` skeletons, which then get saved over
+/// the platform's cache file as if they were fetched data.
+fn sub_tree_mut<'a>(data: &'a mut Value, platform: &str, key: &str) -> Option<&'a mut Value> {
+    data.get_mut(platform)?.get_mut(key)
+}
+
 /// In-place allowlist/truncate for some platform trees (not 5W1H).
 pub(super) fn clean_platform_data(data: &mut Value) {
     // Caps for GitHub repos / Steam games / Bilibili videos+bangumi / Netease songs / Bangumi collections / X tweets.
@@ -15,7 +22,7 @@ pub(super) fn clean_platform_data(data: &mut Value) {
     const MAX_X_TWEETS: usize = 100;
 
     // 清洗 GitHub 仓库数据 - 原地修改
-    if let Some(repos) = data["github"]["repos"].as_array_mut() {
+    if let Some(repos) = sub_tree_mut(data, "github", "repos").and_then(Value::as_array_mut) {
         // 限制仓库数量
         if repos.len() > MAX_GITHUB_REPOS {
             tracing::warn!(
@@ -74,7 +81,7 @@ pub(super) fn clean_platform_data(data: &mut Value) {
     }
 
     // 清洗 GitHub 用户信息 - 原地修改
-    if let Some(user) = data["github"]["user"].as_object_mut() {
+    if let Some(user) = sub_tree_mut(data, "github", "user").and_then(Value::as_object_mut) {
         let id = user.get("id").cloned();
         let login = user.get("login").cloned();
         let name = user.get("name").cloned();
@@ -125,7 +132,7 @@ pub(super) fn clean_platform_data(data: &mut Value) {
     }
 
     // 清洗 Steam 游戏数据 - 原地修改
-    if let Some(games) = data["steam"]["games"].as_array_mut() {
+    if let Some(games) = sub_tree_mut(data, "steam", "games").and_then(Value::as_array_mut) {
         // 限制游戏数量
         if games.len() > MAX_STEAM_GAMES {
             tracing::warn!(
@@ -162,7 +169,7 @@ pub(super) fn clean_platform_data(data: &mut Value) {
     }
 
     // 清洗 Steam 用户信息 - 原地修改
-    if let Some(user) = data["steam"]["user"].as_object_mut() {
+    if let Some(user) = sub_tree_mut(data, "steam", "user").and_then(Value::as_object_mut) {
         let steamid = user.get("steamid").cloned();
         let personaname = user.get("personaname").cloned();
         let avatar = user.get("avatar").cloned();
@@ -613,4 +620,21 @@ pub(super) fn clean_platform_data(data: &mut Value) {
     }
 
     tracing::info!("✓ Platform data cleaned (removed unnecessary fields)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_platform_data;
+    use serde_json::json;
+
+    #[test]
+    fn clean_does_not_invent_platform_keys() {
+        let mut data = json!({});
+        clean_platform_data(&mut data);
+        assert_eq!(data, json!({}));
+
+        let mut data = json!({ "github": { "repos": [] } });
+        clean_platform_data(&mut data);
+        assert_eq!(data, json!({ "github": { "repos": [] } }));
+    }
 }

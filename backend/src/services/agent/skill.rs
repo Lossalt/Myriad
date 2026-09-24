@@ -118,14 +118,7 @@ pub enum ModelTierHint {
     Standard,
 }
 
-impl ModelTierHint {
-    pub fn to_model_tier(&self) -> ModelTier {
-        match self {
-            ModelTierHint::Pro => ModelTier::Pro,
-            ModelTierHint::Standard => ModelTier::Standard,
-        }
-    }
-}
+impl ModelTierHint {}
 
 /// Skill 注册表
 pub struct SkillRegistry {
@@ -285,7 +278,7 @@ impl SkillRegistry {
             .values()
             .map(|s| {
                 let mut entry = json!({
-                    "id": format!("skill:{}", s.id),
+                    "id": crate::services::agent::capability::skill_capability_id(&s.id),
                     "h": s.description,
                 });
                 // 添加参数提示

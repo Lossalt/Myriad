@@ -77,6 +77,57 @@ describe('notificationSourceFor', () => {
   })
 })
 
+describe('notificationSourceFor catalog lookup', () => {
+  it('takes a catalogued source over the notification type', () => {
+    assert.equal(
+      notificationSourceFor(
+        note({
+          notification_type: 'system_info',
+          metadata: { event_key: 'federation.delivery_failed' },
+        }),
+      ),
+      'federation',
+    )
+    assert.equal(
+      notificationSourceFor(
+        note({
+          notification_type: 'system_info',
+          metadata: { event_key: 'platform.sync.failed' },
+        }),
+      ),
+      'system',
+    )
+  })
+
+  it('falls back to the notification type for unknown keys, like the backend', () => {
+    assert.equal(
+      notificationSourceFor(
+        note({
+          notification_type: 'federation_follow',
+          metadata: { event_key: 'agent.not_in_catalog' },
+        }),
+      ),
+      'federation',
+    )
+  })
+
+  it('does not let an unknown key bypass its source switch', () => {
+    const preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
+    preferences.sources.federation = false
+    assert.equal(
+      shouldDeliverNotification(
+        preferences,
+        note({
+          notification_type: 'federation_follow',
+          metadata: { event_key: 'federation.not_in_catalog' },
+        }),
+        'panel',
+      ),
+      false,
+    )
+  })
+})
+
 describe('shouldEmitNotificationToast', () => {
   const task = note({
     notification_type: 'task_completed',

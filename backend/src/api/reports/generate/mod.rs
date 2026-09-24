@@ -24,6 +24,7 @@ use crate::config::DynamicConfig;
 use crate::error::HttpError;
 use crate::middleware::auth::Claims;
 use crate::models::entities::platform_reports;
+use crate::services::platform_id::PlatformId;
 use crate::services::smart_filter::SmartFilteredData;
 use myriad_error::AppError;
 
@@ -77,11 +78,10 @@ pub async fn generate_platform_reports(
     tracing::info!("   Platforms: {:?}", req.platforms);
     tracing::info!("   User: {} (ID: {})", claims.username, claims.sub);
 
-    let actor_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            tracing::error!("Failed to parse user_id from subject");
-            HttpError(AppError::unauthorized("Unauthorized"))
-        })?;
+    let actor_id = claims.durable_user_id().ok_or_else(|| {
+        tracing::error!("Failed to parse user_id from subject");
+        HttpError(AppError::unauthorized("Unauthorized"))
+    })?;
     let user_id = report_storage_user_id(&db, actor_id).await;
 
     let locale = match super::locale::locale_from_headers(&headers) {
@@ -140,6 +140,16 @@ pub async fn generate_platform_reports(
     })))
 }
 
+/// generate-all 的平台集合：[`PlatformId::enabled`]（显式开关，否则凭据是否齐备），
+/// 与 Agent 接通判定、刷新闸门同源。
+pub(crate) fn enabled_report_platforms(config: &DynamicConfig) -> Vec<String> {
+    PlatformId::ALL
+        .into_iter()
+        .filter(|id| id.enabled(config))
+        .map(|id| id.slug().to_string())
+        .collect()
+}
+
 /// 一键生成所有启用平台的平台报告
 /// POST /api/reports/generate-all
 pub async fn generate_all_reports(
@@ -149,102 +159,13 @@ pub async fn generate_all_reports(
     headers: HeaderMap,
 ) -> Result<Json<Value>, HttpError> {
     let actor_id = claims
-        .sub
-        .parse::<i32>()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     let user_id = report_storage_user_id(&db, actor_id).await;
 
     // 1. 获取用户启用的所有平台（AppState.dynamic_config，与 GLOBAL_* 同 Arc）
     let config = dynamic_config.read().await;
-    let enabled_platforms = [
-        (
-            "bilibili",
-            config
-                .bilibili_enabled
-                .unwrap_or(config.bilibili_uid.as_ref().is_some()),
-        ),
-        (
-            "steam",
-            config
-                .steam_enabled
-                .unwrap_or(config.steam_api_key.as_ref().is_some()),
-        ),
-        (
-            "github",
-            config
-                .github_enabled
-                .unwrap_or(config.github_username.as_ref().is_some()),
-        ),
-        (
-            "youtube",
-            config.youtube_enabled.unwrap_or(
-                config.youtube_api_key.as_ref().is_some()
-                    && config.youtube_channel_id.as_ref().is_some(),
-            ),
-        ),
-        (
-            "netease",
-            config
-                .netease_enabled
-                .unwrap_or(config.netease_user_id.as_ref().is_some()),
-        ),
-        (
-            "bangumi",
-            config.bangumi_enabled.unwrap_or(
-                config.bangumi_username.as_ref().is_some()
-                    || config.bangumi_access_token.as_ref().is_some(),
-            ),
-        ),
-        (
-            "x",
-            config.x_enabled.unwrap_or(
-                config.x_username.as_ref().is_some() && config.x_bearer_token.as_ref().is_some(),
-            ),
-        ),
-        (
-            "discord",
-            config
-                .discord_enabled
-                .unwrap_or(config.discord_access_token.as_ref().is_some()),
-        ),
-        (
-            "mal",
-            config
-                .mal_enabled
-                .unwrap_or(config.mal_username.as_ref().is_some()),
-        ),
-        ("xbox", {
-            let has_gamertag = config
-                .xbox_gamertag
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("XBOX_GAMERTAG").is_ok();
-            let has_key = config
-                .openxbl_api_key
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("OPENXBL_API_KEY").is_ok()
-                || std::env::var("XBL_API_KEY").is_ok();
-            config.xbox_enabled.unwrap_or(has_gamertag && has_key)
-        }),
-        ("psn", {
-            let has_id = config
-                .psn_online_id
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("PSN_ONLINE_ID").is_ok();
-            let has_npsso = config
-                .psn_npsso
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-                || std::env::var("PSN_NPSSO").is_ok();
-            config.psn_enabled.unwrap_or(has_id && has_npsso)
-        }),
-    ]
-    .into_iter()
-    .filter(|&(_, enabled)| enabled)
-    .map(|(platform, _)| platform.to_string())
-    .collect::<Vec<_>>();
+    let enabled_platforms = enabled_report_platforms(&config);
     drop(config);
 
     // generate_platform_reports_internal (same persist path as single-platform).
@@ -269,10 +190,41 @@ pub async fn generate_all_reports(
     })))
 }
 
-/// In-flight regen set (key `{user_id}:{platform}`); Mutex not held across await.
-pub(crate) static REPORT_REGEN_IN_FLIGHT: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashSet<String>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+/// Reports being generated right now, by `(user_id, platform)`. Every entry
+/// point (manual, generate-all, auto-regeneration) goes through
+/// [`ReportGeneration::claim`], so one report is never generated (and paid
+/// for) twice at once. The Mutex is never held across an await.
+static REPORT_GENERATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashSet<(i32, String)>>,
+> = once_cell::sync::Lazy::new(Default::default);
+
+/// Ownership of one in-flight report generation; released on drop, including
+/// when the generating task panics or is cancelled.
+pub(crate) struct ReportGeneration {
+    key: (i32, String),
+}
+
+impl ReportGeneration {
+    pub(crate) fn claim(user_id: i32, platform: &str) -> Option<Self> {
+        let key = (user_id, platform.to_string());
+        let claimed = REPORT_GENERATIONS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.clone());
+        // Build the guard only on success and only after the lock is released:
+        // a guard dropped on the failure path would release someone else's claim.
+        claimed.then(|| Self { key })
+    }
+}
+
+impl Drop for ReportGeneration {
+    fn drop(&mut self) {
+        REPORT_GENERATIONS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
+}
 
 /// Public latest owner: `site_owner_user_id` (lowest admin) then user_id 1.
 /// Viewer credentials never select public report ownership. Used by `get_latest_report` + catalog, not authed `/api/reports/list`.
@@ -327,4 +279,33 @@ pub(crate) async fn resolve_report_user_id_for_public_read(
         return Ok(row.user_id);
     }
     Ok(preferred)
+}
+
+#[cfg(test)]
+mod report_generation_tests {
+    use super::ReportGeneration;
+
+    #[test]
+    fn one_generation_per_report_released_even_on_panic() {
+        let user = -73_001;
+        let first = ReportGeneration::claim(user, "steam").expect("free");
+        assert!(ReportGeneration::claim(user, "steam").is_none());
+        assert!(ReportGeneration::claim(user, "github").is_some());
+        drop(first);
+
+        let task = std::thread::spawn(move || {
+            let _held = ReportGeneration::claim(user, "steam").expect("free again");
+            panic!("generation failed");
+        });
+        assert!(task.join().is_err());
+        assert!(ReportGeneration::claim(user, "steam").is_some());
+    }
+
+    #[test]
+    fn every_entry_point_generates_through_the_claim() {
+        let internal = include_str!("generate_internal.rs");
+        assert!(internal.contains("ReportGeneration::claim(user_id, &platform)"));
+        let auto = include_str!("../latest_and_list.rs");
+        assert!(!auto.contains("IN_FLIGHT"));
+    }
 }

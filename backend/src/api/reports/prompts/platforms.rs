@@ -251,7 +251,4 @@ guild_takes: one take per guilds_preview entry, max 8, never invent servers: {\"
 /// Production does not read this list. `prompts/mod.rs` tests walk it so a
 /// new platform without a prompt fails there.
 #[cfg(test)]
-pub const KNOWN_PLATFORMS: &[&str] = &[
-    "bilibili", "steam", "github", "youtube", "netease", "bangumi", "mal", "x", "xbox", "psn",
-    "discord",
-];
+pub const KNOWN_PLATFORMS: &[&str] = crate::services::platform_id::PLATFORM_SLUGS;

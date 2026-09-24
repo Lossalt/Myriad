@@ -29,7 +29,7 @@ use crate::services::note_authors::{
     remove_note_author, sync_published_author_line,
 };
 use crate::services::note_publish::{
-    datetime_to_millis, millis_to_datetime, publish_doc, upsert_doc_for_published_item,
+    datetime_to_millis, millis_to_datetime, publish_doc_on, upsert_doc_for_published_item,
 };
 
 #[derive(Debug, Deserialize)]
@@ -280,7 +280,7 @@ pub(crate) async fn create_note_doc(
         doc.revision,
         doc.image.as_deref(),
         &doc.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -421,7 +421,7 @@ pub(crate) async fn update_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -560,11 +560,18 @@ pub(crate) async fn publish_note_doc(
     active.updated_at = Set(Utc::now().into());
     active.revision = Set(expected + 1);
     active.last_edited_by = Set(Some(user_id));
+    // Claim, author and publish commit together: a failed publish must not
+    // leave the claimed edit stored without its media bound, and history is
+    // bound from `expected`, the snapshot the claim itself captured.
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| phantasi_store_http("begin note publish", e))?;
     let claimed = phantasi_note_docs::Entity::update_many()
         .set(active)
         .filter(phantasi_note_docs::Column::Id.eq(id))
         .filter(phantasi_note_docs::Column::Revision.eq(expected))
-        .exec(&db)
+        .exec(&txn)
         .await
         .map_err(|e| phantasi_store_http("claim note publish", e))?;
     if claimed.rows_affected == 0 {
@@ -574,8 +581,11 @@ pub(crate) async fn publish_note_doc(
         ));
     }
     doc.revision = expected + 1;
-    ensure_note_author(&db, doc.id, user_id, doc.user_id).await?;
-    let (item, saved) = publish_doc(&db, doc, published_at).await?;
+    ensure_note_author(&txn, doc.id, user_id, doc.user_id).await?;
+    let (item, saved) = publish_doc_on(&txn, doc, published_at, expected).await?;
+    txn.commit()
+        .await
+        .map_err(|e| phantasi_store_http("commit note publish", e))?;
     broadcast_saved_doc(&saved, user_id, req.client_request_id);
     Ok(Json(json!({
         "success": true,
@@ -655,7 +665,7 @@ pub(crate) async fn schedule_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -739,7 +749,7 @@ pub(crate) async fn unschedule_note_doc(
         expected,
         saved.image.as_deref(),
         &saved.content_md,
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| HttpError(error.into()))?;
@@ -832,23 +842,30 @@ pub(crate) async fn note_doc_websocket(
     let allowed = crate::middleware::ws_origin::allowed_origins_from_global_config().await;
     crate::middleware::ws_origin::assert_ws_origin_for_cookie_session(&headers, &allowed)?;
     let user_id = admin_user_id(&admin)?;
+    let session_epoch = admin.0.tv;
     let username = admin.0.username;
-    let (owner_id, item_id) = find_doc_owner(&db, id).await?;
+    let (owner_id, _) = find_doc_owner(&db, id).await?;
     Ok(ws.on_upgrade(move |socket| {
-        handle_note_doc_socket(socket, db, id, user_id, owner_id, item_id, username)
+        handle_note_doc_socket(socket, db, id, user_id, session_epoch, owner_id, username)
     }))
 }
+
+/// How often a collaborator's session and admin role are re-checked. Drafts
+/// stop flowing to a demoted or signed-out admin within this interval.
+const NOTE_COLLAB_RECHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
 async fn handle_note_doc_socket(
     mut socket: WebSocket,
     db: DatabaseConnection,
     doc_id: i32,
     user_id: i32,
+    session_epoch: i64,
     owner_id: i32,
-    item_id: Option<i32>,
     username: String,
 ) {
     let mut credited = false;
+    let mut recheck = tokio::time::interval(NOTE_COLLAB_RECHECK);
+    recheck.tick().await;
     let hub = note_collab_hub();
     let mut rx = hub.subscribe(doc_id);
     let peer_id = uuid::Uuid::new_v4().to_string();
@@ -871,6 +888,16 @@ async fn handle_note_doc_socket(
     );
     loop {
         tokio::select! {
+            _ = recheck.tick() => {
+                let still_admin = matches!(
+                    crate::middleware::auth::live_session_roles(&db, user_id, session_epoch).await,
+                    Ok(Some(roles)) if roles.is_admin
+                );
+                if !still_admin {
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
+            }
             event = rx.recv() => {
                 let Ok(event) = event else {
                     // Never keep a collaborative client silently on a missed revision.
@@ -919,6 +946,12 @@ async fn handle_note_doc_socket(
                                 .await
                                 .is_ok()
                             {
+                                // The note may have been first published while
+                                // this socket was open: read its item now.
+                                let item_id = find_doc_owner(&db, doc_id)
+                                    .await
+                                    .ok()
+                                    .and_then(|(_, item_id)| item_id);
                                 let _ = sync_published_author_line(&db, item_id, doc_id).await;
                             }
                         }
@@ -1098,6 +1131,11 @@ mod tests {
             "publish must keep the original owner"
         );
         assert!(publish.contains("ensure_note_author"));
+        // Claim and publish share one transaction, and history is bound from
+        // the revision the claim captured.
+        assert!(publish.contains("db\n        .begin()") || publish.contains("db.begin()"));
+        assert!(publish.contains("txn.commit()"));
+        assert!(publish.contains("publish_doc_on(&txn, doc, published_at, expected)"));
         assert!(publish.contains("expected_revision"));
         assert!(publish.contains("update_many()"));
         assert!(publish.contains("Column::Revision.eq(expected)"));

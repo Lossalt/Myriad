@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::models::entities::tapp_storage;
 
-const SHORTCUT_KEY_PREFIX: &str = "_shortcut:";
+const SHORTCUT_KEY_PREFIX: &str = myriad_tapp_contract::storage::HostNamespace::Shortcut.prefix();
 
 /// Domain errors for shortcut registry operations.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { beginIdentityChange, settleIdentity } from '../../utils/identity'
 import {
   agentPanelOpenSessionCount,
   agentPanelSubmitDetail,
@@ -61,6 +62,15 @@ test('session open keeps its target until the engine attaches', () => {
   queueAgentSessionOpen({ detail: {} } as unknown as Event)
   const engine = attachAgentSessionOpenQueue()
   assert.deepEqual(engine.queued, { sessionId: 's1', runId: 'r1', taskId: undefined })
+  engine.detach()
+})
+
+test('an identity change discards the previous subject\'s queued session open', () => {
+  queueAgentSessionOpen({ detail: { sessionId: 'account-a-session' } } as unknown as Event)
+  beginIdentityChange()
+  settleIdentity({ id: 2 })
+  const engine = attachAgentSessionOpenQueue()
+  assert.equal(engine.queued, null)
   engine.detach()
 })
 

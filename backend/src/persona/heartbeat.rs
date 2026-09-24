@@ -1,6 +1,7 @@
 //! A heartbeat batch has two active executions, without spawning a waiter per task.
 use super::drivers::run_batch;
 use crate::services::agent;
+use crate::services::agent::heartbeat::{ClaimAttempt, ClaimStatus};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -44,9 +45,10 @@ async fn execute(
     task: agent::heartbeat::HeartbeatTask,
     minute_bucket: i64,
 ) {
-    // 多副本 CAS：未抢到则跳过（另一实例已执行或已完成）
-    if !agent::heartbeat::HeartbeatManager::try_claim_execution(&task_db, &task.id, minute_bucket)
+    // 多副本 CAS：未抢到（另一实例已执行或已完成）或认领查询失败都跳过本轮
+    if agent::heartbeat::HeartbeatManager::try_claim_execution(&task_db, &task.id, minute_bucket)
         .await
+        != ClaimAttempt::Claimed
     {
         return;
     }
@@ -89,7 +91,7 @@ async fn execute(
     let outcome =
         tokio::time::timeout(timeout, agent.process_with_progress(request, progress_tx)).await;
 
-    let mut claim_status = "done";
+    let mut claim_status = ClaimStatus::Done;
     match outcome {
         Ok(Ok(response)) => {
             let succeeded = response.is_successful_outcome();
@@ -97,7 +99,7 @@ async fn execute(
             let result_summary = if succeeded {
                 response_summary
             } else {
-                claim_status = "failed";
+                claim_status = ClaimStatus::Failed;
                 format!("ERROR: {}", response_summary)
             };
             hb_ref.record_result(&task.id, &result_summary).await;
@@ -121,7 +123,7 @@ async fn execute(
             }
         }
         Ok(Err(e)) => {
-            claim_status = "failed";
+            claim_status = ClaimStatus::Failed;
             let err_msg = format!("ERROR: {}", e);
             hb_ref.record_result(&task.id, &err_msg).await;
             if let Some(nm) = agent::notifications::get_notification_manager() {
@@ -135,7 +137,7 @@ async fn execute(
             );
         }
         Err(_elapsed) => {
-            claim_status = "failed";
+            claim_status = ClaimStatus::Failed;
             // 硬取消：协作式 is_cancelled，打断 executor 步骤环
             if let Some(exec_tid) = captured_exec_task.lock().await.clone() {
                 agent::executor::request_cancel(
@@ -179,7 +181,7 @@ async fn execute_seo_review(
     minute_bucket: i64,
 ) {
     let timeout = std::time::Duration::from_secs(agent::heartbeat::HEARTBEAT_TASK_TIMEOUT_SECS);
-    let mut claim_status = "done";
+    let mut claim_status = ClaimStatus::Done;
     match tokio::time::timeout(
         timeout,
         crate::api::seo_review::run_scheduled_seo_review(&task_db),
@@ -210,7 +212,7 @@ async fn execute_seo_review(
             tracing::info!(task_id = %task.id, "[Heartbeat] SEO review drafted");
         }
         Ok(Err(error)) => {
-            claim_status = "failed";
+            claim_status = ClaimStatus::Failed;
             let err_msg = format!("ERROR: {error}");
             hb_ref.record_result(&task.id, &err_msg).await;
             if let Some(nm) = agent::notifications::get_notification_manager() {
@@ -220,7 +222,7 @@ async fn execute_seo_review(
             tracing::warn!(task_id = %task.id, %error, "[Heartbeat] SEO review failed");
         }
         Err(_elapsed) => {
-            claim_status = "failed";
+            claim_status = ClaimStatus::Failed;
             let err_msg = format!(
                 "ERROR: heartbeat task timed out after {}s",
                 agent::heartbeat::HEARTBEAT_TASK_TIMEOUT_SECS
@@ -244,4 +246,46 @@ async fn execute_seo_review(
         claim_status,
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn claim_store_failure_does_not_run_the_task_locally() {
+        let dir = std::env::temp_dir().join(format!(
+            "hb_claim_fail_closed_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("HEARTBEAT.md");
+        tokio::fs::write(
+            &path,
+            "---\ntasks:\n  - id: t1\n    name: \"Task One\"\n    schedule: \"* * * * *\"\n    action: \"do stuff\"\n    enabled: true\n---\n",
+        )
+        .await
+        .unwrap();
+        let hb = Arc::new(agent::heartbeat::HeartbeatManager::new(path).await.unwrap());
+        let task = hb.get_tasks().await.remove(0);
+
+        // Every query against a disconnected connection errors, like a DB outage.
+        let db = DatabaseConnection::default();
+        assert_eq!(
+            agent::heartbeat::HeartbeatManager::try_claim_execution(&db, "t1", 1).await,
+            ClaimAttempt::StoreFailed
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            execute(db, hb.clone(), task, 1),
+        )
+        .await
+        .expect("a failed claim must return without running the agent");
+        let after = hb.get_tasks().await.remove(0);
+        assert!(after.last_result.is_none(), "{:?}", after.last_result);
+        assert!(after.last_run.is_none());
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
 }

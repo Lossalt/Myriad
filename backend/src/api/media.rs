@@ -80,9 +80,8 @@ pub async fn upload_media(
     multipart: axum::extract::Multipart,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
+        .subject_id()
+        .ok_or_else(|| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
     let (filename, mime, bytes) = read_file_field(multipart).await?;
     let actor = MediaActor::admin(user_id).map_err(|err| HttpError(err.into()))?;
     let created = MediaService::from_data_paths(paths())
@@ -188,11 +187,10 @@ pub async fn unpublish_media(
     ))
 }
 
-fn actor_from_claims(claims: &Claims) -> Result<MediaActor, HttpError> {
+pub(crate) fn actor_from_claims(claims: &Claims) -> Result<MediaActor, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
+        .subject_id()
+        .ok_or_else(|| media_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
     if claims.is_admin {
         MediaActor::admin(user_id).or_else(|_| Ok(MediaActor::site_operator(Some(user_id), true)))
     } else {
@@ -232,13 +230,6 @@ async fn read_file_field(
 
 #[cfg(test)]
 mod tests {
-    use crate::services::media_catalog::catalogs_cache_image;
-
-    #[test]
-    fn catalog_api_does_not_index_cache_image() {
-        assert!(!catalogs_cache_image());
-    }
-
     #[test]
     fn journal_upload_does_not_call_federation_store() {
         let src = include_str!("media.rs");

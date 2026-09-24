@@ -58,7 +58,7 @@ mod tests {
         let body = err.0.to_json();
         let json = body.to_string();
         assert_eq!(body["error"], "Invalid payload");
-        assert_eq!(body["code"], "unmapped");
+        assert_eq!(body["code"], "bad_request");
         assert!(!json.contains("__admin"), "{json}");
         assert!(!json.contains("secret"), "{json}");
         assert!(!json.contains("leak"), "{json}");

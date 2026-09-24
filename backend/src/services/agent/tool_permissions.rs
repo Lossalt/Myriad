@@ -1,5 +1,6 @@
 //! Grant checks shared by native tool calls and saved Recipes.
 use super::capability::{capability_covered_by_grants, get_capabilities_by_ids};
+use crate::services::agent::capability::CapabilityRef;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) async fn capability_allowed_for_grants(
@@ -7,7 +8,7 @@ pub(crate) async fn capability_allowed_for_grants(
     params: &HashMap<String, serde_json::Value>,
     granted: &HashSet<String>,
 ) -> Result<(), String> {
-    if let Some(skill_id) = capability_id.strip_prefix("skill:") {
+    if let Some(skill_id) = CapabilityRef::parse(&capability_id).skill_id() {
         let allowed = match super::skill::get_skill_registry() {
             Some(registry) => match registry.get(skill_id).await {
                 Some(skill) => super::skill::skill_covered_by_grants(&skill, Some(granted)).await,
@@ -20,7 +21,7 @@ pub(crate) async fn capability_allowed_for_grants(
         }
         return Ok(());
     }
-    if capability_id.starts_with("mcp.") {
+    if CapabilityRef::parse(&capability_id).is_mcp() {
         if !granted.contains("mcp:execute") {
             return Err(format!("capability '{capability_id}' is not available"));
         }

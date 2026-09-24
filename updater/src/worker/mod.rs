@@ -1080,6 +1080,19 @@ mod stuck_and_idempotency_tests {
         }
     }
 
+    /// Every update job an older updater finished stays on disk and is scanned here.
+    #[test]
+    fn job_history_from_older_updaters_does_not_block_update_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("job.5f0c2d9e8b7a4e1f9c3d2b1a0e9f8d7c.json"),
+            include_str!("../state/testdata/job-v0.5.3-update.json"),
+        )
+        .unwrap();
+        assert!(replay_idempotent_update(&state, "new-key", "new-fp").unwrap().is_none());
+    }
+
     fn pending_keyed(id: &str) -> Job {
         let mut job = sample_job(id, Some("k"), Some("fp"));
         job.status = JobStatus::Pending;

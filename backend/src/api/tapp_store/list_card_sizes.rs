@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use crate::middleware::auth::{Claims, OptionalClaims};
 use crate::services::tapp_list_card_sizes::{self, TappListCardSizes};
-use crate::services::tapp_ownership::parse_authenticated_subject_id;
 use crate::state::AppState;
 
 fn require_db(state: &AppState) -> Result<sea_orm::DatabaseConnection, (StatusCode, Json<Value>)> {
@@ -27,11 +26,11 @@ fn require_db(state: &AppState) -> Result<sea_orm::DatabaseConnection, (StatusCo
 
 /// Durable account only — guests (`sub < 0` / guest session claims) cannot write.
 fn require_durable_user(claims: &Claims) -> Result<i32, (StatusCode, Json<Value>)> {
-    match parse_authenticated_subject_id(&claims.sub) {
+    match claims.subject_id().filter(|id| *id >= 0) {
         Some(user_id) => Ok(user_id),
         None => {
             // Distinguish guest cookie claims from garbage `sub`
-            let is_guest = claims.sub.parse::<i32>().map(|id| id < 0).unwrap_or(false)
+            let is_guest = claims.subject_id().is_some_and(|id| id < 0)
                 || claims.username.starts_with("guest:");
             if is_guest {
                 Err((
@@ -68,7 +67,7 @@ pub async fn get_list_card_sizes(
     let db = require_db(&state)?;
     let viewer = claims
         .as_ref()
-        .and_then(|c| parse_authenticated_subject_id(&c.sub));
+        .and_then(|c| c.subject_id().filter(|id| *id >= 0));
     let layout = tapp_list_card_sizes::load_for_viewer(&db, viewer).await;
     // Primary payload: guests see site layout; authed users see personal only.
     let primary = if layout.source == "site_owner" {

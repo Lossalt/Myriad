@@ -563,6 +563,8 @@ pub fn router(app_state: crate::state::AppState) -> axum::Router<crate::state::A
     // Freeform Note 媒体：路由层 live_note_media_body_limit = note_video_limit() + 16 MiB。
     let media_router = Router::<crate::state::AppState>::new()
         .route("/api/federation/media", post(federation_media_upload))
+        // Multipart honours DefaultBodyLimit (global 50 MiB) over the stream cap.
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .layer(axum::middleware::from_fn(
             crate::federation::limits::live_note_media_body_limit,
         ))

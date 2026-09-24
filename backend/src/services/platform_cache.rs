@@ -176,16 +176,24 @@ fn platform_cache_byte_budget() -> usize {
 fn ensure_cache_cleanup() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        tokio::spawn(async {
-            let mut interval = tokio::time::interval(PLATFORM_CACHE_TTL);
-            loop {
-                interval.tick().await;
-                let mut cache = PLATFORM_CACHE.write().await;
-                cache.max_bytes = platform_cache_byte_budget();
-                cache.trim();
-            }
-        });
+        start_cache_cleanup(crate::services::jobs::jobs());
     });
+}
+
+/// Trims the snapshot cache to the current memory budget on the process job
+/// runner, so shutdown stops it with the other background jobs.
+fn start_cache_cleanup(
+    runner: &crate::services::jobs::JobRunner,
+) -> crate::services::jobs::JobHandle {
+    runner.periodic(
+        "platform cache trim",
+        crate::services::jobs::Every::new(PLATFORM_CACHE_TTL),
+        || async {
+            let mut cache = PLATFORM_CACHE.write().await;
+            cache.max_bytes = platform_cache_byte_budget();
+            cache.trim();
+        },
+    )
 }
 
 static PLATFORM_LOCKS: Lazy<RwLock<HashMap<String, Weak<Mutex<()>>>>> =
@@ -663,5 +671,19 @@ mod tests {
         );
         assert_eq!(PlatformCacheError::InvalidStructure.status_hint(), 500);
         assert_eq!(PlatformCacheError::Write("x".into()).status_hint(), 500);
+    }
+
+    #[tokio::test]
+    async fn cache_trim_runs_on_the_job_runner_and_stops_with_it() {
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = super::start_cache_cleanup(&runner);
+        assert!(!handle.is_cancelled());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            runner.shutdown(std::time::Duration::from_secs(1)),
+        )
+        .await
+        .expect("trim job must stop with the runner");
+        assert!(handle.is_cancelled());
     }
 }

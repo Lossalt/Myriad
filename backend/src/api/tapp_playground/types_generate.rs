@@ -409,6 +409,8 @@ pub enum PlaygroundStreamEvent {
     },
     Error {
         message: String,
+        /// Same stable code the HTTP error body carries (`playground_*`).
+        code: String,
     },
 }
 
@@ -422,7 +424,11 @@ fn playground_error_code(status: StatusCode, message: &str) -> &'static str {
     if lower.contains("agent generation failed") {
         return "playground_ai_failed";
     }
-    if lower.contains("did not pass validation") || lower.contains("validation") {
+    if lower.contains("did not pass validation")
+        || lower.contains("validation")
+        || lower.contains("invalid agent plan")
+        || lower.contains("invalid json project")
+    {
         return "playground_validation_failed";
     }
     if lower.contains("too large") || lower.contains("exceeds") {
@@ -569,6 +575,7 @@ async fn generate_project_stream(
                 let _ = event_tx
                     .send(PlaygroundStreamEvent::Error {
                         message: "Generation cancelled".to_string(),
+                        code: "playground_cancelled".to_string(),
                     })
                     .await;
             }
@@ -581,8 +588,13 @@ async fn generate_project_stream(
                     .and_then(Value::as_str)
                     .map(str::to_string)
                     .unwrap_or_else(|| format!("Generation failed ({status})"));
+                let code = body
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("playground_generate_failed")
+                    .to_string();
                 let _ = event_tx
-                    .send(PlaygroundStreamEvent::Error { message })
+                    .send(PlaygroundStreamEvent::Error { message, code })
                     .await;
             }
         }
@@ -596,7 +608,7 @@ async fn generate_project_stream(
             PlaygroundStreamEvent::Done { .. } | PlaygroundStreamEvent::Error { .. }
         );
         let data = serde_json::to_string(&event).unwrap_or_else(|_| {
-            r#"{"type":"error","message":"Failed to serialize stream event"}"#.to_string()
+            r#"{"type":"error","message":"Failed to serialize stream event","code":"playground_generate_failed"}"#.to_string()
         });
         return Some((
             Ok::<_, Infallible>(Event::default().data(data)),
@@ -1793,6 +1805,10 @@ mod prompt_contract_tests {
                 "History accepts at most 20 turns"
             ),
             "playground_payload_too_large"
+        );
+        assert_eq!(
+            playground_error_code(StatusCode::INTERNAL_SERVER_ERROR, "Invalid agent plan"),
+            "playground_validation_failed"
         );
     }
 }

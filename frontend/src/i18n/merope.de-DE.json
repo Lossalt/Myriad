@@ -51,8 +51,6 @@
   "rigImportFailed": "Diese PSD mit Ebenen konnte nicht importiert werden.",
   "rigCommitFailed": "Das importierte Rig konnte nicht gespeichert werden.",
   "rigCompileFailed": "Das Ebenen-Rig konnte nicht kompiliert werden.",
-  "rigStoredInvalid": "Das gespeicherte Rig ist ungültig. Bitte erneut importieren.",
-  "portraitUnavailable": "Das aktuelle Hauptporträt ist nicht verfügbar.",
   "portraitDownloadFailed": "Das Hauptporträt konnte nicht heruntergeladen werden.",
   "portraitUploadFailed": "Das Hauptporträt konnte nicht hochgeladen werden.",
   "seeThroughStatusFailed": "Der See-through-Status konnte nicht geladen werden.",

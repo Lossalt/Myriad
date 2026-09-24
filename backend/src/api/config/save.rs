@@ -133,14 +133,18 @@ async fn save_to_database(
         .begin()
         .await
         .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
-    if let Some(url) = updates.get("ui_wallpaper_url").and_then(Value::as_str) {
-        // Same origin set as the media upgrade backfill. URLs under an older
-        // site origin are recognized by the binder when they resolve locally.
-        let origins = crate::services::media::upgrade::configured_origins().await;
-        let published = crate::services::media::bind_and_publish_wallpaper(&txn, url, &origins)
-            .await
-            .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
-        updates.insert("ui_wallpaper_url".into(), json!(published));
+    // Same origin set as the media upgrade backfill. URLs under an older site
+    // origin are recognized by the binder when they resolve locally.
+    let origins = crate::services::media::upgrade::configured_origins().await;
+    for key in ["ui_wallpaper_url", "site_og_image", "site_favicon"] {
+        let Some(url) = updates.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let published =
+            crate::services::media::bind_and_publish_site_image(&txn, key, url, &origins)
+                .await
+                .map_err(|error| ConfigPersistError::Store(error.to_string()))?;
+        updates.insert(key.into(), json!(published));
     }
     crate::services::config_service::ConfigService::update_configs_on(&txn, updates)
         .await
@@ -954,15 +958,13 @@ pub(crate) fn collect_database_updates_with_vendor(
 }
 
 /// Whether a config form field key holds a secret (must not write mask/empty to .env).
+///
+/// The storage rule (`data_key::is_sensitive_config_key`, which decides what is
+/// sealed) is authoritative, so certificates count and quota fields such as
+/// `*_tokens` do not. Form fields additionally use bare `key` / `*_key` names.
 fn is_secret_config_field_key(field_key: &str) -> bool {
     let k = field_key.to_ascii_lowercase();
-    k.contains("token")
-        || k.contains("secret")
-        || k.contains("api_key")
-        || k.contains("npsso")
-        || k.contains("password")
-        || k.ends_with("_key")
-        || k == "key"
+    crate::services::data_key::is_sensitive_config_key(&k) || k.ends_with("_key") || k == "key"
 }
 
 /// Skip empty or masked secrets so save does not clobber real .env/DB values with ••••.

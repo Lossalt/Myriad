@@ -2,6 +2,10 @@ import type { AgentPanelMode } from '../../components/agent-panel/agentPanelMode
 import type { AgentFaceChannel, ReplyUtterance } from './agentFaceChannel'
 import type { BodyAdapter } from './body/types'
 import { getAgentPanelMode } from '../../components/agent-panel/agentPanelMode'
+import {
+  MEROPE_EVENT_PREFIX,
+  MEROPE_TOUCH_TOPIC,
+} from '../../services/notificationEvents'
 import { authSubject } from '../../utils/authSubject'
 import { liveFaceVisible } from './faceVisible'
 import { liveMotionGeneration } from './motion/liveGeneration'
@@ -177,7 +181,7 @@ export function notificationCarriesMeropeSpeech(
   }
   return (
     typeof metadata.event_key === 'string' &&
-    metadata.event_key.startsWith('agent.merope.')
+    metadata.event_key.startsWith(MEROPE_EVENT_PREFIX)
   )
 }
 
@@ -216,7 +220,7 @@ export function deliverProactiveFace(
   const text = notification.body?.trim() ? notification.body : undefined
   if (
     gate.chatBusy ||
-    (notification.eventKey === 'agent.merope.touch' &&
+    (notification.eventKey === MEROPE_TOUCH_TOPIC &&
       (liveBody?.state().speaking ||
         !liveFaceVisible() ||
         (typeof document !== 'undefined' && document.hidden)))
@@ -228,7 +232,7 @@ export function deliverProactiveFace(
     channel.updateState(notification.meropeState)
   }
   return deliverGatedLine(channel, gate, getAgentPanelMode(), {
-    touchContinuation: notification.eventKey === 'agent.merope.touch',
+    touchContinuation: notification.eventKey === MEROPE_TOUCH_TOPIC,
     messageId: notification.id,
     text: notification.body,
     source: 'proactive',

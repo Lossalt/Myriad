@@ -1,4 +1,5 @@
-//! Bind business consumers to ready assets. Callers pass an open transaction.
+//! Consumer-shaped wrappers over [`super::binding::bind`]: each names its
+//! consumer and how it extracts citations. Callers pass an open transaction.
 
 use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 use serde_json::Value;
@@ -7,12 +8,11 @@ use uuid::Uuid;
 use crate::models::entities::{media_assets, media_url_aliases};
 
 use super::assets;
+use super::binding::{Authority, Bound, Citations, Consumer, Unresolved, bind};
 use super::error::MediaError;
-use super::references::{NewReference, replace_for_consumer};
-use super::types::MediaState;
-use super::urls::{
-    cite_local_path, compatible_url, content_path, filename_for_mime, media_shaped_path,
-};
+use super::references::replace_for_consumer;
+use super::types::{MediaActor, MediaState};
+use super::urls::{cite_local_path, compatible_url, filename_for_mime, media_shaped_path};
 
 pub fn extract_registered_paths(text: &str, origins: &[String]) -> Vec<String> {
     let mut found = Vec::new();
@@ -133,84 +133,6 @@ fn parse_public_id(path: &str) -> Option<Uuid> {
     Uuid::parse_str(rest.split('/').next()?).ok()
 }
 
-pub async fn references_from_fields(
-    db: &impl ConnectionTrait,
-    origins: &[String],
-    cover: Option<&str>,
-    body: &str,
-    requires_public: bool,
-) -> Result<Vec<NewReference>, MediaError> {
-    let mut refs = Vec::new();
-    if let Some(cover) = cover {
-        if let Some(path) = cite_local_path(cover, origins) {
-            push_ref(db, &mut refs, &path, "cover", requires_public).await?;
-        }
-    }
-    for (index, path) in extract_registered_paths(body, origins)
-        .into_iter()
-        .enumerate()
-    {
-        let slot = format!("body:{index}");
-        push_ref(db, &mut refs, &path, &slot, requires_public).await?;
-    }
-    Ok(refs)
-}
-
-pub async fn references_from_urls(
-    db: &impl ConnectionTrait,
-    origins: &[String],
-    urls: &[String],
-    slot: impl Fn(usize) -> String,
-    requires_public: bool,
-) -> Result<Vec<NewReference>, MediaError> {
-    let mut refs = Vec::new();
-    for (index, url) in urls.iter().enumerate() {
-        let Some(path) = cite_local_path(url, origins) else {
-            continue;
-        };
-        let name = slot(index);
-        push_ref(db, &mut refs, &path, &name, requires_public).await?;
-    }
-    Ok(refs)
-}
-
-async fn push_ref(
-    db: &impl ConnectionTrait,
-    refs: &mut Vec<NewReference>,
-    path: &str,
-    slot: &str,
-    requires_public: bool,
-) -> Result<(), MediaError> {
-    let Some(asset_id) = resolve_asset_id(db, path).await? else {
-        // Recognized local URLs must not silently escape deletion protection.
-        // Legacy citations become writable after the explicit migration imports
-        // them; remote URLs never reach this branch.
-        return Err(MediaError::NotReady);
-    };
-    if refs
-        .iter()
-        .any(|item| item.asset_id == asset_id && item.slot == slot)
-    {
-        return Ok(());
-    }
-    refs.push(NewReference {
-        asset_id,
-        slot: slot.to_string(),
-        requires_public,
-        expires_at: None,
-    });
-    Ok(())
-}
-
-pub async fn bind_consumer(
-    txn: &impl ConnectionTrait,
-    consumer_type: &str,
-    consumer_id: impl AsRef<str>,
-    refs: &[NewReference],
-) -> Result<(), MediaError> {
-    replace_for_consumer(txn, consumer_type, consumer_id.as_ref(), refs).await
-}
-
 pub async fn bind_note_draft(
     txn: &impl ConnectionTrait,
     doc_id: i32,
@@ -219,8 +141,15 @@ pub async fn bind_note_draft(
     content_md: &str,
     origins: &[String],
 ) -> Result<(), MediaError> {
-    let refs = references_from_fields(txn, origins, image, content_md, false).await?;
-    bind_consumer(txn, "note_draft", doc_id.to_string(), &refs).await?;
+    let citations = Citations::fields(origins, image, content_md);
+    bind(
+        txn,
+        &Consumer::note_draft(doc_id),
+        &citations,
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await?;
     sync_note_history_refs(txn, doc_id, history_since_revision, origins).await
 }
 
@@ -247,6 +176,9 @@ pub async fn clear_rss_source(
     Ok(())
 }
 
+/// RSS content is external; only media that already entered the durable
+/// catalog as public is protected. Nothing is imported or published here: a
+/// feed can name any local URL, including another user's private draft.
 pub async fn bind_rss_item(
     txn: &impl ConnectionTrait,
     item_id: i32,
@@ -264,36 +196,24 @@ pub async fn bind_rss_item(
     ] {
         collect_strings(&payload[key], &mut strings);
     }
-    let mut paths = Vec::new();
+    let mut citations = Citations::new();
     for text in strings {
         if let Some(path) = cite_local_path(&text, origins) {
-            paths.push(path);
+            citations.push_path("media", path);
         }
-        paths.extend(extract_registered_paths(&text, origins));
-    }
-    paths.sort();
-    paths.dedup();
-    let mut refs = Vec::new();
-    for path in paths {
-        let id = match resolve_asset_id(txn, &path).await? {
-            Some(id) => Some(id),
-            None => match super::legacy::cache_equivalent_path(&path) {
-                Some(other) => resolve_asset_id(txn, &other).await?,
-                None => None,
-            },
-        };
-        if let Some(asset_id) = id {
-            if !refs.iter().any(|r: &NewReference| r.asset_id == asset_id) {
-                refs.push(NewReference {
-                    asset_id,
-                    slot: format!("media:{}", refs.len()),
-                    requires_public: true,
-                    expires_at: None,
-                });
-            }
+        for path in extract_registered_paths(&text, origins) {
+            citations.push_path("media", path);
         }
     }
-    bind_consumer(txn, "rss_item", item_id.to_string(), &refs).await
+    bind(
+        txn,
+        &Consumer::rss_item(item_id),
+        &citations,
+        Authority::External,
+        Unresolved::Skip,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn bind_note_published(
@@ -303,10 +223,19 @@ pub async fn bind_note_published(
     content_md: &str,
     origins: &[String],
 ) -> Result<(), MediaError> {
-    let refs = references_from_fields(txn, origins, image, content_md, true).await?;
-    bind_consumer(txn, "note_published", item_id.to_string(), &refs).await
+    bind(
+        txn,
+        &Consumer::note_published(item_id),
+        &Citations::fields(origins, image, content_md),
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await
+    .map(|_| ())
 }
 
+/// Portrait, avatar and every image the visual profile names are shown on
+/// public pages, so all of them are published.
 pub async fn bind_persona(
     txn: &impl ConnectionTrait,
     portrait: Option<&str>,
@@ -314,29 +243,27 @@ pub async fn bind_persona(
     visual_profile: Option<&Value>,
     origins: &[String],
 ) -> Result<(), MediaError> {
-    let mut portrait_urls = Vec::new();
-    if let Some(portrait) = portrait {
-        portrait_urls.push(portrait.to_string());
-    }
-    if let Some(avatar) = avatar {
-        portrait_urls.push(avatar.to_string());
-    }
-    let portrait_refs = references_from_urls(
+    let portraits: Vec<&str> = portrait.into_iter().chain(avatar).collect();
+    bind(
         txn,
-        origins,
-        &portrait_urls,
-        |i| format!("portrait:{i}"),
-        true,
+        &Consumer::persona_portrait(),
+        &Citations::urls(origins, &portraits, |i| format!("portrait:{i}")),
+        Authority::Site,
+        Unresolved::Reject,
     )
     .await?;
-    bind_consumer(txn, "persona_portrait", "persona", &portrait_refs).await?;
-    let mut outfit_urls = Vec::new();
-    if let Some(profile) = visual_profile {
-        collect_strings(profile, &mut outfit_urls);
-    }
-    let outfit_refs =
-        references_from_urls(txn, origins, &outfit_urls, |i| format!("outfit:{i}"), true).await?;
-    bind_consumer(txn, "persona_outfit", "persona", &outfit_refs).await
+    let outfits = visual_profile
+        .map(|profile| Citations::strings(origins, profile, |i| format!("outfit:{i}")))
+        .unwrap_or_default();
+    bind(
+        txn,
+        &Consumer::persona_outfit(),
+        &outfits,
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub(super) fn collect_strings(value: &Value, out: &mut Vec<String>) {
@@ -356,28 +283,8 @@ pub(super) fn collect_strings(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-pub async fn bind_stickers(
-    txn: &impl ConnectionTrait,
-    layout: &str,
-    origins: &[String],
-) -> Result<(), MediaError> {
-    bind_sticker_urls(txn, layout, origins, &[]).await
-}
-
-async fn bind_sticker_urls(
-    txn: &impl ConnectionTrait,
-    layout: &str,
-    origins: &[String],
-    unresolved: &[String],
-) -> Result<(), MediaError> {
-    let layout: Value = serde_json::from_str(layout).unwrap_or(Value::Null);
-    let mut urls = extract_sticker_image_urls(&layout);
-    urls.retain(|url| cite_local_path(url, origins).is_none_or(|path| !unresolved.contains(&path)));
-    let refs = references_from_urls(txn, origins, &urls, |i| format!("sticker:{i}"), true).await?;
-    bind_consumer(txn, "sticker", "dashboard", &refs).await
-}
-
-/// Publish sticker images and rewrite `config.imageUrl` to public paths.
+/// Publish and bind sticker images; `config.imageUrl` is stored as each
+/// asset's permanent path.
 pub async fn bind_and_publish_dashboard_layout(
     txn: &impl ConnectionTrait,
     layout_json: &str,
@@ -388,61 +295,43 @@ pub async fn bind_and_publish_dashboard_layout(
 
 /// [`bind_and_publish_dashboard_layout`], leaving the `unresolved` local paths
 /// unpublished, unbound and unchanged in the layout. Only the media upgrade
-/// passes any: stored stickers whose media can never exist on this instance.
-/// Writers pass none, so saving such a sticker still fails.
+/// and settings restore pass any: stored stickers whose media can never exist
+/// on this instance. Writers pass none, so saving such a sticker still fails.
 pub(crate) async fn bind_and_publish_dashboard_layout_except(
     txn: &impl ConnectionTrait,
     layout_json: &str,
     origins: &[String],
     unresolved: &[String],
 ) -> Result<String, MediaError> {
-    let rewritten = publish_dashboard_layout(txn, layout_json, origins, unresolved).await?;
-    bind_sticker_urls(txn, &rewritten, origins, unresolved).await?;
-    Ok(rewritten)
-}
-
-async fn publish_dashboard_layout(
-    txn: &impl ConnectionTrait,
-    layout_json: &str,
-    origins: &[String],
-    unresolved: &[String],
-) -> Result<String, MediaError> {
-    let Ok(mut layout) = serde_json::from_str::<Value>(layout_json) else {
+    let parsed: Option<Value> = serde_json::from_str(layout_json).ok();
+    let urls = parsed
+        .as_ref()
+        .map(extract_sticker_image_urls)
+        .unwrap_or_default();
+    let mut citations = Citations::urls(origins, &urls, |i| format!("sticker:{i}"));
+    citations.retain(|citation| !unresolved.contains(&citation.path));
+    let bound = bind(
+        txn,
+        &Consumer::stickers(),
+        &citations,
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await?;
+    let Some(mut layout) = parsed else {
         return Ok(layout_json.to_string());
     };
-    let urls = extract_sticker_image_urls(&layout);
-    let mut ids = Vec::new();
-    let mut aliases = Vec::new();
-    for url in urls {
-        let Some(path) = cite_local_path(&url, origins) else {
-            continue;
-        };
-        if unresolved.contains(&path) {
-            continue;
-        }
-        if let Some(id) = resolve_asset_id(txn, &path).await? {
-            aliases.push((path, id));
-            ids.push(id);
-        }
-    }
-    let map = publish_asset_ids(txn, &ids).await?;
     rewrite_sticker_image_urls(&mut layout, |raw| {
-        let Some(path) = cite_local_path(raw, origins) else {
-            return raw.to_string();
-        };
-        if let Some((_, id)) = aliases.iter().find(|(from, _)| from == &path) {
-            if let Some(to) = map.get(id) {
-                return to.clone();
-            }
-        }
-        if let Some(id) = parse_content_id(&path) {
-            if let Some(to) = map.get(&id) {
-                return to.clone();
-            }
-        }
-        raw.to_string()
+        cite_local_path(raw, origins)
+            .and_then(|path| permanent_path(&bound, &path))
+            .unwrap_or_else(|| raw.to_string())
     });
     Ok(layout.to_string())
+}
+
+/// Permanent path of the asset a cited local path resolved to in `bound`.
+fn permanent_path(bound: &Bound, path: &str) -> Option<String> {
+    bound.permanent_for(path).map(str::to_string)
 }
 
 pub async fn bind_ai_task(
@@ -452,25 +341,39 @@ pub async fn bind_ai_task(
     origins: &[String],
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<(), MediaError> {
-    let mut urls = Vec::new();
-    collect_strings(result, &mut urls);
-    let mut refs = references_from_urls(txn, origins, &urls, |_| "result".into(), false).await?;
-    for item in &mut refs {
-        item.expires_at = expires_at;
-    }
-    bind_consumer(txn, "ai_task", task_id, &refs).await
+    bind(
+        txn,
+        &Consumer::ai_task(task_id, expires_at),
+        &Citations::strings(origins, result, |_| "result".into()),
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await
+    .map(|_| ())
 }
 
-pub async fn bind_channel_message(
+/// Media handed to one Agent run (web or channel). `payload` is client input:
+/// any string in it may name an asset. Only assets the sender may manage are
+/// bound, so a message cannot pin someone else's media against deletion; a
+/// sender without an actor (guest) binds nothing. The reference expires after
+/// the run; stored messages that show the media protect it from then on.
+pub async fn bind_run_input(
     txn: &impl ConnectionTrait,
     consumer_id: &str,
     payload: &Value,
     origins: &[String],
+    actor: Option<&MediaActor>,
 ) -> Result<(), MediaError> {
-    let mut urls = Vec::new();
-    collect_strings(payload, &mut urls);
-    let refs = references_from_urls(txn, origins, &urls, |i| format!("inbound:{i}"), false).await?;
-    bind_consumer(txn, "channel_message", consumer_id, &refs).await
+    let authority = actor.map_or(Authority::Anonymous, Authority::Actor);
+    bind(
+        txn,
+        &Consumer::run_input(consumer_id),
+        &Citations::strings(origins, payload, |i| format!("inbound:{i}")),
+        authority,
+        Unresolved::Reject,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn clear_note_doc(
@@ -488,6 +391,11 @@ pub async fn clear_note_doc(
 
 /// Bind snapshots captured by this write; retained revisions are immutable.
 /// Migration passes zero to rebuild all retained history.
+///
+/// Snapshots hold the content *before* each save, so a dead image the author
+/// just removed would otherwise fail every later save with MEDIA_NOT_READY.
+/// Past versions cannot be edited: protect what is live and skip the rest.
+/// Unmigrated assets stay protected by `references_complete`.
 pub(crate) async fn sync_note_history_refs(
     txn: &impl ConnectionTrait,
     doc_id: i32,
@@ -514,15 +422,32 @@ pub(crate) async fn sync_note_history_refs(
     for row in rows {
         let revision: i64 = row.try_get("", "revision")?;
         let snapshot: Value = row.try_get("", "snapshot")?;
-        let md = snapshot
-            .get("content_md")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let image = snapshot.get("image").and_then(Value::as_str);
-        let refs = references_from_fields(txn, origins, image, md, false).await?;
-        replace_for_consumer(txn, "note_history", &format!("{doc_id}:{revision}"), &refs).await?;
+        bind_note_snapshot(txn, doc_id, revision, &snapshot, origins).await?;
     }
     Ok(())
+}
+
+pub(crate) async fn bind_note_snapshot(
+    txn: &impl ConnectionTrait,
+    doc_id: i32,
+    revision: i64,
+    snapshot: &Value,
+    origins: &[String],
+) -> Result<(), MediaError> {
+    let md = snapshot
+        .get("content_md")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let image = snapshot.get("image").and_then(Value::as_str);
+    bind(
+        txn,
+        &Consumer::note_history(doc_id, revision),
+        &Citations::fields(origins, image, md),
+        Authority::Site,
+        Unresolved::Skip,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn clear_history_prefix(txn: &impl ConnectionTrait, doc_id: i32) -> Result<(), MediaError> {
@@ -536,52 +461,41 @@ async fn clear_history_prefix(txn: &impl ConnectionTrait, doc_id: i32) -> Result
     Ok(())
 }
 
-/// Mark cited assets public and rewrite private content paths to public paths.
-pub async fn publish_cited_media(
+/// Rewrite older spellings of cited local media (legacy aliases,
+/// `/api/media/{id}/content`) to each asset's permanent address. Read-only:
+/// publication happens when the content is bound to its consumer.
+pub async fn normalize_cited_media(
     txn: &impl ConnectionTrait,
     origins: &[String],
     cover: Option<&str>,
     body: &str,
 ) -> Result<(Option<String>, String), MediaError> {
-    let mut paths = extract_registered_paths(body, origins);
-    if let Some(cover) = cover {
-        if let Some(path) = cite_local_path(cover, origins) {
-            paths.push(path);
-        }
-    }
-    let mut ids = Vec::new();
-    let mut aliases = Vec::new();
-    for path in paths {
-        if let Some(id) = resolve_asset_id(txn, &path).await? {
-            aliases.push((path, id));
-            ids.push(id);
-        }
-    }
-    let map = publish_asset_ids(txn, &ids).await?;
-    let rewrite = |raw: &str| -> String {
-        let mut out = raw.to_string();
-        for (from, id) in &aliases {
-            if let Some(to) = map.get(id) {
-                out = out.replace(from, to);
+    let citations = Citations::fields(origins, cover, body);
+    let mut resolved = Bound::default();
+    for citation in citations.iter() {
+        if let Some(id) = resolve_asset_id(txn, &citation.path).await? {
+            if let Some(row) = assets::find_by_id(txn, id).await? {
+                if let Ok(asset) = assets::to_domain(row, 0) {
+                    resolved.insert(citation.path.clone(), asset.id, asset.url);
+                }
             }
         }
-        for (id, to) in &map {
-            out = out.replace(&content_path(*id), to);
-        }
-        out
-    };
-    let body = rewrite(body);
-    let cover = cover.map(rewrite).filter(|value| !value.trim().is_empty());
+    }
+    let body = resolved.rewrite(body);
+    let cover = cover
+        .map(|cover| resolved.rewrite(cover))
+        .filter(|value| !value.trim().is_empty());
     Ok((cover, body))
 }
 
-/// Publish one local URL and return the public path, or the original if it is already public.
-pub async fn publish_local_url(
+/// [`normalize_cited_media`] for one URL; anything that is not local media
+/// comes back unchanged.
+pub async fn normalize_local_url(
     txn: &impl ConnectionTrait,
     url: &str,
     origins: &[String],
 ) -> Result<String, MediaError> {
-    let (cover, _) = publish_cited_media(txn, origins, Some(url), "").await?;
+    let (cover, _) = normalize_cited_media(txn, origins, Some(url), "").await?;
     Ok(cover
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| url.to_string()))
@@ -605,52 +519,76 @@ pub async fn site_media_local_path(
     Ok(resolve_asset_id(db, &path).await?.map(|_| path))
 }
 
-/// Saving a wallpaper is publication; bind it in the same transaction as config.
-/// Returns the value to store: local media as its path-only public URL (which
-/// drops any stale origin), anything else unchanged.
+/// Saving a site image setting is publication; bind it in the same
+/// transaction as config. Returns the value to store: local media as its
+/// path-only permanent URL (which drops any stale origin), anything else
+/// unchanged.
 pub async fn bind_and_publish_wallpaper(
     txn: &impl ConnectionTrait,
     url: &str,
     origins: &[String],
 ) -> Result<String, MediaError> {
-    let local = site_media_local_path(txn, url, origins).await?;
-    let published = publish_local_url(txn, local.as_deref().unwrap_or(url), origins).await?;
-    let refs = references_from_urls(
-        txn,
-        origins,
-        std::slice::from_ref(&published),
-        |_| "image".into(),
-        true,
-    )
-    .await?;
-    bind_consumer(txn, "site_wallpaper", "site", &refs).await?;
-    Ok(published)
+    bind_and_publish_site_image(txn, "ui_wallpaper_url", url, origins).await
 }
 
-/// Settings restore of the wallpaper. Binds like saving it, except that local
-/// media that definitely does not exist on this instance (a media volume that
-/// did not come along) is kept as stored and left unbound instead of failing.
-/// Returns the value to store and the dead URLs as cited.
-pub(crate) async fn bind_restored_wallpaper(
+pub async fn bind_and_publish_site_image(
     txn: &impl ConnectionTrait,
+    key: &str,
+    url: &str,
+    origins: &[String],
+) -> Result<String, MediaError> {
+    let consumer =
+        Consumer::site_image(key).ok_or_else(|| MediaError::invalid("Not a site image setting"))?;
+    let local = site_media_local_path(txn, url, origins).await?;
+    let mut citations = Citations::new();
+    if let Some(path) = local.clone() {
+        citations.push_path("image", path);
+    }
+    let bound = bind(
+        txn,
+        &consumer,
+        &citations,
+        Authority::Site,
+        Unresolved::Reject,
+    )
+    .await?;
+    Ok(local
+        .and_then(|path| permanent_path(&bound, &path))
+        .unwrap_or_else(|| url.to_string()))
+}
+
+/// Restore a site image, retaining missing local URLs without binding them.
+/// Returns the stored value and any dead URLs.
+pub(crate) async fn bind_restored_site_image(
+    txn: &impl ConnectionTrait,
+    key: &str,
     url: &str,
     origins: &[String],
     paths: &super::LegacyPaths,
 ) -> Result<(String, Vec<String>), MediaError> {
+    let consumer =
+        Consumer::site_image(key).ok_or_else(|| MediaError::invalid("Not a site image setting"))?;
     if let Some(path) = cite_local_path(url, origins) {
         if super::upgrade::is_dead_local_path(txn, paths, origins, &path).await? {
-            bind_consumer(txn, "site_wallpaper", "site", &[]).await?;
+            bind(
+                txn,
+                &consumer,
+                &Citations::new(),
+                Authority::Site,
+                Unresolved::Skip,
+            )
+            .await?;
             return Ok((url.to_string(), vec![url.to_string()]));
         }
     }
     Ok((
-        bind_and_publish_wallpaper(txn, url, origins).await?,
+        bind_and_publish_site_image(txn, key, url, origins).await?,
         Vec::new(),
     ))
 }
 
 /// Settings restore of the dashboard layout; dead sticker media is handled as
-/// in [`bind_restored_wallpaper`] while live stickers are published and bound.
+/// in [`bind_restored_site_image`] while live stickers are published and bound.
 pub(crate) async fn bind_restored_dashboard_layout(
     txn: &impl ConnectionTrait,
     layout_json: &str,
@@ -674,7 +612,9 @@ pub(crate) async fn bind_restored_dashboard_layout(
     Ok((stored, dead_urls))
 }
 
-pub async fn publish_asset_ids(
+/// Mark assets public. Only [`super::binding::bind`] calls this, after it has
+/// authorized every id for the consumer being bound.
+pub(super) async fn publish_asset_ids(
     txn: &impl ConnectionTrait,
     ids: &[i32],
 ) -> Result<std::collections::HashMap<i32, String>, MediaError> {

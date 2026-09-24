@@ -18,9 +18,9 @@ use tracing::{info, warn};
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::config::DynamicConfig;
+use crate::services::bot_supervisor::{BotWorker, SessionResult, SupervisorPhase, supervise};
 use crate::services::http_client;
 
-const POLL: Duration = Duration::from_secs(2);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const API_BASE: &str = "https://open.feishu.cn";
 const TOKEN_MARGIN: Duration = Duration::from_secs(60);
@@ -199,75 +199,43 @@ async fn cached_auth_header_inner(force: bool) -> Result<String, ConnectFailureK
 
 /// Owned by the persona supervisor; dropping this future stops channel admission.
 pub(crate) async fn run_worker() {
-    run_loop().await;
+    supervise::<FeishuWorker>().await;
 }
 
-async fn run_loop() {
-    let mut last_permanent: Option<CredentialFingerprint> = None;
-    let mut reconnect_attempts: u32 = 0;
-    loop {
-        let fingerprint = {
-            let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-            CredentialFingerprint::from_config(&config)
+struct FeishuWorker;
+
+impl BotWorker for FeishuWorker {
+    const NAME: &'static str = "Feishu bot";
+    type Fingerprint = CredentialFingerprint;
+    type Resume = ();
+
+    fn fingerprint(config: &DynamicConfig) -> CredentialFingerprint {
+        CredentialFingerprint::from_config(config)
+    }
+
+    fn intent(fingerprint: &CredentialFingerprint) -> WorkerIntent {
+        fingerprint.intent()
+    }
+
+    async fn publish(phase: SupervisorPhase, fingerprint: &CredentialFingerprint) {
+        let phase = match phase {
+            SupervisorPhase::Offline => FeishuBotPhase::Offline,
+            SupervisorPhase::Rejected => FeishuBotPhase::Rejected,
+            SupervisorPhase::Connecting => FeishuBotPhase::Connecting,
+            SupervisorPhase::Reconnecting => FeishuBotPhase::Reconnecting,
         };
+        publish_status(phase, fingerprint).await;
+    }
 
-        if fingerprint.intent() != WorkerIntent::Run {
-            last_permanent = None;
-            reconnect_attempts = 0;
-            publish_status(FeishuBotPhase::Offline, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        if last_permanent.as_ref() == Some(&fingerprint) {
-            publish_status(FeishuBotPhase::Rejected, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let watched = fingerprint.clone();
-        let watch_task = crate::services::channel_work::AbortTask(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(POLL).await;
-                let current = {
-                    let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-                    CredentialFingerprint::from_config(&config)
-                };
-                if current != watched {
-                    let _ = cancel_tx.send(true);
-                    break;
-                }
-            }
-        }));
-
-        publish_status(FeishuBotPhase::Connecting, &fingerprint).await;
-        let result = run_gateway(&fingerprint, cancel_rx).await;
-        drop(watch_task);
-        match result {
-            Ok(()) => {
-                last_permanent = None;
-                reconnect_attempts = 0;
-                publish_status(FeishuBotPhase::Offline, &fingerprint).await;
-            }
-            Err(ConnectFailureKind::Permanent) => {
-                warn!("Feishu bot stopped: credentials rejected");
-                last_permanent = Some(fingerprint.clone());
-                reconnect_attempts = 0;
-                publish_status(FeishuBotPhase::Rejected, &fingerprint).await;
-            }
-            Err(_) => {
-                reconnect_attempts = reconnect_attempts.saturating_add(1);
-                let delay = transient_backoff(reconnect_attempts);
-                warn!(
-                    attempt = reconnect_attempts,
-                    retry_in_secs = delay.as_secs(),
-                    "Feishu bot transient failure; will reconnect"
-                );
-                publish_status(FeishuBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(delay).await;
-            }
-        }
+    async fn run_session(
+        fingerprint: &CredentialFingerprint,
+        _resume: Option<()>,
+        cancel: watch::Receiver<bool>,
+    ) -> SessionResult<()> {
+        run_gateway(fingerprint, cancel)
+            .await
+            .map(|()| None)
+            .map_err(|kind| (kind, None))
     }
 }
 
@@ -377,15 +345,6 @@ async fn feishu_http_client() -> Result<reqwest::Client, ConnectFailureKind> {
         log_transport("Feishu HTTP client build failed", &err);
         ConnectFailureKind::Transient
     })
-}
-
-fn transient_backoff(attempt: u32) -> Duration {
-    let secs = if attempt >= 6 {
-        30
-    } else {
-        1u64 << attempt.min(5)
-    };
-    Duration::from_secs(secs.min(30))
 }
 
 fn log_transport(context: &str, err: &impl std::fmt::Display) {

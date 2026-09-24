@@ -8,6 +8,7 @@ use super::ensure_heals::*;
 use super::expected_indexes::get_expected_indexes;
 use super::expected_schema::get_expected_schema;
 use super::introspect::*;
+use super::phantasi_source_dedupe::ensure_phantasi_source_url_key_unique;
 use super::seeds::{ensure_default_config, ensure_default_platforms};
 
 /// Schema 版本号
@@ -20,8 +21,11 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 数字系列 `migrations/001`–`006` 是新库权威建表。没有文件的
 /// `seaql_migrations` 行在 `Migrator::up` 之前删掉。普通缺列走
 /// `get_expected_schema` 通用 ADD。Support floor: product ≥ 0.3.10。
-/// Current: drop July CREATE heals; 003 source applications; 006 identities in TableDef。
-pub const SCHEMA_VERSION: &str = "2026.09.22.1";
+/// Current: drop July CREATE heals; 003 source applications; 006 identities in TableDef;
+/// 时间线只放帖子（`ensure_timeline_posts_only`）；半撤回转发收尾
+/// （`ensure_repost_state_consistent`）；已发布行的发布幂等键；旧自治授权收窄
+/// （`narrow_legacy_autonomy_grants`）。
+pub const SCHEMA_VERSION: &str = "2026.09.24.4";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -259,6 +263,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
                     ensure_channels_active_relationship_unique(db).await
                 }
                 "idx_platform_metadata_user_platform" => ensure_platform_metadata_unique(db).await,
+                "idx_phantasi_sources_url_key" => ensure_phantasi_source_url_key_unique(db).await,
                 _ => db.execute_unprepared(ddl).await.map(|_| ()),
             };
             result.map_err(|e| DbErr::Custom(format!("schema repair DDL failed: {ddl}: {e}")))?;
@@ -272,13 +277,18 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     // Ongoing object/data heals, plus recent (~1 month) CREATE IF NOT EXISTS.
     ensure_tapp_storage_credential_constraint(db).await?;
     ensure_agent_tasks_status_check(db).await?;
+    ensure_agent_task_engine(db).await?;
+    ensure_room_membership_notify(db).await?;
     ensure_tapp_storage_quota(db).await?;
     ensure_timeline_unique(db).await?;
+    ensure_timeline_posts_only(db).await?;
+    ensure_repost_state_consistent(db).await?;
     ensure_delivery_queue_unique(db).await?;
     ensure_channels_active_relationship_unique(db).await?;
     ensure_platform_metadata_unique(db).await?;
     ensure_agent_intentions_table(db).await?;
     ensure_agent_autonomy_grants_table(db).await?;
+    narrow_legacy_autonomy_grants(db).await?;
     ensure_agent_merope_tables(db).await?;
     ensure_phantasi_item_topic_index(db).await?;
     ensure_phantasi_state_revision(db).await?;
@@ -289,6 +299,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_phantasi_source_applications_table(db).await?;
     ensure_media_assets_table(db).await?;
     ensure_phantasi_note_source_unique(db).await?;
+    ensure_phantasi_source_url_key_unique(db).await?;
     ensure_rsshub_global_url_unique(db).await?;
     ensure_phantasi_application_pending_unique(db).await?;
     ensure_tapp_shortcut_chord_unique(db).await?;

@@ -1,5 +1,5 @@
 import type { MessageBodyRef } from './messageBody'
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useI18n } from '../../contexts/I18nContext'
 import { authSubject } from '../../utils/authSubject'
 import { BODY_PAGE_CHARS, readBodyPage } from './messageBody'

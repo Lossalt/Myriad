@@ -19,9 +19,6 @@ pub const STEP_TIMEOUT_MIN_SECS: u64 = 10;
 pub const STEP_TIMEOUT_MAX_SECS: u64 = 900;
 /// AI 能力的保底（秒）：生图与 Pro 长文经常超过一分钟。
 pub const AI_STEP_TIMEOUT_FLOOR_SECS: u64 = 300;
-/// Skill 子步骤的地板（秒）。子步骤大多是小操作，但不能因此把声明需要更久的
-/// 能力也压到这里——`ai.image` 声明 300 秒、`model3d.generate` 声明 180 秒。
-pub const SKILL_SUB_STEP_MIN_SECS: u64 = 60;
 
 /// 能力没有声明预估时长时的类别兜底（秒）。
 pub fn category_timeout_fallback_secs(
@@ -62,10 +59,7 @@ pub fn step_timeout_secs(
 }
 
 /// 支持的平台名称列表
-pub const VALID_PLATFORMS: &[&str] = &[
-    "steam", "bilibili", "github", "youtube", "netease", "bangumi", "x", "discord", "mal", "xbox",
-    "psn",
-];
+pub const VALID_PLATFORMS: &[&str] = crate::services::platform_id::PLATFORM_SLUGS;
 
 /// 验证平台名称是否在白名单中（含 "all"），返回 Result
 pub fn validate_platform_name(platform: &str) -> Result<&str, String> {
@@ -271,20 +265,6 @@ mod step_timeout_tests {
         assert_eq!(step_timeout_secs(None, Some(180_000), 300, false), 540);
     }
 
-    /// Skill 子步骤既要有地板，也不能盖掉能力自己声明的预算。
-    #[test]
-    fn skill_sub_steps_floor_short_work_without_capping_long_work() {
-        let sub_step = |est, fallback, ai| {
-            step_timeout_secs(None, est, fallback, ai).max(SKILL_SUB_STEP_MIN_SECS)
-        };
-        // 小操作抬到地板
-        assert_eq!(sub_step(Some(100), 30, false), SKILL_SUB_STEP_MIN_SECS);
-        // 能力声明更久时以声明为准
-        assert_eq!(sub_step(Some(300_000), 300, true), 900); // ai.image
-        assert_eq!(sub_step(Some(180_000), 300, false), 540); // model3d.generate
-        assert_eq!(sub_step(Some(120_000), 300, false), 360); // model3d.rig
-    }
-
     /// 产物会被执行的提示词，必须给第三方内容划边界。
     ///
     /// 这三处的输入里都有 `ai.webSearch` / `web.scrape` / `phantasi.article` 抓回来
@@ -293,23 +273,11 @@ mod step_timeout_tests {
     /// 执行层。
     #[test]
     fn prompts_that_yield_executable_plans_frame_untrusted_input() {
-        for (label, source, expected) in [
-            (
-                "动态步骤生成",
-                include_str!("executor/path_ai_helpers.rs"),
-                1,
-            ),
-            (
-                "Skill 内部 DAG",
-                include_str!("executor/execute_step.rs"),
-                1,
-            ),
-            (
-                "UI / 页面动作计划",
-                include_str!("executor/handlers/ui_control.rs"),
-                2,
-            ),
-        ] {
+        for (label, source, expected) in [(
+            "UI / 页面动作计划",
+            include_str!("executor/handlers/ui_control.rs"),
+            2,
+        )] {
             assert_eq!(
                 source.matches("untrusted_block(").count(),
                 expected,
@@ -341,9 +309,6 @@ mod step_timeout_tests {
     #[test]
     fn json_extraction_is_not_rehand_rolled() {
         for (label, source) in [
-            ("Skill DAG", include_str!("executor/execute_step.rs")),
-            ("动态步骤", include_str!("executor/path_ai_helpers.rs")),
-            ("追问判定", include_str!("executor/resume_and_dynamic.rs")),
             ("记忆提取", include_str!("memory/manager.rs")),
             ("报告 DNA", include_str!("merope/report_dna.rs")),
         ] {
@@ -352,21 +317,6 @@ mod step_timeout_tests {
                 "{label} 又自己抠了一遍花括号"
             );
         }
-    }
-
-    /// DAG 子步骤走 `step_timeout_secs`，禁止 `timeout_ms: Some(60000)`。
-    #[test]
-    fn the_dag_path_derives_its_timeout_instead_of_hardcoding_one() {
-        let dag = include_str!("executor/execute_step.rs");
-        assert!(
-            !dag.contains("timeout_ms: Some(60000)"),
-            "Skill 子步骤又把超时写死了"
-        );
-        assert_eq!(
-            dag.matches("step_timeout_secs(").count(),
-            2,
-            "消费端与 DAG 构建各调一次；数量变了说明有人另开了第三套算法"
-        );
     }
 
     #[test]

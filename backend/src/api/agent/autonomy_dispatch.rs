@@ -34,6 +34,8 @@ pub async fn tick_autonomy_work(db: DatabaseConnection) {
 
 async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(), String> {
     if intent.user_id == SYSTEM_USER_ID || intent.accept_source != AcceptSource::Autonomy {
+        // A row the query still returned must not keep the head of the queue.
+        defer_skipped_autonomy(db, &intent).await;
         return Ok(());
     }
     let grant = AutonomyGrantStore::new(db.clone())
@@ -52,22 +54,23 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
         grant.as_ref(),
         &granted,
     ) else {
+        // Keep Accepted so the user can still click the card, but leave the
+        // oldest-first batch. expires_at is what expiry uses, not updated_at.
+        defer_skipped_autonomy(db, &intent).await;
         return Ok(());
     };
 
     let store = IntentStore::new(db.clone());
-    // CAS Accepted → Running first so concurrent ticks do not create empty sessions.
-    store
-        .transition(
-            &intent.id,
-            intent.user_id,
-            IntentStatus::Running,
-            None,
-            None,
-            None,
-        )
+    // CAS Accepted → Running first so concurrent ticks do not create empty
+    // sessions, and only while the source is still autonomy: a user who
+    // accepted the card in the meantime owns it and runs it with their input.
+    if !store
+        .claim_for_autonomy(&intent.id, intent.user_id)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(());
+    }
 
     let session_id = match ensure_session(
         db,
@@ -191,6 +194,19 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
     Ok(())
 }
 
+async fn defer_skipped_autonomy(db: &DatabaseConnection, intent: &IntentRecord) {
+    if let Err(error) = IntentStore::new(db.clone())
+        .defer_autonomy_skip(&intent.id, intent.user_id)
+        .await
+    {
+        tracing::warn!(
+            %error,
+            intent_id = %intent.id,
+            "[Autonomy] could not defer skipped proposal"
+        );
+    }
+}
+
 async fn forward_autonomy_progress(
     run: Arc<AgentRun>,
     mut events: tokio::sync::mpsc::Receiver<AgentProgressEvent>,
@@ -233,20 +249,12 @@ async fn finish_autonomy_turn(
         .as_ref()
         .map(|task| task.task_id.clone())
         .filter(|id| !id.is_empty())
-        .or_else(|| {
-            api_response
-                .confirmation
-                .as_ref()
-                .map(|confirmation| format!("confirmation:{}", confirmation.confirmation_id))
-        })
         .unwrap_or_default();
     let is_waiting = api_response
         .task
         .as_ref()
         .is_some_and(|task| task.status == "waiting_for_input")
         && !task_id.is_empty();
-    let is_confirmation = api_response.confirmation.is_some()
-        || api_response.response_type == "confirmation_required";
     let metadata = work_turn_session_metadata(&api_response, run_id, &task_id);
     let _ = persist_assistant_message(
         db,
@@ -301,12 +309,8 @@ async fn finish_autonomy_turn(
         Some(api_response.message.clone()),
     )
     .await;
-    let response_value = if is_confirmation {
-        park_confirmation_run(&api_response, &task_id)
-    } else {
-        serde_json::to_value(&api_response)
-            .unwrap_or_else(|_| AppError::public_json("serialization failed"))
-    };
+    let response_value = serde_json::to_value(&api_response)
+        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
     let _ = progress_tx
         .send(AgentProgressEvent::TaskCompleted {
             task_id,
@@ -316,76 +320,21 @@ async fn finish_autonomy_turn(
         .await;
 }
 
-pub(crate) fn park_confirmation_run(api_response: &ApiResponse, task_id: &str) -> Value {
-    let mut value = serde_json::to_value(api_response)
-        .unwrap_or_else(|_| AppError::public_json("serialization failed"));
-    if let Some(object) = value.as_object_mut() {
-        object.insert("streamTerminal".into(), json!(false));
-        let mut task = object.get("task").cloned().unwrap_or_else(|| json!({}));
-        if !task.is_object() {
-            task = json!({});
-        }
-        if let Some(task_object) = task.as_object_mut() {
-            if !task_id.is_empty() {
-                task_object.insert("taskId".into(), json!(task_id));
-            }
-            task_object.insert("status".into(), json!("waiting_for_input"));
-        }
-        object.insert("task".into(), task);
-    }
-    value
-}
-
 pub(crate) fn work_turn_session_metadata(
     api_response: &ApiResponse,
     run_id: &str,
     task_id: &str,
 ) -> Value {
-    let mut base = serde_json::to_value(api_response).unwrap_or_else(|_| json!({}));
-    if let Some(confirmation) = &api_response.confirmation {
-        if let Some(obj) = base.as_object_mut() {
-            let details = confirmation
-                .pending_steps
-                .iter()
-                .map(|step| {
-                    let impact = if step.impact.is_empty() {
-                        String::new()
-                    } else {
-                        format!("\n{}", step.impact.join("\n"))
-                    };
-                    format!("{}: {}{impact}", step.capability_name, step.message)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            obj.insert(
-                "pendingQuestion".into(),
-                json!({
-                    "questionId": format!("confirmation:{}", confirmation.confirmation_id),
-                    "confirmationId": confirmation.confirmation_id,
-                    "questionType": "confirmation",
-                    "question": api_response.message,
-                    "context": details,
-                    "required": true,
-                    "riskLevel": confirmation.risk_level,
-                    "expiresInSeconds": confirmation.expires_in_seconds,
-                    "pendingSteps": confirmation.pending_steps,
-                }),
-            );
-        }
-    }
+    let base = serde_json::to_value(api_response).unwrap_or_else(|_| json!({}));
     session_metadata_with_run_identity(Some(base), run_id, task_id)
 }
 
 #[cfg(test)]
 fn intention_status_from_response(response: &AgentResponse) -> IntentStatus {
-    if matches!(
-        response.response_type,
-        AgentResponseType::ConfirmationRequired
-    ) || response.confirmation.is_some()
-        || response
-            .task
-            .as_ref()
-            .is_some_and(|task| task.status == TaskStatus::WaitingForInput)
+    if response
+        .task
+        .as_ref()
+        .is_some_and(|task| task.status == TaskStatus::WaitingForInput)
     {
         return IntentStatus::Waiting;
     }
@@ -402,6 +351,89 @@ fn intention_status_from_response(response: &AgentResponse) -> IntentStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::agent::consciousness::AutonomyGrantView;
+
+    /// Oldest-first batch of 4. A skip stamps `updated_at` so the row leaves
+    /// the head; a claim is a dispatch. This is the queue contract
+    /// `defer_autonomy_skip` implements.
+    fn advance_batch(
+        rows: &mut [(String, chrono::DateTime<chrono::Utc>, AutonomyClaim, bool)],
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<String> {
+        let mut order: Vec<usize> = (0..rows.len()).filter(|index| !rows[*index].3).collect();
+        order.sort_by_key(|index| rows[*index].1);
+        let mut dispatched = Vec::new();
+        for index in order.into_iter().take(4) {
+            match &rows[index].2 {
+                AutonomyClaim::Claim { .. } => {
+                    rows[index].3 = true;
+                    dispatched.push(rows[index].0.clone());
+                }
+                AutonomyClaim::Skip => {
+                    rows[index].1 = now;
+                }
+            }
+        }
+        dispatched
+    }
+
+    #[test]
+    fn revoked_rows_do_not_block_the_next_autonomy_tick() {
+        let start = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let granted = vec!["calendar:read".to_string()];
+        let mut rows = Vec::new();
+        for index in 0..4 {
+            let grant = AutonomyGrantView {
+                user_id: 10 + index,
+                allowed_permissions: granted.clone(),
+                revoked: true,
+            };
+            rows.push((
+                format!("revoked-{index}"),
+                start + chrono::Duration::seconds(index as i64),
+                autonomy_claim_decision(10 + index, AcceptSource::Autonomy, Some(&grant), &granted),
+                false,
+            ));
+            assert!(
+                matches!(rows[index as usize].2, AutonomyClaim::Skip),
+                "revoked grant must be skipped"
+            );
+        }
+        let live = AutonomyGrantView {
+            user_id: 42,
+            allowed_permissions: granted.clone(),
+            revoked: false,
+        };
+        rows.push((
+            "live".into(),
+            start + chrono::Duration::seconds(10),
+            autonomy_claim_decision(42, AcceptSource::Autonomy, Some(&live), &granted),
+            false,
+        ));
+        assert!(matches!(rows[4].2, AutonomyClaim::Claim { .. }));
+
+        let first = advance_batch(&mut rows, start + chrono::Duration::minutes(1));
+        assert!(
+            first.is_empty(),
+            "the first tick only sees the four revoked heads"
+        );
+        let second = advance_batch(&mut rows, start + chrono::Duration::minutes(2));
+        assert_eq!(second, vec!["live".to_string()]);
+        assert!(rows[4].3, "the live proposal was dispatched");
+        assert!(rows[..4].iter().all(|row| !row.3));
+        assert!(rows[..4].iter().all(|row| row.1 > rows[4].1));
+    }
+
+    #[test]
+    fn skipped_dispatch_defers_instead_of_returning_unchanged() {
+        let src = include_str!("autonomy_dispatch.rs");
+        assert!(
+            src.matches("defer_skipped_autonomy(db, &intent)").count() >= 2,
+            "both skip returns must leave the queue head"
+        );
+    }
 
     #[tokio::test]
     async fn autonomy_producer_error_closes_running_run() {
@@ -477,25 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_stays_waiting() {
-        let response = AgentResponse {
-            response_type: AgentResponseType::ConfirmationRequired,
-            message: "confirm".into(),
-            data: None,
-            data_display: None,
-            suggestions: vec![],
-            task: None,
-            confirmation: None,
-            frontend_action: None,
-            performance: None,
-        };
-        assert_eq!(
-            intention_status_from_response(&response),
-            IntentStatus::Waiting
-        );
-    }
-
-    #[test]
     fn waiting_for_input_stays_waiting() {
         let response = AgentResponse {
             response_type: AgentResponseType::Answer,
@@ -519,7 +532,6 @@ mod tests {
                 execution_trace: None,
                 recipe: None,
             }),
-            confirmation: None,
             frontend_action: None,
             performance: None,
         };
@@ -559,7 +571,6 @@ mod tests {
                 step_history: vec![],
                 execution_trace: None,
             }),
-            confirmation: None,
             frontend_action: None,
             performance: None,
             session_id: None,
@@ -568,33 +579,6 @@ mod tests {
         assert_eq!(meta["runId"], "run_1");
         assert_eq!(meta["taskId"], "t1");
         assert_eq!(meta["task"]["pendingQuestion"]["questionId"], "q1");
-
-        response.task = None;
-        response.response_type = "confirmation_required".into();
-        response.confirmation = Some(ConfirmationInfo {
-            confirmation_id: "c1".into(),
-            risk_level: "high".into(),
-            expires_in_seconds: 300,
-            pending_steps: vec![PendingStepInfo {
-                step_id: "s1".into(),
-                capability_name: "mail.send".into(),
-                message: "Send the note".into(),
-                impact: vec!["Writes mail".into()],
-            }],
-        });
-        let meta = work_turn_session_metadata(&response, "run_2", "confirmation:c1");
-        assert_eq!(meta["pendingQuestion"]["confirmationId"], "c1");
-        assert_eq!(meta["pendingQuestion"]["questionType"], "confirmation");
-        assert_eq!(meta["taskId"], "confirmation:c1");
-        assert!(
-            meta["pendingQuestion"]["context"]
-                .as_str()
-                .unwrap()
-                .contains("mail.send")
-        );
-        let parked = park_confirmation_run(&response, "confirmation:c1");
-        assert_eq!(parked["task"]["status"], "waiting_for_input");
-        assert_eq!(parked["streamTerminal"], false);
 
         response.task = Some(TaskInfo {
             task_id: "t2".into(),
@@ -617,7 +601,6 @@ mod tests {
             step_history: vec![],
             execution_trace: None,
         });
-        response.confirmation = None;
         response.response_type = "answer".into();
         let mut resume = work_turn_session_metadata(&response, "run_3", "t2");
         resume

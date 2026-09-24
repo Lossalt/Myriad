@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use crate::config::DynamicConfig;
 use crate::error::HttpError;
-use crate::middleware::auth::{Claims, ensure_current_admin_on};
+use crate::middleware::auth::{Claims, current_admin_status};
 use crate::services::tapp_api_service::{ApiExecutionContext, TappApiService};
 use crate::services::tapp_context::{
     context_app_payload, context_system_payload, context_user_payload, idle_navigation_context,
@@ -74,7 +74,10 @@ pub async fn get_context_user(
     let user_id = super::common::parse_user_id(&claims)?;
 
     let connected_platforms = get_available_platforms().await;
-    let is_current_admin = claims.is_admin && ensure_current_admin_on(&claims, &db).await.is_ok();
+    let is_current_admin = claims.is_admin
+        && current_admin_status(&claims, &db)
+            .await
+            .map_err(HttpError::from)?;
     let mut display_name: Option<String> = None;
     let mut avatar_url: Option<String> = None;
 

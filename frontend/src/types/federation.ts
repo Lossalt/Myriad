@@ -90,8 +90,12 @@ export interface NoteAttachmentInput {
   name?: string
 }
 
+/** Publishable content kinds; kept equal to `shared/federation_content_kinds.json` (backend `ContentKind`). */
+export const FEDERATION_CONTENT_KINDS = ['note', 'report', 'phantasi-article', 'tapp', 'library'] as const
+export type FederationContentKind = (typeof FEDERATION_CONTENT_KINDS)[number]
+
 export interface PublishRequest {
-  content_type: 'report' | 'phantasi-article' | 'tapp' | 'library' | 'note'
+  content_type: FederationContentKind
   /** Required except freeform notes (server generates id). */
   content_id?: string
   visibility?: 'public' | 'followers' | 'direct'

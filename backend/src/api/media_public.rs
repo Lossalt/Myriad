@@ -20,7 +20,7 @@ use crate::extract::Db;
 use crate::services::data_paths::paths;
 use crate::services::media::{
     FileServe, LegacyPaths, MediaStore, NO_STORE, ServeOutcome, resolve_alias_or_legacy,
-    resolve_public_asset,
+    resolve_private_asset, resolve_public_asset,
 };
 
 pub fn public_media_routes() -> Router<crate::state::AppState> {
@@ -58,10 +58,33 @@ async fn serve_public_asset(
         return hide();
     };
     let store = MediaStore::new(paths().media.clone());
-    match resolve_public_asset(&db, &store, public_id, &filename).await {
-        Ok(outcome) => send(req, outcome).await,
-        Err(_) => hide(),
-    }
+    let outcome = match resolve_public_asset(&db, &store, public_id, &filename).await {
+        Ok(outcome @ ServeOutcome::File(_)) => outcome,
+        Ok(ServeOutcome::NotFound { .. }) => {
+            // Same address for a private asset: only a signed-in reader who may
+            // read it gets the bytes, never cacheable. Anonymous requests stop
+            // before any session lookup.
+            let Some(actor) = reader(&db, req.headers()).await else {
+                return hide();
+            };
+            match resolve_private_asset(&db, &store, public_id, &filename, &actor).await {
+                Ok(outcome) => outcome,
+                Err(_) => return hide(),
+            }
+        }
+        Err(_) => return hide(),
+    };
+    send(req, outcome).await
+}
+
+async fn reader(
+    db: &sea_orm::DatabaseConnection,
+    headers: &axum::http::HeaderMap,
+) -> Option<crate::services::media::MediaActor> {
+    let claims = crate::middleware::auth::authenticate_optional_request(headers, db)
+        .await
+        .ok()??;
+    crate::api::media::actor_from_claims(&claims).ok()
 }
 
 async fn serve_federation_media(
@@ -70,7 +93,7 @@ async fn serve_federation_media(
     req: Request,
 ) -> Response {
     let local_path = format!("/media/federation/{user}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_phantasi_cache(
@@ -79,7 +102,7 @@ async fn serve_phantasi_cache(
     req: Request,
 ) -> Response {
     let local_path = format!("/api/phantasi/image-cache/{subdir}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_brew_cache(
@@ -88,19 +111,18 @@ async fn serve_brew_cache(
     req: Request,
 ) -> Response {
     let local_path = format!("/api/brew/image-cache/{subdir}/{file}");
-    serve_alias(db, local_path, true, req).await
+    serve_alias(db, local_path, req).await
 }
 
 async fn serve_alias(
     db: sea_orm::DatabaseConnection,
     local_path: String,
-    allow_unmigrated: bool,
     req: Request,
 ) -> Response {
     let data = paths();
     let store = MediaStore::new(data.media.clone());
     let legacy = LegacyPaths::from_data_paths(data);
-    match resolve_alias_or_legacy(&db, &store, &legacy, &local_path, allow_unmigrated).await {
+    match resolve_alias_or_legacy(&db, &store, &legacy, &local_path).await {
         Ok(outcome) => send(req, outcome).await,
         Err(_) => hide(),
     }
@@ -161,6 +183,14 @@ fn apply_headers(res: &mut Response, file: &FileServe) {
     }
     if let Ok(value) = HeaderValue::from_str(&file.mime) {
         headers.insert(header::CONTENT_TYPE, value);
+    }
+    // Cached SVG comes from arbitrary feeds and is same-origin: opened as a
+    // document it must not run script. Images embedded via <img> are unaffected.
+    if file.mime == "image/svg+xml" {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; sandbox"),
+        );
     }
     if let Some(etag) = file.etag.as_deref() {
         if let Ok(value) = HeaderValue::from_str(&format!("\"{etag}\"")) {

@@ -1,12 +1,8 @@
-//! Bounded legacy catalog migration. Invoked explicitly; not from schema startup.
+//! Legacy media migration primitives used by the upgrade worker.
 
 use chrono::Utc;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
-};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -21,37 +17,87 @@ use super::store::{MediaStore, hash_path};
 use super::types::{MediaExposure, MediaScope, MediaSource, MediaState};
 use super::urls::{alias_local_path, storage_key};
 
-pub const DEFAULT_BATCH: u32 = 50;
-pub const MAX_BATCH: u32 = 100;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MigrationStats {
-    pub scanned: u64,
-    pub files_present: u64,
-    pub files_missing: u64,
-    pub bytes: u64,
-    pub duplicate_paths: u64,
-    pub shared: u64,
-    pub unknown_owner: u64,
-    pub orphan_candidates: u64,
-    pub copied: u64,
-    pub already_migrated: u64,
-    pub failed: u64,
-    pub aliases_written: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MigrationBatch {
-    pub stats: MigrationStats,
-    pub next_cursor: Option<i32>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogPlan {
     pub local_path: String,
     pub disk: PathBuf,
     pub owner: LegacyOwner,
     pub kind: LegacyKind,
+}
+
+/// MIME of an importable legacy file, from its extension.
+pub(super) fn legacy_mime(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path).extension()?.to_str()?;
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        _ => return None,
+    })
+}
+
+/// Import a cached file that authored content cites into a durable public
+/// asset, aliased at the cached path, in the caller's transaction. From then
+/// on the asset's references are maintained transactionally like any new
+/// write. `None` when the path is not a cached file that still exists.
+pub(super) async fn import_cached_citation(
+    db: &impl ConnectionTrait,
+    store: &MediaStore,
+    paths: &LegacyPaths,
+    path: &str,
+) -> Result<Option<i32>, MediaError> {
+    if !(path.starts_with("/api/phantasi/image-cache/")
+        || path.starts_with("/api/brew/image-cache/"))
+    {
+        return Ok(None);
+    }
+    let Ok(plan) = plan_catalog_url(path, &[], paths) else {
+        return Ok(None);
+    };
+    let Some(mime) = legacy_mime(path) else {
+        return Ok(None);
+    };
+    if tokio::fs::metadata(&plan.disk).await.is_err() {
+        return Ok(None);
+    }
+    // The file lands in the store before the caller commits. A stable identity
+    // per cached file means a rolled-back attempt's copy is found and reused by
+    // the retry instead of leaving another orphan behind.
+    let canonical = cache_equivalent_path(path)
+        .filter(|_| path.starts_with("/api/brew/"))
+        .unwrap_or_else(|| path.to_string());
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(canonical.as_bytes());
+    let mut identity = [0u8; 16];
+    identity.copy_from_slice(&digest[..16]);
+    let public_id = uuid::Builder::from_custom_bytes(identity).into_uuid();
+    let row = media_assets::ActiveModel {
+        kind: Set("upload".into()),
+        public_id: Set(Some(public_id)),
+        url: Set(path.to_string()),
+        mime: Set(mime.into()),
+        name: Set(path.rsplit('/').next().unwrap_or("media").into()),
+        size: Set(0),
+        created_at: Set(Utc::now().fixed_offset()),
+        references_complete: Set(false),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+    match migrate_one(store, db, &row, &plan).await? {
+        Outcome::Copied { .. } | Outcome::Already { .. } => {}
+        Outcome::Missing | Outcome::Failed => return Ok(None),
+    }
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE media_assets SET references_complete = TRUE WHERE id = $1",
+        [row.id.into()],
+    ))
+    .await?;
+    Ok(Some(row.id))
 }
 
 pub fn plan_catalog_url(
@@ -79,118 +125,12 @@ pub fn plan_catalog_url(
     })
 }
 
-pub async fn migrate_catalog_batch(
-    store: &MediaStore,
-    db: &impl ConnectionTrait,
-    paths: &LegacyPaths,
-    allowed_origins: &[String],
-    after_id: i32,
-    limit: u32,
-) -> Result<MigrationBatch, MediaError> {
-    let limit = limit.clamp(1, MAX_BATCH);
-    let rows = media_assets::Entity::find()
-        .filter(media_assets::Column::Id.gt(after_id))
-        .order_by_asc(media_assets::Column::Id)
-        .limit(u64::from(limit))
-        .all(db)
-        .await?;
-    let next_cursor = (rows.len() == limit as usize)
-        .then(|| rows.last().map(|row| row.id))
-        .flatten();
-
-    let mut disk_users: HashMap<PathBuf, Vec<i32>> = HashMap::new();
-    let mut planned: Vec<(media_assets::Model, CatalogPlan)> = Vec::new();
-    let mut stats = MigrationStats::default();
-    stats.scanned = rows.len() as u64;
-
-    for row in rows {
-        if row.url.starts_with("/media/assets/") || row.url.starts_with("/api/media/") {
-            continue;
-        }
-        match plan_catalog_url(&row.url, allowed_origins, paths) {
-            Ok(plan) => {
-                disk_users
-                    .entry(plan.disk.clone())
-                    .or_default()
-                    .push(row.id);
-                if matches!(plan.owner, LegacyOwner::Unknown) {
-                    stats.unknown_owner += 1;
-                }
-                planned.push((row, plan));
-            }
-            Err(code) => {
-                stats.failed += 1;
-                record_job(
-                    db,
-                    "catalog",
-                    &row.id.to_string(),
-                    Some(row.id),
-                    "skipped",
-                    "pending",
-                    "pending",
-                    Some(code),
-                    None,
-                )
-                .await?;
-            }
-        }
-    }
-    for ids in disk_users.values() {
-        if ids.len() > 1 {
-            stats.shared += (ids.len() - 1) as u64;
-            stats.duplicate_paths += 1;
-        }
-    }
-
-    for (row, plan) in planned {
-        match migrate_one(store, db, &row, &plan).await {
-            Ok(outcome) => apply_outcome(&mut stats, outcome),
-            Err(_) => {
-                apply_outcome(&mut stats, Outcome::Failed);
-                let _ = record_job(
-                    db,
-                    "catalog",
-                    &row.id.to_string(),
-                    Some(row.id),
-                    "pending",
-                    "pending",
-                    "pending",
-                    Some("STORE_FAILED"),
-                    None,
-                )
-                .await;
-            }
-        }
-    }
-
-    Ok(MigrationBatch { stats, next_cursor })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
     Copied { bytes: u64, aliases: u64 },
     Already { bytes: u64, aliases: u64 },
     Missing,
     Failed,
-}
-
-fn apply_outcome(stats: &mut MigrationStats, outcome: Outcome) {
-    match outcome {
-        Outcome::Copied { bytes, aliases } => {
-            stats.files_present += 1;
-            stats.copied += 1;
-            stats.bytes += bytes;
-            stats.aliases_written += aliases;
-        }
-        Outcome::Already { bytes, aliases } => {
-            stats.files_present += 1;
-            stats.already_migrated += 1;
-            stats.bytes += bytes;
-            stats.aliases_written += aliases;
-        }
-        Outcome::Missing => stats.files_missing += 1,
-        Outcome::Failed => stats.failed += 1,
-    }
 }
 
 pub(super) async fn migrate_one(
@@ -539,45 +479,6 @@ async fn append_manifest(root: &Path, line: &ManifestLine<'_>) -> Result<(), Med
     file.write_all(body.as_bytes()).await?;
     file.flush().await?;
     Ok(())
-}
-
-#[derive(Clone, Debug)]
-pub struct MigrationJobInput {
-    pub source_kind: String,
-    pub source_key: String,
-    pub batch_version: i32,
-}
-
-pub async fn upsert_job(
-    db: &impl ConnectionTrait,
-    input: MigrationJobInput,
-) -> Result<media_migration_jobs::Model, MediaError> {
-    if let Some(existing) = media_migration_jobs::Entity::find()
-        .filter(media_migration_jobs::Column::SourceKind.eq(&input.source_kind))
-        .filter(media_migration_jobs::Column::SourceKey.eq(&input.source_key))
-        .one(db)
-        .await?
-    {
-        return Ok(existing);
-    }
-    record_job(
-        db,
-        &input.source_kind,
-        &input.source_key,
-        None,
-        "pending",
-        "pending",
-        "pending",
-        None,
-        None,
-    )
-    .await?;
-    media_migration_jobs::Entity::find()
-        .filter(media_migration_jobs::Column::SourceKind.eq(&input.source_kind))
-        .filter(media_migration_jobs::Column::SourceKey.eq(&input.source_key))
-        .one(db)
-        .await?
-        .ok_or(MediaError::StoreFailed)
 }
 
 #[cfg(test)]

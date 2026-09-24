@@ -59,6 +59,60 @@ pub fn role_from_user_id(user_id: i32, is_admin: bool) -> UserRole {
     }
 }
 
+/// One elevated permission an admin can delegate (the granted layer), with
+/// the configuration flag that delegates it to each role. The runtime check,
+/// the admin summary and the accepted update keys all read this one table.
+pub struct Delegation {
+    pub permission: TappPermission,
+    pub user_key: &'static str,
+    pub user: fn(&DynamicConfig) -> bool,
+    /// `None`: never delegated to guests (the capability needs a durable
+    /// signed-in subject); saving cannot enable it.
+    pub guest_key: Option<&'static str>,
+    pub guest: Option<fn(&DynamicConfig) -> bool>,
+}
+
+macro_rules! delegations {
+    ($($permission:ident: $user:ident $(, $guest:ident)?;)*) => {
+        &[$(Delegation {
+            permission: TappPermission::$permission,
+            user_key: stringify!($user),
+            user: |config| config.$user,
+            guest_key: delegations!(@key $($guest)?),
+            guest: delegations!(@get $($guest)?),
+        },)*]
+    };
+    (@key) => { None };
+    (@key $guest:ident) => { Some(stringify!($guest)) };
+    (@get) => { None };
+    (@get $guest:ident) => { Some(|config: &DynamicConfig| config.$guest) };
+}
+
+pub const DELEGATIONS: &[Delegation] = delegations! {
+    AiGenerate: user_perm_ai_generate, guest_perm_ai_generate;
+    AiAnalyze: user_perm_ai_analyze, guest_perm_ai_analyze;
+    AiChat: user_perm_ai_chat, guest_perm_ai_chat;
+    AiImage: user_perm_ai_image, guest_perm_ai_image;
+    AiSearch: user_perm_ai_search, guest_perm_ai_search;
+    ThreeDGenerate: user_perm_3d_generate, guest_perm_3d_generate;
+    NetworkFetch: user_perm_network_fetch, guest_perm_network_fetch;
+    ComponentTheme: user_perm_component_theme;
+    ShortcutRegister: user_perm_shortcut_register;
+    EventPublish: user_perm_event_publish, guest_perm_event_publish;
+    SchedulerRegister: user_perm_scheduler_register;
+    SpeechTts: user_perm_speech_tts;
+    SpeechAsr: user_perm_speech_asr;
+    StorageWrite: user_perm_storage_write, guest_perm_storage_write;
+    FederationPost: user_perm_federation_post;
+    FederationChannel: user_perm_federation_channel;
+    FederationRoom: user_perm_federation_room;
+    PhantasiCommentWrite: user_perm_phantasi_comment_write;
+};
+
+pub fn delegation(permission: TappPermission) -> Option<&'static Delegation> {
+    DELEGATIONS.iter().find(|row| row.permission == permission)
+}
+
 /// Tapp 权限检查服务
 pub struct TappPermissionService;
 
@@ -138,53 +192,14 @@ impl TappPermissionService {
 
     /// 检查普通用户的 elevated 权限
     fn check_user_elevated(config: &DynamicConfig, permission: TappPermission) -> bool {
-        match permission {
-            TappPermission::AiGenerate => config.user_perm_ai_generate,
-            TappPermission::AiAnalyze => config.user_perm_ai_analyze,
-            TappPermission::AiChat => config.user_perm_ai_chat,
-            TappPermission::AiImage => config.user_perm_ai_image,
-            TappPermission::AiSearch => config.user_perm_ai_search,
-            TappPermission::ThreeDGenerate => config.user_perm_3d_generate,
-            TappPermission::NetworkFetch => config.user_perm_network_fetch,
-            TappPermission::ComponentTheme => config.user_perm_component_theme,
-            TappPermission::ShortcutRegister => config.user_perm_shortcut_register,
-            TappPermission::EventPublish => config.user_perm_event_publish,
-            TappPermission::SchedulerRegister => config.user_perm_scheduler_register,
-            TappPermission::SpeechTts => config.user_perm_speech_tts,
-            TappPermission::SpeechAsr => config.user_perm_speech_asr,
-            TappPermission::StorageWrite => config.user_perm_storage_write,
-            TappPermission::FederationPost => config.user_perm_federation_post,
-            TappPermission::FederationChannel => config.user_perm_federation_channel,
-            TappPermission::FederationRoom => config.user_perm_federation_room,
-            TappPermission::PhantasiCommentWrite => config.user_perm_phantasi_comment_write,
-            _ => false,
-        }
+        delegation(permission).is_some_and(|row| (row.user)(config))
     }
 
     /// 检查游客的 elevated 权限
     fn check_guest_elevated(config: &DynamicConfig, permission: TappPermission) -> bool {
-        match permission {
-            TappPermission::AiGenerate => config.guest_perm_ai_generate,
-            TappPermission::AiAnalyze => config.guest_perm_ai_analyze,
-            TappPermission::AiChat => config.guest_perm_ai_chat,
-            TappPermission::AiImage => config.guest_perm_ai_image,
-            TappPermission::AiSearch => config.guest_perm_ai_search,
-            TappPermission::ThreeDGenerate => config.guest_perm_3d_generate,
-            TappPermission::NetworkFetch => config.guest_perm_network_fetch,
-            TappPermission::ComponentTheme => false,
-            TappPermission::ShortcutRegister => false,
-            TappPermission::EventPublish => config.guest_perm_event_publish,
-            TappPermission::SchedulerRegister => false,
-            TappPermission::SpeechTts => false,
-            TappPermission::SpeechAsr => false,
-            TappPermission::StorageWrite => config.guest_perm_storage_write,
-            // 游客写域固定 false（check() 排除块也会先返回）
-            TappPermission::FederationPost => false,
-            TappPermission::FederationChannel => false,
-            TappPermission::FederationRoom => false,
-            TappPermission::PhantasiCommentWrite => config.guest_perm_phantasi_comment_write,
-            _ => false,
-        }
+        delegation(permission)
+            .and_then(|row| row.guest)
+            .is_some_and(|guest| guest(config))
     }
 
     /// 获取用户可用的权限等级列表
@@ -212,56 +227,54 @@ impl TappPermissionService {
 
     /// 获取权限配置摘要
     pub fn get_permission_config(config: &DynamicConfig) -> TappPermissionConfig {
+        // Straight from the delegation table: a guest column of `None` reads false.
+        let user = |permission| Self::check_user_elevated(config, permission);
+        let guest = |permission| Self::check_guest_elevated(config, permission);
         TappPermissionConfig {
             user: ElevatedPermissions {
-                ai_generate: config.user_perm_ai_generate,
-                ai_analyze: config.user_perm_ai_analyze,
-                ai_chat: config.user_perm_ai_chat,
-                ai_image: config.user_perm_ai_image,
-                ai_search: config.user_perm_ai_search,
-                three_d_generate: config.user_perm_3d_generate,
+                ai_generate: user(TappPermission::AiGenerate),
+                ai_analyze: user(TappPermission::AiAnalyze),
+                ai_chat: user(TappPermission::AiChat),
+                ai_image: user(TappPermission::AiImage),
+                ai_search: user(TappPermission::AiSearch),
+                three_d_generate: user(TappPermission::ThreeDGenerate),
+                network_fetch: user(TappPermission::NetworkFetch),
+                component_theme: user(TappPermission::ComponentTheme),
+                shortcut_register: user(TappPermission::ShortcutRegister),
+                event_publish: user(TappPermission::EventPublish),
+                scheduler_register: user(TappPermission::SchedulerRegister),
+                speech_tts: user(TappPermission::SpeechTts),
+                speech_asr: user(TappPermission::SpeechAsr),
+                storage_write: user(TappPermission::StorageWrite),
+                federation_post: user(TappPermission::FederationPost),
+                federation_channel: user(TappPermission::FederationChannel),
+                federation_room: user(TappPermission::FederationRoom),
+                phantasi_comment_write: user(TappPermission::PhantasiCommentWrite),
                 report_write: false, // 不再下放
-                network_fetch: config.user_perm_network_fetch,
                 // media:control 为 basic，始终可用；字段保留供 API 兼容
                 media_control: true,
-                component_theme: config.user_perm_component_theme,
-                shortcut_register: config.user_perm_shortcut_register,
-                event_publish: config.user_perm_event_publish,
-                scheduler_register: config.user_perm_scheduler_register,
-                speech_tts: config.user_perm_speech_tts,
-                speech_asr: config.user_perm_speech_asr,
-                storage_write: config.user_perm_storage_write,
-                federation_post: config.user_perm_federation_post,
-                federation_channel: config.user_perm_federation_channel,
-                federation_room: config.user_perm_federation_room,
-                phantasi_comment_write: config.user_perm_phantasi_comment_write,
             },
             guest: ElevatedPermissions {
-                ai_generate: config.guest_perm_ai_generate,
-                ai_analyze: config.guest_perm_ai_analyze,
-                ai_chat: config.guest_perm_ai_chat,
-                ai_image: config.guest_perm_ai_image,
-                ai_search: config.guest_perm_ai_search,
-                three_d_generate: config.guest_perm_3d_generate,
+                ai_generate: guest(TappPermission::AiGenerate),
+                ai_analyze: guest(TappPermission::AiAnalyze),
+                ai_chat: guest(TappPermission::AiChat),
+                ai_image: guest(TappPermission::AiImage),
+                ai_search: guest(TappPermission::AiSearch),
+                three_d_generate: guest(TappPermission::ThreeDGenerate),
+                network_fetch: guest(TappPermission::NetworkFetch),
+                component_theme: guest(TappPermission::ComponentTheme),
+                shortcut_register: guest(TappPermission::ShortcutRegister),
+                event_publish: guest(TappPermission::EventPublish),
+                scheduler_register: guest(TappPermission::SchedulerRegister),
+                speech_tts: guest(TappPermission::SpeechTts),
+                speech_asr: guest(TappPermission::SpeechAsr),
+                storage_write: guest(TappPermission::StorageWrite),
+                federation_post: guest(TappPermission::FederationPost),
+                federation_channel: guest(TappPermission::FederationChannel),
+                federation_room: guest(TappPermission::FederationRoom),
+                phantasi_comment_write: guest(TappPermission::PhantasiCommentWrite),
                 report_write: false, // 不再下放
-                network_fetch: config.guest_perm_network_fetch,
-                // media:control 为 basic，始终可用；字段保留供 API 兼容
                 media_control: true,
-                // These routes require a durable authenticated subject. Keep
-                // config fields for schema compatibility; grant path is hardcoded false.
-                component_theme: false,
-                shortcut_register: false,
-                event_publish: config.guest_perm_event_publish,
-                scheduler_register: false,
-                speech_tts: false,
-                speech_asr: false,
-                storage_write: config.guest_perm_storage_write,
-                // federation 写域不向游客下放：固定 false
-                federation_post: false,
-                federation_channel: false,
-                federation_room: false,
-                // phantasi:commentWrite 路由要求持久登录主体，游客一律关闭
-                phantasi_comment_write: false,
             },
             user_ai_quota: AiQuotaConfig {
                 daily_calls: config.user_ai_daily_calls,

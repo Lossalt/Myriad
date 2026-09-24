@@ -2,9 +2,7 @@ use chrono::{TimeZone, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::RwLock;
 
 use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
 use myriad_tapp_contract::manifest::{
@@ -330,6 +328,6 @@ pub async fn scheduler_mailbox_depth(db: &DatabaseConnection) -> Result<i64, Str
 /// 调度引擎
 pub struct TappSchedulerEngine {
     pub(crate) db: DatabaseConnection,
-    /// 是否正在运行
-    pub(crate) running: Arc<RwLock<bool>>,
+    /// 调度循环在进程 job runner 里的句柄；`None` 表示未启动。
+    pub(crate) job: std::sync::Mutex<Option<crate::services::jobs::JobHandle>>,
 }

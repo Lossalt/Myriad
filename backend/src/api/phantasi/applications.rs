@@ -23,6 +23,7 @@ use crate::models::entities::{
     phantasi_sources,
 };
 use crate::services::phantasi_scheduler::get_phantasi_scheduler;
+use crate::services::phantasi_subscribe::{self, NewSource, SourceCreation, create_or_find_source};
 use myriad_error::AppError;
 
 use super::helpers::{
@@ -98,22 +99,12 @@ fn looks_like_email(raw: &str) -> bool {
 
 /// `url_key` / `site_url_key` hold `url_match_key` of every source URL (kept in
 /// sync by the entity save hook, backfilled by schema_check), so the lookup is
-/// one indexed query that only returns a matching row.
+/// one indexed query that only returns a matching row. Same rule as source creation.
 async fn find_existing_source<C: ConnectionTrait>(
     db: &C,
     keys: &[String],
 ) -> Result<Option<phantasi_sources::Model>, HttpError> {
-    if keys.is_empty() {
-        return Ok(None);
-    }
-    phantasi_sources::Entity::find()
-        .filter(
-            Condition::any()
-                .add(phantasi_sources::Column::UrlKey.is_in(keys.iter().map(String::as_str)))
-                .add(phantasi_sources::Column::SiteUrlKey.is_in(keys.iter().map(String::as_str))),
-        )
-        .order_by_asc(phantasi_sources::Column::Id)
-        .one(db)
+    phantasi_subscribe::find_existing_source(db, keys)
         .await
         .map_err(|error| phantasi_store_http("find existing source", error))
 }
@@ -123,24 +114,12 @@ fn unique_violation(err: &impl std::fmt::Display) -> bool {
     lower.contains("23505") || lower.contains("duplicate key") || lower.contains("unique")
 }
 
-pub(crate) fn application_url_lock_key(match_key: &str) -> String {
-    format!("myriad:phantasi:source_url:{match_key}")
-}
-
+/// The same advisory locks source creation takes, so an application and a
+/// concurrent subscribe of the same URL serialize.
 async fn lock_url_match_keys<C: ConnectionTrait>(db: &C, keys: &[String]) -> Result<(), HttpError> {
-    let mut sorted = keys.to_vec();
-    sorted.sort();
-    sorted.dedup();
-    for key in sorted {
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            [application_url_lock_key(&key).into()],
-        ))
+    phantasi_subscribe::lock_source_url_keys(db, keys)
         .await
-        .map_err(|error| phantasi_store_http("lock application URL", error))?;
-    }
-    Ok(())
+        .map_err(|error| phantasi_store_http("lock application URL", error))
 }
 
 /// Application URLs are only written through `parse_public_url` (parsed, no
@@ -174,11 +153,10 @@ async fn find_pending_for_keys<C: ConnectionTrait>(
         .map_err(|error| phantasi_store_http("find pending application", error))
 }
 
-async fn create_friend_source<C: ConnectionTrait>(
-    db: &C,
-    admin_id: i32,
-    app: &phantasi_source_applications::Model,
-) -> Result<phantasi_sources::Model, HttpError> {
+/// The source an approved application creates: its feed when it has one, else an
+/// entry-type link. The applicant's site also identifies it, so an existing
+/// source for the same site is reused.
+fn friend_source(admin_id: i32, app: &phantasi_source_applications::Model) -> NewSource {
     let now = Utc::now();
     let has_feed = app
         .feed_url
@@ -194,12 +172,12 @@ async fn create_friend_source<C: ConnectionTrait>(
     } else {
         app.site_url.clone()
     };
-    let new_source = phantasi_sources::ActiveModel {
+    NewSource::new(phantasi_sources::ActiveModel {
         user_id: Set(admin_id),
         name: Set(app.site_name.clone()),
         url: Set(url),
         feed_type: Set(phantasi_sources::FeedType::Rss),
-        source_type: Set(source_type.clone()),
+        source_type: Set(source_type),
         category: Set(Some(FRIEND_CATEGORY.to_string())),
         description: Set(app.description.clone()),
         site_url: Set(Some(app.site_url.clone())),
@@ -211,23 +189,8 @@ async fn create_friend_source<C: ConnectionTrait>(
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
         ..Default::default()
-    };
-    match new_source.insert(db).await {
-        Ok(source) => Ok(source),
-        Err(error) if unique_violation(&error) => {
-            let mut keys = vec![url_match_key(&app.site_url)];
-            if let Some(feed) = app.feed_url.as_deref() {
-                let key = url_match_key(feed);
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
-            find_existing_source(db, &keys)
-                .await?
-                .ok_or_else(|| phantasi_store_http("save source", error))
-        }
-        Err(error) => Err(phantasi_store_http("save source", error)),
-    }
+    })
+    .also_identified_by(app.site_url.clone())
 }
 
 /// 公开申请友联。可匿名；登录则记下申请人。
@@ -504,17 +467,12 @@ async fn approve_pending_application(
                 "Application is not pending",
             ));
         }
-        let mut keys = vec![url_match_key(&app.site_url)];
-        if let Some(feed) = app.feed_url.as_deref() {
-            let key = url_match_key(feed);
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-        lock_url_match_keys(&txn, &keys).await?;
-        let (source, created) = match find_existing_source(&txn, &keys).await? {
-            Some(existing) => (existing, false),
-            None => (create_friend_source(&txn, admin_id, &app).await?, true),
+        let (source, created) = match create_or_find_source(&txn, friend_source(admin_id, &app))
+            .await
+            .map_err(|error| phantasi_store_http("save source", error))?
+        {
+            SourceCreation::Existing(existing) => (existing, false),
+            SourceCreation::Created(source) => (source, true),
         };
         let now = Utc::now();
         let mut active: phantasi_source_applications::ActiveModel = app.into();
@@ -792,7 +750,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_phantasi_source_applications_pending_feed
             feed_url: Some("https://Blog.EXAMPLE/rss#top".into()),
             ..pending
         };
-        let source = create_friend_source(&db, 1, &unnormalized).await.unwrap();
+        let source = {
+            let txn = db.begin().await.unwrap();
+            let created = create_or_find_source(&txn, friend_source(1, &unnormalized))
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+            match created {
+                SourceCreation::Created(source) => source,
+                SourceCreation::Existing(_) => panic!("fresh schema has no source yet"),
+            }
+        };
         for (url, expected) in [
             ("https://blog.example/rss", Some(source.id)),
             ("https://blog.example", Some(source.id)),
@@ -854,18 +822,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_phantasi_source_applications_pending_feed
             .nth(1)
             .and_then(|rest| rest.split("pub(crate) async fn reject_application").next())
             .expect("approve_pending_application");
-        assert!(approve.contains("lock_url_match_keys"));
-        let lock_at = approve.find("lock_url_match_keys").expect("lock");
-        let create_at = approve.find("create_friend_source").expect("create source");
-        assert!(lock_at < create_at);
-    }
-
-    #[test]
-    fn application_url_lock_key_is_stable() {
-        assert_eq!(
-            application_url_lock_key("https://example.com/blog"),
-            "myriad:phantasi:source_url:https://example.com/blog"
+        assert!(
+            approve.contains("create_or_find_source("),
+            "approval creates through the shared lock-then-lookup path"
         );
+        assert!(!approve.contains(".insert("));
     }
 
     #[tokio::test]

@@ -2,12 +2,11 @@
 
 use axum::{Json, http::StatusCode};
 use myriad_error::AppError;
-use myriad_phantasi::article_federation_path;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::json;
 
+use super::kind::ContentKind;
 use super::media::{attachment_url_rejection_reason, classify_media_mime};
-use super::timeline::preview_from_ap_object;
 use super::types::NoteAttachmentInput;
 use crate::federation::audience::Visibility;
 use crate::federation::limits::NOTE_ATTACHMENT_COUNT_LIMIT as MAX_NOTE_ATTACHMENTS;
@@ -23,7 +22,7 @@ pub(super) async fn build_ap_object(
     user_id: i32,
     username: &str,
     base_url: &str,
-    content_type: &str,
+    kind: ContentKind,
     content_id: &str,
     visibility: Visibility,
     note_text: Option<&str>,
@@ -33,8 +32,8 @@ pub(super) async fn build_ap_object(
     let local_actor = actor_url(base_url, username);
     let (to, cc) = resolve_audience(visibility, base_url, username);
 
-    match content_type {
-        "note" => {
+    match kind {
+        ContentKind::Note => {
             let text = note_text.unwrap_or("").trim();
             let attachments = note_attachments.unwrap_or(&[]);
             if text.is_empty() && attachments.is_empty() {
@@ -49,7 +48,8 @@ pub(super) async fn build_ap_object(
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({
-                        "error": format!("Note text too long (max {} chars)", MAX_NOTE_TEXT_CHARS)
+                        "error": format!("Note text too long (max {} chars)", MAX_NOTE_TEXT_CHARS),
+                        "code": "note_too_long",
                     })),
                 ));
             }
@@ -57,7 +57,8 @@ pub(super) async fn build_ap_object(
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({
-                        "error": format!("Too many attachments (max {})", MAX_NOTE_ATTACHMENTS)
+                        "error": format!("Too many attachments (max {})", MAX_NOTE_ATTACHMENTS),
+                        "code": "note_too_many_attachments",
                     })),
                 ));
             }
@@ -97,7 +98,7 @@ pub(super) async fn build_ap_object(
 
             let mut note = json!({
                 "type": "Note",
-                "id": format!("{}/notes/{}", base_url.trim_end_matches('/'), content_id),
+                "id": kind.object_url(base_url, content_id),
                 "attributedTo": &local_actor,
                 "content": content_html,
                 "source": {
@@ -109,7 +110,7 @@ pub(super) async fn build_ap_object(
                 "to": to,
                 "cc": cc,
                 "attachment": ap_attachments,
-                "mfp:contentType": "note",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
             });
             if let Some(parent) = in_reply_to.map(str::trim).filter(|s| !s.is_empty()) {
@@ -117,7 +118,7 @@ pub(super) async fn build_ap_object(
             }
             Ok(note)
         }
-        "report" => {
+        ContentKind::Report => {
             // 单平台报告 → AP Article
             let report_id: i32 = content_id.parse().unwrap_or(0);
             let row = db
@@ -169,7 +170,7 @@ pub(super) async fn build_ap_object(
             // Also expose mfp:* for ActivityPub-style clients. Do not send full report JSON.
             Ok(json!({
                 "type": "Article",
-                "id": format!("{}/reports/{}", base_url, report_id),
+                "id": kind.object_url(base_url, &report_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &name,
                 "summary": &summary,
@@ -178,7 +179,7 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "report",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:reportId": report_id,
                 "mfp:platform": &platform,
@@ -190,7 +191,7 @@ pub(super) async fn build_ap_object(
                 "content_preview": &content_preview,
             }))
         }
-        "phantasi-article" => {
+        ContentKind::PhantasiArticle => {
             // Phantasi 文章 → AP Article
             let item_id: i32 = content_id.parse().unwrap_or(0);
             let row = db
@@ -222,7 +223,7 @@ pub(super) async fn build_ap_object(
 
             Ok(json!({
                 "type": "Article",
-                "id": format!("{}{}", base_url, article_federation_path(item_id)),
+                "id": kind.object_url(base_url, &item_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &title,
                 "content": format!("<p>{}</p>", &summary_text),
@@ -231,13 +232,13 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "phantasi-article",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:source": source_name,
                 "mfp:author": author,
             }))
         }
-        "tapp" => {
+        ContentKind::Tapp => {
             // Tapp 应用 → AP Application。仅发布清单元数据，不发布代码包。
             let row = db
                 .query_one_raw(Statement::from_sql_and_values(
@@ -258,11 +259,10 @@ pub(super) async fn build_ap_object(
             let author: Option<serde_json::Value> = row.try_get("", "author").ok();
             let icon: Option<String> = row.try_get("", "icon").ok();
             let manifest: serde_json::Value = row.try_get("", "manifest").unwrap_or(json!({}));
-            let encoded_id = urlencoding::encode(&tapp_id);
 
             Ok(json!({
                 "type": "Application",
-                "id": format!("{}/tapps/{}", base_url, encoded_id),
+                "id": kind.object_url(base_url, &tapp_id),
                 "attributedTo": &local_actor,
                 "name": name,
                 "summary": description,
@@ -273,14 +273,14 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "tapp",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": tapp_id,
                 "mfp:version": version,
                 "mfp:author": author,
                 "mfp:manifest": manifest,
             }))
         }
-        "library" => {
+        ContentKind::Library => {
             // Library 发布：content_id = platform_metadata.id（平台收藏快照）
             // 或 platform 名（取该用户该平台最新一条 metadata）。
             // 无独立 library_items 表；数据来自 platform_metadata.raw_data 摘要。
@@ -359,7 +359,7 @@ pub(super) async fn build_ap_object(
 
             Ok(json!({
                 "type": "Collection",
-                "id": format!("{}/library/{}", base_url, meta_id),
+                "id": kind.object_url(base_url, &meta_id.to_string()),
                 "attributedTo": &local_actor,
                 "name": &name,
                 "summary": &summary,
@@ -367,7 +367,7 @@ pub(super) async fn build_ap_object(
                 "published": now_iso8601(),
                 "to": to,
                 "cc": cc,
-                "mfp:contentType": "library",
+                "mfp:contentType": kind.as_str(),
                 "mfp:contentId": content_id,
                 "mfp:platform": &platform_name,
                 "mfp:metadataId": meta_id,
@@ -376,29 +376,28 @@ pub(super) async fn build_ap_object(
                 "item_count": item_count,
             }))
         }
-        _ => Err((
-            StatusCode::BAD_REQUEST,
-            Json(AppError::public_json("Unsupported content type")),
-        )),
     }
 }
 
 // Fan-out / Timeline
 
-/// Enqueue Activity delivery to all accepted incoming followers (fan-out on send).
+/// 不在调用方事务里的扇出：把活动投给全部已接受的粉丝，逐个尽力而为。
 ///
-/// Best-effort: queue insert failures are logged and skipped; the publish path
-/// must not fail after the Create is already persisted. Returns how many
-/// follower inboxes were successfully queued **or** delivered locally.
+/// 给「自身写入已经提交、扇出只是通知」的调用方用（密钥轮换后的
+/// Update(Person)）。坏数据的粉丝（空 inbox、列解码失败）记日志跳过，
+/// 同实例粉丝某一个投递失败也只记日志 —— 一个坏粉丝不再让其余粉丝收不到。
+/// 只有读粉丝列表或写投递队列的数据库错误返回 `Err`：已经排上的行保留，
+/// `(activity_id, target_inbox)` 唯一约束让重试不重复。
 ///
-/// Same-instance followers (inbox under our `base_url`) are written directly to
-/// their local timeline — HTTP delivery to localhost / private hosts is refused
-/// by the delivery worker, so without this shortcut multi-user and local-dev
-/// follows never see posts.
+/// 需要「写入与扇出同生共死」的调用方（发布 / 撤回、转发 / 取消转发）不用它，而是在
+/// 自己的事务里调 [`stage_follower_fan_out`]、提交后调
+/// [`deliver_to_local_followers`]。返回排上队的远端行数加成功的本地投递数。
 ///
-/// Actual HTTP delivery for remote followers is performed by
-/// `delivery::process_delivery_queue_detailed`, started via
-/// `delivery::spawn_delivery_worker` from main on full-mode boot.
+/// Same-instance followers (inbox under our `base_url`) get the activity through
+/// [`deliver_activity_locally`](crate::federation::inbox::deliver_activity_locally),
+/// the same dispatch a remote inbox runs — HTTP delivery to localhost / private
+/// hosts is refused by the delivery worker. Remote rows are sent by
+/// `delivery::process_delivery_queue_detailed` (`delivery::spawn_delivery_worker`).
 pub(crate) async fn fan_out_to_followers(
     db: &DatabaseConnection,
     user_id: i32,
@@ -406,8 +405,90 @@ pub(crate) async fn fan_out_to_followers(
     activity_json: &serde_json::Value,
 ) -> Result<u32, String> {
     let base_url = get_base_url().await;
+    let staged = stage_follower_fan_out(db, &base_url, user_id, activity_db_id)
+        .await
+        .map_err(|e| {
+            format!("Fan-out failed for user {user_id} activity_db_id={activity_db_id}: {e}")
+        })?;
+    let local_delivered =
+        deliver_to_local_followers(db, &staged.local_followers, activity_json).await;
+    tracing::info!(
+        user_id,
+        activity_db_id,
+        queued = staged.queued,
+        local_delivered,
+        local_followers = staged.local_followers.len(),
+        skipped = staged.skipped,
+        "Fan-out to followers finished"
+    );
+    Ok(staged.queued + local_delivered)
+}
 
-    let followers = db
+/// 在发布事务内落下的扇出意图：远端投递行已写进 `federation_delivery_queue`，
+/// 同实例粉丝留给提交后的进程内投递。
+///
+/// 投递队列本身就是持久化的扇出意图 —— 与内容、Create/Delete 活动同一个事务
+/// 提交，提交成功即由投递 worker 负责送达；提交失败则一行都不留，客户端重试
+/// 不会产生重复帖子，也不会有「帖子已落库但没排上投递」的半成品。
+#[derive(Debug, Default)]
+pub(crate) struct StagedFanOut {
+    /// 本事务写入的远端投递行数。
+    pub queued: u32,
+    /// 需要在提交后进程内投递的同实例粉丝用户名。
+    pub local_followers: Vec<String>,
+    /// 因数据坏掉而跳过的粉丝数（空 inbox、列解码失败）。
+    pub skipped: u32,
+}
+
+/// 单个粉丝行的去向。坏数据只影响它自己，不连累其他粉丝。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FollowerRoute {
+    Local(String),
+    Remote { inbox: String, domain: String },
+    Skip(&'static str),
+}
+
+pub(crate) fn route_follower(
+    base_url: &str,
+    inbox: Option<&str>,
+    domain: Option<&str>,
+    actor: Option<&str>,
+) -> FollowerRoute {
+    let inbox = inbox.map(str::trim).unwrap_or("");
+    let actor = actor.map(str::trim).unwrap_or("");
+    let local = local_username_from_inbox_url(base_url, inbox).or_else(|| {
+        (!actor.is_empty())
+            .then(|| local_username_from_actor_url(base_url, actor))
+            .flatten()
+    });
+    if let Some(username) = local {
+        return FollowerRoute::Local(username);
+    }
+    if inbox.is_empty() {
+        return FollowerRoute::Skip("empty inbox_url");
+    }
+    let Some(domain) = domain else {
+        return FollowerRoute::Skip("undecodable domain");
+    };
+    FollowerRoute::Remote {
+        inbox: inbox.to_string(),
+        domain: domain.to_string(),
+    }
+}
+
+/// 在调用方事务内为全部已接受的粉丝排队投递（发布 / 撤回、转发 / 取消转发用；
+/// [`fan_out_to_followers`] 在自动提交连接上也走它）。
+///
+/// 逐个粉丝尽力而为：坏数据的粉丝记日志跳过，其余照常排队。数据库错误原样
+/// 返回 —— 事务里任何一条语句失败都会让整个事务作废，此时调用方回滚，
+/// 内容和活动也一起不落库。
+pub(crate) async fn stage_follower_fan_out(
+    txn: &impl ConnectionTrait,
+    base_url: &str,
+    user_id: i32,
+    activity_db_id: i32,
+) -> Result<StagedFanOut, sea_orm::DbErr> {
+    let followers = txn
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"SELECT ra.inbox_url, ra.domain, ra.actor_url
@@ -416,192 +497,116 @@ pub(crate) async fn fan_out_to_followers(
                WHERE f.user_id = $1 AND f.direction = 'incoming' AND f.status = 'accepted'"#,
             [user_id.into()],
         ))
-        .await
-        .map_err(|e| {
-            format!(
-                "Fan-out follower query failed for user {user_id} activity_db_id={activity_db_id}: {e}"
-            )
-        })?;
+        .await?;
 
-    let mut queued = 0u32;
-    let mut local_delivered = 0u32;
-
+    let mut staged = StagedFanOut::default();
     for row in followers {
-        let inbox: String = row
-            .try_get("", "inbox_url")
-            .map_err(|e| format!("invalid follower inbox_url: {e}"))?;
-        let domain: String = row
-            .try_get("", "domain")
-            .map_err(|e| format!("invalid follower domain: {e}"))?;
-        let follower_actor: String = row
-            .try_get("", "actor_url")
-            .map_err(|e| format!("invalid follower actor_url: {e}"))?;
-
-        if inbox.trim().is_empty() {
-            return Err(format!(
-                "Fan-out refused: empty inbox_url for follower {follower_actor} domain={domain} activity_db_id={activity_db_id}"
-            ));
-        }
-
-        if let Some(local_username) =
-            local_username_from_inbox_url(&base_url, &inbox).or_else(|| {
-                if follower_actor.is_empty() {
-                    None
-                } else {
-                    local_username_from_actor_url(&base_url, &follower_actor)
-                }
-            })
-        {
-            if activity_json.get("type").and_then(|v| v.as_str()) == Some("Move") {
-                crate::federation::inbox::deliver_activity_locally(
-                    db,
-                    &local_username,
-                    activity_json,
-                )
-                .await
-                .map_err(|e| {
-                    format!(
-                        "Fan-out local Move failed username={local_username} activity_db_id={activity_db_id}: {e}"
-                    )
-                })?;
-                local_delivered += 1;
-                queued += 1;
-                continue;
+        let inbox = row
+            .try_get::<Option<String>>("", "inbox_url")
+            .ok()
+            .flatten();
+        let domain = row.try_get::<Option<String>>("", "domain").ok().flatten();
+        let actor = row
+            .try_get::<Option<String>>("", "actor_url")
+            .ok()
+            .flatten();
+        match route_follower(
+            base_url,
+            inbox.as_deref(),
+            domain.as_deref(),
+            actor.as_deref(),
+        ) {
+            FollowerRoute::Local(username) => staged.local_followers.push(username),
+            FollowerRoute::Remote { inbox, domain } => {
+                staged.queued += enqueue_delivery(txn, activity_db_id, &inbox, &domain).await?;
             }
-            match deliver_create_to_local_follower(db, &local_username, activity_json).await {
-                Ok(true) => {
-                    local_delivered += 1;
-                    queued += 1;
-                }
-                Ok(false) => {
-                    return Err(format!(
-                        "Fan-out local: no user for username={local_username} activity_db_id={activity_db_id}"
-                    ));
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "Fan-out local timeline failed username={local_username} activity_db_id={activity_db_id}: {e}"
-                    ));
-                }
+            FollowerRoute::Skip(reason) => {
+                staged.skipped += 1;
+                tracing::warn!(
+                    user_id,
+                    activity_db_id,
+                    follower = actor.as_deref().unwrap_or(""),
+                    reason,
+                    "Fan-out skipped an unusable follower"
+                );
             }
-            continue;
         }
-
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_delivery_queue
-                   (activity_id, target_inbox, target_domain, status, created_at)
-               VALUES ($1, $2, $3, 'pending', NOW())
-               ON CONFLICT (activity_id, target_inbox) DO NOTHING"#,
-            [
-                activity_db_id.into(),
-                inbox.clone().into(),
-                domain.clone().into(),
-            ],
-        ))
-        .await
-        .map_err(|e| {
-            format!(
-                "Fan-out enqueue failed activity_db_id={activity_db_id} target_domain={domain} inbox={inbox}: {e}"
-            )
-        })?;
-        queued += 1;
     }
-
-    if queued > 0 {
-        tracing::info!(
-            "Fan-out queued {queued} deliveries ({local_delivered} local) for activity_db_id={activity_db_id}"
-        );
-    } else {
-        tracing::debug!(
-            "Fan-out: no accepted followers for user {user_id} activity_db_id={activity_db_id}"
-        );
-    }
-
-    Ok(queued)
+    Ok(staged)
 }
 
-/// 把一条公开活动投给群邻实例（见 `federation::room_peers`）。
+/// 在调用方事务内把一条公开活动排队投给群邻实例（见 `federation::room_peers`）。
 ///
 /// 与粉丝扇出并行、不互斥：同一个实例既是粉丝又是群邻时，
 /// `(activity_id, target_inbox)` 唯一约束把重复投递吃掉，收方只收到一份。
 ///
 /// 只对 `Visibility::Public` 调用 —— followers / direct 的收件人是明确的，
 /// 群邻不在其中，往那边投等于把非公开内容广播给没被寻址的实例。
-pub(super) async fn fan_out_to_room_peers(
-    db: &DatabaseConnection,
+pub(super) async fn stage_room_peer_fan_out(
+    txn: &impl ConnectionTrait,
+    base_url: &str,
     activity_db_id: i32,
-    activity_json: &serde_json::Value,
-) -> u32 {
-    let peers = match crate::federation::room_peers::room_peer_inboxes(db).await {
-        Ok(peers) => peers,
-        Err(e) => {
-            tracing::error!(
-                activity_db_id,
-                error = %e,
-                "Room-peer fan-out query failed; public post reaches followers only"
-            );
-            return 0;
-        }
-    };
-    if peers.is_empty() {
-        return 0;
-    }
-
+) -> Result<u32, sea_orm::DbErr> {
+    let peers = crate::federation::room_peers::room_peer_inboxes(txn).await?;
     // 本地 actor 的帖子对本实例用户已经可见（federation_activities 就是查询源），
     // 同域目标只会让投递线程对自己发一次 HTTP。
-    let base_url = get_base_url().await;
-    let local_domain = crate::federation::types::extract_domain(&base_url)
+    let local_domain = crate::federation::types::extract_domain(base_url)
         .unwrap_or_default()
         .to_ascii_lowercase();
-
     let mut queued = 0u32;
-    let mut failed = 0u32;
     for peer in peers {
         if !local_domain.is_empty() && peer.domain == local_domain {
             continue;
         }
-        match db
-            .execute_raw(Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"INSERT INTO federation_delivery_queue
-                       (activity_id, target_inbox, target_domain, status, created_at)
-                   VALUES ($1, $2, $3, 'pending', NOW())
-                   ON CONFLICT (activity_id, target_inbox) DO NOTHING"#,
-                [
-                    activity_db_id.into(),
-                    peer.inbox_url.clone().into(),
-                    peer.domain.clone().into(),
-                ],
-            ))
-            .await
+        queued += enqueue_delivery(txn, activity_db_id, &peer.inbox_url, &peer.domain).await?;
+    }
+    Ok(queued)
+}
+
+async fn enqueue_delivery(
+    txn: &impl ConnectionTrait,
+    activity_db_id: i32,
+    inbox: &str,
+    domain: &str,
+) -> Result<u32, sea_orm::DbErr> {
+    let result = txn
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"INSERT INTO federation_delivery_queue
+                   (activity_id, target_inbox, target_domain, status, created_at)
+               VALUES ($1, $2, $3, 'pending', NOW())
+               ON CONFLICT (activity_id, target_inbox) DO NOTHING"#,
+            [activity_db_id.into(), inbox.into(), domain.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected() as u32)
+}
+
+/// 提交后把活动进程内投给同实例粉丝，逐个尽力而为。
+///
+/// 投递 worker 拒绝往本机 / 私网发 HTTP，所以同实例粉丝只能走进程内投递；
+/// 它与远端收件箱走同一套分发（回执、事务、Delete / Undo 语义都一致）。
+/// 某个粉丝失败只记日志，不影响其他粉丝，也不影响已经提交的发布结果。
+/// 返回成功投递的人数。
+pub(crate) async fn deliver_to_local_followers(
+    db: &DatabaseConnection,
+    usernames: &[String],
+    activity_json: &serde_json::Value,
+) -> u32 {
+    let mut delivered = 0u32;
+    for username in usernames {
+        match crate::federation::inbox::deliver_activity_locally(db, username, activity_json).await
         {
-            Ok(res) => queued += res.rows_affected() as u32,
-            Err(e) => {
-                failed += 1;
-                tracing::error!(
-                    activity_db_id,
-                    target_domain = %peer.domain,
-                    inbox = %peer.inbox_url,
-                    error = %e,
-                    "Room-peer fan-out enqueue failed"
-                );
-            }
+            Ok(()) => delivered += 1,
+            Err(error) => tracing::error!(
+                username = %username,
+                activity = activity_json["id"].as_str().unwrap_or(""),
+                %error,
+                "Local fan-out failed for one follower"
+            ),
         }
     }
-
-    if failed > 0 {
-        tracing::warn!(activity_db_id, queued, failed, "Room-peer fan-out partial");
-    } else if queued > 0 {
-        tracing::info!(
-            activity_db_id,
-            queued,
-            actor = activity_json["actor"].as_str().unwrap_or(""),
-            "Room-peer fan-out queued"
-        );
-    }
-
-    queued
+    delivered
 }
 
 /// If inbox is `{base}/users/{username}/inbox`, return username.
@@ -609,178 +614,6 @@ fn local_username_from_inbox_url(base_url: &str, inbox_url: &str) -> Option<Stri
     let trimmed = inbox_url.trim().trim_end_matches('/');
     let actor = trimmed.strip_suffix("/inbox")?;
     local_username_from_actor_url(base_url, actor)
-}
-
-/// Deliver a non-Move activity into a same-instance follower's timeline.
-/// Like returns Ok(true) without insert. Ok(false) if the user is missing.
-async fn deliver_create_to_local_follower(
-    db: &DatabaseConnection,
-    follower_username: &str,
-    activity_json: &serde_json::Value,
-) -> Result<bool, String> {
-    let user_row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT id FROM users WHERE username = $1",
-            [follower_username.into()],
-        ))
-        .await
-        .map_err(|e| {
-            tracing::error!("DB error: {}", e);
-            "Database error".to_string()
-        })?;
-    let Some(user_row) = user_row else {
-        return Ok(false);
-    };
-    let follower_user_id = crate::federation::types::row_positive_id(&user_row, "id")?;
-
-    let publisher_actor = activity_json["actor"].as_str().unwrap_or("").to_string();
-    if publisher_actor.is_empty() {
-        return Err("Create activity missing actor".into());
-    }
-
-    let remote_actor_id = ensure_remote_actor_stub(db, &publisher_actor).await?;
-
-    let activity_id = activity_json["id"].as_str().unwrap_or("").to_string();
-    if activity_id.is_empty() {
-        return Err("Create activity missing id".into());
-    }
-    let activity_type = activity_json["type"]
-        .as_str()
-        .unwrap_or("Create")
-        .to_string();
-    // Likes are not home-timeline items (counts come from interactions / activities).
-    if activity_type == "Like" {
-        return Ok(true);
-    }
-    let object = &activity_json["object"];
-    let object_type = object["type"].as_str().map(|s| s.to_string());
-    let preview = preview_from_ap_object(object);
-    // Store `object` as-is (string id or embedded object).
-    let content_json = object.clone();
-
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"INSERT INTO federation_timeline
-               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
-        [
-            follower_user_id.into(),
-            activity_id.into(),
-            remote_actor_id.into(),
-            activity_type.into(),
-            object_type.into(),
-            preview.into(),
-            content_json.into(),
-        ],
-    ))
-    .await
-    .map_err(|e| format!("timeline insert: {}", e))?;
-
-    Ok(true)
-}
-
-/// Ensure a federation_remote_actors row exists for a local (or already-known) actor
-/// without HTTP fetch — used when fan-out short-circuits same-instance delivery.
-///
-/// For same-instance publishers, fill display_name + avatar proxy so followers'
-/// personal feeds attribute posts to the author (not the viewer).
-async fn ensure_remote_actor_stub(
-    db: &DatabaseConnection,
-    actor_url_str: &str,
-) -> Result<i32, String> {
-    let domain = extract_domain(actor_url_str).unwrap_or_default();
-    let username = actor_url_str
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let inbox = format!("{}/inbox", actor_url_str.trim_end_matches('/'));
-
-    // Prefer local profile when this actor_url is on our instance.
-    let base_url = get_base_url().await;
-    let base = base_url.trim_end_matches('/');
-    let is_local = actor_url_str
-        .trim_end_matches('/')
-        .starts_with(&format!("{}/users/", base));
-    let mut display_name: Option<String> = None;
-    let mut avatar_url: Option<String> = None;
-    if is_local {
-        if let Some(ref uname) = username {
-            if let Ok(Some(row)) = db
-                .query_one_raw(Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    format!(
-                        r#"SELECT display_name,
-                              {avatar} AS avatar_url
-                       FROM users
-                       WHERE username = $1
-                       LIMIT 1"#,
-                        avatar = crate::services::avatar::avatar_snapshot_expr("users")
-                    ),
-                    [uname.clone().into()],
-                ))
-                .await
-            {
-                display_name = row
-                    .try_get::<Option<String>>("", "display_name")
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.is_empty());
-                let has_avatar = row
-                    .try_get::<Option<String>>("", "avatar_url")
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.is_empty())
-                    .is_some();
-                if has_avatar {
-                    avatar_url = Some(format!(
-                        "{}/users/{}/avatar",
-                        base,
-                        urlencoding::encode(uname)
-                    ));
-                }
-            }
-        }
-    }
-
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"INSERT INTO federation_remote_actors
-                   (actor_url, username, domain, display_name, avatar_url, inbox_url, last_fetched_at, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-               ON CONFLICT (actor_url) DO UPDATE SET
-                   username = COALESCE(EXCLUDED.username, federation_remote_actors.username),
-                   domain = COALESCE(NULLIF(EXCLUDED.domain, ''), federation_remote_actors.domain),
-                   display_name = COALESCE(
-                       NULLIF(EXCLUDED.display_name, ''),
-                       federation_remote_actors.display_name
-                   ),
-                   avatar_url = COALESCE(
-                       NULLIF(EXCLUDED.avatar_url, ''),
-                       federation_remote_actors.avatar_url
-                   ),
-                   inbox_url = COALESCE(NULLIF(EXCLUDED.inbox_url, ''), federation_remote_actors.inbox_url)
-               RETURNING id"#,
-            [
-                actor_url_str.into(),
-                username.into(),
-                domain.into(),
-                display_name.into(),
-                avatar_url.into(),
-                inbox.into(),
-            ],
-        ))
-        .await
-        .map_err(|e| { tracing::error!("DB error: {}", e); "Database error".to_string() })?;
-
-    returning_id(row).map_err(|error| {
-        tracing::error!(%error, "remote actor stub RETURNING id decode failed");
-        "Failed to upsert remote actor stub".into()
-    })
 }
 
 // 辅助函数
@@ -1055,19 +888,177 @@ mod tests {
     }
 
     #[test]
-    fn fan_out_to_followers_does_not_swallow_route_failures() {
+    fn route_follower_isolates_bad_rows() {
+        let base = "https://myriad.example";
+        assert_eq!(
+            route_follower(
+                base,
+                Some("https://r.example/users/a/inbox"),
+                Some("r.example"),
+                Some("https://r.example/users/a"),
+            ),
+            FollowerRoute::Remote {
+                inbox: "https://r.example/users/a/inbox".into(),
+                domain: "r.example".into(),
+            }
+        );
+        assert_eq!(
+            route_follower(
+                base,
+                Some("https://myriad.example/users/bob/inbox"),
+                None,
+                None
+            ),
+            FollowerRoute::Local("bob".into())
+        );
+        // 本地粉丝即使 inbox 缺失，也能凭 actor URL 走本地捷径。
+        assert_eq!(
+            route_follower(
+                base,
+                Some(""),
+                None,
+                Some("https://myriad.example/users/bob")
+            ),
+            FollowerRoute::Local("bob".into())
+        );
+        assert!(matches!(
+            route_follower(
+                base,
+                Some("  "),
+                Some("r.example"),
+                Some("https://r.example/a")
+            ),
+            FollowerRoute::Skip(_)
+        ));
+        assert!(matches!(
+            route_follower(base, None, Some("r.example"), None),
+            FollowerRoute::Skip(_)
+        ));
+        assert!(matches!(
+            route_follower(base, Some("https://r.example/inbox"), None, None),
+            FollowerRoute::Skip(_)
+        ));
+    }
+
+    /// 发布 / 撤回用的扇出：坏粉丝只跳过自己，数据库错误才让事务作废；
+    /// 本地捷径在提交后逐个尽力，不返回错误。
+    #[test]
+    fn staged_fan_out_is_best_effort_per_recipient() {
+        let src = include_str!("ap_object.rs");
+        let section = |start: &str, end: &str| {
+            src.split(start)
+                .nth(1)
+                .and_then(|rest| rest.split(end).next())
+                .expect(start)
+                .to_string()
+        };
+        let stage = section(
+            "pub(crate) async fn stage_follower_fan_out",
+            "pub(super) async fn stage_room_peer_fan_out",
+        );
+        assert!(stage.contains("txn: &impl ConnectionTrait"));
+        assert!(stage.contains("FollowerRoute::Skip(reason)"));
+        assert!(!stage.contains("return Err"));
+        let local = section(
+            "pub(crate) async fn deliver_to_local_followers",
+            "/// If inbox is",
+        );
+        assert!(local.contains(") -> u32 {"));
+        assert!(!local.contains('?'));
+    }
+
+    /// 提交后扇出与事务内扇出走同一套逐粉丝路由：坏粉丝只跳过自己，
+    /// 数据库错误才返回 `Err`。
+    #[test]
+    fn fan_out_to_followers_is_best_effort_per_recipient() {
         let src = include_str!("ap_object.rs");
         let fan = src
             .split("pub(crate) async fn fan_out_to_followers")
             .nth(1)
-            .and_then(|rest| {
-                rest.split("pub(super) async fn fan_out_to_room_peers")
-                    .next()
-            })
+            .and_then(|rest| rest.split("pub(crate) struct StagedFanOut").next())
             .expect("fan_out_to_followers");
         assert!(fan.contains("Result<u32, String>"));
-        assert!(!fan.contains("unwrap_or_default()"));
-        assert!(!fan.contains("return 0;"));
-        assert!(fan.contains("Fan-out refused: empty inbox_url"));
+        assert!(fan.contains("stage_follower_fan_out(db"));
+        assert!(fan.contains("deliver_to_local_followers(db"));
+        assert!(!fan.contains("return Err"));
+    }
+
+    /// 密钥轮换走的提交后扇出：空 inbox 的坏远端、已不存在的本地用户都只
+    /// 跳过自己，正常远端照常排队，本地 bob 照常收到。
+    #[tokio::test]
+    async fn fan_out_to_followers_skips_bad_followers() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let base = get_base_url().await;
+        db.execute_unprepared(&format!(
+            r#"
+            INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+            INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+                (11, 'https://good.example/users/g', 'good.example', 'https://good.example/users/g/inbox'),
+                (12, 'https://bad.example/users/b', 'bad.example', ''),
+                (13, '{base}/users/bob', 'local', '{base}/users/bob/inbox'),
+                (14, '{base}/users/ghost', 'local', '{base}/users/ghost/inbox');
+            INSERT INTO federation_follows (user_id, remote_actor_id, direction, status) VALUES
+                (1, 11, 'incoming', 'accepted'), (1, 12, 'incoming', 'accepted'),
+                (1, 13, 'incoming', 'accepted'), (1, 14, 'incoming', 'accepted');
+            "#
+        ))
+        .await
+        .unwrap();
+        let activity_id = format!("{base}/activities/fan-out-test");
+        let create = json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "Create",
+            "id": &activity_id,
+            "actor": format!("{base}/users/alice"),
+            "to": [AP_PUBLIC],
+            "object": {
+                "type": "Note",
+                "id": format!("{base}/notes/fan-out-test"),
+                "attributedTo": format!("{base}/users/alice"),
+                "content": "hi",
+                "to": [AP_PUBLIC],
+            },
+        });
+        let act_db_id =
+            insert_local_activity(db, 1, &activity_id, "Create", Some("Note"), create.clone())
+                .await
+                .unwrap();
+
+        let delivered = fan_out_to_followers(db, 1, act_db_id, &create)
+            .await
+            .expect("bad followers must not fail the fan-out");
+        assert_eq!(delivered, 2, "good remote queued + bob delivered locally");
+        let queued: Vec<String> = db
+            .query_all_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT target_inbox FROM federation_delivery_queue WHERE activity_id = $1",
+                [act_db_id.into()],
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get("", "target_inbox").unwrap())
+            .collect();
+        assert_eq!(
+            queued,
+            vec!["https://good.example/users/g/inbox".to_string()]
+        );
+        let bob_rows = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT COUNT(*) AS n FROM federation_timeline WHERE user_id = 2 AND activity_id = $1",
+                [activity_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i64>("", "n")
+            .unwrap();
+        assert_eq!(bob_rows, 1);
+
+        fixture.close().await;
     }
 }

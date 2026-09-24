@@ -11,6 +11,7 @@
 //! - 自动创建的 Skill 需要通过 gating 校验
 //! - 每日自动创建上限 10 个
 
+use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -34,18 +35,6 @@ fn skill_io_failed(action: &str, error: std::io::Error) -> String {
         _ => action.to_string(),
     }
 }
-
-fn skill_ai_failed(label: &str, error: impl std::fmt::Display) -> String {
-    let detail = error.to_string();
-    tracing::error!(error = %detail, label, "skill AI failed");
-    classify_outbound_fetch(label, &detail)
-}
-
-/// Skill 改进冷却时间（秒）— 同一 Skill 24 小时内最多改进 1 次
-const IMPROVE_COOLDOWN_SECS: i64 = 86400;
-
-/// 失败率阈值：超过此值触发自动改进
-const FAILURE_RATE_THRESHOLD: f64 = 0.30;
 
 /// 淘汰阈值：失败率超过此值的自动 Skill 被清理
 const PRUNE_FAILURE_RATE: f64 = 0.70;
@@ -236,305 +225,7 @@ impl SkillEvolution {
 
     // 核心回调
 
-    /// 执行后回调：记录成功/失败，触发进化动作
-    ///
-    /// 由 Executor 在每个步骤完成后调用。
-    /// 当失败率超阈值时自动触发改进流程。
-    pub async fn on_execution_complete(
-        &self,
-        capability_id: &str,
-        success: bool,
-        failure_reason: Option<&str>,
-    ) {
-        // Normalize stats key: strip "skill:" prefix so stats keys are consistent
-        // with improve_skill / prune_skills which use bare skill IDs.
-        let stats_key = capability_id
-            .strip_prefix("skill:")
-            .unwrap_or(capability_id);
-
-        let (should_improve, should_prune) = {
-            let mut stats = self.stats.lock().await;
-            let entry = stats.entry(stats_key.to_string()).or_default();
-
-            if success {
-                entry.success_count += 1;
-                entry.consecutive_failures = 0;
-            } else {
-                entry.failure_count += 1;
-                entry.consecutive_failures += 1;
-                entry.last_failure_reason = failure_reason.map(String::from);
-            }
-
-            self.mark_stats_dirty();
-
-            let total = entry.total();
-            let failure_rate = entry.failure_rate();
-
-            let should_improve = !success
-                && failure_rate > FAILURE_RATE_THRESHOLD
-                && total >= MIN_SAMPLES_FOR_ACTION
-                && match entry.last_improved_at {
-                    Some(last) => (Utc::now() - last).num_seconds() > IMPROVE_COOLDOWN_SECS,
-                    None => true,
-                };
-
-            let should_prune = failure_rate > PRUNE_FAILURE_RATE && total >= MIN_SAMPLES_FOR_ACTION
-                || entry.consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT;
-
-            (should_improve, should_prune)
-        };
-
-        // 只对 Agent 生成的 Skill 触发自动进化
-        if should_improve || should_prune {
-            if let Some(registry) = get_skill_registry() {
-                // stats_key is already normalized ("skill:" prefix stripped)
-                let skill_id = stats_key;
-                if let Some(skill) = registry.get(skill_id).await {
-                    if skill.origin == SkillOrigin::Manual {
-                        // 手动 Skill 不自动修改；should_prune 时才记警告
-                        if should_prune {
-                            tracing::warn!(
-                                skill_id = skill_id,
-                                "[SkillEvolution] Manual skill has high failure rate, needs developer attention"
-                            );
-                        }
-                        return;
-                    }
-
-                    if should_prune {
-                        tracing::info!(
-                            skill_id = skill_id,
-                            "[SkillEvolution] Auto-pruning low-quality skill"
-                        );
-                        self.prune_single_skill(&skill).await;
-                    } else if should_improve {
-                        tracing::info!(
-                            skill_id = skill_id,
-                            failure_reason = failure_reason,
-                            "[SkillEvolution] Triggering AI-powered improvement"
-                        );
-                        // 写入 `Utc::now()` 作改进中标记；冷却看 elapsed > `IMPROVE_COOLDOWN_SECS`
-                        // 成功后再写成实际完成时间，失败回滚
-                        let improving_marker = Utc::now();
-                        {
-                            let mut stats = self.stats.lock().await;
-                            if let Some(entry) = stats.get_mut(stats_key) {
-                                entry.last_improved_at = Some(improving_marker);
-                            }
-                            self.mark_stats_dirty();
-                        }
-                        // 后台 AI 改进
-                        let skill_id_owned = skill_id.to_string();
-                        let stats_key_owned = stats_key.to_string();
-                        let failure_reason_owned = failure_reason.map(String::from);
-                        let old_instructions = skill.full_instructions.clone();
-                        if let Some(evolution) = get_skill_evolution() {
-                            let evo = evolution.clone();
-                            crate::services::ai_cost_ledger::spawn_with_current_ai_attribution(
-                                move || async move {
-                                    match Self::ai_improve_skill(
-                                        &evo,
-                                        &skill_id_owned,
-                                        &old_instructions,
-                                        failure_reason_owned.as_deref(),
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {
-                                            // 成功：确认改进时间戳
-                                            let mut stats = evo.stats.lock().await;
-                                            if let Some(entry) = stats.get_mut(&stats_key_owned) {
-                                                entry.last_improved_at = Some(Utc::now());
-                                            }
-                                            evo.mark_stats_dirty();
-                                            drop(stats);
-                                            evo.flush().await;
-                                            if let Some(nm) = crate::services::agent::notifications::get_notification_manager()
-                                        {
-                                            nm.notify_skill_evolution(
-                                                &skill_id_owned,
-                                                "improved",
-                                                "AI rewrote this auto-skill based on recent failures.",
-                                            )
-                                            .await;
-                                        }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                skill_id = %skill_id_owned,
-                                                error = %e,
-                                                "[SkillEvolution] AI improvement failed, rolling back cooldown"
-                                            );
-                                            // 失败：回滚 last_improved_at（允许下次失败重新触发）
-                                            let mut stats = evo.stats.lock().await;
-                                            if let Some(entry) = stats.get_mut(&stats_key_owned) {
-                                                // 只回滚自己设置的时间戳，避免覆盖其他并发改进
-                                                if entry.last_improved_at == Some(improving_marker)
-                                                {
-                                                    entry.last_improved_at = None;
-                                                }
-                                            }
-                                            evo.mark_stats_dirty();
-                                        }
-                                    }
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // AI 驱动的改进
-
-    /// 使用 AI 生成改进后的 Skill 指令
-    async fn ai_improve_skill(
-        evolution: &Arc<SkillEvolution>,
-        skill_id: &str,
-        old_instructions: &str,
-        failure_reason: Option<&str>,
-    ) -> Result<(), String> {
-        use crate::config::ModelTier;
-        use crate::services::ai::create_ai_analyzer_for_tier;
-
-        let analyzer = create_ai_analyzer_for_tier(ModelTier::Standard)
-            .await
-            .ok_or("AI analyzer not available")?;
-
-        let reason_ctx = failure_reason
-            .map(|r| format!("\nRecent failure reason: {}", r))
-            .unwrap_or_default();
-
-        let prompt = format!(
-            "You improve Skill instructions. The Skill below has been failing often.\n\n\
-            Current instructions:\n{}\n{}\n\n\
-            Rewrite them to be more robust and precise:\n\
-            1. Keep the original intent\n\
-            2. Add error handling and edge-case checks\n\
-            3. Make parameter matching more exact\n\
-            4. Output the improved instruction text only, no explanation\n",
-            old_instructions, reason_ctx
-        );
-
-        let new_instructions = analyzer
-            .analyze(&prompt)
-            .await
-            .map_err(|error| skill_ai_failed("Skill AI generation failed", error))?;
-
-        if new_instructions.len() < 20 {
-            return Err("AI generated instructions too short".to_string());
-        }
-
-        // 绕过冷却检查：调用方 on_execution_complete 已做过冷却判定，
-        // 并且刚写入了"改进中"时间戳标记——不绕过的话这里会永远撞上自己的标记
-        evolution
-            .improve_skill_inner(skill_id, &new_instructions, true)
-            .await?;
-
-        tracing::info!(
-            skill_id = skill_id,
-            "[SkillEvolution] AI improvement completed"
-        );
-        Ok(())
-    }
-
-    /// 改进 Skill 内部实现
-    ///
-    /// `bypass_cooldown`: AI 自动改进路径由 on_execution_complete 统一做冷却判定，
-    /// 且已写入"改进中"时间戳防并发，此处必须跳过冷却检查。
-    async fn improve_skill_inner(
-        &self,
-        skill_id: &str,
-        new_instructions: &str,
-        bypass_cooldown: bool,
-    ) -> Result<(), String> {
-        let registry = get_skill_registry().ok_or("Skill registry not initialized")?;
-        let skill = registry
-            .get(skill_id)
-            .await
-            .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
-
-        if skill.origin == SkillOrigin::Manual {
-            return Err("Cannot modify manual skills".to_string());
-        }
-
-        // 检查冷却时间
-        if !bypass_cooldown {
-            let stats = self.stats.lock().await;
-            if let Some(stat) = stats.get(skill_id) {
-                if let Some(last) = stat.last_improved_at {
-                    let elapsed = (Utc::now() - last).num_seconds();
-                    if elapsed < IMPROVE_COOLDOWN_SECS {
-                        return Err(format!(
-                            "Skill improvement on cooldown ({} seconds remaining)",
-                            IMPROVE_COOLDOWN_SECS - elapsed
-                        ));
-                    }
-                }
-            }
-        }
-
-        // 备份原文件
-        let bak_path = skill.file_path.with_extension("md.bak");
-        if skill.file_path.exists() {
-            tokio::fs::copy(&skill.file_path, &bak_path)
-                .await
-                .map_err(|error| skill_io_failed("Failed to backup skill", error))?;
-        }
-
-        // 读取原文件，替换 body 部分，保留 frontmatter
-        let original = tokio::fs::read_to_string(&skill.file_path)
-            .await
-            .map_err(|error| skill_io_failed("Failed to read skill file", error))?;
-
-        let new_content = if let Some(idx) = original.find("\n---\n") {
-            let frontmatter = &original[..idx];
-            // 逐行处理：只改 origin 行（避免误伤 name/description 中的同名文本）；
-            // 丢弃过期的 parameters 行，重载时会从新指令的 ${} 槽位重新提取
-            let updated_fm = frontmatter
-                .lines()
-                .filter(|l| !l.trim_start().starts_with("parameters:"))
-                .map(|l| {
-                    if l.trim_start().starts_with("origin:") {
-                        "origin: agent_improved"
-                    } else {
-                        l
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("{}\n---\n\n{}\n", updated_fm, new_instructions)
-        } else {
-            return Err("Invalid skill file format".to_string());
-        };
-
-        // 原子写入
-        let tmp_path = skill.file_path.with_extension("md.tmp");
-        tokio::fs::write(&tmp_path, &new_content)
-            .await
-            .map_err(|error| skill_io_failed("Failed to write skill file", error))?;
-        tokio::fs::rename(&tmp_path, &skill.file_path)
-            .await
-            .map_err(|error| skill_io_failed("Failed to replace skill file", error))?;
-
-        // 更新统计
-        {
-            let mut stats = self.stats.lock().await;
-            let entry = stats.entry(skill_id.to_string()).or_default();
-            entry.last_improved_at = Some(Utc::now());
-            entry.consecutive_failures = 0;
-            self.mark_stats_dirty();
-        }
-
-        // 重新加载
-        if let Some(registry) = get_skill_registry() {
-            registry.reload().await;
-        }
-
-        tracing::info!(skill_id = skill_id, "[SkillEvolution] Improved skill");
-        Ok(())
-    }
 
     // 淘汰
 
@@ -562,7 +253,9 @@ impl SkillEvolution {
         let mut pruned = Vec::new();
         for skill_id in to_prune {
             if let Some(registry) = get_skill_registry() {
-                let lookup_id = skill_id.strip_prefix("skill:").unwrap_or(&skill_id);
+                let lookup_id = CapabilityRef::parse(&skill_id)
+                    .skill_id()
+                    .unwrap_or(&skill_id);
                 if let Some(skill) = registry.get(lookup_id).await {
                     if skill.origin == SkillOrigin::Manual {
                         continue;
@@ -640,19 +333,25 @@ impl SkillEvolution {
     /// 手动删除一个 Agent 生成的 Skill（不允许删除 manual Skill）
     ///
     /// 软删除：移动到 skills/_trash/，不物理抹除。
-    pub async fn delete_skill(&self, skill_id: &str) -> Result<(), String> {
-        let registry = get_skill_registry().ok_or("Skill registry not initialized")?;
+    pub async fn delete_skill(&self, skill_id: &str) -> Result<(), SkillDeleteError> {
+        let registry = get_skill_registry().ok_or_else(|| {
+            SkillDeleteError::Rejected("Skill registry not initialized".to_string())
+        })?;
         let skill = registry
             .get(skill_id)
             .await
-            .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+            .ok_or_else(|| SkillDeleteError::Rejected(format!("Skill not found: {}", skill_id)))?;
 
         if skill.origin == SkillOrigin::Manual {
-            return Err("Cannot delete manual skills".to_string());
+            return Err(SkillDeleteError::Rejected(
+                "Cannot delete manual skills".to_string(),
+            ));
         }
 
         if skill.file_path.exists() {
-            soft_delete_skill_file(&skill).await?;
+            soft_delete_skill_file(&skill)
+                .await
+                .map_err(SkillDeleteError::File)?;
         }
 
         // 清理统计
@@ -674,6 +373,15 @@ impl SkillEvolution {
         );
         Ok(())
     }
+}
+
+/// Why a manual skill delete did not happen.
+#[derive(Debug)]
+pub enum SkillDeleteError {
+    /// The skill cannot be deleted: unknown, manual, or the registry is not ready.
+    Rejected(String),
+    /// Moving the skill file into the trash failed.
+    File(String),
 }
 
 /// 将 skill 文件移入 `skills/_trash/`（带时间戳前缀），避免物理删除无法恢复。
@@ -719,21 +427,34 @@ pub async fn init_skill_evolution(skills_dir: PathBuf) {
     let evolution = Arc::new(SkillEvolution::new(skills_dir).await);
     let _ = SKILL_EVOLUTION.set(evolution.clone());
 
-    // 后台定时任务：定期 flush + 每日 prune
-    tokio::spawn(async move {
-        let flush_interval = tokio::time::Duration::from_secs(5 * 60); // 5 min
-        let prune_interval_ticks = 288; // 288 * 5min = 24h
-        let mut tick_count: u64 = 0;
+    start_maintenance(crate::services::jobs::jobs(), evolution, FLUSH_INTERVAL);
+}
 
-        loop {
-            tokio::time::sleep(flush_interval).await;
-            tick_count += 1;
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// 288 * 5min = 24h
+const PRUNE_EVERY_TICKS: u64 = 288;
 
+/// 后台定时任务：定期 flush + 每日 prune。挂在进程 job runner 上，
+/// 停机时随其他后台任务一起停；每轮结束后再等满一个间隔，与原先的 sleep 循环一致。
+fn start_maintenance(
+    runner: &crate::services::jobs::JobRunner,
+    evolution: Arc<SkillEvolution>,
+    flush_interval: std::time::Duration,
+) -> crate::services::jobs::JobHandle {
+    let every = crate::services::jobs::Every::new(flush_interval)
+        .after(flush_interval)
+        .spaced();
+    let mut tick_count: u64 = 0;
+    runner.periodic("skill evolution maintenance", every, move || {
+        tick_count += 1;
+        let prune = tick_count.is_multiple_of(PRUNE_EVERY_TICKS);
+        let evolution = evolution.clone();
+        async move {
             // 每 5 分钟 flush
             evolution.flush().await;
 
             // 每 24 小时 prune
-            if tick_count.is_multiple_of(prune_interval_ticks) {
+            if prune {
                 let pruned = evolution.prune_skills().await;
                 if !pruned.is_empty() {
                     tracing::info!(
@@ -744,10 +465,41 @@ pub async fn init_skill_evolution(skills_dir: PathBuf) {
                 }
             }
         }
-    });
+    })
 }
 
 /// 获取全局 SkillEvolution
 pub fn get_skill_evolution() -> Option<&'static Arc<SkillEvolution>> {
     SKILL_EVOLUTION.get()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn maintenance_runs_on_the_job_runner_and_stops_with_it() {
+        let dir = std::env::temp_dir().join(format!(
+            "myriad-skill-evolution-job-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let evolution = Arc::new(SkillEvolution::new(dir.clone()).await);
+        evolution
+            .stats_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = start_maintenance(&runner, evolution, Duration::from_millis(1));
+        let stats = dir.join(STATS_FILE);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !stats.exists() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not flush dirty stats");
+        runner.shutdown(Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

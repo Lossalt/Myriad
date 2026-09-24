@@ -45,10 +45,12 @@ fn test_smart_filter_integration() {
 
     let data = Value::Object(all_data);
 
-    // 使用 process_and_save_all，它会分平台保存
-    match SmartFilter::process_and_save_all(&data) {
-        Ok(_) => println!("Successfully processed and saved all platform data"),
-        Err(e) => println!("Failed to process platform data: {}", e),
+    // 与抓取落盘同一条路：逐平台 process_and_save_single
+    for (platform, raw) in data.as_object().into_iter().flatten() {
+        match SmartFilter::process_and_save_single(platform, raw) {
+            Ok(_) => println!("Processed and saved {platform}"),
+            Err(e) => println!("Failed to process {platform}: {e}"),
+        }
     }
 
     // 列出分平台过滤文件（println，无 assert）
@@ -493,4 +495,68 @@ fn load_youtube_filtered_cache_from_disk_if_present() {
         serde_json::from_value(v).expect("deserialize SmartFilteredData after save shape");
     assert_eq!(back.platform, "youtube");
     assert!(matches!(back.content_analysis, ContentAnalysis::YouTube(_)));
+}
+
+/// Every filter save goes through one adapter, so the caps hold for full and single refresh.
+#[test]
+fn filter_input_caps_videos_and_songs() {
+    use process::{MAX_SONGS_FOR_FILTER, MAX_VIDEOS_FOR_FILTER, filter_input};
+    let videos: Vec<Value> = (0..150)
+        .map(|i| serde_json::json!({ "title": format!("v{i}"), "bvid": format!("BV{i}") }))
+        .collect();
+    let bilibili = serde_json::json!({
+        "user": { "name": "me", "mid": 1 },
+        "favorites": [{ "videos": videos }, { "videos": videos }],
+    });
+    let input = filter_input("bilibili", &bilibili);
+    assert_eq!(
+        input["videos"].as_array().map(Vec::len),
+        Some(MAX_VIDEOS_FOR_FILTER)
+    );
+    assert_eq!(input["user_info"]["name"], "me");
+    let filtered = SmartFilter::filter("bilibili", &input).expect("bilibili filter");
+    match filtered.content_analysis {
+        ContentAnalysis::Bilibili(ref a) => {
+            assert_eq!(a.recent_videos.len(), MAX_VIDEOS_FOR_FILTER)
+        }
+        other => panic!("expected Bilibili analysis, got {other:?}"),
+    }
+
+    let songs: Vec<Value> = (0..MAX_SONGS_FOR_FILTER + 10)
+        .map(|i| serde_json::json!({ "name": format!("s{i}") }))
+        .collect();
+    let netease = serde_json::json!({
+        "profile": { "nickname": "me" },
+        "liked_songs": songs,
+    });
+    let input = filter_input("netease", &netease);
+    assert_eq!(
+        input["songs"].as_array().map(Vec::len),
+        Some(MAX_SONGS_FOR_FILTER)
+    );
+    assert_eq!(
+        input["playlists"][0]["tracks"].as_array().map(Vec::len),
+        Some(MAX_SONGS_FOR_FILTER)
+    );
+    assert_eq!(input["profile"]["nickname"], "me");
+
+    let steam = serde_json::json!({ "user": { "personaname": "me" }, "games": [{ "appid": 1 }] });
+    let input = filter_input("steam", &steam);
+    assert_eq!(input["user_info"]["personaname"], "me");
+    assert_eq!(input["owned_games"]["games"][0]["appid"], 1);
+    assert_eq!(input["recently_played"]["games"][0]["appid"], 1);
+
+    let github = serde_json::json!({ "user": { "login": "me" } });
+    assert_eq!(filter_input("github", &github), github);
+}
+
+/// The only filter save path must not bypass the shared adapter.
+#[test]
+fn filter_save_path_uses_filter_input() {
+    let single = include_str!("cache_tokens.rs")
+        .split("pub fn process_and_save_single")
+        .nth(1)
+        .expect("process_and_save_single");
+    assert!(single.contains("filter_input(platform, platform_data)"));
+    assert!(!include_str!("process.rs").contains("fn process_and_save_all"));
 }

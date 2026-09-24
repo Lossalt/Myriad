@@ -62,24 +62,38 @@ impl IntentStore {
             .ok_or_else(|| DbErr::RecordNotFound("consciousness intent not found".into()))?;
         let current_status = parse_status(&current.status)?;
         if current_status == IntentStatus::Accepted {
-            let mut record = model_to_record(current)?;
+            let record = model_to_record(current)?;
             if record.accept_source == AcceptSource::Autonomy && source == AcceptSource::User {
+                // The user takes over only a proposal autonomy has not claimed
+                // yet. If it already ran, report what actually happened.
                 let update = agent_intentions::ActiveModel {
                     accept_source: Set(source.as_str().into()),
                     updated_at: Set(to_fixed(Utc::now())),
                     ..Default::default()
                 };
-                agent_intentions::Entity::update_many()
+                let result = agent_intentions::Entity::update_many()
                     .set(update)
                     .filter(agent_intentions::Column::Id.eq(intent_id))
                     .filter(agent_intentions::Column::UserId.eq(user_id))
+                    .filter(agent_intentions::Column::Status.eq(IntentStatus::Accepted.as_str()))
+                    .filter(
+                        agent_intentions::Column::AcceptSource.eq(AcceptSource::Autonomy.as_str()),
+                    )
                     .exec(&self.db)
                     .await?;
-                record.accept_source = source;
+                if result.rows_affected != 1 {
+                    return Err(DbErr::Custom(
+                        "consciousness intent changed concurrently".into(),
+                    ));
+                }
+                return self.find(intent_id, user_id).await;
             }
             return Ok(record);
         }
-        if !current_status.can_transition_to(IntentStatus::Accepted) {
+        // Accepting is a decision on a proposal. Running → Accepted exists for
+        // reclaiming a run that never started; an accept click must not use it
+        // to pull a live run back.
+        if current_status != IntentStatus::Proposed {
             return Err(DbErr::Custom(format!(
                 "invalid consciousness intent transition: {} -> accepted",
                 current_status.as_str()
@@ -117,6 +131,25 @@ impl IntentStore {
         models.into_iter().map(model_to_record).collect()
     }
 
+    /// Move a skipped Accepted autonomy row to the tail of the oldest-first
+    /// queue. Status stays Accepted so the user can still open the card.
+    /// A concurrent user accept or claim is left alone.
+    pub async fn defer_autonomy_skip(&self, intent_id: &str, user_id: i32) -> Result<bool, DbErr> {
+        let update = agent_intentions::ActiveModel {
+            updated_at: Set(to_fixed(Utc::now())),
+            ..Default::default()
+        };
+        let result = agent_intentions::Entity::update_many()
+            .set(update)
+            .filter(agent_intentions::Column::Id.eq(intent_id))
+            .filter(agent_intentions::Column::UserId.eq(user_id))
+            .filter(agent_intentions::Column::Status.eq(IntentStatus::Accepted.as_str()))
+            .filter(agent_intentions::Column::AcceptSource.eq(AcceptSource::Autonomy.as_str()))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected == 1)
+    }
+
     pub async fn latest_work_source_event(&self, user_id: i32) -> Result<Option<String>, DbErr> {
         let model = agent_intentions::Entity::find()
             .filter(agent_intentions::Column::UserId.eq(user_id))
@@ -133,6 +166,25 @@ impl IntentStore {
 
     /// Compare-and-set a transition so concurrent event workers cannot advance
     /// the same intention twice.
+    /// Accepted → Running for autonomy, only while the user has not taken the
+    /// proposal over. `Ok(false)` means someone else owns it now.
+    pub async fn claim_for_autonomy(&self, intent_id: &str, user_id: i32) -> Result<bool, DbErr> {
+        let update = agent_intentions::ActiveModel {
+            status: Set(IntentStatus::Running.as_str().into()),
+            updated_at: Set(to_fixed(Utc::now())),
+            ..Default::default()
+        };
+        let result = agent_intentions::Entity::update_many()
+            .set(update)
+            .filter(agent_intentions::Column::Id.eq(intent_id))
+            .filter(agent_intentions::Column::UserId.eq(user_id))
+            .filter(agent_intentions::Column::Status.eq(IntentStatus::Accepted.as_str()))
+            .filter(agent_intentions::Column::AcceptSource.eq(AcceptSource::Autonomy.as_str()))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected == 1)
+    }
+
     pub async fn transition(
         &self,
         intent_id: &str,
@@ -396,6 +448,109 @@ mod ledger_db_tests {
     use super::*;
     use crate::services::agent::consciousness::{AcceptSource, IntentStatus, WorkProposal};
     use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
+
+    #[tokio::test]
+    async fn user_takeover_and_autonomy_claim_exclude_each_other() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut options = sea_orm::ConnectOptions::new(url);
+        options.max_connections(1).sqlx_logging(false);
+        let db = sea_orm::Database::connect(options).await.unwrap();
+        db.execute_unprepared(
+            r#"CREATE TEMP TABLE agent_intentions (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, source_event_id TEXT NOT NULL,
+                summary TEXT NOT NULL, reason_code TEXT NOT NULL, status TEXT NOT NULL,
+                proposal JSONB NOT NULL, work_session_id TEXT, work_run_id TEXT,
+                result_summary TEXT, expires_at TIMESTAMPTZ, accept_source TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+            INSERT INTO agent_intentions
+            SELECT id, 7, 'e', 's', 'r', 'accepted',
+                   '{"title":"t","instruction":"i","expected_outcome":"o","source_event_id":"e"}',
+                   NULL, NULL, NULL, NULL, 'autonomy', NOW(), NOW()
+            FROM (VALUES ('first-user'), ('first-autonomy')) v(id);"#,
+        )
+        .await
+        .unwrap();
+        let store = IntentStore::new(db);
+
+        // The user takes over first: autonomy must not run it afterwards.
+        let taken = store
+            .mark_accepted("first-user", 7, AcceptSource::User)
+            .await
+            .unwrap();
+        assert_eq!(
+            (taken.status, taken.accept_source),
+            (IntentStatus::Accepted, AcceptSource::User)
+        );
+        assert!(!store.claim_for_autonomy("first-user", 7).await.unwrap());
+
+        // Autonomy claims first: the user's accept must not relabel the run.
+        assert!(store.claim_for_autonomy("first-autonomy", 7).await.unwrap());
+        let late = store
+            .mark_accepted("first-autonomy", 7, AcceptSource::User)
+            .await;
+        let running = store.find("first-autonomy", 7).await.unwrap();
+        assert_eq!(
+            (running.status, running.accept_source),
+            (IntentStatus::Running, AcceptSource::Autonomy)
+        );
+        assert!(
+            late.is_err(),
+            "a late accept must not touch a running intent"
+        );
+    }
+
+    #[tokio::test]
+    async fn deferred_skips_let_the_next_batch_reach_a_later_row() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut options = sea_orm::ConnectOptions::new(url);
+        options.max_connections(1).sqlx_logging(false);
+        let db = sea_orm::Database::connect(options).await.unwrap();
+        db.execute_unprepared(
+            r#"CREATE TEMP TABLE agent_intentions (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, source_event_id TEXT NOT NULL,
+                summary TEXT NOT NULL, reason_code TEXT NOT NULL, status TEXT NOT NULL,
+                proposal JSONB NOT NULL, work_session_id TEXT, work_run_id TEXT,
+                result_summary TEXT, expires_at TIMESTAMPTZ, accept_source TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+            INSERT INTO agent_intentions
+            SELECT format('blocked-%s', n), 8, 'e', 's', 'r', 'accepted',
+                   '{"title":"t","instruction":"i","expected_outcome":"o","source_event_id":"e"}',
+                   NULL, NULL, NULL, NOW() + INTERVAL '1 day', 'autonomy',
+                   NOW() - INTERVAL '2 hours',
+                   NOW() - INTERVAL '2 hours' + (n::text || ' seconds')::interval
+            FROM generate_series(1, 4) AS n;
+            INSERT INTO agent_intentions
+            SELECT 'ready-later', 9, 'e', 's', 'r', 'accepted',
+                   '{"title":"t","instruction":"i","expected_outcome":"o","source_event_id":"e"}',
+                   NULL, NULL, NULL, NOW() + INTERVAL '1 day', 'autonomy',
+                   NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour';"#,
+        )
+        .await
+        .unwrap();
+        let store = IntentStore::new(db);
+        let blocked = store.list_autonomy_accepted(4).await.unwrap();
+        assert_eq!(blocked.len(), 4);
+        assert!(blocked.iter().all(|row| row.id.starts_with("blocked-")));
+        for row in &blocked {
+            assert!(
+                store
+                    .defer_autonomy_skip(&row.id, row.user_id)
+                    .await
+                    .unwrap()
+            );
+            let kept = store.find(&row.id, row.user_id).await.unwrap();
+            assert_eq!(
+                (kept.status, kept.accept_source),
+                (IntentStatus::Accepted, AcceptSource::Autonomy)
+            );
+        }
+        let next = store.list_autonomy_accepted(4).await.unwrap();
+        assert_eq!(next[0].id, "ready-later");
+    }
 
     async fn connect() -> Option<(DatabaseConnection, i32)> {
         let url = std::env::var("AGENT_TEST_DATABASE_URL")

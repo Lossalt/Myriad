@@ -389,6 +389,24 @@ export function layoutsAfterWidgetRegistry(
   }
 }
 
+/**
+ * Merge an edit of the rendered tiles back over the stored side. While the
+ * widget registry is not known to be complete (still loading, or the Tapp
+ * sync failed), tiles it cannot render were never shown, so the edit cannot
+ * have removed them: keep them instead of saving their deletion.
+ */
+export function keepUnrenderedTiles(
+  edited: WidgetConfig[],
+  stored: WidgetConfig[],
+  isRenderable: (widget: WidgetConfig) => boolean,
+): WidgetConfig[] {
+  const editedIds = new Set(edited.map((widget) => widget.id))
+  const hidden = stored.filter(
+    (widget) => !editedIds.has(widget.id) && !isRenderable(widget),
+  )
+  return hidden.length ? [...edited, ...hidden] : edited
+}
+
 export function serializeDashboardLayout(
   layouts: HomeDashboardLayouts,
 ): string {

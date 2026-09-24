@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(
   readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'),
 )
-const APP_VERSION = pkg.version || '0.5.6'
+const APP_VERSION = pkg.version || '0.5.7'
 
 export default defineConfig(({ command }) => ({
   appType: 'spa',
@@ -145,12 +145,6 @@ export default defineConfig(({ command }) => ({
                 },
                 {
                   name: (id) => {
-                    if (
-                      id.includes('node_modules/chart.js') ||
-                      id.includes('node_modules/react-chartjs-2')
-                    ) {
-                      return 'chart-vendor'
-                    }
                     // motion-dom / motion-utils are separate packages whose paths
                     // also contain node_modules/motion. Merging them into `motion`
                     // would make shared helpers a static dep of the 124K chunk and

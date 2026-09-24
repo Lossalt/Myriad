@@ -1,6 +1,5 @@
 import type { HomeLayoutMode } from '../utils/homeLayout'
-import { API_URL } from '../config'
-import { clearDedupCache } from '../utils/requestDedup'
+import { invalidateUIConfig } from '../utils/requestDedup'
 import { apiService } from './api'
 
 /** Fields `POST /api/config/dashboard` accepts; every write is a partial update. */
@@ -30,6 +29,6 @@ export async function saveDashboardConfig(
   options: { signal?: AbortSignal } = {},
 ): Promise<SavedDashboardConfig> {
   const saved = await apiService.post<SavedDashboardConfig>('/config/dashboard', patch, options)
-  clearDedupCache(`${API_URL}/api/config/ui`)
+  invalidateUIConfig()
   return saved
 }

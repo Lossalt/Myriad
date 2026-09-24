@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useConfigI18n } from '../../contexts/I18nContext'
 import { listMedia } from '../../services/mediaApi'
 import { userFacingError } from '../../utils/userFacingError'
-import { AuthenticatedMedia } from '../phantasi/skin/AuthenticatedMedia'
+import { MediaPreview } from '../phantasi/skin/MediaPreview'
 
 export function WallpaperMediaPicker({ onSelect }: { onSelect: (url: string) => void }) {
   const { t } = useConfigI18n()
@@ -52,9 +52,9 @@ export function WallpaperMediaPicker({ onSelect }: { onSelect: (url: string) => 
                 title={item.name}
                 aria-label={item.name}
                 className="rounded-lg overflow-hidden border border-black/10 dark:border-white/10"
-                onClick={() => { onSelect(item.content_path || item.url); setOpen(false) }}
+                onClick={() => { onSelect(item.url); setOpen(false) }}
               >
-                <AuthenticatedMedia src={item.content_path || item.url} className="w-full h-24 object-cover" />
+                <MediaPreview src={item.url} className="w-full h-24 object-cover" />
                 <span className="block truncate text-xs p-1">{item.name}</span>
               </button>
             ))}

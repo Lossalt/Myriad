@@ -1,11 +1,10 @@
 import type { WidgetConfig } from '../widgetGridTypes'
-import { API_URL } from '../../config'
 import { currentCopy } from '../../i18n/localeCopy'
 import { apiService } from '../../services/api'
 import { authSubject } from '../../utils/authSubject'
 import { DebouncedLatestWriter } from '../../utils/debouncedLatestWriter'
 import { formatUserFacingError } from '../../utils/formatUserFacingError'
-import { clearDedupCache } from '../../utils/requestDedup'
+import { invalidateUIConfig } from '../../utils/requestDedup'
 import { showError } from '../../utils/toastManager'
 
 /** Both fields are already serialized, so a queued snapshot cannot be mutated later. */
@@ -27,7 +26,7 @@ export function saveControlPanelLayout(layout: WidgetConfig[], rows: number): vo
         owner.throwIfAborted()
         await apiService.post('/config/control-panel', patch, { signal: owner })
         owner.throwIfAborted()
-        clearDedupCache(`${API_URL}/api/config/ui`)
+        invalidateUIConfig()
       },
       onError: async (error, owner) => {
         const message = await formatUserFacingError(error, currentCopy().errors.controlPanelSaveFailed)

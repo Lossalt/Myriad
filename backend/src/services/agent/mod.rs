@@ -3,20 +3,15 @@ pub mod capability;
 pub mod chat_music;
 pub mod chat_prompt;
 pub mod consciousness;
-pub mod dag_pure;
 pub mod data_read_pure;
 pub mod data_write_pure;
 pub mod error_analyzer_pure;
-#[cfg(test)]
-pub mod escalation;
 pub mod executor;
 pub mod executor_resolve_pure;
 pub mod executor_utils_pure;
 pub mod external_pure;
 pub mod heartbeat;
 pub mod identity;
-#[cfg(test)]
-pub mod intent;
 pub mod mcp;
 pub mod memory;
 pub mod merope;
@@ -27,11 +22,8 @@ pub mod perception_view;
 pub(crate) mod playback_direction;
 pub(crate) mod presence_window;
 pub mod queue;
-#[cfg(test)]
-pub mod recipe;
 pub mod resource_create_pure;
 pub mod response_agent;
-pub mod retry_pure;
 pub mod routing;
 pub mod run_hub;
 pub mod search_output;
@@ -67,11 +59,11 @@ mod process_work;
 pub(crate) use confirmation_and_tasks::collect_step_frontend_actions;
 
 pub use agent_footer::{
-    apply_pre_param_answer_to_recipe, cleanup_expired_confirmations, ensure_agent_usage_allowed,
-    get_capabilities_summary_for_user, get_user_permissions, init_task_store,
-    parse_pre_param_question_id, user_is_current_admin,
+    ensure_agent_usage_allowed, get_capabilities_summary_for_user,
+    get_user_permissions, init_task_store, user_is_current_admin,
 };
 pub(crate) use agent_footer::{
-    granted_covers_tapp_permission, scheduler_create_actions_within_grants,
+    granted_covers_tapp_permission, max_user_agent_permissions,
+    scheduler_create_actions_within_grants, scheduler_create_tapp_permissions_within_grants,
 };
 pub use agent_header::{Agent, LANE_QUEUE, SYSTEM_USER_ID};

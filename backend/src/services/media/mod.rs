@@ -7,6 +7,7 @@
 
 mod access;
 mod assets;
+mod binding;
 mod cite;
 mod error;
 #[cfg(test)]
@@ -29,26 +30,25 @@ mod urls;
 mod validate;
 
 pub use access::{can_manage, can_read};
-pub(crate) use cite::{bind_restored_dashboard_layout, bind_restored_wallpaper, sync_note_history_refs};
+pub use binding::{Authority, Bound, Citation, Citations, Consumer, Unresolved, Visibility, bind};
 pub use cite::{
-    bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_wallpaper,
-    bind_channel_message, bind_consumer, bind_note_draft, bind_note_published, bind_persona,
-    bind_rss_item, bind_stickers, clear_note_doc, clear_rss_source, extract_registered_paths,
-    publish_asset_ids, publish_cited_media, publish_local_url, references_from_fields,
-    references_from_urls, resolve_asset_id,
+    bind_ai_task, bind_and_publish_dashboard_layout, bind_and_publish_site_image,
+    bind_and_publish_wallpaper, bind_note_draft, bind_note_published, bind_persona, bind_rss_item,
+    bind_run_input, clear_note_doc, clear_rss_source, extract_registered_paths,
+    normalize_cited_media, normalize_local_url, resolve_asset_id,
+};
+pub(crate) use cite::{
+    bind_restored_dashboard_layout, bind_restored_site_image, sync_note_history_refs,
 };
 pub use error::MediaError;
 pub use legacy::{LegacyClass, LegacyPaths};
-pub use maintenance::{maintain, start_upgrade_worker};
-pub use migration::{
-    MigrationBatch, MigrationJobInput, MigrationStats, migrate_catalog_batch, upsert_job,
-};
+pub use maintenance::{maintain, prune_references, start_upgrade_worker};
 pub use recovery::{RecoverPlan, plan_recovery};
-pub use references::{NewReference, active_count, parse_consumer_type, replace_for_consumer};
+pub use references::{active_count, parse_consumer_type};
 pub use scan::catalog_labels_for_assets;
 pub use serve::{
     FileServe, NO_STORE, ServeOutcome, resolve_alias_or_legacy, resolve_authenticated_content,
-    resolve_public_asset,
+    resolve_private_asset, resolve_public_asset,
 };
 pub use store::MediaStore;
 pub use types::{
@@ -145,7 +145,11 @@ impl MediaService {
         ctx.validate()?;
         let payload = validate_bytes(&input.bytes, &input.claimed_mime, input.max_bytes)?;
         if let Some(existing) = assets::find_by_producer(db, &ctx).await? {
-            return existing_producer_result(existing);
+            if !producer_row_is_terminal(&existing) {
+                return existing_producer_result(existing);
+            }
+            // A failed or deleted earlier attempt must not burn the key forever.
+            assets::release_producer_key(db, existing.id).await?;
         }
         let write_token = Uuid::new_v4();
         let row = match assets::insert_staging(
@@ -185,10 +189,8 @@ impl MediaService {
                 }
             }
             let filename = filename_for_mime(&row.name, &payload.mime, public_id)?;
-            let catalog_url = match input.exposure {
-                MediaExposure::Public => compatible_url(public_id, &filename),
-                MediaExposure::Private => content_path(row.id),
-            };
+            // One permanent address for either exposure; serving decides access.
+            let catalog_url = compatible_url(public_id, &filename);
             self.commit_staged(db, row.id, write_token, &key, &catalog_url)
                 .await
         }
@@ -233,6 +235,43 @@ impl MediaService {
         Ok(())
     }
 
+    /// Promote a file from the evictable image cache into a durable asset
+    /// owned by `ctx`. Cache paths are not citable media; producers that hand
+    /// a cached download to content (channel inbound, agent tools) call this
+    /// instead. Keyed by the cache file, so repeating it is idempotent.
+    pub async fn persist_cached(
+        &self,
+        db: &DatabaseConnection,
+        ctx: MediaContext,
+        cached_url: &str,
+        claimed_mime: Option<&str>,
+        filename: &str,
+        exposure: MediaExposure,
+    ) -> Result<MediaAsset, MediaError> {
+        let (bytes, mime) = crate::services::image_cache::ImageCacheService::new()
+            .read_local_public_url(cached_url)
+            .await
+            .map_err(|_| MediaError::Missing)?;
+        let file = cached_url.rsplit('/').next().unwrap_or(cached_url);
+        let (asset, _) = self
+            .persist_ready_bytes(
+                db,
+                ctx.with_producer_key(format!("image-cache:{file}")),
+                NewMediaBytes {
+                    bytes: bytes.into(),
+                    claimed_mime: claimed_mime
+                        .filter(|value| value.starts_with("image/"))
+                        .map_or(mime, str::to_string),
+                    filename: filename.to_string(),
+                    max_bytes: crate::services::memory_profile::note_image_limit(),
+                    derived_from_id: None,
+                    exposure,
+                },
+            )
+            .await?;
+        Ok(asset)
+    }
+
     /// Persist bytes as a ready asset. `created` is false when `producer_key` hits.
     pub async fn persist_ready_bytes(
         &self,
@@ -271,17 +310,6 @@ impl MediaService {
         recovery::recover_expired(&self.store, db, limit, WRITE_LEASE_SECS).await
     }
 
-    pub async fn migrate_legacy_catalog_batch(
-        &self,
-        db: &DatabaseConnection,
-        paths: &LegacyPaths,
-        allowed_origins: &[String],
-        after_id: i32,
-        limit: u32,
-    ) -> Result<MigrationBatch, MediaError> {
-        migrate_catalog_batch(&self.store, db, paths, allowed_origins, after_id, limit).await
-    }
-
     pub async fn delete(
         &self,
         db: &DatabaseConnection,
@@ -312,7 +340,16 @@ impl MediaService {
                             }
                             Ok(DeletePlan::Unlink(row.storage_key))
                         }
-                        MediaState::Staging | MediaState::Missing => Err(MediaError::NotReady),
+                        // Listed in the catalog, so it must be removable; the
+                        // bytes never landed and the name may still be cited.
+                        MediaState::Missing => {
+                            if references::has_active(txn, id, false).await? {
+                                return Err(MediaError::InUse);
+                            }
+                            assets::retire_missing(txn, id).await?;
+                            Ok(DeletePlan::AlreadyGone)
+                        }
+                        MediaState::Staging => Err(MediaError::NotReady),
                     }
                 })
             })
@@ -361,10 +398,14 @@ impl MediaService {
                 {
                     return Err(MediaError::NotReady);
                 }
-                if references::has_active(txn, id, true).await? {
+                // Same guard as delete: until the upgrade has scanned a legacy
+                // asset's citations, public pages may still link it.
+                if !row.references_complete || references::has_active(txn, id, true).await? {
                     return Err(MediaError::PublicInUse);
                 }
-                assets::mark_private(txn, id, &content_path(id)).await?;
+                let public_id = row.public_id.ok_or(MediaError::NotReady)?;
+                let filename = filename_for_mime(&row.name, &row.mime, public_id)?;
+                assets::mark_private(txn, id, &compatible_url(public_id, &filename)).await?;
                 let saved = assets::find_by_id(txn, id)
                     .await?
                     .ok_or(MediaError::Missing)?;
@@ -404,9 +445,16 @@ fn existing_producer_result(row: media_assets::Model) -> Result<MediaAsset, Medi
     let state = row.state.as_deref().unwrap_or("");
     match MediaState::parse(state) {
         Ok(MediaState::Ready) => assets::to_domain(row, 0),
-        Ok(MediaState::Staging) => Err(MediaError::NotReady),
+        Ok(MediaState::Staging | MediaState::Deleting) => Err(MediaError::NotReady),
         _ => Err(MediaError::conflict("Producer key already used")),
     }
+}
+
+fn producer_row_is_terminal(row: &media_assets::Model) -> bool {
+    matches!(
+        MediaState::parse(row.state.as_deref().unwrap_or("")),
+        Ok(MediaState::Missing | MediaState::Deleted)
+    )
 }
 
 fn txn_error(err: sea_orm::TransactionError<MediaError>) -> MediaError {
@@ -418,6 +466,7 @@ fn txn_error(err: sea_orm::TransactionError<MediaError>) -> MediaError {
 
 #[cfg(test)]
 mod tests {
+    use super::references::{NewReference, replace_for_consumer};
     use super::*;
 
     #[test]

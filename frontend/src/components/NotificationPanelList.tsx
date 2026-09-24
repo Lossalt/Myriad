@@ -4,6 +4,10 @@ import type { NotificationSourceKey } from '../services/notificationPreferencesA
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../contexts/I18nContext'
 import { notificationSourceFor } from '../services/notificationDelivery'
+import {
+  NotificationAction,
+  NotificationEvent,
+} from '../services/notificationEvents'
 import { getGreeting } from '../utils/dynamicContent'
 import { formatUserFacingError } from '../utils/formatUserFacingError'
 import {
@@ -55,7 +59,7 @@ type NotifTarget =
   | null
 
 function resolveTarget(n: AppNotification): NotifTarget {
-  if (n.metadata?.action === 'open_agent') {
+  if (n.metadata?.action === NotificationAction.openAgent) {
     const sid =
       typeof n.metadata?.session_id === 'string' ? n.metadata.session_id : ''
     const runId =
@@ -84,7 +88,7 @@ function resolveTarget(n: AppNotification): NotifTarget {
   if (typeof route === 'string' && route.startsWith('/')) {
     return { kind: 'route', path: route }
   }
-  if (n.metadata?.action === 'open_agent_manage') {
+  if (n.metadata?.action === NotificationAction.openAgentManage) {
     const rawTab = n.metadata?.tab
     const tab =
       rawTab === 'skills' || rawTab === 'memory' || rawTab === 'heartbeat'
@@ -208,7 +212,7 @@ function NotificationPanelList({
       try {
         const { runFederationInviteAction, runSeoReviewApply } = await import('../services/notificationActions')
         if (
-          n.metadata?.event_key === 'heartbeat.seo_review' &&
+          n.metadata?.event_key === NotificationEvent.heartbeatSeoReview &&
           actionId === 'apply'
         ) {
           await runSeoReviewApply(n)
@@ -229,7 +233,7 @@ function NotificationPanelList({
         }
       } catch (err) {
         const fallback =
-          n.metadata?.event_key === 'heartbeat.seo_review'
+          n.metadata?.event_key === NotificationEvent.heartbeatSeoReview
             ? t.errors.seoApplyFailed
             : t.errors.inviteInvalid
         setActionError(await formatUserFacingError(err, fallback))

@@ -1,3 +1,4 @@
+use crate::services::agent::capability::CapabilityRef;
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
 use serde_json::{Value, json};
@@ -232,7 +233,7 @@ impl AgentTurnBudget {
     ) -> Result<Self, String> {
         let role = crate::services::tapp_context::role_for_subject(
             user_id,
-            user_is_current_admin(db, user_id).await,
+            user_is_current_admin(db, user_id).await?,
         );
         let reservation = crate::services::ai_quota::reserve_ai_quota_with_options(
             db,
@@ -380,7 +381,9 @@ pub async fn get_capabilities_summary_for_user(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
 ) -> serde_json::Value {
-    if user_is_current_admin(db, user_id).await {
+    // Informational listing: an unreadable role (already logged) shows the
+    // non-admin summary, whose grants are computed separately below.
+    if user_is_current_admin(db, user_id).await == Ok(true) {
         capability::get_capability_summary_filtered(None).await
     } else {
         let granted = get_user_permissions(db, user_id).await;
@@ -388,38 +391,30 @@ pub async fn get_capabilities_summary_for_user(
     }
 }
 
-/// Query the current database role. Agent recipes can execute long after a
-/// token was issued, so a hard-coded "first user is admin" rule is unsafe.
-pub async fn user_is_current_admin(db: &sea_orm::DatabaseConnection, user_id: i32) -> bool {
-    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-
-    if user_id == 0 {
-        return true;
+/// Query the current role ([`crate::services::principal::is_current_admin`]).
+/// Agent recipes can execute long after a token was issued, so a hard-coded
+/// "first user is admin" rule is unsafe. The system user (0) is admin. A failed
+/// read is an error; callers decide, it is never reported as "not an admin".
+pub async fn user_is_current_admin(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+) -> Result<bool, String> {
+    if user_id == SYSTEM_USER_ID {
+        return Ok(true);
     }
-
-    match db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-            [user_id.into()],
-        ))
+    crate::services::principal::is_current_admin(db, user_id)
         .await
-    {
-        Ok(Some(row)) => row.try_get::<bool>("", "is_admin").unwrap_or(false),
-        Ok(None) => false,
-        Err(error) => {
-            tracing::warn!(
-                user_id,
-                %error,
-                "[Agent] Failed to refresh current user role; using least privilege"
-            );
-            false
-        }
-    }
+        .map_err(|error| {
+            tracing::warn!(user_id, %error, "[Agent] Failed to read current user role");
+            "Could not verify current administrator status".to_string()
+        })
 }
 
 /// 非管理员 Agent 能力候选全集；之后按当前授予权限过滤。
-fn max_user_agent_permissions() -> std::collections::HashSet<String> {
+///
+/// 空的自治授权请求用它做默认范围：当前授予 ∩ 这个集合。管理员专属权限
+/// 不进默认自治范围；显式列出且当前已授予时仍然允许。
+pub(crate) fn max_user_agent_permissions() -> std::collections::HashSet<String> {
     // 共享订阅库管理、报告生成和系统管理不进入非管理员候选集。
     [
         "platform:read",
@@ -482,7 +477,7 @@ pub async fn ensure_agent_usage_allowed(
 ) -> Result<bool, String> {
     use crate::services::permission_service::{TappPermission, TappPermissionService, UserRole};
 
-    let is_admin = user_is_current_admin(db, user_id).await;
+    let is_admin = user_is_current_admin(db, user_id).await?;
     if is_admin || user_id == SYSTEM_USER_ID {
         return Ok(true);
     }
@@ -618,6 +613,24 @@ pub(crate) fn scheduler_create_actions_within_grants(
     Ok(())
 }
 
+/// Execute-time translation of `scheduler.create`'s Tapp permissions into the
+/// Agent grant vocabulary. Do not pass `permission.as_str()` to
+/// `authorize_capability`: those strings are not in the Agent grant set.
+pub(crate) fn scheduler_create_tapp_permissions_within_grants(
+    granted: &std::collections::HashSet<String>,
+    permissions: &[crate::services::permission_service::TappPermission],
+) -> Result<(), String> {
+    for permission in permissions {
+        if !granted_covers_tapp_permission(granted, *permission) {
+            return Err(format!(
+                "capability 'scheduler.create' is not available for scheduled action: {}",
+                permission.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 获取用户在 Agent 系统中的授予权限。
 ///
 /// - 管理员 / 系统用户：全部能力权限
@@ -629,8 +642,12 @@ pub async fn get_user_permissions(
     use crate::services::permission_service::{TappPermissionService, UserRole};
     use std::collections::HashSet;
 
-    // 系统用户或管理员：全部权限
-    if user_is_current_admin(db, user_id).await {
+    // 系统用户或管理员：全部权限。角色读不出与下方可见性读不出一样按最小权限。
+    let is_admin = match user_is_current_admin(db, user_id).await {
+        Ok(is_admin) => is_admin,
+        Err(_) => return HashSet::new(),
+    };
+    if is_admin {
         let registry = capability::get_registry();
         let mut permissions: HashSet<String> = registry
             .get_all()
@@ -685,200 +702,22 @@ pub async fn init_task_store(db: DatabaseConnection) {
     executor::init_task_store_db(db).await;
 }
 
-/// 清理过期的确认请求
-pub async fn cleanup_expired_confirmations() {
-    let now = Utc::now();
-    let mut store = PENDING_CONFIRMATIONS.write().await;
-
-    let expired: Vec<String> = store
-        .iter()
-        .filter(|(_, v)| v.request.expires_at < now)
-        .map(|(k, _)| k.clone())
-        .collect();
-
-    for id in expired {
-        tracing::debug!(confirmation_id = %id, "[Agent] Cleaning up expired confirmation");
-        store.remove(&id);
-    }
-}
-
 // 预执行参数收集 / 写回
-
-/// 缺失的必需参数
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MissingRequiredParam {
-    pub(crate) step_id: String,
-    pub(crate) param_name: String,
-    pub(crate) description: String,
-}
-
-/// 结构化 question_id，resume 时据此写回 Recipe.step.params
-pub(crate) fn pre_param_question_id(step_id: &str, param_name: &str) -> String {
-    format!("pre_param:{}:{}", step_id, param_name)
-}
-
-/// 解析 `pre_param:{step_id}:{param_name}`，或 `pre_param_{param_name}`（无 step 映射）。
-pub fn parse_pre_param_question_id(question_id: &str) -> Option<(String, String)> {
-    if let Some(rest) = question_id.strip_prefix("pre_param:") {
-        let mut parts = rest.splitn(2, ':');
-        let step_id = parts.next()?.to_string();
-        let param_name = parts.next()?.to_string();
-        if step_id.is_empty() || param_name.is_empty() {
-            return None;
-        }
-        return Some((step_id, param_name));
-    }
-    // `pre_param_{name}`：无 step 映射，调用方用第一个匹配步骤。
-    if let Some(param_name) = question_id.strip_prefix("pre_param_") {
-        if !param_name.is_empty() && param_name != "s" {
-            return Some((String::new(), param_name.to_string()));
-        }
-    }
-    None
-}
-
-/// 将用户回答写回 Recipe 对应步骤参数
-pub fn apply_pre_param_answer_to_recipe(
-    recipe: &mut Recipe,
-    question_id: &str,
-    answer: &str,
-) -> bool {
-    let Some((step_id, param_name)) = parse_pre_param_question_id(question_id) else {
-        return false;
-    };
-    let value = serde_json::Value::String(answer.trim().to_string());
-    if step_id.is_empty() {
-        // question_id 无 step_id：写入第一个缺少该参数的步骤，否则第一个步骤
-        let idx = recipe
-            .steps
-            .iter()
-            .position(|s| !s.params.contains_key(&param_name))
-            .or(if recipe.steps.is_empty() {
-                None
-            } else {
-                Some(0)
-            });
-        if let Some(i) = idx {
-            recipe.steps[i].params.insert(param_name, value);
-            return true;
-        }
-        return false;
-    }
-    if let Some(step) = recipe.steps.iter_mut().find(|s| s.id == step_id) {
-        step.params.insert(param_name, value);
-        return true;
-    }
-    false
-}
-
-fn step_has_param_value(step: &types::RecipeStep, param_name: &str) -> bool {
-    let has_value = step
-        .params
-        .get(param_name)
-        .map(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()))
-        .unwrap_or(false);
-    let has_from = step.params.contains_key(&format!("{}From", param_name));
-    has_value || has_from
-}
-
-fn push_missing_from_schema(
-    missing: &mut Vec<MissingRequiredParam>,
-    step: &types::RecipeStep,
-    schema: &Value,
-) {
-    let Some(required) = schema.get("required").and_then(|v| v.as_array()) else {
-        return;
-    };
-    let properties = schema.get("properties");
-    for req_val in required {
-        let Some(param_name) = req_val.as_str() else {
-            continue;
-        };
-        if step_has_param_value(step, param_name) {
-            continue;
-        }
-        let description = properties
-            .and_then(|p| p.get(param_name))
-            .and_then(|p| p.get("description"))
-            .and_then(|d| d.as_str())
-            .unwrap_or(param_name)
-            .to_string();
-        missing.push(MissingRequiredParam {
-            step_id: step.id.clone(),
-            param_name: param_name.to_string(),
-            description,
-        });
-    }
-}
-
-/// 收集 Recipe 中缺失的必需参数（静态 registry + 动态 MCP schema + Skill）
-pub(crate) async fn collect_missing_required_params(recipe: &Recipe) -> Vec<MissingRequiredParam> {
-    let registry = capability::get_registry();
-    let skill_registry = skill::get_skill_registry();
-    let mcp_schemas = load_mcp_tool_schemas().await;
-    let mut missing = Vec::new();
-
-    for step in &recipe.steps {
-        if let Some(skill_id) = step.capability_id.strip_prefix("skill:") {
-            if let Some(skill_reg) = skill_registry {
-                if let Some(sk) = skill_reg.get(skill_id).await {
-                    for param_name in &sk.parameters {
-                        if !step_has_param_value(step, param_name) {
-                            missing.push(MissingRequiredParam {
-                                step_id: step.id.clone(),
-                                param_name: param_name.to_string(),
-                                description: param_name.replace('_', " "),
-                            });
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-
-        if let Some(cap) = registry.get(&step.capability_id) {
-            push_missing_from_schema(&mut missing, step, &cap.input_schema);
-            continue;
-        }
-
-        // 动态 MCP 工具：不在静态 registry 中，从 MCP manager 读 schema
-        if step.capability_id.starts_with("mcp.") {
-            if let Some(schema) = mcp_schemas.get(&step.capability_id) {
-                push_missing_from_schema(&mut missing, step, schema);
-            }
-        }
-    }
-
-    missing
-}
-
-/// capability_id (`mcp.{server}.{tool}`) → input_schema
-async fn load_mcp_tool_schemas() -> HashMap<String, Value> {
-    let mut map = HashMap::new();
-    let Some(manager) = mcp::get_mcp_manager() else {
-        return map;
-    };
-    for (server_id, tool) in manager.list_tools().await {
-        let cap_id = format!("mcp.{}.{}", server_id, tool.name);
-        map.insert(cap_id, tool.input_schema);
-    }
-    map
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn pending(cap: &str, risk: RiskLevel) -> PendingConfirmation {
-        PendingConfirmation {
-            step_id: "s1".to_string(),
-            capability_id: cap.to_string(),
-            capability_name: cap.to_string(),
-            description: String::new(),
-            risk_level: risk,
-            confirmation_message: String::new(),
-            impact: Vec::new(),
-        }
+    /// The system user and guests are answered without the database; a real
+    /// account whose role cannot be read is an error, not "not an admin".
+    #[tokio::test]
+    async fn current_admin_role_read_failure_is_an_error() {
+        let db = sea_orm::DatabaseConnection::default();
+        assert_eq!(user_is_current_admin(&db, SYSTEM_USER_ID).await, Ok(true));
+        assert_eq!(user_is_current_admin(&db, -4).await, Ok(false));
+        crate::middleware::auth::invalidate_auth_cache_local(910_401);
+        assert!(user_is_current_admin(&db, 910_401).await.is_err());
+        assert!(get_user_permissions(&db, 910_401).await.is_empty());
     }
 
     #[test]
@@ -894,39 +733,6 @@ mod tests {
             !AgentTurnKind::Fresh.reserve_options().skip_cooldown,
             "a new user turn is exactly what cooldown is for"
         );
-    }
-
-    #[test]
-    fn session_id_is_parsed_from_lane_key() {
-        assert_eq!(
-            session_id_from_lane_key("user:42:session:ses_abc"),
-            Some("ses_abc".to_string())
-        );
-        assert_eq!(session_id_from_lane_key("user:42"), None);
-        assert_eq!(session_id_from_lane_key("user:42:session:"), None);
-    }
-
-    #[test]
-    fn test_system_gate_normal_user_needs_confirmation() {
-        let steps = vec![pending("cache.clear", RiskLevel::High)];
-        assert!(
-            Agent::system_sensitive_gate(1, &steps).is_none(),
-            "普通用户应走正常确认流程"
-        );
-    }
-
-    #[test]
-    fn test_system_gate_auto_confirms_low_and_medium() {
-        for risk in [RiskLevel::Low, RiskLevel::Medium] {
-            let steps = vec![pending("storage.set", risk)];
-            match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-                Some(Ok(())) => {}
-                other => panic!(
-                    "系统任务应自动确认 {risk:?}，got {:?}",
-                    other.map(|r| r.is_ok())
-                ),
-            }
-        }
     }
 
     /// 非管理员开着「网络请求」也拿不到 MCP。
@@ -969,31 +775,6 @@ mod tests {
             &mcp_only,
             TappPermission::NetworkFetch
         ));
-    }
-
-    #[test]
-    fn test_system_gate_blocks_high() {
-        let steps = vec![pending("cache.clear", RiskLevel::High)];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Err(resp)) => {
-                assert!(resp.message.contains("cache.clear"), "{}", resp.message);
-            }
-            other => panic!("High 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
-        }
-    }
-
-    #[test]
-    fn test_system_gate_blocks_critical() {
-        let steps = vec![
-            pending("storage.set", RiskLevel::Low),
-            pending("system.shutdown", RiskLevel::Critical),
-        ];
-        match Agent::system_sensitive_gate(SYSTEM_USER_ID, &steps) {
-            Some(Err(resp)) => {
-                assert!(resp.message.contains("system.shutdown"), "{}", resp.message);
-            }
-            other => panic!("Critical 应被拒绝，got {:?}", other.map(|r| r.is_ok())),
-        }
     }
 
     #[test]
@@ -1107,32 +888,94 @@ mod tests {
     }
 
     #[test]
+    fn autonomy_scheduler_create_translates_tapp_permissions() {
+        use crate::services::agent::consciousness::missing_permission;
+        use crate::services::agent::system_op_pure::extract_raw_backend_actions;
+        use crate::services::permission_service::TappPermission;
+        use crate::services::tapp_scheduler::{
+            backend_action_permissions_of, normalize_backend_actions_parsed,
+        };
+        use std::collections::HashSet;
+
+        fn required_of(params: &HashMap<String, Value>) -> Vec<TappPermission> {
+            let mut required = vec![TappPermission::SchedulerRegister];
+            if let Some(raw) = extract_raw_backend_actions(params) {
+                let (_normalized, wrappers) =
+                    normalize_backend_actions_parsed(Some(raw)).expect("actions");
+                required.extend(backend_action_permissions_of(&wrappers));
+            }
+            required
+        }
+
+        let mut basic = HashMap::new();
+        basic.insert(
+            "backendActions".into(),
+            json!([
+                { "action": "storage.get", "key": "note" },
+                { "action": "notification.queue", "message": "ok" }
+            ]),
+        );
+        let mut fetch = HashMap::new();
+        fetch.insert(
+            "backendActions".into(),
+            json!([{ "type": "fetch", "url": "https://example.com" }]),
+        );
+        let granted: HashSet<String> = ["scheduler:write".to_string()].into_iter().collect();
+        let granted_list: Vec<String> = granted.iter().cloned().collect();
+
+        let basic_required = required_of(&basic);
+        // The old execute path compared Tapp strings (`scheduler:register`) to
+        // the Agent grant set and always refused. The translated check allows
+        // a scheduler:write ceiling that only schedules basic actions.
+        let tapp_strings: Vec<String> = basic_required
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+        assert!(
+            missing_permission(&granted_list, "scheduler.create", &tapp_strings).is_some(),
+            "Tapp strings must not be treated as Agent grants"
+        );
+        assert!(
+            scheduler_create_tapp_permissions_within_grants(&granted, &basic_required).is_ok(),
+            "scheduler:write plus basic actions must be allowed"
+        );
+
+        let fetch_required = required_of(&fetch);
+        let refused = scheduler_create_tapp_permissions_within_grants(&granted, &fetch_required);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("network:fetch")),
+            "fetch without a network grant must be refused, got {refused:?}"
+        );
+
+        for params in [&basic, &fetch] {
+            let required = required_of(params);
+            assert_eq!(
+                scheduler_create_tapp_permissions_within_grants(&granted, &required).is_ok(),
+                scheduler_create_actions_within_grants(params, &granted).is_ok(),
+                "execution and plan must agree for {params:?}"
+            );
+        }
+    }
+
+    #[test]
     fn saved_recipe_validation_rejects_dependency_cycles() {
         let mut recipe = Recipe::new("cycle", "cycle", ExecutionType::Instant);
-        recipe.steps = vec![
-            AiRecipeStep {
-                id: "a".to_string(),
-                capability_id: "ai.summarize".to_string(),
-                action: "a".to_string(),
-                params: HashMap::new(),
-                depends_on: vec!["b".to_string()],
-                on_failure: "abort".to_string(),
-                retry: None,
-                timeout_ms: None,
-            }
-            .into_recipe_step(0, None),
-            AiRecipeStep {
-                id: "b".to_string(),
-                capability_id: "ai.summarize".to_string(),
-                action: "b".to_string(),
-                params: HashMap::new(),
-                depends_on: vec!["a".to_string()],
-                on_failure: "abort".to_string(),
-                retry: None,
-                timeout_ms: None,
-            }
-            .into_recipe_step(1, None),
-        ];
+        let step = |id: &str, dependency: &str, order| RecipeStep {
+            id: id.to_string(),
+            order,
+            capability_id: "ai.summarize".to_string(),
+            action: id.to_string(),
+            params: HashMap::new(),
+            depends_on: vec![dependency.to_string()],
+            on_failure: FailureStrategy::Abort,
+            retry: None,
+            timeout_ms: None,
+            model_tier: None,
+            generator: None,
+        };
+        recipe.steps = vec![step("a", "b", 0), step("b", "a", 1)];
 
         let error = Agent::validate_saved_recipe(&recipe).expect_err("cycle must be rejected");
         assert!(error.contains("dependency cycle"));
@@ -1147,7 +990,6 @@ mod tests {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance: None,
         };
@@ -1157,7 +999,6 @@ mod tests {
             !response(AgentResponseType::Answer, Some(json!({"blocked": true})))
                 .is_successful_outcome()
         );
-        assert!(!response(AgentResponseType::ConfirmationRequired, None).is_successful_outcome());
         assert!(!response(AgentResponseType::Clarification, None).is_successful_outcome());
 
         for status in [
@@ -1209,63 +1050,5 @@ mod tests {
             "TaskCreated SSE uses recipe.id; cancel/steer must hit the same id"
         );
         assert_eq!(task.recipe_id, recipe.id);
-    }
-
-    #[test]
-    fn pre_param_question_id_roundtrip() {
-        let qid = pre_param_question_id("step_1", "tappId");
-        assert_eq!(qid, "pre_param:step_1:tappId");
-        assert_eq!(
-            parse_pre_param_question_id(&qid),
-            Some(("step_1".into(), "tappId".into()))
-        );
-        assert_eq!(
-            parse_pre_param_question_id("pre_param_url"),
-            Some(("".into(), "url".into()))
-        );
-        assert!(parse_pre_param_question_id("other").is_none());
-    }
-
-    fn sample_step(id: &str, cap: &str) -> types::RecipeStep {
-        types::RecipeStep {
-            id: id.into(),
-            order: 0,
-            capability_id: cap.into(),
-            action: "act".into(),
-            params: HashMap::new(),
-            depends_on: vec![],
-            on_failure: types::FailureStrategy::Abort,
-            retry: None,
-            timeout_ms: None,
-            model_tier: None,
-            generator: None,
-        }
-    }
-
-    #[test]
-    fn apply_pre_param_writes_back_to_recipe_step() {
-        let mut recipe = Recipe::new("t", "open tapp", ExecutionType::Instant);
-        recipe.steps.push(sample_step("step_1", "tapp.interact"));
-
-        assert!(apply_pre_param_answer_to_recipe(
-            &mut recipe,
-            "pre_param:step_1:tappId",
-            " my-tapp "
-        ));
-        assert_eq!(
-            recipe.steps[0]
-                .params
-                .get("tappId")
-                .and_then(|v| v.as_str()),
-            Some("my-tapp")
-        );
-    }
-
-    #[test]
-    fn step_has_param_respects_from_refs() {
-        let mut step = sample_step("s", "ai.summarize");
-        assert!(!step_has_param_value(&step, "content"));
-        step.params.insert("contentFrom".into(), json!("step_0"));
-        assert!(step_has_param_value(&step, "content"));
     }
 }

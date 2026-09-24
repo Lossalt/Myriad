@@ -51,7 +51,7 @@ pub async fn execute(
         "cache.status" => execute_cache_status(params).await,
         "cache.clear" => execute_cache_clear(params).await,
         "rsshub.healthcheck" => execute_rsshub_healthcheck(params, ctx).await,
-        "image.cache" => execute_image_cache(params).await,
+        "image.cache" => execute_image_cache(params, ctx).await,
         "export.data" => execute_export_data(params).await,
         "task.submit" => execute_task_submit(params).await,
         "phantasi.schedule" => execute_phantasi_schedule(params).await,
@@ -151,13 +151,30 @@ async fn execute_scheduler_create(
         );
     }
 
-    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    let role = if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         UserRole::Admin
     } else {
         UserRole::User
     };
     let mut required_permissions = vec![TappPermission::SchedulerRegister];
     required_permissions.extend(backend_action_permissions_of(&wrappers));
+    if ctx.autonomy_permission_cap.is_some() {
+        // A task created under autonomy must not schedule actions beyond the
+        // turn's cap. Translate Tapp permissions into the Agent grant set;
+        // passing `scheduler:register` / `network:fetch` to authorize_capability
+        // always fails because those strings are not Agent grants.
+        let granted = crate::services::agent::consciousness::effective_granted(
+            ctx.db,
+            ctx.user_id,
+            ctx.autonomy_permission_cap.as_deref(),
+        )
+        .await?;
+        let granted_set: std::collections::HashSet<String> = granted.into_iter().collect();
+        crate::services::agent::scheduler_create_tapp_permissions_within_grants(
+            &granted_set,
+            &required_permissions,
+        )?;
+    }
     {
         let config = GLOBAL_DYNAMIC_CONFIG.read().await;
         for permission in required_permissions {
@@ -301,7 +318,7 @@ async fn execute_scheduler_trigger(
 // Agent Heartbeat（HEARTBEAT.md，非 Tapp scheduler）
 
 async fn require_heartbeat_admin(ctx: &HandlerContext<'_>) -> Result<(), String> {
-    if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await {
+    if crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await? {
         Ok(())
     } else {
         Err("Heartbeat admin required".to_string())
@@ -676,9 +693,32 @@ async fn execute_rsshub_healthcheck(
 
 // 图片缓存
 
-async fn execute_image_cache(params: &HashMap<String, Value>) -> Result<Value, String> {
+/// The result is meant to be cited (notes, persona, messages). Image-cache
+/// paths are no longer registered media and would fail those saves with
+/// MEDIA_NOT_READY, so promote the download to a public asset.
+async fn persist_cached_image(url: &str, ctx: &HandlerContext<'_>) -> Result<String, String> {
+    let cached = ImageCacheService::new().cache_image(url).await?;
+    let file = cached.rsplit('/').next().unwrap_or(&cached).to_string();
+    crate::services::media::MediaService::from_data_paths(crate::services::data_paths::paths())
+        .persist_cached(
+            ctx.db,
+            crate::services::media::task_media_context(ctx.user_id, ctx.user_id),
+            &cached,
+            None,
+            &file,
+            crate::services::media::MediaExposure::Public,
+        )
+        .await
+        .map(|asset| asset.url)
+        .map_err(|error| error.to_string())
+}
+
+async fn execute_image_cache(
+    params: &HashMap<String, Value>,
+    ctx: &HandlerContext<'_>,
+) -> Result<Value, String> {
     if let Some(url) = first_string_param(params, &["url"]) {
-        let local_path = ImageCacheService::new().cache_image(&url).await?;
+        let local_path = persist_cached_image(&url, ctx).await?;
         return Ok(json!({
             "localPath": local_path,
             "cached": true,
@@ -879,7 +919,7 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
     match action {
         PhantasiScheduleAction::Start => match get_phantasi_scheduler() {
             Some(scheduler) => {
-                scheduler.start().await;
+                scheduler.start();
                 Ok(json!({
                     "success": true,
                     "action": "start",
@@ -891,7 +931,7 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
         },
         PhantasiScheduleAction::Stop => match get_phantasi_scheduler() {
             Some(scheduler) => {
-                scheduler.stop().await;
+                scheduler.stop();
                 Ok(json!({
                     "success": true,
                     "action": "stop",
@@ -917,16 +957,21 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
                     }
                 } else {
                     match scheduler.refresh_all_enabled().await {
-                        Ok((attempted, refreshed, failed, new_items)) => Ok(json!({
-                            "success": failed == 0,
+                        Ok(summary) => Ok(json!({
+                            "success": summary.failed == 0,
                             "action": "refresh",
                             "status": "refreshed",
-                            "attempted": attempted,
-                            "refreshed": refreshed,
-                            "failed": failed,
-                            "newItems": new_items,
+                            "attempted": summary.attempted,
+                            "refreshed": summary.refreshed,
+                            "failed": summary.failed,
+                            "busy": summary.busy,
+                            "newItems": summary.new_items,
                             "message": format!(
-                                "Refreshed {refreshed} sources ({failed} failed), {new_items} new items"
+                                "Refreshed {} sources ({} failed, {} already refreshing), {} new items",
+                                summary.refreshed,
+                                summary.failed,
+                                summary.busy,
+                                summary.new_items
                             )
                         })),
                         Err(e) => {
@@ -939,11 +984,11 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
             _ => Err("Phantasi scheduler not initialized".to_string()),
         },
         PhantasiScheduleAction::Status => {
-            let scheduler_active = get_phantasi_scheduler().is_some();
+            let scheduler = get_phantasi_scheduler();
             Ok(json!({
                 "action": "status",
-                "running": scheduler_active,
-                "available": scheduler_active,
+                "running": scheduler.as_ref().is_some_and(|s| s.is_running()),
+                "available": scheduler.is_some(),
                 "checkedAt": chrono::Utc::now().to_rfc3339()
             }))
         }
@@ -951,7 +996,12 @@ async fn execute_phantasi_schedule(params: &HashMap<String, Value>) -> Result<Va
 }
 
 async fn execute_setup_status(ctx: &HandlerContext<'_>) -> Result<Value, String> {
-    let progress = crate::api::setup::inspect_setup_progress(ctx.db).await;
+    let progress = crate::api::setup::inspect_setup_progress(ctx.db)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "[Agent] setup.status cannot be read");
+            "Setup state cannot be verified".to_string()
+        })?;
     Ok(json!({
         "isSetupRequired": progress.is_setup_required,
         "hasDatabase": progress.has_database,

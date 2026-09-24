@@ -1,9 +1,10 @@
+import type { UIConfigChange } from '../utils/requestDedup'
 import { useEffect } from 'react'
 import { getUIConfigDeduped } from '../utils/requestDedup'
 import { useVisibleState } from './useVisibleState'
 
 /** Share transport/cache, but let each mounted consumer own its latest reload. */
-export function usePublicUiConfig<T = Record<string, unknown>>(changedEvent: string) {
+export function usePublicUiConfig<T = Record<string, unknown>>(changedEvent: UIConfigChange) {
   const [config, setConfig] = useVisibleState<T | null>(null)
   useEffect(() => {
     let active = true

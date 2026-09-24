@@ -10,7 +10,7 @@ use sea_orm::DatabaseConnection;
 use serde_json::json;
 
 use crate::error::HttpError;
-use crate::middleware::auth::{Claims, ensure_current_admin_on};
+use crate::middleware::auth::{Claims, current_admin_status};
 use crate::models::entities::tapps;
 use crate::services::permission_service::{TappPermission, UserRole};
 use crate::services::tapp_ownership::{self, TappAccessError};
@@ -222,15 +222,26 @@ pub fn parse_user_id(claims: &Claims) -> Result<i32, HttpError> {
 }
 
 /// Resolve the current role used by Tapp capability filtering.
-pub async fn current_tapp_user_role(db: &DatabaseConnection, claims: &Claims) -> UserRole {
-    if claims.is_admin && ensure_current_admin_on(claims, db).await.is_ok() {
+///
+/// Claims that never passed the auth boundary, guests and id 0 are guests. An
+/// admin claim is rechecked live; a failed read is an error, never a silent
+/// downgrade to an ordinary user.
+pub async fn current_tapp_user_role(
+    db: &DatabaseConnection,
+    claims: &Claims,
+) -> Result<UserRole, HttpError> {
+    if claims.durable_user_id().is_none() {
+        return Ok(UserRole::Guest);
+    }
+    let is_admin = claims.is_admin
+        && current_admin_status(claims, db)
+            .await
+            .map_err(HttpError::from)?;
+    Ok(if is_admin {
         UserRole::Admin
     } else {
-        match claims.subject().map(|subject| subject.id()) {
-            Some(user_id) if user_id > 0 => UserRole::User,
-            _ => UserRole::Guest,
-        }
-    }
+        UserRole::User
+    })
 }
 
 // Prompt 安全验证
@@ -257,13 +268,21 @@ mod tests {
         assert!(super::parse_user_id(&unbound).is_err(), "sub is never re-parsed");
 
         let db = sea_orm::DatabaseConnection::default();
-        assert_eq!(super::current_tapp_user_role(&db, &claims(7)).await, UserRole::User);
-        assert_eq!(super::current_tapp_user_role(&db, &claims(-3)).await, UserRole::Guest);
-        assert_eq!(super::current_tapp_user_role(&db, &unbound).await, UserRole::Guest);
+        let db = &db;
+        let role = |claims| async move { super::current_tapp_user_role(db, &claims).await };
+        assert_eq!(role(claims(7)).await.unwrap(), UserRole::User);
+        assert_eq!(role(claims(-3)).await.unwrap(), UserRole::Guest);
+        assert_eq!(role(unbound).await.unwrap(), UserRole::Guest);
         // A stale admin claim whose subject never passed the boundary is not admin.
         let mut stale_admin = mint_session_claims(7, "u", true, false, 0);
         stale_admin.subject = None;
-        assert_eq!(super::current_tapp_user_role(&db, &stale_admin).await, UserRole::Guest);
+        assert_eq!(role(stale_admin).await.unwrap(), UserRole::Guest);
+        // An admin whose live role cannot be read is an error, not a user.
+        assert!(
+            role(mint_session_claims(7, "u", true, false, 0))
+                .await
+                .is_err()
+        );
     }
 
     #[test]

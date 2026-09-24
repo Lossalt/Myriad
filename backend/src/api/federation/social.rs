@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use myriad_error::AppError;
@@ -61,11 +61,15 @@ fn federation_user_error(context: &'static str, error: impl std::fmt::Display) -
 }
 
 fn federation_store_response(context: &'static str, error: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(AppError::public_json(federation_user_error(context, error))),
-    )
-        .into_response()
+    // The label may carry a detail suffix, so the code is set here rather than inferred.
+    let code = if context == "rotate federation keys" {
+        "federation_key_rotate_failed"
+    } else {
+        "federation_data_failed"
+    };
+    let mut body = AppError::public_json(federation_user_error(context, error));
+    body["code"] = json!(code);
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
 }
 
 /// `?limit=&cancelled_only=` 查询参数。
@@ -277,6 +281,13 @@ pub(crate) async fn federation_timeline(
 
 // Content Publishing Wrappers
 
+/// `Idempotency-Key` 请求头；不是合法 UTF-8 时当作空键，由发布拒绝为 400。
+fn idempotency_key(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("Idempotency-Key")
+        .map(|value| value.to_str().unwrap_or(""))
+}
+
 /// POST /api/federation/publish — 发布内容到联邦网络
 /// 路由已挂 auth_middleware；claims / body / db 走提取器。
 /// body 上限由路由的 `live_authenticated_body_limit`（默认 `AUTHENTICATED_BODY_LIMIT` 24 MiB）决定。
@@ -284,9 +295,19 @@ pub(crate) async fn federation_publish(
     extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
+    headers: HeaderMap,
     Json(payload): Json<federation::content::PublishRequest>,
 ) -> Response {
-    match federation::content::publish_content(user_id, &claims.username, &db, &payload).await {
+    match federation::content::publish_content(
+        user_id,
+        claims.is_admin,
+        &claims.username,
+        &db,
+        &payload,
+        idempotency_key(&headers),
+    )
+    .await
+    {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
     }
@@ -423,9 +444,19 @@ pub(crate) async fn federation_create_note(
     extract::DurableUserId(user_id): extract::DurableUserId,
     extract::AuthedClaims(claims): extract::AuthedClaims,
     extract::Db(db): extract::Db,
+    headers: HeaderMap,
     Json(payload): Json<federation::content::CreateNoteRequest>,
 ) -> Response {
-    match federation::content::create_note(user_id, &claims.username, &db, &payload).await {
+    match federation::content::create_note(
+        user_id,
+        claims.is_admin,
+        &claims.username,
+        &db,
+        &payload,
+        idempotency_key(&headers),
+    )
+    .await
+    {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Err((status, json)) => status_json_to_http((status, json)).into_response(),
     }
@@ -1707,7 +1738,9 @@ pub(crate) async fn get_federation_timeline(
                        OR ra.domain = $3
                    )
                WHERE t.user_id = $1
-                 AND (t.activity_type IS NULL OR t.activity_type <> 'Like')
+                 -- Posts only: Like / Delete / Undo change state, they are not feed items
+                 -- (older same-instance delivery stored some of them as empty rows).
+                 AND (t.activity_type IS NULL OR t.activity_type IN ('Create', 'Announce', 'Update'))
                ORDER BY t.received_at DESC
                LIMIT 50"#,
                 peer_has_avatar = crate::services::avatar::avatar_presence_expr("peer"),

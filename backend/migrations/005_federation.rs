@@ -1047,6 +1047,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
                         ColumnDef::new(FederationPublishedContent::UpdatedAt)
                             .timestamp_with_time_zone(),
                     )
+                    // 客户端幂等键（按用户）与首次请求的指纹；重试回放原结果。
+                    .col(ColumnDef::new(FederationPublishedContent::IdempotencyKey).text())
+                    .col(ColumnDef::new(FederationPublishedContent::IdempotencyFingerprint).text())
                     .to_owned(),
             )
             .await?;
@@ -1071,6 +1074,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
                     .table(FederationPublishedContent::Table)
                     .col(FederationPublishedContent::ContentType)
                     .col(FederationPublishedContent::ContentId)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+
+        // NULL 互不冲突：不带键的发布不受约束。
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_published_content_idempotency")
+                    .table(FederationPublishedContent::Table)
+                    .col(FederationPublishedContent::UserId)
+                    .col(FederationPublishedContent::IdempotencyKey)
                     .unique()
                     .to_owned(),
             )
@@ -1234,6 +1251,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_relationship
             )
             .await?;
 
+        manager
+            .get_connection()
+            .execute_unprepared(crate::ROOM_MEMBERSHIP_NOTIFY_SQL)
+            .await?;
+
         // ==================== 扩展表（与 schema_check ensure_* 同结构）====================
         // 内容过滤 / 策略单例 / domain Move 别名 / 对象互动
         let db = manager.get_connection();
@@ -1359,6 +1381,10 @@ DROP TABLE IF EXISTS federation_content_filters;
             .await?;
         manager
             .drop_table(Table::drop().table(FederationRoomMembers::Table).to_owned())
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared("DROP FUNCTION IF EXISTS federation_room_membership_notify()")
             .await?;
         manager
             .drop_table(Table::drop().table(FederationRooms::Table).to_owned())
@@ -1623,6 +1649,8 @@ pub enum FederationPublishedContent {
     Visibility,
     PublishedAt,
     UpdatedAt,
+    IdempotencyKey,
+    IdempotencyFingerprint,
 }
 
 #[derive(Iden)]

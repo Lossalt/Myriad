@@ -112,7 +112,6 @@ export default function TagBubblesStep({
             o.loadSignalsFailed,
             o.generationTimeout,
             {
-              pro_unavailable: o.proUnavailable,
               report_dna_failed: o.loadSignalsFailed,
             },
           ),
@@ -132,7 +131,6 @@ export default function TagBubblesStep({
     locale,
     o.generationTimeout,
     o.loadSignalsFailed,
-    o.proUnavailable,
     o.saveFirst,
     reloadToken,
   ])

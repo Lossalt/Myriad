@@ -4,23 +4,29 @@ use sea_orm::DatabaseConnection;
 use serde_json::{Value, json};
 
 use super::flags::{
-    db_or_env_clearable, nonempty_db, nonempty_env, platform_config_is_ready,
-    resolve_platform_enabled, sort_platforms_by_order,
+    admin_platform_enabled, db_or_env_clearable, nonempty_db, nonempty_env, sort_platforms_by_order,
 };
 use super::secrets::mask_secret_display_value;
 use super::types::{
     AiConfig, ConfigField, ConfigResponse, PlatformAutoFetchConfig, PlatformConfig, ReportConfig,
     TripoConfig, UiConfig,
 };
+use crate::services::platform_id::PlatformId;
 
+/// Fails when stored configuration cannot be read (database or decryption).
+/// Falling back to env here would hand the admin form empty secrets, and
+/// saving that form writes every secret field as cleared.
 pub(crate) async fn build_config(
     db: &DatabaseConnection,
     reveal_sensitive: bool,
-) -> ConfigResponse {
+) -> Result<ConfigResponse, String> {
     let db = db.clone();
     // 优先从数据库读取配置
     let config_service = crate::services::config_service::ConfigService::new(db.clone());
-    let db_config = config_service.load_config().await.ok();
+    let db_config = Some(config_service.load_config().await.map_err(|error| {
+        tracing::error!(error = %error, "stored configuration could not be read");
+        "Stored configuration could not be read".to_string()
+    })?);
 
     // Prefer DB when present (including intentional empty clear); else process env.
     // Same clearable semantics as SEO/analytics (`db_or_env_clearable`).
@@ -51,87 +57,34 @@ pub(crate) async fn build_config(
             .and_then(|c| c.bangumi_access_token.as_ref()),
     ) || nonempty_env("BANGUMI_ACCESS_TOKEN");
     let has_bangumi_identity = has_bangumi_username || has_bangumi_access_token;
-    let github_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.github_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.github_username.as_ref()))
-            || nonempty_env("GITHUB_USERNAME"),
-    );
-    let bilibili_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.bilibili_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.bilibili_uid.as_ref()))
-            || nonempty_env("BILIBILI_UID"),
-    );
-    let steam_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.steam_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.steam_api_key.as_ref()))
-            || nonempty_env("STEAM_API_KEY"),
-    );
     let has_youtube_key = nonempty_db(db_config.as_ref().and_then(|c| c.youtube_api_key.as_ref()))
         || nonempty_env("YOUTUBE_API_KEY");
-    let has_youtube_channel = nonempty_db(
-        db_config
-            .as_ref()
-            .and_then(|c| c.youtube_channel_id.as_ref()),
-    ) || nonempty_env("YOUTUBE_CHANNEL_ID");
-    let youtube_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.youtube_enabled),
-        has_youtube_key && has_youtube_channel,
-    );
-    let netease_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.netease_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.netease_user_id.as_ref()))
-            || nonempty_env("NETEASE_USER_ID"),
-    );
-    let bangumi_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.bangumi_enabled),
-        has_bangumi_identity,
-    );
-    let has_x_username = nonempty_db(db_config.as_ref().and_then(|c| c.x_username.as_ref()))
-        || nonempty_env("X_USERNAME");
     let has_x_bearer = nonempty_db(db_config.as_ref().and_then(|c| c.x_bearer_token.as_ref()))
         || nonempty_env("X_BEARER_TOKEN");
-    let x_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.x_enabled),
-        has_x_username && has_x_bearer,
-    );
     let has_discord_token = nonempty_db(
         db_config
             .as_ref()
             .and_then(|c| c.discord_access_token.as_ref()),
     ) || nonempty_env("DISCORD_ACCESS_TOKEN");
-    let discord_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.discord_enabled),
-        has_discord_token,
-    );
     let has_mal_username = nonempty_db(db_config.as_ref().and_then(|c| c.mal_username.as_ref()))
         || nonempty_env("MAL_USERNAME");
-    let mal_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.mal_enabled),
-        has_mal_username,
-    );
     let has_openxbl_key = nonempty_db(db_config.as_ref().and_then(|c| c.openxbl_api_key.as_ref()))
         || nonempty_env("OPENXBL_API_KEY")
         || nonempty_env("XBL_API_KEY");
-    let has_xbox_gamertag = nonempty_db(db_config.as_ref().and_then(|c| c.xbox_gamertag.as_ref()))
-        || nonempty_env("XBOX_GAMERTAG");
-    let xbox_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.xbox_enabled),
-        has_openxbl_key && has_xbox_gamertag,
-    );
     let has_psn_npsso = nonempty_db(db_config.as_ref().and_then(|c| c.psn_npsso.as_ref()))
         || nonempty_env("PSN_NPSSO");
-    let has_psn_online_id = nonempty_db(db_config.as_ref().and_then(|c| c.psn_online_id.as_ref()))
-        || nonempty_env("PSN_ONLINE_ID");
-    let psn_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.psn_enabled),
-        has_psn_npsso && has_psn_online_id,
-    );
+    // 开关显示的是「按表单现状保存之后」的启用：同一条 PlatformId 规则，作用在表单
+    // 里显示（也会被保存回去）的凭据上。
+    let enabled = {
+        let admin = admin_platform_enabled(db_config.as_ref(), |key| std::env::var(key).ok());
+        move |id: PlatformId| admin.iter().any(|(p, on)| *p == id && *on)
+    };
 
     let config = ConfigResponse {
         platforms: vec![
             PlatformConfig {
                 name: "GitHub".to_string(),
-                enabled: github_enabled,
+                enabled: enabled(PlatformId::Github),
                 has_token: nonempty_db(db_config.as_ref().and_then(|c| c.github_token.as_ref()))
                     || nonempty_env("GITHUB_TOKEN"),
                 icon: "".to_string(),
@@ -163,7 +116,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Bilibili".to_string(),
-                enabled: bilibili_enabled,
+                enabled: enabled(PlatformId::Bilibili),
                 has_token: nonempty_db(db_config.as_ref().and_then(|c| c.bilibili_uid.as_ref()))
                     || nonempty_env("BILIBILI_UID"),
                 icon: "".to_string(),
@@ -182,7 +135,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Steam".to_string(),
-                enabled: steam_enabled,
+                enabled: enabled(PlatformId::Steam),
                 has_token: nonempty_db(db_config.as_ref().and_then(|c| c.steam_api_key.as_ref()))
                     || nonempty_env("STEAM_API_KEY"),
                 icon: "".to_string(),
@@ -214,7 +167,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "YouTube".to_string(),
-                enabled: youtube_enabled,
+                enabled: enabled(PlatformId::Youtube),
                 has_token: has_youtube_key,
                 icon: "".to_string(),
                 description: "Public channel stats and recent uploads".to_string(),
@@ -245,7 +198,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Netease Music".to_string(),
-                enabled: netease_enabled,
+                enabled: enabled(PlatformId::Netease),
                 has_token: nonempty_db(db_config.as_ref().and_then(|c| c.netease_user_id.as_ref()))
                     || nonempty_env("NETEASE_USER_ID"),
                 icon: "".to_string(),
@@ -264,7 +217,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Bangumi".to_string(),
-                enabled: bangumi_enabled,
+                enabled: enabled(PlatformId::Bangumi),
                 has_token: has_bangumi_identity,
                 icon: "".to_string(),
                 description: "Collections, ratings, and watching status".to_string(),
@@ -310,7 +263,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "X".to_string(),
-                enabled: x_enabled,
+                enabled: enabled(PlatformId::X),
                 has_token: has_x_bearer,
                 icon: "".to_string(),
                 description: "Profile and posts, with sharing".to_string(),
@@ -341,7 +294,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Discord".to_string(),
-                enabled: discord_enabled,
+                enabled: enabled(PlatformId::Discord),
                 has_token: has_discord_token,
                 icon: "".to_string(),
                 description: "Profile, servers, and linked accounts".to_string(),
@@ -389,7 +342,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "MyAnimeList".to_string(),
-                enabled: mal_enabled,
+                enabled: enabled(PlatformId::Mal),
                 has_token: has_mal_username,
                 icon: "".to_string(),
                 description: "Anime / manga lists and scores".to_string(),
@@ -422,7 +375,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "Xbox".to_string(),
-                enabled: xbox_enabled,
+                enabled: enabled(PlatformId::Xbox),
                 has_token: has_openxbl_key,
                 icon: "".to_string(),
                 description: "Achievements, Gamerscore, and recent games".to_string(),
@@ -453,7 +406,7 @@ pub(crate) async fn build_config(
             },
             PlatformConfig {
                 name: "PlayStation".to_string(),
-                enabled: psn_enabled,
+                enabled: enabled(PlatformId::Psn),
                 has_token: has_psn_npsso,
                 icon: "".to_string(),
                 description: "Trophies, trophy level, and recent games".to_string(),
@@ -2012,43 +1965,47 @@ pub(crate) async fn build_config(
         db_config.as_ref().and_then(|c| c.platform_order.as_ref()),
     );
 
-    config
+    Ok(config)
 }
 
 pub async fn get_config(crate::extract::Db(db): crate::extract::Db) -> (StatusCode, Json<Value>) {
-    let config = build_config(&db, false).await;
-    (StatusCode::OK, Json(json!(config)))
-}
-
-pub(crate) async fn reconcile_platform_auto_refresh_with_config(
-    db: &DatabaseConnection,
-    config: &ConfigResponse,
-) -> Result<crate::services::platform_auto_refresh::PlatformAutoRefreshSummary, String> {
-    let auto_fetch = config.auto_fetch.clone().unwrap_or_default();
-    let user_id = crate::api::profile::site_owner_user_id(db).await?;
-    // 自动刷新覆盖所有「已配置」平台；报告页 enabled 不参与
-    let platforms: Vec<String> = config
-        .platforms
-        .iter()
-        .filter(|platform| platform_config_is_ready(platform))
-        .map(|platform| platform.name.clone())
-        .collect();
-    crate::services::platform_auto_refresh::reconcile_platform_auto_refresh(
-        db,
-        user_id,
-        auto_fetch.enabled,
-        auto_fetch.interval_hours,
-        &platforms,
-    )
-    .await
+    match build_config(&db, false).await {
+        Ok(config) => (StatusCode::OK, Json(json!(config))),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": message, "code": "CONFIG_UNREADABLE" })),
+        ),
+    }
 }
 
 /// Rebuild core platform refresh tasks from persisted configuration.
-/// Called on backend startup so the database configuration remains the source
-/// of truth even after a restart or interrupted settings save.
+/// Called on backend startup and after saves so the database configuration
+/// remains the source of truth even after a restart or interrupted settings save.
+///
+/// 自动刷新覆盖凭据齐备的平台，与抓取同一条判断（`configured_platform_ids`）；
+/// 启用开关不参与。
 pub async fn reconcile_platform_auto_refresh(
     db: &DatabaseConnection,
 ) -> Result<crate::services::platform_auto_refresh::PlatformAutoRefreshSummary, String> {
-    let config = build_config(db, false).await;
-    reconcile_platform_auto_refresh_with_config(db, &config).await
+    let config = crate::services::config_service::ConfigService::new(db.clone())
+        .load_config()
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "stored configuration could not be read");
+            "Stored configuration could not be read".to_string()
+        })?;
+    let user_id = crate::api::profile::site_owner_user_id(db).await?;
+    let platforms: Vec<String> =
+        crate::services::platform_refresh::configured_platform_ids(&config)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+    crate::services::platform_auto_refresh::reconcile_platform_auto_refresh(
+        db,
+        user_id,
+        config.enable_auto_fetch,
+        config.fetch_interval_hours,
+        &platforms,
+    )
+    .await
 }

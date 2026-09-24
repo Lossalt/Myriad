@@ -44,8 +44,6 @@ import {
   sourceAtScroll,
   storyMountWindow,
   storyRailTrackSize,
-  wakeStoryCovers,
-  watchStoryCover,
 } from './railPan.ts'
 
 const cards = [0, 320, 640, 960].map((left) => ({ left, width: 304 }))
@@ -352,17 +350,6 @@ describe('railCardKeepsPaint / railMountColumns', () => {
       5,
     )
     assert.equal(slotLoad.loading, 'lazy')
-    let woke = 0
-    const stop = watchStoryCover(12, () => {
-      woke += 1
-    })
-    eagerStoryCovers(track as unknown as ParentNode, 1, 8)
-    assert.equal(woke, 0)
-    eagerStoryCovers(track as unknown as ParentNode, 10, 14)
-    assert.equal(woke, 1)
-    stop()
-    wakeStoryCovers(10, 14)
-    assert.equal(woke, 1)
     assert.deepEqual(eagerStoryDelta(4, 10, 3, 9), [{ from: 10, to: 10 }])
     assert.deepEqual(eagerStoryDelta(3, 9, 4, 10), [{ from: 3, to: 3 }])
     assert.deepEqual(eagerStoryDelta(1, 8, 1, 8), [])

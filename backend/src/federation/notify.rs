@@ -6,6 +6,7 @@
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::{Value, json};
 
+use crate::services::agent::notification_preferences::NotificationEventKey;
 use crate::services::agent::notifications::{
     Notification, NotificationPriority, NotificationType, get_notification_manager,
 };
@@ -170,21 +171,23 @@ pub async fn notify_channel_message(
         sender_label,
         &preview,
     )
-    .with_metadata(json!({
-        "event_key": "federation.channel_message",
-        "route": aro_route("channel", channel_id),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "channel",
-        "channel_id": channel_id,
-        "sender_actor": sender_actor,
-        "message_type": message_type,
-    }));
+    .with_event(
+        NotificationEventKey::FederationChannelMessage,
+        json!({
+            "route": aro_route("channel", channel_id),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "channel",
+            "channel_id": channel_id,
+            "sender_actor": sender_actor,
+            "message_type": message_type,
+        }),
+    );
     notification.id = format!("fed_ch_{}_u{}", stable_hash(channel_id), user_id);
     notification.read = false;
     manager.upsert(notification).await;
     dispatch_persona_observation(
         user_id,
-        "federation.channel_message",
+        NotificationEventKey::FederationChannelMessage.key(),
         format!("{sender_label} sent a DM: {preview}"),
     )
     .await;
@@ -216,21 +219,23 @@ pub async fn notify_room_message(
         title,
         &preview,
     )
-    .with_metadata(json!({
-        "event_key": "federation.room_message",
-        "route": aro_route("room", room_id),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "room",
-        "room_id": room_id,
-        "sender_actor": sender_actor,
-        "message_type": message_type,
-    }));
+    .with_event(
+        NotificationEventKey::FederationRoomMessage,
+        json!({
+            "route": aro_route("room", room_id),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "room",
+            "room_id": room_id,
+            "sender_actor": sender_actor,
+            "message_type": message_type,
+        }),
+    );
     notification.id = format!("fed_rm_{}_u{}", stable_hash(room_id), user_id);
     notification.read = false;
     manager.upsert(notification).await;
     dispatch_persona_observation(
         user_id,
-        "federation.room_message",
+        NotificationEventKey::FederationRoomMessage.key(),
         format!("{sender_label} spoke in a room: {preview}"),
     )
     .await;
@@ -248,20 +253,22 @@ pub async fn notify_new_follower(user_id: i32, actor_url: &str, actor_label: &st
         "New follower",
         format!("{actor_label} followed you"),
     )
-    .with_metadata(json!({
-        "event_key": "federation.new_follower",
-        "route": format!("/tapp/run/{}?view=feed", ARO_TAPP_ID),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "follow",
-        "actor_url": actor_url,
-        "actor_label": actor_label,
-    }));
+    .with_event(
+        NotificationEventKey::FederationNewFollower,
+        json!({
+            "route": format!("/tapp/run/{}?view=feed", ARO_TAPP_ID),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "follow",
+            "actor_url": actor_url,
+            "actor_label": actor_label,
+        }),
+    );
     notification.id = format!("fed_follower_{}_u{}", stable_hash(actor_url), user_id);
     notification.read = false;
     manager.upsert(notification).await;
     dispatch_persona_observation(
         user_id,
-        "federation.new_follower",
+        NotificationEventKey::FederationNewFollower.key(),
         format!("{actor_label} followed this person"),
     )
     .await;
@@ -279,14 +286,16 @@ pub async fn notify_follow_accepted(user_id: i32, actor_url: &str, actor_label: 
         "Follow accepted",
         format!("{actor_label} accepted your follow"),
     )
-    .with_metadata(json!({
-        "event_key": "federation.follow_accepted",
-        "route": format!("/tapp/run/{}?view=feed", ARO_TAPP_ID),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "follow_accepted",
-        "actor_url": actor_url,
-        "actor_label": actor_label,
-    }));
+    .with_event(
+        NotificationEventKey::FederationFollowAccepted,
+        json!({
+            "route": format!("/tapp/run/{}?view=feed", ARO_TAPP_ID),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "follow_accepted",
+            "actor_url": actor_url,
+            "actor_label": actor_label,
+        }),
+    );
     notification.id = format!("fed_follow_ok_{}_u{}", stable_hash(actor_url), user_id);
     notification.read = false;
     manager.upsert(notification).await;
@@ -309,8 +318,9 @@ pub async fn notify_channel_invite(
         "New message request",
         format!("{actor_label} wants to message you"),
     )
-    .with_metadata(json!({
-        "event_key": "federation.channel_invite",
+    .with_event(
+        NotificationEventKey::FederationChannelInvite,
+        json!({
         "route": aro_route("channel", channel_id),
         "tapp_id": ARO_TAPP_ID,
         "kind": "channel_invite",
@@ -322,7 +332,8 @@ pub async fn notify_channel_invite(
             { "id": "accept", "api": format!("POST /api/federation/channels/{}/accept", channel_id) },
             { "id": "reject", "api": format!("POST /api/federation/channels/{}/close", channel_id) }
         ],
-    }));
+    }),
+    );
     notification.id = format!("fed_inv_ch_{}_u{}", stable_hash(channel_id), user_id);
     notification.read = false;
     manager.upsert(notification).await;
@@ -351,20 +362,22 @@ pub async fn notify_room_invite(
         "Group invite",
         body,
     )
-    .with_metadata(json!({
-        "event_key": "federation.room_invite",
-        "route": aro_route("room", room_id),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "room_invite",
-        "room_id": room_id,
-        "room_name": room_name,
-        "actor_url": actor_url,
-        "actor_label": actor_label,
-        "actions": [
-            { "id": "accept", "api": format!("POST /api/federation/rooms/{}/accept", room_id) },
-            { "id": "reject", "api": format!("POST /api/federation/rooms/{}/reject", room_id) }
-        ],
-    }));
+    .with_event(
+        NotificationEventKey::FederationRoomInvite,
+        json!({
+            "route": aro_route("room", room_id),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "room_invite",
+            "room_id": room_id,
+            "room_name": room_name,
+            "actor_url": actor_url,
+            "actor_label": actor_label,
+            "actions": [
+                { "id": "accept", "api": format!("POST /api/federation/rooms/{}/accept", room_id) },
+                { "id": "reject", "api": format!("POST /api/federation/rooms/{}/reject", room_id) }
+            ],
+        }),
+    );
     notification.id = format!("fed_inv_rm_{}_u{}", stable_hash(room_id), user_id);
     notification.read = false;
     manager.upsert(notification).await;
@@ -409,16 +422,18 @@ pub async fn notify_room_invite_accepted(
         "Group invite accepted",
         body,
     )
-    .with_metadata(json!({
-        "event_key": "federation.room_invite_accepted",
-        "route": aro_route("room", room_id),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "room_invite_accepted",
-        "room_id": room_id,
-        "room_name": room_name,
-        "actor_url": actor_url,
-        "actor_label": actor_label,
-    }));
+    .with_event(
+        NotificationEventKey::FederationRoomInviteAccepted,
+        json!({
+            "route": aro_route("room", room_id),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "room_invite_accepted",
+            "room_id": room_id,
+            "room_name": room_name,
+            "actor_url": actor_url,
+            "actor_label": actor_label,
+        }),
+    );
     notification.id = format!(
         "fed_rm_ok_{}_{}_u{}",
         stable_hash(room_id),
@@ -446,14 +461,16 @@ pub async fn notify_channel_accepted(user_id: i32, channel_id: &str, actor_label
         "Direct messages are ready",
         body,
     )
-    .with_metadata(json!({
-        "event_key": "federation.channel_accepted",
-        "route": aro_route("channel", channel_id),
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "channel_accepted",
-        "channel_id": channel_id,
-        "actor_label": actor_label,
-    }));
+    .with_event(
+        NotificationEventKey::FederationChannelAccepted,
+        json!({
+            "route": aro_route("channel", channel_id),
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "channel_accepted",
+            "channel_id": channel_id,
+            "actor_label": actor_label,
+        }),
+    );
     notification.id = format!("fed_ch_ok_{}_u{}", stable_hash(channel_id), user_id);
     notification.read = false;
     manager.upsert(notification).await;
@@ -491,15 +508,17 @@ pub async fn notify_delivery_failed(
         "Federation delivery failed",
         body,
     )
-    .with_metadata(json!({
-        "event_key": "federation.delivery_failed",
-        "route": "/tapp/run/com.myriad.aro?view=messages",
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "delivery_failed",
-        "activity_type": kind,
-        "target_domain": domain,
-        "error": err_short,
-    }));
+    .with_event(
+        NotificationEventKey::FederationDeliveryFailed,
+        json!({
+            "route": "/tapp/run/com.myriad.aro?view=messages",
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "delivery_failed",
+            "activity_type": kind,
+            "target_domain": domain,
+            "error": err_short,
+        }),
+    );
     // Same domain+type collapses into one unread entry (latest error wins)
     notification.id = format!(
         "fed_dlv_dead_u{}_{}",
@@ -541,14 +560,16 @@ pub async fn notify_domain_relationship_revoked(
         "Federation unlinked",
         body,
     )
-    .with_metadata(json!({
-        "event_key": "federation.domain_revoked",
-        "route": "/tapp/run/com.myriad.aro?view=messages",
-        "tapp_id": ARO_TAPP_ID,
-        "kind": "domain_revoked",
-        "target_domain": domain,
-        "cancelled_deliveries": cancelled_deliveries,
-    }));
+    .with_event(
+        NotificationEventKey::FederationDomainRevoked,
+        json!({
+            "route": "/tapp/run/com.myriad.aro?view=messages",
+            "tapp_id": ARO_TAPP_ID,
+            "kind": "domain_revoked",
+            "target_domain": domain,
+            "cancelled_deliveries": cancelled_deliveries,
+        }),
+    );
     // One entry per user+domain; a later revocation of the same domain replaces it.
     notification.id = format!("fed_dom_revoked_u{}_{}", user_id, stable_hash(domain));
     notification.read = false;

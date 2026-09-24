@@ -128,6 +128,90 @@ pub async fn broadcast_to_room(room_id: &str, message: &serde_json::Value) {
     broadcast_message(&ROOM_REGISTRY, room_id, message);
 }
 
+/// Internal signal on a room's broadcast: a membership row changed, so each
+/// socket re-checks its member before forwarding anything else. Never sent to
+/// clients (not JSON, so no broadcast payload can equal it).
+const MEMBERSHIP_CHANGED: &str = "\u{0}membership-changed";
+
+/// Backstop for a lost LISTEN connection: sockets re-check this often anyway.
+const MEMBERSHIP_RECHECK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Ask this room's live sockets to re-check membership now. The trigger's
+/// NOTIFY does the same for every write path; callers that just removed a
+/// member call this after commit so no later broadcast can overtake it.
+pub(crate) fn signal_membership_changed(room_id: &str) {
+    let registry = ROOM_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = registry.get(room_id) {
+        let _ = entry.tx.send(MEMBERSHIP_CHANGED.to_string());
+    }
+}
+
+/// One process-wide LISTEN on the membership trigger's channel. Every write
+/// path that removes, demotes or re-states a member fires the trigger, so no
+/// handler has to remember to evict sockets itself. Registered lazily on the
+/// first room socket as a supervised job: the runner reconnects it with backoff
+/// and stops it at shutdown; [`MEMBERSHIP_RECHECK`] covers the gap.
+fn ensure_membership_listener(db: &DatabaseConnection) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !matches!(
+        db.get_database_backend(),
+        sea_orm::DatabaseBackend::Postgres
+    ) || STARTED.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    let pool = db.get_postgres_connection_pool().clone();
+    crate::services::jobs::jobs().supervised(
+        "room membership listener",
+        crate::services::jobs::Backoff::new(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(60),
+        ),
+        move || listen_membership_changes(pool.clone()),
+    );
+}
+
+/// One LISTEN session: returns when the connection is lost.
+async fn listen_membership_changes(pool: sea_orm::sqlx::PgPool) {
+    let mut listener = match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::warn!(%error, "room membership LISTEN connect failed");
+            return;
+        }
+    };
+    if let Err(error) = listener.listen(migration::ROOM_MEMBERSHIP_CHANNEL).await {
+        tracing::warn!(%error, "room membership LISTEN setup failed");
+        return;
+    }
+    loop {
+        match listener.recv().await {
+            Ok(notification) => signal_membership_changed(notification.payload()),
+            Err(error) => {
+                tracing::warn!(%error, "room membership LISTEN lost");
+                return;
+            }
+        }
+    }
+}
+
+/// Whether `actor` is currently an active member of the room. A lookup error
+/// counts as not a member: the socket closes and the client can reconnect.
+async fn is_active_room_member(db: &DatabaseConnection, room_id: &str, actor: &str) -> bool {
+    use sea_orm::{ConnectionTrait as _, DatabaseBackend, Statement};
+    db.query_one_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"SELECT 1 FROM federation_room_members
+           WHERE room_id = $1 AND actor_url = $2
+             AND COALESCE(membership_status, 'active') = 'active'"#,
+        [room_id.into(), actor.into()],
+    ))
+    .await
+    .ok()
+    .flatten()
+    .is_some()
+}
+
 fn broadcast_message(registry: &BroadcastRegistry, id: &str, message: &serde_json::Value) {
     let message = serde_json::to_string(message).unwrap_or_default();
     let registry = registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -452,21 +536,9 @@ async fn handle_room_socket(
 
     // 验证用户是该 Room 的**活跃**成员（`membership_status = 'active'`）。
     // 精确 `actor_url` 匹配 + `membership_status = 'active'`（pending 不能连）。REST 另有 `same_actor_url` 回退。
-    use sea_orm::{ConnectionTrait as _, DatabaseBackend, Statement};
-    let is_member = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"SELECT 1 FROM federation_room_members
-               WHERE room_id = $1 AND actor_url = $2
-                 AND COALESCE(membership_status, 'active') = 'active'"#,
-            [room_id.clone().into(), local_actor.clone().into()],
-        ))
-        .await
-        .ok()
-        .flatten()
-        .is_some();
-
-    if !is_member {
+    // The same check runs again whenever the membership changes (see below).
+    ensure_membership_listener(&db);
+    if !is_active_room_member(&db, &room_id, &local_actor).await {
         tracing::warn!(
             "[WS] User {} is not an active member of room {}",
             user_id,
@@ -498,11 +570,24 @@ async fn handle_room_socket(
     }
 
     let room_id_clone = room_id.clone();
+    let mut recheck = tokio::time::interval(MEMBERSHIP_RECHECK);
+    recheck.tick().await;
 
     loop {
         tokio::select! {
+            _ = recheck.tick() => {
+                if !is_active_room_member(&db, &room_id, &local_actor).await {
+                    break;
+                }
+            }
             broadcast_result = rx.recv() => {
                 match broadcast_result {
+                    Ok(msg) if msg == MEMBERSHIP_CHANGED => {
+                        // A removed member must not receive the next message.
+                        if !is_active_room_member(&db, &room_id, &local_actor).await {
+                            break;
+                        }
+                    }
                     Ok(msg) => {
                         if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                             break;
@@ -510,6 +595,10 @@ async fn handle_room_socket(
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("[WS] Room {} lagged {} messages", room_id, n);
+                        // A skipped message may have been a membership change.
+                        if !is_active_room_member(&db, &room_id, &local_actor).await {
+                            break;
+                        }
                         let lag_msg = json!({ "type": "lagged", "room_id": &room_id, "missed": n });
                         if ws_sender
                             .send(Message::Text(serde_json::to_string(&lag_msg).unwrap_or_default().into()))
@@ -696,6 +785,62 @@ async fn handle_ws_client_message(
 #[cfg(test)]
 mod registry_lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn membership_signal_reaches_room_sockets_but_is_not_json() {
+        assert!(serde_json::from_str::<serde_json::Value>(MEMBERSHIP_CHANGED).is_err());
+        let room = format!("room-signal-{}", uuid::Uuid::new_v4());
+        let mut sub = BroadcastSubscription::new(ROOM_REGISTRY.clone(), &room, 8);
+        signal_membership_changed(&room);
+        let rx = sub.rx.as_mut().unwrap();
+        assert_eq!(rx.try_recv().unwrap(), MEMBERSHIP_CHANGED);
+    }
+
+    #[tokio::test]
+    async fn membership_trigger_announces_every_removal() {
+        use sea_orm::ConnectionTrait;
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut listener = sea_orm::sqlx::postgres::PgListener::connect(&url)
+            .await
+            .unwrap();
+        listener
+            .listen(migration::ROOM_MEMBERSHIP_CHANNEL)
+            .await
+            .unwrap();
+        let mut options = sea_orm::ConnectOptions::new(url);
+        options.max_connections(1).sqlx_logging(false);
+        let db = sea_orm::Database::connect(options).await.unwrap();
+        db.execute_unprepared(
+            "CREATE TEMP TABLE federation_room_members (room_id TEXT, actor_url TEXT, \
+             membership_status TEXT); \
+             INSERT INTO federation_room_members VALUES ('room-a', 'actor', 'active'), \
+             ('room-b', 'actor', 'active');",
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared(migration::ROOM_MEMBERSHIP_NOTIFY_SQL)
+            .await
+            .unwrap();
+        db.execute_unprepared("DELETE FROM federation_room_members WHERE room_id = 'room-a'")
+            .await
+            .unwrap();
+        db.execute_unprepared(
+            "UPDATE federation_room_members SET membership_status = 'pending' \
+             WHERE room_id = 'room-b'",
+        )
+        .await
+        .unwrap();
+        for expected in ["room-a", "room-b"] {
+            let notification =
+                tokio::time::timeout(std::time::Duration::from_secs(5), listener.recv())
+                    .await
+                    .expect("notification")
+                    .unwrap();
+            assert_eq!(notification.payload(), expected);
+        }
+    }
 
     #[test]
     fn websocket_upgrade_rejects_non_positive_subject() {

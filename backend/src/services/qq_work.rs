@@ -3,7 +3,10 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{Duration as ChronoDuration, Utc};
-use myriad_agent_rules::channel::{next_passive_seq, parse_qq_file_info};
+use myriad_agent_rules::channel::{
+    ConnectFailure, ConnectFailureKind, classify_connect_failure, next_passive_seq,
+    parse_qq_file_info,
+};
 use myriad_error::redact_secrets;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -33,7 +36,6 @@ pub async fn start_paired_work_with_images(
     images: &[myriad_agent_rules::channel::ChannelImageRef],
     session_key: &str,
     msg_id: &str,
-    _auth_header: &str,
 ) {
     channel_work::handle_text_with_images(
         db,
@@ -43,7 +45,6 @@ pub async fn start_paired_work_with_images(
         input,
         images,
         session_key,
-        msg_id,
         ChannelTransport::Qq {
             db: db.clone(),
             openid: openid.to_string(),
@@ -59,7 +60,7 @@ pub async fn send_c2c(
     openid: &str,
     content: &str,
     inbound_msg_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ConnectFailureKind> {
     if content.is_empty() || openid.is_empty() {
         return Ok(());
     }
@@ -105,14 +106,17 @@ pub async fn send_c2c(
                 body = %redact_secrets(&text),
                 "QQ C2C send failed"
             );
-            Err(format!("qq send {status}"))
+            Err(classify_connect_failure(&ConnectFailure::HttpStatus {
+                status: status.as_u16(),
+                body: &text,
+            }))
         }
         Err(error) => {
             warn!(
                 error = %redact_secrets(&error.to_string()),
                 "QQ C2C send request failed"
             );
-            Err(redact_secrets(&error.to_string()))
+            Err(ConnectFailureKind::Transient)
         }
     }
 }
@@ -125,7 +129,7 @@ pub async fn send_c2c_image(
     openid: &str,
     bytes: &[u8],
     inbound_msg_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ConnectFailureKind> {
     if bytes.is_empty() || openid.is_empty() {
         return Ok(());
     }
@@ -136,7 +140,9 @@ pub async fn send_c2c_image(
     if !enabled {
         return Ok(());
     }
-    let file_info = upload_c2c_image(auth_header, openid, bytes).await?;
+    let file_info = upload_c2c_image(auth_header, openid, bytes)
+        .await
+        .map_err(|_| ConnectFailureKind::Transient)?;
     let mut body = serde_json::json!({
         "msg_type": 7,
         "media": { "file_info": file_info },
@@ -172,14 +178,17 @@ pub async fn send_c2c_image(
                 body = %redact_secrets(&text),
                 "QQ C2C image send failed"
             );
-            Err(format!("qq image send {status}"))
+            Err(classify_connect_failure(&ConnectFailure::HttpStatus {
+                status: status.as_u16(),
+                body: &text,
+            }))
         }
         Err(error) => {
             warn!(
                 error = %redact_secrets(&error.to_string()),
                 "QQ C2C image send request failed"
             );
-            Err(redact_secrets(&error.to_string()))
+            Err(ConnectFailureKind::Transient)
         }
     }
 }

@@ -8,8 +8,8 @@ use serde_json::json;
 use crate::federation::actor::RemoteActorInfo;
 use crate::federation::types::*;
 
-use super::inbox_err;
-use super::local_deliver::{DeliveryMode, enqueue_delivery, enqueue_delivery_queue};
+use super::local_deliver::{enqueue_delivery_queue, local_username_from_inbox_url};
+use super::{PostCommit, inbox_err};
 
 // Activity 处理器
 
@@ -76,29 +76,6 @@ pub(crate) async fn handle_verified_move(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Handle a Move delivered in-process (`local_deliver`, no HTTP signature):
-/// the same preflight and database phase as the HTTP inboxes, the latter in
-/// its own transaction.
-pub(crate) async fn handle_move(
-    db: &DatabaseConnection,
-    signed_actor: &str,
-    activity: &serde_json::Value,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let verified = crate::federation::move_actor::preflight_move(db, signed_actor, activity)
-        .await
-        .map_err(move_preflight_error)?;
-    let txn = db
-        .begin()
-        .await
-        .map_err(|e| inbox_err("begin Move transaction", e.to_string()))?;
-    // Dropping `txn` on the error path rolls it back.
-    let status = handle_verified_move(&txn, Some(&verified), activity).await?;
-    txn.commit()
-        .await
-        .map_err(|e| inbox_err("commit Move transaction", e.to_string()))?;
-    Ok(status)
-}
-
 /// 处理 Follow 请求
 pub(crate) async fn handle_follow(
     db: &impl ConnectionTrait,
@@ -106,7 +83,7 @@ pub(crate) async fn handle_follow(
     actor_url_str: &str,
     activity: &serde_json::Value,
     follow_remote: Option<&RemoteActorInfo>,
-    delivery_mode: DeliveryMode<'_>,
+    post_commit: &mut PostCommit,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     // Follow.object 必须就是本次要记录的本地 Actor，不能只靠投递路径上的 local_user_id。
     let base_url = get_base_url().await;
@@ -206,16 +183,14 @@ pub(crate) async fn handle_follow(
         target: None,
     };
 
-    // In a receipt transaction, queue the outbound Accept in the same DB
-    // transaction.  Trusted in-process delivery is retained for the local
-    // helper path, where no inbound receipt transaction is open.
-    match delivery_mode {
-        DeliveryMode::QueueOnly => {
-            enqueue_delivery_queue(db, local_user_id, &accept, &remote.inbox_url).await?;
-        }
-        DeliveryMode::InProcess(local_db) => {
-            enqueue_delivery(local_db, local_user_id, &accept, &remote.inbox_url).await?;
-        }
+    // A remote follower gets the Accept through the delivery queue, in the
+    // same transaction as the follow row. The delivery worker refuses
+    // same-instance inboxes, so a local follower's Accept is delivered
+    // in-process once this transaction has committed.
+    if local_username_from_inbox_url(&base_url, &remote.inbox_url).is_some() {
+        post_commit.reply_locally(local_user_id, accept, remote.inbox_url.clone());
+    } else {
+        enqueue_delivery_queue(db, local_user_id, &accept, &remote.inbox_url).await?;
     }
 
     // 新粉丝通知
@@ -837,6 +812,104 @@ pub(crate) async fn handle_content_activity(
     activity: &serde_json::Value,
     remote: Option<&RemoteActorInfo>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let remote =
+        check_and_record_content_activity(db, actor_url_str, activity_type, activity, remote)
+            .await?;
+
+    // Update 改的是已有条目，不是新帖子，不按收件人插行。
+    if activity_type == "Update" {
+        return apply_remote_update(db, actor_url_str, remote.id, &activity["object"]).await;
+    }
+
+    // Delete：硬删本用户时间线里该 object（不限 activity_type=Create）
+    if activity_type == "Delete" {
+        let object_id = activity["object"]["id"]
+            .as_str()
+            .or_else(|| activity["object"].as_str())
+            .unwrap_or("");
+        if !object_id.is_empty() {
+            // `remote_actor_id` 约束是关键：没有它，任何持有效签名的远端都能
+            // 用任意 object id 删掉目标用户时间线里**别人**的条目。
+            db.execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM federation_timeline
+                   WHERE user_id = $1
+                     AND remote_actor_id = $3
+                     AND (
+                       content_json->>'id' = $2
+                       OR activity_id = $2
+                       OR content_json #>> '{object,id}' = $2
+                     )"#,
+                [local_user_id.into(), object_id.into(), remote.id.into()],
+            ))
+            .await
+            .map_err(db_err)?;
+        }
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    // Like: record activity only — do not pollute home feed (counts via activities).
+    if activity_type == "Like" {
+        crate::federation::interactions::handle_inbound_like(
+            db,
+            local_user_id,
+            actor_url_str,
+            activity,
+        )
+        .await;
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    // 添加到 Timeline — prefer plain source.content for Note objects
+    // Announce / Create land on the feed.
+    let object_type = activity["object"]["type"].as_str().map(|s| s.to_string());
+    let preview = crate::federation::content::preview_from_ap_object(&activity["object"]);
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"INSERT INTO federation_timeline
+               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
+        [
+            local_user_id.into(),
+            activity["id"].as_str().unwrap_or("").into(),
+            remote.id.into(),
+            activity_type.into(),
+            object_type.into(),
+            preview.into(),
+            activity["object"].clone().into(),
+        ],
+    ))
+    .await
+    .map_err(db_err)?;
+
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// 共享收件箱的 Update：直接改全部本地条目，不先解析「发给哪个本地用户」。
+///
+/// 公开帖的 Update 寻址是 Public + 作者的粉丝集合，多用户实例上从 to / cc
+/// 解析不出本地收件人；而同一个对象可能在多个关注者的时间线里各有一行。
+pub(crate) async fn handle_shared_update(
+    db: &impl ConnectionTrait,
+    actor_url_str: &str,
+    activity: &serde_json::Value,
+    remote: Option<&RemoteActorInfo>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let remote =
+        check_and_record_content_activity(db, actor_url_str, "Update", activity, remote).await?;
+    apply_remote_update(db, actor_url_str, remote.id, &activity["object"]).await
+}
+
+/// 内容类活动的公共前置：对象归属检查、要求 Actor 预检已完成、记下活动。
+async fn check_and_record_content_activity<'a>(
+    db: &impl ConnectionTrait,
+    actor_url_str: &str,
+    activity_type: &str,
+    activity: &serde_json::Value,
+    remote: Option<&'a RemoteActorInfo>,
+) -> Result<&'a RemoteActorInfo, (StatusCode, Json<serde_json::Value>)> {
     // 签名只证明"请求由 activity.actor 的公钥签出"。要动对象，还得证明这个
     // Actor 有权动它 —— 否则任意联邦实例都能伪造他人内容或删除他人条目。
     //
@@ -890,102 +963,118 @@ pub(crate) async fn handle_content_activity(
             activity_id.into(),
             remote.id.into(),
             activity_type.into(),
-            object_type.clone().into(),
-            activity["object"].clone().into(),
-        ],
-    ))
-    .await
-    .map_err(db_err)?;
-
-    // Delete：硬删本用户时间线里该 object（不限 activity_type=Create）
-    if activity_type == "Delete" {
-        let object_id = activity["object"]["id"]
-            .as_str()
-            .or_else(|| activity["object"].as_str())
-            .unwrap_or("");
-        if !object_id.is_empty() {
-            // `remote_actor_id` 约束是关键：没有它，任何持有效签名的远端都能
-            // 用任意 object id 删掉目标用户时间线里**别人**的条目。
-            db.execute_raw(Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"DELETE FROM federation_timeline
-                   WHERE user_id = $1
-                     AND remote_actor_id = $3
-                     AND (
-                       content_json->>'id' = $2
-                       OR activity_id = $2
-                       OR content_json #>> '{object,id}' = $2
-                     )"#,
-                [local_user_id.into(), object_id.into(), remote.id.into()],
-            ))
-            .await
-            .map_err(db_err)?;
-        }
-        return Ok(StatusCode::ACCEPTED);
-    }
-
-    // Like: record activity only — do not pollute home feed (counts via activities).
-    if activity_type == "Like" {
-        crate::federation::interactions::handle_inbound_like(
-            db,
-            local_user_id,
-            actor_url_str,
-            activity,
-        )
-        .await;
-        return Ok(StatusCode::ACCEPTED);
-    }
-
-    // 添加到 Timeline — prefer plain source.content for Note objects
-    // Announce / Create / Update land on the feed.
-    let preview = timeline_preview_from_object(&activity["object"]);
-
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"INSERT INTO federation_timeline
-               (user_id, activity_id, remote_actor_id, activity_type, object_type, content_preview, content_json, received_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-           ON CONFLICT (user_id, activity_id) DO NOTHING"#,
-        [
-            local_user_id.into(),
-            activity["id"].as_str().unwrap_or("").into(),
-            remote.id.into(),
-            activity_type.into(),
             object_type.into(),
-            preview.into(),
             activity["object"].clone().into(),
         ],
     ))
     .await
     .map_err(db_err)?;
 
+    Ok(remote)
+}
+
+/// 远端 Update：把本地已有的该对象条目原地改成新版本。
+///
+/// - 对象就是 Actor 自己（改资料）：资料从 Actor 文档读，不是帖子，什么都不改。
+/// - 只改这个 Actor 自己投来的 Create 行（`remote_actor_id` 收口，与 Delete 同理；
+///   历史上按 Update 插进来的行也一并更新）。所有本地用户的副本一起改：同一个
+///   对象只有一个当前版本。`received_at` 不动，编辑不把旧帖顶到最前。
+/// - 这个 Actor 投来的原 Create 活动里存的对象同样改成新版本：收藏在没有时间线
+///   行时回退读它，对象详情与转发引用也读它。
+/// - 本地没有这个对象：忽略，不插新行。时间线按关注投递 Create / Announce，
+///   Update 是对已有帖子的修改；乱序到达的 Update 若插行，会让已经 Delete 掉
+///   的帖子复活。
+/// - 对象带 `updated` 且库里已有更新的版本：不回退（乱序重投）。
+async fn apply_remote_update(
+    db: &impl ConnectionTrait,
+    actor_url_str: &str,
+    remote_actor_id: i32,
+    object: &serde_json::Value,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    let Some(object_id) = crate::federation::audience::object_id(object) else {
+        return Ok(StatusCode::ACCEPTED);
+    };
+    if same_actor_url(&object_id, actor_url_str) || !object.is_object() {
+        // 改资料，或只给了对象 IRI —— 没有可以落到条目上的新内容。
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    let updated = object
+        .get("updated")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s.trim()).ok())
+        .map(|t| t.to_rfc3339());
+    let object_type = object.get("type").and_then(|v| v.as_str());
+    let preview = crate::federation::content::preview_from_ap_object(object);
+
+    // 时间线行与原 Create 活动里存的对象在一条语句里一起改：收藏回退读、
+    // 对象详情读的是后者，只改时间线会让它们停在旧版本。
+    let sql = format!(
+        r#"WITH activities AS (
+               UPDATE federation_activities a
+               SET object_json = $3
+               WHERE a.remote_actor_id = $1
+                 AND a.activity_type = 'Create'
+                 AND a.object_json->>'id' = $2
+                 AND NOT {activity_is_newer}
+               RETURNING 1
+           ), timeline AS (
+               UPDATE federation_timeline t
+               SET content_json = $3,
+                   content_preview = $4,
+                   object_type = COALESCE($5, t.object_type)
+               WHERE t.remote_actor_id = $1
+                 AND t.activity_type IN ('Create', 'Update')
+                 AND t.content_json->>'id' = $2
+                 AND NOT {timeline_is_newer}
+               RETURNING 1
+           )
+           SELECT (SELECT COUNT(*) FROM activities) + (SELECT COUNT(*) FROM timeline) AS n"#,
+        activity_is_newer = stored_version_is_newer("a.object_json"),
+        timeline_is_newer = stored_version_is_newer("t.content_json"),
+    );
+    let updated_rows = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            sql,
+            [
+                remote_actor_id.into(),
+                object_id.clone().into(),
+                object.clone().into(),
+                preview.into(),
+                object_type.into(),
+                updated.into(),
+            ],
+        ))
+        .await
+        .map_err(db_err)?
+        .and_then(|row| row.try_get::<i64>("", "n").ok())
+        .unwrap_or(0);
+    if updated_rows == 0 {
+        tracing::debug!(
+            actor = %actor_url_str,
+            object = %object_id,
+            "Update for an object with no current local copy; ignored"
+        );
+    }
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Plain timeline preview from an AP object (Note prefers source.content).
-fn timeline_preview_from_object(object: &serde_json::Value) -> Option<String> {
-    object
-        .pointer("/source/content")
-        .and_then(|v| v.as_str())
-        .or_else(|| object.get("content").and_then(|v| v.as_str()))
-        .or_else(|| object.get("summary").and_then(|v| v.as_str()))
-        .or_else(|| object.get("content_preview").and_then(|v| v.as_str()))
-        .or_else(|| object.get("mfp:contentPreview").and_then(|v| v.as_str()))
-        .or_else(|| object.get("name").and_then(|v| v.as_str()))
-        .map(|s| {
-            let plain = s
-                .replace("<p>", "")
-                .replace("</p>", "")
-                .replace("<br>", " ")
-                .replace("<br/>", " ")
-                .replace("<br />", " ")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-                .replace("&quot;", "\"");
-            plain.chars().take(200).collect::<String>()
-        })
-        .filter(|s| !s.trim().is_empty())
+/// 防回退条件：对象带 `updated`（`$6`）且库里 `column` 存的版本更新。
+///
+/// 库里的 `updated` 不是合法时间戳就当作不比新版本新。
+fn stored_version_is_newer(column: &str) -> String {
+    format!(
+        r#"(
+             $6::timestamptz IS NOT NULL
+             AND CASE
+                   WHEN {column}->>'updated'
+                        ~ '^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}(\.\d+)?(Z|[+-]\d{{2}}:\d{{2}})$'
+                   THEN ({column}->>'updated')::timestamptz > $6::timestamptz
+                   ELSE false
+                 END
+           )"#
+    )
 }
 
 /// 留存群邻实例的公开帖，即使本地没有任何人关注作者。
@@ -1073,7 +1162,7 @@ pub(crate) async fn distribute_to_followers(
 
     let activity_id_str = activity["id"].as_str().unwrap_or("");
     let object_type = activity["object"]["type"].as_str().map(|s| s.to_string());
-    let preview = timeline_preview_from_object(&activity["object"]);
+    let preview = crate::federation::content::preview_from_ap_object(&activity["object"]);
 
     // 批量 INSERT — 一次 SQL 分发到所有关注者的时间线，避免 N+1
     db.execute_raw(Statement::from_sql_and_values(

@@ -5,9 +5,9 @@ import { API_URL } from '../config'
 import { useI18n } from '../contexts/I18nContext'
 import { fetchJson } from '../utils/apiHelper'
 import { emitAppEvent } from '../utils/appEvents'
-import { messageForRegisterError } from '../utils/authErrorMessages'
 import { sanitizeUsername } from '../utils/inputSanitizer'
 import { setSessionHint } from '../utils/sessionDetection'
+import { userFacingError } from '../utils/userFacingError'
 import { Spinner } from './Spinner'
 import './LoginForm.css'
 
@@ -85,8 +85,8 @@ const RegisterForm: FC = () => {
       setTimeout(() => {
         window.location.href = '/'
       }, 100)
-    } catch (err: any) {
-      setError(messageForRegisterError(err, t))
+    } catch (err: unknown) {
+      setError(userFacingError(err, t.auth.registerFailed))
     } finally {
       setSubmitting(false)
     }

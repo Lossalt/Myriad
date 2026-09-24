@@ -11,7 +11,7 @@ use crate::models::entities::{media_assets, media_url_aliases};
 use super::access::can_read;
 use super::assets;
 use super::error::MediaError;
-use super::legacy::{LegacyPaths, legacy_disk_path};
+use super::legacy::{LegacyPaths, legacy_serve_path};
 use super::store::MediaStore;
 use super::types::{MediaActor, MediaExposure, MediaState};
 use super::urls::{filename_for_mime, registered_local_path};
@@ -95,12 +95,40 @@ pub async fn resolve_public_asset(
     file_from_row(store, &row, PUBLIC_CACHE_CONTROL)
 }
 
+/// The permanent address of a private asset, for a reader who is signed in.
+/// Public assets never reach this: [`resolve_public_asset`] serves them first.
+pub async fn resolve_private_asset(
+    db: &impl ConnectionTrait,
+    store: &MediaStore,
+    public_id: Uuid,
+    filename: &str,
+    actor: &MediaActor,
+) -> Result<ServeOutcome, MediaError> {
+    let Some(row) = assets::find_by_public_id(db, public_id).await? else {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    };
+    if !public_filename_ok(&row.name, &row.mime, public_id, filename) {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    }
+    let Ok(asset) = assets::to_domain(row.clone(), 0) else {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    };
+    if !can_read(actor, &asset) {
+        return Ok(ServeOutcome::NotFound { no_store: true });
+    }
+    file_from_row(store, &row, NO_STORE)
+}
+
+/// A local path that is not a permanent asset address. A registered alias
+/// (a migrated legacy file, or a cached file that content cited) serves its
+/// asset and never falls back to disk. Otherwise the raw file is served: the
+/// live image cache (RSS pictures, proxied downloads) and legacy federation
+/// files that nothing has cited yet.
 pub async fn resolve_alias_or_legacy(
     db: &impl ConnectionTrait,
     store: &MediaStore,
     paths: &LegacyPaths,
     local_path: &str,
-    allow_unmigrated: bool,
 ) -> Result<ServeOutcome, MediaError> {
     let Some(local_path) = registered_local_path(local_path) else {
         return Ok(ServeOutcome::NotFound { no_store: true });
@@ -118,10 +146,7 @@ pub async fn resolve_alias_or_legacy(
         }
         return file_from_row(store, &row, PUBLIC_CACHE_CONTROL);
     }
-    if !allow_unmigrated {
-        return Ok(ServeOutcome::NotFound { no_store: true });
-    }
-    let Some(disk) = legacy_disk_path(paths, &local_path) else {
+    let Some(disk) = legacy_serve_path(paths, &local_path) else {
         return Ok(ServeOutcome::NotFound { no_store: true });
     };
     if tokio::fs::metadata(&disk).await.is_err() {
@@ -174,6 +199,8 @@ fn mime_from_path(path: &std::path::Path) -> &'static str {
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
         "mov" => "video/quicktime",

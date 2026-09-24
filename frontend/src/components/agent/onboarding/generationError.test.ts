@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { currentCopy } from '../../../i18n/localeCopy'
 import { ApiError, parseApiErrorBody } from '../../../services/api'
 import {
   generationFailureMessage,
@@ -150,5 +151,46 @@ test('generationFailureMessage keeps provider detail on portrait failure', () =>
       { portrait_generation_failed: '主立绘生成失败，请重试' },
     ),
     '主立绘生成失败，请重试',
+  )
+})
+
+test('generationFailureMessage reads the shared byCode table when the step has no override', () => {
+  const byCode = currentCopy().errors.byCode as Record<string, string>
+  for (const code of [
+    'image_provider_credits',
+    'portrait_generation_in_progress',
+    'pro_unavailable',
+    'lite_unavailable',
+    'name_unusable',
+    'visual_gender_required',
+    'AI_DAILY_CALL_LIMIT',
+    'AI_COOLDOWN_ACTIVE',
+    'QUEUE_FULL',
+    'agent_access_denied',
+  ]) {
+    assert.ok(byCode[code], `byCode.${code} missing`)
+    assert.equal(
+      generationFailureMessage(new ApiError(code, 502, code), 'failed', 'timed out'),
+      byCode[code],
+      code,
+    )
+  }
+  assert.equal(
+    generationFailureMessage(
+      new ApiError('QUEUE_FULL: Agent queue is full', 429, 'QUEUE_FULL'),
+      'failed',
+      'timed out',
+    ),
+    `${byCode.QUEUE_FULL} Agent queue is full`,
+  )
+  // A step-specific override still wins over the shared copy.
+  assert.equal(
+    generationFailureMessage(
+      new ApiError('The model returned an unusable visual design', 502, 'visual_design_unusable'),
+      'import failed',
+      'timed out',
+      { visual_design_unusable: 'could not read the portrait' },
+    ),
+    'could not read the portrait The model returned an unusable visual design',
   )
 })

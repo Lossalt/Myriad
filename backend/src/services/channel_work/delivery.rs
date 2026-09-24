@@ -36,21 +36,21 @@ impl StoredOutbound {
             prompt,
         }
     }
-    fn markup(&self, platform: &str) -> Option<Value> {
+    fn markup(&self, platform: ChannelPlatform) -> Option<Value> {
         self.prompt
             .as_ref()
             .filter(|_| self.next_index + 1 == self.items.len())
             .and_then(|prompt| match platform {
-                "telegram" => telegram_reply_markup(prompt),
-                "discord" => discord_reply_markup(prompt),
-                "feishu" => feishu_reply_markup(prompt),
-                _ => None,
+                ChannelPlatform::Telegram => telegram_reply_markup(prompt),
+                ChannelPlatform::Discord => discord_reply_markup(prompt),
+                ChannelPlatform::Feishu => feishu_reply_markup(prompt),
+                ChannelPlatform::Qq => None,
             })
     }
 }
 
-pub(super) async fn clear_outbound(db: &DatabaseConnection, platform: &str, key: &str) {
-    let _ = shared_registry::take::<StoredOutbound>(db, outbound_ns(platform), key).await;
+pub(super) async fn clear_outbound(db: &DatabaseConnection, platform: ChannelPlatform, key: &str) {
+    let _ = shared_registry::take::<StoredOutbound>(db, platform.outbound_ns(), key).await;
 }
 
 pub(super) async fn flush_outbound(
@@ -65,7 +65,7 @@ pub(super) async fn flush_outbound(
             return;
         }
         let stored =
-            match shared_registry::get::<StoredOutbound>(db, outbound_ns(sink.platform()), key)
+            match shared_registry::get::<StoredOutbound>(db, sink.platform().outbound_ns(), key)
                 .await
             {
                 Ok(Some(stored)) => stored,
@@ -105,7 +105,22 @@ pub(super) async fn flush_outbound(
                 }
                 delay = 1;
             }
-            Err(error) => {
+            // Retrying a refused item only blocks the session (every new
+            // message gets "still working") until the outbox expires days
+            // later. Skip it and deliver the rest.
+            Err(super::transport::SendError::Permanent) => {
+                warn!("channel delivery refused by the platform; skipping item");
+                match acknowledge_item(db, sink.platform(), key, &stored).await {
+                    Ok(true) => {}
+                    Ok(false) => return,
+                    Err(error) => {
+                        warn!(%error, "channel outbox progress write failed");
+                        return;
+                    }
+                }
+                delay = 1;
+            }
+            Err(error @ super::transport::SendError::Transient) => {
                 warn!(%error, retry_seconds = delay, "channel delivery failed; retrying stored item");
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(60);
@@ -118,14 +133,14 @@ pub(super) async fn flush_outbound(
 // recreate a stopped outbox or overwrite the next run's delivery record.
 async fn acknowledge_item(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     key: &str,
     sent: &StoredOutbound,
 ) -> Result<bool, DbErr> {
     let result = db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
         "UPDATE tapp_runtime_registry SET payload = jsonb_set(payload, '{next_index}', to_jsonb($4::bigint)), updated_at = NOW() \
          WHERE namespace = $1 AND record_id = $2 AND payload->>'run_id' = $3 AND (payload->>'next_index')::bigint = $5",
-        [outbound_ns(platform).into(), key.into(), sent.run_id.as_str().into(), ((sent.next_index + 1) as i64).into(), (sent.next_index as i64).into()])).await?;
+        [platform.outbound_ns().into(), key.into(), sent.run_id.as_str().into(), ((sent.next_index + 1) as i64).into(), (sent.next_index as i64).into()])).await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -155,7 +170,7 @@ async fn project_delivery(
         let expiry = (Utc::now() + ChronoDuration::days(2)).timestamp();
         shared_registry::put(
             &txn,
-            outbound_ns(sink.platform()),
+            sink.platform().outbound_ns(),
             key,
             identity(user_id),
             &outbox,
@@ -170,7 +185,7 @@ async fn project_delivery(
             };
             shared_registry::put(
                 &txn,
-                pending_ns(sink.platform()),
+                sink.platform().pending_ns(),
                 key,
                 identity(user_id),
                 &pending,
@@ -181,13 +196,13 @@ async fn project_delivery(
             txn.execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2",
-                [pending_ns(sink.platform()).into(), key.into()],
+                [sink.platform().pending_ns().into(), key.into()],
             ))
             .await?;
         }
         shared_registry::put(
             &txn,
-            session_ns(sink.platform()),
+            sink.platform().session_ns(),
             key,
             identity(user_id),
             &session,
@@ -286,7 +301,7 @@ mod postgres_tests {
         let expiry = Utc::now().timestamp() + 600;
         shared_registry::put(
             &db,
-            outbound_ns("telegram"),
+            ChannelPlatform::Telegram.outbound_ns(),
             &key,
             identity(101),
             &sent,
@@ -295,35 +310,40 @@ mod postgres_tests {
         .await
         .unwrap();
         assert!(
-            acknowledge_item(&db, "telegram", &key, &sent)
+            acknowledge_item(&db, ChannelPlatform::Telegram, &key, &sent)
                 .await
                 .unwrap()
         );
-        let saved: StoredOutbound = shared_registry::get(&db, outbound_ns("telegram"), &key)
-            .await
-            .unwrap()
-            .unwrap();
+        let saved: StoredOutbound =
+            shared_registry::get(&db, ChannelPlatform::Telegram.outbound_ns(), &key)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(saved.next_index, 1);
         assert_eq!(
             saved.items.get(1),
             Some(&DeliveryItem::Image("/image.png".into()))
         );
-        clear_outbound(&db, "telegram", &key).await;
+        clear_outbound(&db, ChannelPlatform::Telegram, &key).await;
         assert!(
-            !acknowledge_item(&db, "telegram", &key, &sent)
+            !acknowledge_item(&db, ChannelPlatform::Telegram, &key, &sent)
                 .await
                 .unwrap()
         );
         assert!(
-            shared_registry::get::<StoredOutbound>(&db, outbound_ns("telegram"), &key)
-                .await
-                .unwrap()
-                .is_none()
+            shared_registry::get::<StoredOutbound>(
+                &db,
+                ChannelPlatform::Telegram.outbound_ns(),
+                &key
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
         let next = StoredOutbound::prepare("next", &[], 100, None, "next-run");
         shared_registry::put(
             &db,
-            outbound_ns("telegram"),
+            ChannelPlatform::Telegram.outbound_ns(),
             &key,
             identity(101),
             &next,
@@ -332,16 +352,17 @@ mod postgres_tests {
         .await
         .unwrap();
         assert!(
-            !acknowledge_item(&db, "telegram", &key, &sent)
+            !acknowledge_item(&db, ChannelPlatform::Telegram, &key, &sent)
                 .await
                 .unwrap()
         );
-        let saved: StoredOutbound = shared_registry::get(&db, outbound_ns("telegram"), &key)
-            .await
-            .unwrap()
-            .unwrap();
+        let saved: StoredOutbound =
+            shared_registry::get(&db, ChannelPlatform::Telegram.outbound_ns(), &key)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(saved.run_id, "next-run");
         assert_eq!(saved.next_index, 0);
-        clear_outbound(&db, "telegram", &key).await;
+        clear_outbound(&db, ChannelPlatform::Telegram, &key).await;
     }
 }

@@ -15,16 +15,6 @@ pub fn normalize_search_type(search_type: &str) -> &'static str {
     }
 }
 
-pub fn is_web_search_output(value: &Value) -> bool {
-    if value.get("searchType").is_some() || value.get("totalResults").is_some() {
-        return true;
-    }
-    matches!(
-        value.get("source").and_then(|v| v.as_str()),
-        Some("gemini_grounding" | "google_search" | "tinyfish")
-    ) && value.get("results").is_some()
-}
-
 pub fn capability_input_schema() -> Value {
     json!({
         "type": "object",
@@ -80,69 +70,9 @@ pub fn capability_payload(
     })
 }
 
-pub fn web_search_source_label(output: &Value) -> Value {
-    output.get("source").cloned().unwrap_or_else(|| {
-        output
-            .get("results")
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .and_then(|item| item.get("source"))
-            .cloned()
-            .unwrap_or(json!("web_search"))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tinyfish_payload_counts_as_web_search_output() {
-        assert!(is_web_search_output(&json!({
-            "searchType": "general",
-            "totalResults": 0,
-            "results": []
-        })));
-        assert!(!is_web_search_output(&json!({
-            "analysis": "hello"
-        })));
-    }
-
-    #[test]
-    fn capability_payload_sets_search_shape() {
-        let out = capability_payload("q", "general", "s".into(), vec![json!({"name": "a"})]);
-        assert_eq!(out["success"], true);
-        assert_eq!(out["searchType"], "general");
-        assert_eq!(out["totalResults"], 1);
-        assert!(is_web_search_output(&out));
-        assert_eq!(web_search_source_label(&out), json!("web_search"));
-    }
-
-    #[test]
-    fn source_label_prefers_result_item_source() {
-        let out = json!({
-            "searchType": "general",
-            "results": [{"source": "tinyfish"}]
-        });
-        assert_eq!(web_search_source_label(&out), json!("tinyfish"));
-    }
-
-    #[test]
-    fn platform_local_cache_is_not_web_search() {
-        assert!(!is_web_search_output(&json!({
-            "source": "local_cache",
-            "wishlist": [],
-            "items": [{"name": "Hades"}],
-            "total": 1
-        })));
-        assert!(!is_web_search_output(&json!({
-            "source": "tinyfish"
-        })));
-        assert!(is_web_search_output(&json!({
-            "source": "tinyfish",
-            "results": []
-        })));
-    }
 
     #[test]
     fn payload_keys_match_declared_output_schema() {
@@ -187,5 +117,13 @@ mod tests {
         assert!(props.contains_key("searchPrompt"));
         assert!(!props.contains_key("resultFormat"));
         assert!(!props.contains_key("source"));
+    }
+
+    #[test]
+    fn capability_payload_sets_search_shape() {
+        let out = capability_payload("q", "general", "s".into(), vec![json!({"name": "a"})]);
+        assert_eq!(out["success"], true);
+        assert_eq!(out["searchType"], "general");
+        assert_eq!(out["totalResults"], 1);
     }
 }

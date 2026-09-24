@@ -469,8 +469,9 @@ async fn summary_cache_miss_aggregates_in_one_wave_and_fails_whole_on_error() {
     db.execute_unprepared(&format!(
         r#"
 INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views) VALUES
-    ('{d0}', '/a', 5, 0, 100, 2), ('{d0}', '/b', 3, 0, 0, 0), ('{d0}', '__site__', 0, 2, 0, 0),
-    ('{d1}', '/a', 4, 0, 0, 0), ('{d9}', '/a', 7, 0, 0, 0);
+    ('{d0}', '/a', 5, 0, 100, 2), ('{d0}', '/b', 3, 0, 0, 0), ('{d0}', '__site__', 0, 1, 0, 0),
+    ('{d1}', '/a', 4, 0, 0, 0), ('{d1}', '__site__', 0, 5, 0, 0), ('{d9}', '/a', 7, 0, 0, 0),
+    ('{d120}', '__site__', 0, 4, 0, 0);
 INSERT INTO analytics_visitor_seen (day, path, visitor_hash) VALUES
     ('{d0}', '__site__', 'v1'), ('{d0}', '__site__', 'v2'), ('{d1}', '__site__', 'v1'),
     ('{d9}', '__site__', 'v3'), ('{d0}', '/a', 'v1'), ('{d0}', '/a', 'v2');
@@ -486,6 +487,7 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         d0 = day(0),
         d1 = day(1),
         d9 = day(9),
+        d120 = day(120),
     ))
     .await
     .unwrap();
@@ -494,12 +496,16 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         from: None,
         to: None,
     };
-    SUMMARY_CACHE.lock().await.clear();
+    invalidate_summary_cache().await;
     let (status, axum::Json(body)) = super::admin_api::build_analytics_summary(&db, query()).await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(body["range"]["views"], 12);
     assert_eq!(body["range"]["unique_visitors"], 2);
+    // Day UV comes from the seen set like range UV, not from the (drifted) counter.
     assert_eq!(body["today"]["unique_visitors"], 2);
+    assert_eq!(body["daily"][5]["unique_visitors"], 1);
+    assert_eq!(body["compare"]["day"]["unique_visitors"]["current"], 2);
+    assert_eq!(body["compare"]["day"]["unique_visitors"]["previous"], 1);
     assert_eq!(body["compare"]["day"]["views"]["previous"], 4);
     assert_eq!(body["compare"]["range"]["views"]["previous"], 7);
     assert_eq!(body["compare"]["range"]["unique_visitors"]["previous"], 1);
@@ -513,7 +519,25 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
     assert_eq!(body["events"][0]["targets"][0]["unique_visitors"], 1);
     assert_eq!(body["countries"][0]["unique_visitors"], 1);
 
-    SUMMARY_CACHE.lock().await.clear();
+    // Past visitor-seen retention only the counter rollup is left.
+    let old = day(120);
+    let (_, axum::Json(body)) = super::admin_api::build_analytics_summary(
+        &db,
+        SummaryQuery {
+            days: None,
+            from: Some(old.clone()),
+            to: Some(old),
+        },
+    )
+    .await;
+    assert_eq!(body["daily"][0]["unique_visitors"], 4);
+
+    invalidate_summary_cache().await;
+    let card = super::admin_api::visitor_card_aggregate(&db).await.unwrap();
+    assert_eq!(card["today"]["unique_visitors"], 2);
+    assert_eq!(card["daily"][3]["unique_visitors"], 1);
+
+    invalidate_summary_cache().await;
     db.execute_unprepared("ALTER TABLE analytics_country_visitor RENAME TO country_visitor_off")
         .await
         .unwrap();
@@ -523,6 +547,260 @@ INSERT INTO analytics_country_visitor (day, country_code, visitor_hash) VALUES
         body.get("range").is_none(),
         "no partial statistics on failure"
     );
-    SUMMARY_CACHE.lock().await.clear();
+    invalidate_summary_cache().await;
     isolated.drop().await;
+}
+
+async fn analytics_scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap()
+}
+
+#[tokio::test]
+async fn failed_counter_write_leaves_no_seen_row() {
+    use sea_orm::ConnectionTrait;
+    let Ok(url) = std::env::var("ANALYTICS_TEST_DATABASE_URL") else {
+        return;
+    };
+    let isolated = crate::db::IsolatedSchema::migrated(&url, "analytics_atomic_test").await;
+    let db = isolated.db.clone();
+    let day = analytics_today();
+    let jp = CountryInfo {
+        code: "JP".into(),
+        name: "Japan".into(),
+    };
+    // Every counter table rejects writes: the seen half of each pair must roll back with it.
+    db.execute_unprepared(
+        r#"
+CREATE FUNCTION analytics_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'injected counter failure'; END $$;
+CREATE TRIGGER fail_page BEFORE INSERT OR UPDATE ON analytics_page_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+CREATE TRIGGER fail_event BEFORE INSERT OR UPDATE ON analytics_event_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+CREATE TRIGGER fail_country BEFORE INSERT OR UPDATE ON analytics_country_daily
+    FOR EACH ROW EXECUTE FUNCTION analytics_fail();
+"#,
+    )
+    .await
+    .unwrap();
+    assert!(bump_pageview(&db, day, "/a", "v1", true).await.is_err());
+    assert!(record_site_unique(&db, day, "v1").await.is_err());
+    assert!(bump_engagement(&db, day, "/a", "v1", 5_000).await.is_err());
+    assert!(bump_event(&db, day, "click", "/a", "", "v1").await.is_err());
+    assert!(bump_country(&db, day, &jp, "v1", true).await.is_err());
+    for table in [
+        "analytics_visitor_seen",
+        "analytics_event_visitor",
+        "analytics_country_visitor",
+    ] {
+        let n = analytics_scalar(&db, &format!("SELECT COUNT(*) AS n FROM {table}")).await;
+        assert_eq!(n, 0, "{table} kept a seen row whose counter failed");
+    }
+
+    // Once the counters accept writes the same visitor is still a first visit.
+    db.execute_unprepared(
+        "DROP TRIGGER fail_page ON analytics_page_daily;
+         DROP TRIGGER fail_event ON analytics_event_daily;
+         DROP TRIGGER fail_country ON analytics_country_daily;",
+    )
+    .await
+    .unwrap();
+    bump_pageview(&db, day, "/a", "v1", true).await.unwrap();
+    assert_eq!(record_site_unique(&db, day, "v1").await.unwrap(), Some(1));
+    bump_engagement(&db, day, "/a", "v1", 5_000).await.unwrap();
+    bump_event(&db, day, "click", "/a", "", "v1").await.unwrap();
+    bump_country(&db, day, &jp, "v1", true).await.unwrap();
+    let q = |sql: &'static str| analytics_scalar(&db, sql);
+    assert_eq!(
+        q("SELECT (views * 10 + unique_visitors)::bigint AS n
+           FROM analytics_page_daily WHERE path = '/a'")
+        .await,
+        11
+    );
+    assert_eq!(
+        q("SELECT engaged_views::bigint AS n FROM analytics_page_daily WHERE path = '/a'").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '__site__'")
+            .await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_event_daily").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_country_daily").await,
+        1
+    );
+    drop(db);
+    isolated.drop().await;
+}
+
+#[tokio::test]
+async fn concurrent_duplicate_visits_count_once() {
+    let Ok(url) = std::env::var("ANALYTICS_TEST_DATABASE_URL") else {
+        return;
+    };
+    let isolated = crate::db::IsolatedSchema::migrated(&url, "analytics_race_test").await;
+    let db = isolated.db.clone();
+    let day = analytics_today();
+
+    let views = (0..16).map(|_| bump_pageview(&db, day, "/c", "same", true));
+    for result in futures::future::join_all(views).await {
+        result.unwrap();
+    }
+    let events = (0..8).map(|_| bump_event(&db, day, "click", "/c", "", "same"));
+    for result in futures::future::join_all(events).await {
+        result.unwrap();
+    }
+    let q = |sql: &'static str| analytics_scalar(&db, sql);
+    assert_eq!(
+        q("SELECT views::bigint AS n FROM analytics_page_daily WHERE path = '/c'").await,
+        16
+    );
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '/c'").await,
+        1
+    );
+    assert_eq!(
+        q("SELECT (count * 10 + unique_visitors)::bigint AS n FROM analytics_event_daily").await,
+        81
+    );
+
+    // Distinct first visits get distinct ordinals 1..=N; duplicates share one.
+    let visitors: Vec<String> = (0..12).map(|i| format!("visitor-{i:02}")).collect();
+    let firsts = visitors.iter().map(|v| record_site_unique(&db, day, v));
+    let mut ordinals: Vec<i64> = futures::future::join_all(firsts)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap().unwrap())
+        .collect();
+    ordinals.sort_unstable();
+    assert_eq!(ordinals, (1..=12).collect::<Vec<i64>>());
+    let repeats = (0..8).map(|_| record_site_unique(&db, day, "late"));
+    for result in futures::future::join_all(repeats).await {
+        assert_eq!(result.unwrap(), Some(13));
+    }
+    assert_eq!(
+        q("SELECT unique_visitors::bigint AS n FROM analytics_page_daily WHERE path = '__site__'")
+            .await,
+        13
+    );
+    assert_eq!(
+        q("SELECT COUNT(*) AS n FROM analytics_visitor_seen WHERE path = '__site__'").await,
+        13
+    );
+    drop(db);
+    isolated.drop().await;
+}
+
+#[test]
+fn summary_cache_drops_results_computed_across_an_invalidation() {
+    let mut caches = SummaryCaches::default();
+    let key = || "2026-01-01..2026-01-07".to_string();
+
+    // A compute that started before an intake's invalidation must not land.
+    let started = caches.generation();
+    caches.invalidate();
+    assert!(!caches.store_summary(started, key(), json!({ "stale": true })));
+    assert!(!caches.store_card(started, json!({ "stale": true })));
+    assert!(caches.summary(&key()).is_none());
+    assert!(caches.card().is_none());
+
+    // One that started after it lands, and the next invalidation clears it.
+    let started = caches.generation();
+    assert!(caches.store_summary(started, key(), json!({ "fresh": true })));
+    assert!(caches.store_card(started, json!({ "fresh": true })));
+    assert_eq!(caches.summary(&key()), Some(json!({ "fresh": true })));
+    assert_eq!(caches.card(), Some(json!({ "fresh": true })));
+    caches.invalidate();
+    assert!(caches.summary(&key()).is_none());
+    assert!(caches.card().is_none());
+}
+
+#[test]
+fn intake_items_log_every_write_failure() {
+    let src = include_str!("intake_helpers.rs");
+    let body = src
+        .split("async fn process_items")
+        .nth(1)
+        .and_then(|rest| rest.split("async fn parse_json_body").next())
+        .expect("process_items");
+    assert!(
+        !body.contains("let _ ="),
+        "a write error is silently dropped"
+    );
+    assert!(
+        !body.contains(".is_ok()"),
+        "a write error is silently dropped"
+    );
+    assert_eq!(body.matches("intake_write_ok(").count(), 6);
+}
+
+/// Both endpoints go through `admit_intake`; neither re-implements a gate.
+#[test]
+fn intake_endpoints_share_one_gate_chain() {
+    let src = include_str!("intake_helpers.rs");
+    let handler = |name: &str| {
+        src.split(&format!("pub async fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("{name}"))
+            .to_string()
+    };
+    for (name, body) in [
+        ("collect", "CollectRequest"),
+        ("record_pageview", "PageviewRequest"),
+    ] {
+        let handler = handler(name);
+        assert!(
+            handler.contains(&format!("admit_intake::<{body}>(")),
+            "{name}"
+        );
+        assert!(handler.contains("run_intake(&ctx, &items)"), "{name}");
+        for gate in [
+            "analytics_collection_enabled",
+            "is_staff",
+            "is_bot_ua",
+            "rate_limited",
+            "resolve_visitor_hash",
+            "resolve_country",
+            "invalidate_summary_cache",
+            "maybe_prune",
+        ] {
+            assert!(!handler.contains(gate), "{name} re-implements {gate}");
+        }
+    }
+}
+
+#[test]
+fn intake_bodies_validate_into_items() {
+    let collect: CollectRequest = serde_json::from_value(json!({ "items": [] })).unwrap();
+    let (status, body) = collect.into_items().unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(body.0["error"], "empty");
+
+    let pageview: PageviewRequest =
+        serde_json::from_value(json!({ "path": "relative", "vid": "0123456789abcdef" })).unwrap();
+    assert_eq!(pageview.vid(), Some("0123456789abcdef"));
+    let (status, body) = pageview.into_items().unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(body.0["error"], "invalid_path");
+
+    let pageview: PageviewRequest =
+        serde_json::from_value(json!({ "path": "/tapp/abc?x=1", "referrer": "example.com" }))
+            .unwrap();
+    let items = pageview.into_items().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].kind, "pageview");
+    assert_eq!(items[0].path.as_deref(), Some("/tapp/:id"));
+    assert_eq!(items[0].referrer.as_deref(), Some("example.com"));
 }

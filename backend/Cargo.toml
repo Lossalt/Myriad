@@ -1,6 +1,6 @@
 [package]
 name = "myriad-backend"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Myriad Contributors"]
@@ -114,7 +114,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
 cron = "0.17"                                           # For cron expression parsing
 uuid = { version = "1.24", features = ["v4", "serde"] }
 rand = "0.10"

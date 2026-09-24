@@ -198,7 +198,8 @@ pub async fn add_room_sticker(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
-                "error": format!("Room sticker pack full (max {})", ROOM_STICKER_MAX_COUNT)
+                "error": format!("Room sticker pack full (max {})", ROOM_STICKER_MAX_COUNT),
+                "code": "sticker_pack_full",
             })),
         ));
     }

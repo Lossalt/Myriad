@@ -85,7 +85,7 @@ pub async fn chat_completion(
     };
     // The browser established this session. The cloud cannot choose a user,
     // session, model, Work mode, system message, or replacement history.
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return failure(StatusCode::FORBIDDEN, "A durable user account is required");
     };
     let owned = crate::models::entities::agent_sessions::Entity::find_by_id(&session.session_id)
@@ -305,7 +305,7 @@ pub async fn conversation_events(
     Extension(claims): Extension<Claims>,
     Query(query): Query<EventsQuery>,
 ) -> Response {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return StatusCode::FORBIDDEN.into_response();
     };
     let session = match crate::services::agora_convo::chat_session(user_id, &query.agent_id).await {
@@ -447,7 +447,9 @@ mod tests {
         let (session, key) = ChatSession::register(claims, "chat-wire".into())
             .await
             .unwrap();
-        let run = crate::services::agent::run_hub::create_run_for_test(7201, Some("chat-wire".into())).await;
+        let run =
+            crate::services::agent::run_hub::create_run_for_test(7201, Some("chat-wire".into()))
+                .await;
         run.publish(AgentProgressEvent::ThinkingToken {
             token: "private reasoning".into(),
             done: false,
@@ -494,8 +496,11 @@ mod tests {
         let (session, _) = ChatSession::register(claims, "chat-long-wire".into())
             .await
             .unwrap();
-        let run =
-            crate::services::agent::run_hub::create_run_for_test(7202, Some("chat-long-wire".into())).await;
+        let run = crate::services::agent::run_hub::create_run_for_test(
+            7202,
+            Some("chat-long-wire".into()),
+        )
+        .await;
         for _ in 0..520 {
             run.publish(AgentProgressEvent::SummaryToken {
                 token: "partial ".into(),

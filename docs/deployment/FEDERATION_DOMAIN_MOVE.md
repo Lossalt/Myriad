@@ -147,7 +147,7 @@ Content-Type: application/json
 ## Related code
 
 - `backend/src/federation/move_actor.rs` — B/C/E/G job, verify helpers, follow re-point, rewrite whitelist
-- `backend/src/federation/inbox/receive.rs` — `handle_move` and the temporary inbound gate (D)
+- `backend/src/federation/inbox/receive.rs` — Move preflight (`preflight_signed_move`) and the temporary inbound gate (D); `inbox/activities.rs` — `handle_verified_move`
 - `backend/src/federation/actor.rs` — actor documents + shared PEM
 - `backend/src/federation/types.rs` — `Actor.also_known_as` / `Actor.moved_to`
 - `backend/src/federation/delivery.rs` — Move signing identity (old actor base)

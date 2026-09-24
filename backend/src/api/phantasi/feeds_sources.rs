@@ -21,7 +21,10 @@ use serde_json::json;
 use crate::models::entities::{phantasi_categories, phantasi_items, phantasi_sources};
 use crate::services::icon_service::IconService;
 use crate::services::phantasi_parser::{FeedParser, ParseError, ParsedFeed};
-use crate::services::phantasi_scheduler::get_phantasi_scheduler;
+use crate::services::phantasi_scheduler::{SOURCE_REFRESH_IN_PROGRESS, get_phantasi_scheduler};
+use crate::services::phantasi_subscribe::{
+    NewSource, SourceCreation, create_or_find_source, find_subscribed,
+};
 
 use super::helpers::{
     admin_user_id, build_feed_discovery_candidates, get_phantasi_viewer, materialize_source_icon,
@@ -448,18 +451,20 @@ pub(crate) async fn add_source(
         )));
     }
 
-    // 检查是否已订阅
-    let existing = phantasi_sources::Entity::find()
-        .filter(phantasi_sources::Column::Url.eq(url))
-        .one(&db)
-        .await
-        .map_err(|error| phantasi_store_http("find existing source", error))?;
-
-    if existing.is_some() {
-        return Err(HttpError::from((
+    // 预检是否已订阅，省掉一次无谓的上游探测。规则与其余创建路径相同，
+    // 权威判定在下面 `create_or_find_source` 的锁内。
+    let already_subscribed = || {
+        HttpError::from((
             StatusCode::CONFLICT,
             Json(AppError::fail_json("Already subscribed to this feed")),
-        )));
+        ))
+    };
+    if find_subscribed(&db, url)
+        .await
+        .map_err(|error| phantasi_store_http("find existing source", error))?
+        .is_some()
+    {
+        return Err(already_subscribed());
     }
 
     // 解析 source_type
@@ -667,8 +672,17 @@ pub(crate) async fn add_source(
         ..Default::default()
     };
 
-    match new_source.insert(&db).await {
-        Ok(source) => {
+    // 探测期间可能有人订阅了同一个源：锁内重新判定后再插入。
+    let created = async {
+        let txn = db.begin().await?;
+        let created = create_or_find_source(&txn, NewSource::new(new_source)).await?;
+        txn.commit().await?;
+        Ok::<_, sea_orm::DbErr>(created)
+    }
+    .await;
+    match created {
+        Ok(SourceCreation::Existing(_)) => Err(already_subscribed()),
+        Ok(SourceCreation::Created(source)) => {
             // 下载图标到本地
             if let Some(icon_url) = &icon {
                 if let Some(local_path) = persist_source_icon(source.id, icon_url).await {
@@ -843,6 +857,10 @@ pub(crate) async fn update_source(
                     let response: phantasi_sources::SourceResponse = updated.into();
                     Ok(Json(json!({ "success": true, "source": response })))
                 }
+                // 新地址规范化后撞上另一个源（url_key 全站唯一）。
+                Err(e) if crate::federation::types::is_unique_violation(&e) => Err(
+                    phantasi_http_err(StatusCode::CONFLICT, "Another source already uses this URL"),
+                ),
                 Err(e) => Err(phantasi_store_http("update source", e)),
             }
         }
@@ -923,7 +941,9 @@ pub(crate) async fn refresh_source(
                 Ok(new_count) => Ok(Json(json!({ "success": true, "new_items": new_count }))),
                 Err(error) => {
                     tracing::error!(%error, "Failed to refresh source");
-                    let status = if error.starts_with("Failed to fetch feed") {
+                    let status = if error == SOURCE_REFRESH_IN_PROGRESS {
+                        StatusCode::CONFLICT
+                    } else if error.starts_with("Failed to fetch feed") {
                         StatusCode::BAD_GATEWAY
                     } else if error.starts_with("Failed to parse feed") {
                         StatusCode::UNPROCESSABLE_ENTITY

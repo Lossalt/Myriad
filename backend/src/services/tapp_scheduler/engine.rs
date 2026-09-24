@@ -12,9 +12,8 @@ use sea_orm::{
 use serde_json::json;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::RwLock;
 
 use crate::services::agent::ai_process_pure::USER_TEXT_MAX_CHARS;
 use crate::services::tapp_registry::{self as shared_registry};
@@ -37,6 +36,20 @@ use crate::services::platform_auto_refresh::{
 
 use super::types_frontend::*;
 
+/// Whether `subject` may receive a Tapp-scoped task for `tapp_id`: their own
+/// install, the site owner's public install, or any install for an admin.
+/// Both are SQL placeholders or column references. The site owner comes from
+/// the same SQL as [`crate::services::principal::site_owner_id`].
+fn tapp_audience_predicate(tapp_id: &str, subject: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM tapps WHERE tapp_id = {tapp_id} AND ( \
+         user_id = {subject} \
+         OR user_id = ({owner}) \
+         OR EXISTS (SELECT 1 FROM users WHERE id = {subject} AND is_admin = true)))",
+        owner = crate::services::principal::SITE_OWNER_ID_SQL,
+    )
+}
+
 fn scheduler_store_failed(context: &'static str, error: impl std::fmt::Display) -> String {
     tracing::error!(%error, context, "scheduler store failed");
     format!("Failed to {context}")
@@ -47,51 +60,37 @@ impl TappSchedulerEngine {
     pub fn new(db: DatabaseConnection) -> Self {
         Self {
             db,
-            running: Arc::new(RwLock::new(false)),
+            job: std::sync::Mutex::new(None),
         }
     }
 
-    /// 启动调度引擎
-    pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
+    /// 启动调度引擎。主循环登记在进程 job runner 上，停机时由 runner 统一取消并
+    /// 等在途 tick 收尾；重复调用不会再起第二个循环。
+    pub fn start(&self) {
+        let mut job = self
+            .job
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if job.as_ref().is_some_and(|job| !job.is_cancelled()) {
             tracing::warn!("[TappScheduler] Already running");
             return;
         }
-        *running = true;
-        drop(running);
 
         tracing::info!("[TappScheduler] Starting scheduler engine");
 
-        // 启动主调度循环
         let db = self.db.clone();
-        let running = self.running.clone();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-
-            loop {
-                interval.tick().await;
-
-                // 检查是否停止
-                if !*running.read().await {
-                    tracing::info!("[TappScheduler] Scheduler stopped");
-                    break;
+        *job = Some(crate::services::jobs::jobs().periodic(
+            "tapp scheduler",
+            crate::services::jobs::Every::new(std::time::Duration::from_secs(60)),
+            move || {
+                let db = db.clone();
+                async move {
+                    if let Err(e) = Self::tick(&db).await {
+                        tracing::error!("[TappScheduler] Tick error: {}", e);
+                    }
                 }
-
-                // 执行调度
-                if let Err(e) = Self::tick(&db).await {
-                    tracing::error!("[TappScheduler] Tick error: {}", e);
-                }
-            }
-        });
-    }
-
-    /// 停止调度引擎
-    pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
-        tracing::info!("[TappScheduler] Stopping scheduler engine");
+            },
+        ));
     }
 
     /// 主调度循环 tick
@@ -652,8 +651,9 @@ impl TappSchedulerEngine {
 
     /// 一次查询选出本次投递的 live 连接 record_id。
     ///
-    /// 受众谓词与 [`Self::can_receive_frontend_task`] 逐字一致，只是以连接的
-    /// subject_id 为参数下推到 SQL；`target_users` 是额外的 AND 限制，
+    /// 受众与 [`Self::can_receive_frontend_task`] 相同：Tapp 范围共用
+    /// [`tapp_audience_predicate`]，以连接的 subject_id 为参数下推到 SQL；
+    /// 单用户判定的角色读认证快照（5s + NOTIFY）。`target_users` 是额外的 AND 限制，
     /// `Some([])` 表示零收件人而非广播。
     async fn frontend_recipients(
         db: &DatabaseConnection,
@@ -672,31 +672,15 @@ impl TappSchedulerEngine {
         let audience = match task.scope {
             TaskScope::User | TaskScope::TappPerUser => {
                 values.push(task.user_id.into());
-                "r.subject_id = $2"
+                "r.subject_id = $2".to_string()
             }
             TaskScope::Global => {
                 "EXISTS (SELECT 1 FROM users WHERE id = r.subject_id AND is_admin = true)"
+                    .to_string()
             }
             TaskScope::Tapp => {
                 values.push(task.tapp_id.clone().into());
-                r#"EXISTS (
-    SELECT 1
-    FROM tapps
-    WHERE tapp_id = $2
-      AND (
-          user_id = r.subject_id
-          OR user_id = (
-              SELECT id FROM users
-              WHERE is_admin = true
-              ORDER BY id
-              LIMIT 1
-          )
-          OR EXISTS (
-              SELECT 1 FROM users
-              WHERE id = r.subject_id AND is_admin = true
-          )
-      )
-)"#
+                tapp_audience_predicate("$2", "r.subject_id")
             }
         };
         let target_filter = match target_users {
@@ -736,50 +720,22 @@ ORDER BY r.updated_at, r.record_id
     ) -> Result<bool, String> {
         match task.scope {
             TaskScope::User | TaskScope::TappPerUser => Ok(task.user_id == user_id),
-            TaskScope::Global => {
-                let row = db
-                    .query_one_raw(Statement::from_sql_and_values(
-                        DatabaseBackend::Postgres,
-                        "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-                        [user_id.into()],
-                    ))
-                    .await
-                    .map_err(|error| scheduler_store_failed("verify global audience", error))?;
-                Ok(row
-                    .and_then(|row| row.try_get::<bool>("", "is_admin").ok())
-                    .unwrap_or(false))
-            }
+            TaskScope::Global => crate::services::principal::is_current_admin(db, user_id)
+                .await
+                .map_err(|error| scheduler_store_failed("verify global audience", error)),
             TaskScope::Tapp => {
+                let sql = format!("SELECT {} AS allowed", tapp_audience_predicate("$1", "$2"));
                 let row = db
                     .query_one_raw(Statement::from_sql_and_values(
                         DatabaseBackend::Postgres,
-                        r#"
-SELECT EXISTS (
-    SELECT 1
-    FROM tapps
-    WHERE tapp_id = $1
-      AND (
-          user_id = $2
-          OR user_id = (
-              SELECT id FROM users
-              WHERE is_admin = true
-              ORDER BY id
-              LIMIT 1
-          )
-          OR EXISTS (
-              SELECT 1 FROM users
-              WHERE id = $2 AND is_admin = true
-          )
-      )
-) AS allowed
-"#,
+                        sql,
                         [task.tapp_id.clone().into(), user_id.into()],
                     ))
                     .await
-                    .map_err(|error| scheduler_store_failed("verify tapp audience", error))?;
-                Ok(row
-                    .and_then(|row| row.try_get::<bool>("", "allowed").ok())
-                    .unwrap_or(false))
+                    .map_err(|error| scheduler_store_failed("verify tapp audience", error))?
+                    .ok_or_else(|| scheduler_store_failed("verify tapp audience", "no row"))?;
+                row.try_get::<bool>("", "allowed")
+                    .map_err(|error| scheduler_store_failed("verify tapp audience", error))
             }
         }
     }
@@ -966,18 +922,11 @@ SELECT EXISTS (
         task: &tapp_scheduled_tasks::Model,
         wrappers: &[BackendActionWrapper],
     ) -> Result<ScheduledExecutionAuthority, String> {
-        let row = db
-            .query_one_raw(Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-                [task.user_id.into()],
-            ))
+        let is_admin = crate::services::principal::current_roles(db, task.user_id)
             .await
             .map_err(|error| scheduler_store_failed("verify user role", error))?
-            .ok_or_else(|| "Scheduler user no longer exists".to_string())?;
-        let is_admin = row
-            .try_get::<bool>("", "is_admin")
-            .map_err(|error| scheduler_store_failed("read user role", error))?;
+            .ok_or_else(|| "Scheduler user no longer exists".to_string())?
+            .is_admin;
         let role = if is_admin {
             UserRole::Admin
         } else {
@@ -1006,7 +955,15 @@ SELECT EXISTS (
         let mut required = vec![TappPermission::SchedulerRegister];
         required.extend(backend_action_permissions_of(wrappers));
 
-        let config = GLOBAL_DYNAMIC_CONFIG.read().await;
+        // Same source as runtime-grant rebinds: the committed delegation
+        // policy, not this worker's cached config. A revoked delegation must
+        // stop the next run, and an unreadable policy fails closed.
+        let config = crate::services::config_service::ConfigService::load_permission_config_on(db)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "scheduled task could not read permission policy");
+                "Permission policy unavailable before scheduled execution".to_string()
+            })?;
         for permission in &required {
             if !TappPermissionService::check(&config, role, *permission) {
                 return Err(format!(
@@ -1015,7 +972,6 @@ SELECT EXISTS (
                 ));
             }
         }
-        drop(config);
 
         let tapp = crate::services::tapp_ownership::resolve_accessible_tapp(
             db,
@@ -2240,7 +2196,9 @@ mod frontend_recipient_db_tests {
              CREATE TABLE tapp_runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
              channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, \
              expires_at BIGINT NOT NULL); \
-             CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN); \
+             CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, \
+             is_owner BOOLEAN NOT NULL DEFAULT false, \
+             token_version INTEGER NOT NULL DEFAULT 0); \
              CREATE TABLE tapps (id SERIAL PRIMARY KEY, tapp_id VARCHAR(255) NOT NULL, \
              user_id INTEGER NOT NULL)",
         )
@@ -2302,6 +2260,7 @@ mod frontend_recipient_db_tests {
     #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
     async fn fan_out_sql_matches_scope_audience_and_targets() {
         let (admin, db, schema_name) = isolated_db("fanout").await;
+        forget_principals(&[1, 2, 3, 4]);
         // 1 = first admin (site owner), 4 = later admin, 2/3 = ordinary users.
         db.execute_unprepared(
             "INSERT INTO users (id, is_admin) VALUES (1, true), (2, false), (3, NULL), (4, true);
@@ -2399,6 +2358,54 @@ mod frontend_recipient_db_tests {
             );
         }
 
+        drop_schema(&admin, &schema_name).await;
+    }
+
+    /// Process-global role snapshots may hold these ids from other tests.
+    fn forget_principals(ids: &[i32]) {
+        for id in ids {
+            crate::middleware::auth::invalidate_auth_cache_local(*id);
+        }
+    }
+
+    /// The site owner is the durable `is_owner` row, not the lowest admin id,
+    /// and a failed role read stops delivery instead of excluding the subject.
+    #[tokio::test]
+    #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
+    async fn tapp_audience_follows_durable_owner_and_role_errors_surface() {
+        let (admin, db, schema_name) = isolated_db("audience_owner").await;
+        forget_principals(&[1, 2, 5]);
+        db.execute_unprepared(
+            "INSERT INTO users (id, is_admin, is_owner) VALUES
+                 (1, true, false), (2, false, false), (5, true, true);
+             INSERT INTO tapps (tapp_id, user_id) VALUES ('owner.app', 5), ('first.app', 1);",
+        )
+        .await
+        .unwrap();
+        let owner_app = task(TaskScope::Tapp, "owner.app", 5);
+        let first_app = task(TaskScope::Tapp, "first.app", 1);
+        assert!(
+            TappSchedulerEngine::can_receive_frontend_task(&db, 2, &owner_app)
+                .await
+                .unwrap()
+        );
+        // The lowest admin's install is private to them (and other admins).
+        assert!(
+            !TappSchedulerEngine::can_receive_frontend_task(&db, 2, &first_app)
+                .await
+                .unwrap()
+        );
+
+        let global = task(TaskScope::Global, "owner.app", 5);
+        db.execute_unprepared("ALTER TABLE users RENAME COLUMN is_admin TO unavailable")
+            .await
+            .unwrap();
+        forget_principals(&[2]);
+        assert!(
+            TappSchedulerEngine::can_receive_frontend_task(&db, 2, &global)
+                .await
+                .is_err()
+        );
         drop_schema(&admin, &schema_name).await;
     }
 

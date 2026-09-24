@@ -899,3 +899,156 @@ fn accept_path_alias_ap_users_form_matches_stored_users_url() {
     );
     assert!(got_bad.is_none());
 }
+
+async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
+    db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get_by_index::<i64>(0)
+        .unwrap()
+}
+
+/// 远端 Update(Note) 原地改已有条目（所有本地副本、预览一起改），不插新行；
+/// 旧版本不回退；本地没有的对象忽略；别人的对象被拒。
+#[tokio::test]
+async fn remote_update_edits_existing_rows_in_place() {
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    db.execute_unprepared(
+        "INSERT INTO users (id, username) VALUES (2, 'bob'), (3, 'carol');
+         INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+             (21, 'https://r.example/users/amy', 'r.example', 'https://r.example/users/amy/inbox'),
+             (22, 'https://r.example/users/eve', 'r.example', 'https://r.example/users/eve/inbox')",
+    )
+    .await
+    .unwrap();
+    let amy_url = "https://r.example/users/amy";
+    let remote = |id: i32, actor_url: &str| RemoteActorInfo {
+        id,
+        actor_url: actor_url.into(),
+        username: None,
+        domain: "r.example".into(),
+        display_name: None,
+        avatar_url: None,
+        inbox_url: format!("{actor_url}/inbox"),
+        public_key_pem: None,
+        public_key_id: None,
+        mfp_version: None,
+    };
+    let amy = remote(21, amy_url);
+    let note = |content: &str, updated: Option<&str>| {
+        let mut object = json!({
+            "type": "Note",
+            "id": "https://r.example/notes/1",
+            "attributedTo": amy_url,
+            "content": content,
+        });
+        if let Some(updated) = updated {
+            object["updated"] = json!(updated);
+        }
+        object
+    };
+    let create = json!({
+        "type": "Create",
+        "id": "https://r.example/activities/c1",
+        "actor": amy_url,
+        "object": note("<p>first</p>", None),
+    });
+    for user in [2, 3] {
+        handle_content_activity(db, user, amy_url, "Create", &create, Some(&amy))
+            .await
+            .unwrap();
+    }
+    let rows = "SELECT COUNT(*) FROM federation_timeline";
+    let edited = "SELECT COUNT(*) FROM federation_timeline \
+                  WHERE activity_type = 'Create' AND content_preview = 'second' \
+                  AND content_json->>'content' = '<p>second</p>'";
+    assert_eq!(scalar_i64(db, rows).await, 2);
+
+    // 投到 bob 的个人收件箱：bob 与 carol 的副本一起改，行数不变。
+    let update = |id: &str, content: &str, updated: Option<&str>| {
+        json!({
+            "type": "Update",
+            "id": id,
+            "actor": amy_url,
+            "object": note(content, updated),
+        })
+    };
+    let second = update(
+        "https://r.example/activities/u2",
+        "<p>second</p>",
+        Some("2026-09-02T00:00:00Z"),
+    );
+    handle_content_activity(db, 2, amy_url, "Update", &second, Some(&amy))
+        .await
+        .unwrap();
+    assert_eq!(scalar_i64(db, rows).await, 2, "Update must not add rows");
+    assert_eq!(scalar_i64(db, edited).await, 2);
+    // 原 Create 活动里存的对象也是新版本：收藏回退读与对象详情读的是它。
+    let stored_create = "SELECT COUNT(*) FROM federation_activities \
+                         WHERE activity_type = 'Create' \
+                         AND object_json->>'content' = '<p>second</p>'";
+    assert_eq!(scalar_i64(db, stored_create).await, 1);
+    let detail =
+        crate::federation::interactions::resolve_local_object(db, "https://r.example/notes/1")
+            .await
+            .expect("object detail");
+    assert_eq!(detail["content"], json!("<p>second</p>"));
+
+    // 乱序重投的旧版本不回退（走共享收件箱路径）。
+    let stale = update(
+        "https://r.example/activities/u1",
+        "<p>stale</p>",
+        Some("2026-09-01T00:00:00Z"),
+    );
+    handle_shared_update(db, amy_url, &stale, Some(&amy))
+        .await
+        .unwrap();
+    assert_eq!(scalar_i64(db, edited).await, 2, "older version is ignored");
+    assert_eq!(
+        scalar_i64(db, stored_create).await,
+        1,
+        "stored Create keeps the newer version"
+    );
+
+    // 本地没有的对象：忽略，不插行。
+    let mut unknown = update("https://r.example/activities/u3", "<p>new</p>", None);
+    unknown["object"]["id"] = json!("https://r.example/notes/unknown");
+    handle_shared_update(db, amy_url, &unknown, Some(&amy))
+        .await
+        .unwrap();
+    assert_eq!(scalar_i64(db, rows).await, 2);
+
+    // 同域的另一个 Actor 不能改 amy 的帖子。
+    let eve_url = "https://r.example/users/eve";
+    let eve = remote(22, eve_url);
+    let mut forged = update("https://r.example/activities/u4", "<p>forged</p>", None);
+    forged["actor"] = json!(eve_url);
+    let status = handle_shared_update(db, eve_url, &forged, Some(&eve))
+        .await
+        .unwrap_err()
+        .0;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    forged["object"]
+        .as_object_mut()
+        .unwrap()
+        .remove("attributedTo");
+    handle_shared_update(db, eve_url, &forged, Some(&eve))
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar_i64(db, edited).await,
+        2,
+        "rows are scoped to the author"
+    );
+    assert_eq!(
+        scalar_i64(db, stored_create).await,
+        1,
+        "stored Create is scoped to the author"
+    );
+
+    fixture.close().await;
+}

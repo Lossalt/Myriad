@@ -316,6 +316,24 @@ pub fn install_overloaded_status() -> u16 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_nonempty_list_without_declared_names_approves_nothing() {
+        // Export relies on this to carry "no approvals" through the
+        // empty-means-all install contract.
+        let declared = vec!["storage:read".to_string(), "ai:image".to_string()];
+        assert!(
+            super::select_install_approved_permissions(
+                &declared,
+                &["myriad:no-approved-permissions".to_string()]
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            super::select_install_approved_permissions(&declared, &[]),
+            declared
+        );
+    }
+
     use super::*;
     use serde_json::json;
     use std::path::PathBuf;

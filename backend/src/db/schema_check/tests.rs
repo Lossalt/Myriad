@@ -166,6 +166,7 @@ fn uniqueness_heals_are_invoked_and_partial() {
     let orchestrator = include_str!("orchestrator.rs");
     for heal in [
         "ensure_phantasi_note_source_unique",
+        "ensure_phantasi_source_url_key_unique",
         "ensure_rsshub_global_url_unique",
         "ensure_phantasi_application_pending_unique",
         "ensure_tapp_shortcut_chord_unique",
@@ -327,21 +328,12 @@ fn test_agent_addressee_schema_includes_music_mood_cooldown() {
 fn test_default_platform_seeds_include_x_and_core() {
     let seeds = default_platform_seeds();
     let names: Vec<&str> = seeds.iter().map(|s| s.name).collect();
-    for required in [
-        "github",
-        "bilibili",
-        "steam",
-        "youtube",
-        "netease_music",
-        "bangumi",
-        "x",
-        "discord",
-        "mal",
-        "xbox",
-        "psn",
-    ] {
+    for required in crate::services::platform_id::PlatformId::ALL {
         assert!(
-            names.contains(&required),
+            names
+                .iter()
+                .any(|name| crate::services::platform_id::PlatformId::parse(name)
+                    == Some(required)),
             "missing default platform seed: {}",
             required
         );
@@ -1782,4 +1774,297 @@ async fn federation_fk_heal_runs_against_real_catalog() {
             .await
             .expect("federation FK heal must succeed");
     }
+}
+
+/// 历史非帖子行被清掉、旧 Update 行并回原帖；其余行不动，重复执行无副作用。
+#[tokio::test]
+async fn timeline_heal_keeps_only_posts() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    db.execute_unprepared(
+        r#"
+        INSERT INTO users (id, username) VALUES (2, 'bob'), (3, 'carol');
+        INSERT INTO federation_remote_actors (id, actor_url, domain, inbox_url) VALUES
+            (21, 'https://r.example/users/amy', 'r.example', 'https://r.example/users/amy/inbox'),
+            (22, 'https://r.example/users/eve', 'r.example', 'https://r.example/users/eve/inbox');
+        INSERT INTO federation_timeline
+            (user_id, activity_id, remote_actor_id, activity_type, object_type,
+             content_preview, content_json, received_at) VALUES
+            (2, 'https://r/c1', 21, 'Create', 'Note', 'v1',
+             '{"id": "https://r/n/1", "content": "v1"}', '2026-01-01T00:00:00Z'),
+            (2, 'https://r/u1', 21, 'Update', 'Note', 'v2',
+             '{"id": "https://r/n/1", "content": "v2"}', '2026-01-02T00:00:00Z'),
+            (2, 'https://r/u2', 21, 'Update', 'Note', 'v3',
+             '{"id": "https://r/n/1", "content": "v3"}', '2026-01-03T00:00:00Z'),
+            (3, 'https://r/c1', 21, 'Create', 'Note', 'v1',
+             '{"id": "https://r/n/1", "content": "v1"}', '2026-01-01T00:00:00Z'),
+            (2, 'https://r/u3', 22, 'Update', 'Note', 'forged',
+             '{"id": "https://r/n/1", "content": "forged"}', '2026-01-04T00:00:00Z'),
+            (2, 'https://r/u4', 21, 'Update', 'Note', 'orphan',
+             '{"id": "https://r/n/2", "content": "orphan"}', '2026-01-04T00:00:00Z'),
+            (2, 'https://r/p1', 21, 'Update', 'Person', NULL,
+             '{"id": "https://r.example/users/amy", "type": "Person"}', NOW()),
+            (2, 'https://r/d1', 21, 'Delete', NULL, NULL, '"https://r/n/9"', NOW()),
+            (2, 'https://r/x1', 21, 'Undo', 'Announce', NULL, '{"type": "Announce"}', NOW()),
+            (2, 'https://r/l1', 21, 'Like', NULL, NULL, '"https://r/n/1"', NOW()),
+            (2, 'https://r/a1', 21, 'Announce', 'Note', 'boost',
+             '{"id": "https://r/n/5"}', NOW());
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let rows = || async {
+        let mut rows: Vec<(i32, String, String)> = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT user_id, activity_id, COALESCE(content_preview, '') AS preview \
+                 FROM federation_timeline ORDER BY user_id, activity_id",
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row.try_get("", "user_id").unwrap(),
+                    row.try_get("", "activity_id").unwrap(),
+                    row.try_get("", "preview").unwrap(),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let expected = vec![
+        (2, "https://r/a1".to_string(), "boost".to_string()),
+        // 最新一条 Update 并进 Create 行。
+        (2, "https://r/c1".to_string(), "v3".to_string()),
+        // 另一个 Actor 投来的同 id 行不算这篇的编辑，保留原样。
+        (2, "https://r/u3".to_string(), "forged".to_string()),
+        // 没有 Create 行的 Update 是唯一副本，保留。
+        (2, "https://r/u4".to_string(), "orphan".to_string()),
+        // carol 没有 Update 行，不受影响。
+        (3, "https://r/c1".to_string(), "v1".to_string()),
+    ];
+    for _ in 0..2 {
+        super::ensure_heals::ensure_timeline_posts_only(db)
+            .await
+            .expect("timeline heal must succeed");
+        assert_eq!(rows().await, expected);
+    }
+    let merged: String = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT content_json->>'content' AS c FROM federation_timeline \
+             WHERE user_id = 2 AND activity_id = 'https://r/c1'",
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "c")
+        .unwrap();
+    assert_eq!(merged, "v3");
+
+    fixture.close().await;
+}
+
+/// 修复前的半撤回转发：已撤回的删掉剩下一半，没撤回的补回缺的一半，残留时间线行
+/// 清掉；健康转发与纯 Announce 不动，不写任何活动与投递，重复执行无副作用。
+#[tokio::test]
+async fn repost_heal_reconciles_half_withdrawn_reposts() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    // 与 announce_object 同形的转发 Create：活动 id https://h/act/{k}，
+    // Note id https://h/notes/repost_{k}，引用 {quoted}。
+    let create = |key: &str, quoted: &str| {
+        format!(
+            r#"('https://h/act/{key}', 1, 'Create', 'repost',
+               '{{"type": "Create", "id": "https://h/act/{key}", "object": {{
+                   "type": "Note", "id": "https://h/notes/repost_{key}",
+                   "mfp:kind": "repost", "mfp:contentId": "repost_{key}",
+                   "mfp:quotedObjectId": "{quoted}", "quoteUrl": "{quoted}"}}}}',
+               true, '2026-01-01T00:00:00Z')"#
+        )
+    };
+    let activities = [
+        create("ok", "https://r/n/ok"),
+        create("a1", "https://r/n/a1"),
+        create("a2", "https://r/n/a2"),
+        create("a3", "https://r/n/shared"),
+        create("ok2", "https://r/n/shared"),
+        create("b1", "https://r/n/b1"),
+        create("b2", "https://r/n/b2"),
+        create("t1", "https://r/n/t1"),
+        // 旧的取消转发：Delete 转发 Note。
+        r#"('https://h/act/del-a1', 1, 'Delete', NULL,
+            '{"type": "Delete", "object": "https://h/notes/repost_a1"}', true, NOW())"#
+            .to_string(),
+        // 旧的撤回发布：Delete 原 Create 活动 id。
+        r#"('https://h/act/del-b1', 1, 'Delete', 'repost',
+            '{"type": "Delete", "object": "https://h/act/b1"}', true, NOW())"#
+            .to_string(),
+        r#"('https://h/act/ann', 1, 'Announce', NULL,
+            '{"type": "Announce", "object": "https://r/n/ann"}', true, NOW())"#
+            .to_string(),
+    ];
+    db.execute_unprepared(&format!(
+        r#"
+        INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob');
+        INSERT INTO federation_activities
+            (activity_id, user_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES {};
+        INSERT INTO federation_object_interactions (user_id, object_id, kind, activity_id) VALUES
+            (1, 'https://r/n/ok', 'announce', 'https://h/act/ok'),
+            (1, 'https://r/n/shared', 'announce', 'https://h/act/ok2'),
+            (1, 'https://r/n/b1', 'announce', 'https://h/act/b1'),
+            (1, 'https://r/n/b2', 'announce', 'https://h/act/b2'),
+            (1, 'https://r/n/ann', 'announce', 'https://h/act/ann');
+        INSERT INTO federation_published_content
+            (user_id, content_type, content_id, activity_id, visibility, published_at) VALUES
+            (1, 'repost', 'repost_ok', 'https://h/act/ok', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_ok2', 'https://h/act/ok2', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a1', 'https://h/act/a1', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a2', 'https://h/act/a2', 'public', '2026-01-01T00:00:00Z'),
+            (1, 'repost', 'repost_a3', 'https://h/act/a3', 'public', '2026-01-01T00:00:00Z');
+        INSERT INTO federation_timeline (user_id, activity_id, activity_type, object_type) VALUES
+            (1, 'https://h/act/ok', 'Create', 'repost'),
+            (2, 'https://h/act/ok', 'Create', 'repost'),
+            (1, 'https://h/act/t1', 'Create', 'repost'),
+            (2, 'https://h/act/t1', 'Create', 'repost');
+        "#,
+        activities.join(",\n")
+    ))
+    .await
+    .unwrap();
+
+    let pairs = |sql: &'static str| async move {
+        let mut rows: Vec<(String, String)> = db
+            .query_all_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| (row.try_get_by_index(0).unwrap(), row.try_get_by_index(1).unwrap()))
+            .collect();
+        rows.sort();
+        rows
+    };
+    let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+    let count = |sql: &'static str| async move {
+        db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    };
+    for _ in 0..2 {
+        super::ensure_heals::ensure_repost_state_consistent(db)
+            .await
+            .expect("repost heal must succeed");
+        assert_eq!(
+            pairs("SELECT activity_id, object_id FROM federation_object_interactions").await,
+            vec![
+                // a2 没撤回过：补回标记。
+                s("https://h/act/a2", "https://r/n/a2"),
+                s("https://h/act/ann", "https://r/n/ann"),
+                // b1 已有 Delete：标记删掉；b2 没撤回：标记保留并补回已发布行。
+                s("https://h/act/b2", "https://r/n/b2"),
+                s("https://h/act/ok", "https://r/n/ok"),
+                // a3 与 ok2 引用同一对象，唯一约束下不补 a3 的标记。
+                s("https://h/act/ok2", "https://r/n/shared"),
+            ]
+        );
+        assert_eq!(
+            pairs("SELECT activity_id, content_id FROM federation_published_content").await,
+            vec![
+                // a1 已有 Delete：已发布行删掉。
+                s("https://h/act/a2", "repost_a2"),
+                s("https://h/act/a3", "repost_a3"),
+                s("https://h/act/b2", "repost_b2"),
+                s("https://h/act/ok", "repost_ok"),
+                s("https://h/act/ok2", "repost_ok2"),
+            ]
+        );
+        assert_eq!(
+            pairs("SELECT user_id::text, activity_id FROM federation_timeline").await,
+            vec![s("1", "https://h/act/ok"), s("2", "https://h/act/ok")]
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM federation_activities").await, 11);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM federation_delivery_queue").await,
+            0
+        );
+    }
+
+    fixture.close().await;
+}
+
+/// 修复前写入的自治授权去掉管理员专属权限，保持顺序；修复后写入的行、
+/// 本来就只含候选权限的行都不动；重复运行不再改任何行。
+#[tokio::test]
+async fn legacy_autonomy_grants_lose_admin_only_permissions_once() {
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let mut options = sea_orm::ConnectOptions::new(url);
+    options.max_connections(1).sqlx_logging(false);
+    let db = sea_orm::Database::connect(options).await.unwrap();
+    db.execute_unprepared(&format!(
+        r#"CREATE TEMP TABLE agent_autonomy_grants (
+            user_id INTEGER PRIMARY KEY, allowed_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            revoked BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+        INSERT INTO agent_autonomy_grants VALUES
+            (1, '["http:fetch","system:admin","scheduler:write","phantasi:admin"]', false,
+             '{cutoff}'::timestamptz - INTERVAL '1 day', '{cutoff}'::timestamptz - INTERVAL '1 day'),
+            (2, '["http:fetch"]', false,
+             '{cutoff}'::timestamptz - INTERVAL '1 day', '{cutoff}'::timestamptz - INTERVAL '1 day'),
+            (3, '["system:admin"]', false,
+             '{cutoff}'::timestamptz + INTERVAL '1 hour', '{cutoff}'::timestamptz + INTERVAL '1 hour');"#,
+        cutoff = super::ensure_heals::AUTONOMY_EMPTY_GRANT_FIX_AT
+    ))
+    .await
+    .unwrap();
+
+    let read = |user_id: i32| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one_raw(Statement::from_string(
+                    DatabaseBackend::Postgres,
+                    format!(
+                        "SELECT allowed_permissions::text AS p, updated_at::text AS u \
+                         FROM agent_autonomy_grants WHERE user_id = {user_id}"
+                    ),
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            (
+                row.try_get::<String>("", "p").unwrap(),
+                row.try_get::<String>("", "u").unwrap(),
+            )
+        }
+    };
+    let untouched_before = read(2).await;
+
+    super::ensure_heals::narrow_legacy_autonomy_grants(&db)
+        .await
+        .unwrap();
+    let narrowed = read(1).await;
+    assert_eq!(narrowed.0, r#"["http:fetch", "scheduler:write"]"#);
+    assert_eq!(read(2).await, untouched_before);
+    assert_eq!(read(3).await.0, r#"["system:admin"]"#);
+
+    super::ensure_heals::narrow_legacy_autonomy_grants(&db)
+        .await
+        .unwrap();
+    assert_eq!(read(1).await, narrowed, "a second run changes nothing");
 }

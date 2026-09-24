@@ -1,13 +1,14 @@
 //! Feishu p2p pairing entry: classify inbound text, then shared pairing I/O.
 
 use myriad_agent_rules::channel::{
-    FeishuCardCallback, InboundDecision, InboundFeishuText, PAIRING_REQUIRED_REPLY,
-    PairingBindResult, PairingLookup, ingest_channel_text, pairing_bind_reply_for, session_key,
+    FeishuCardCallback, InboundC2cText, InboundFeishuText, PAIRING_REQUIRED_REPLY,
+    PairingBindResult, PairingLookup, session_key,
 };
 use sea_orm::{DatabaseConnection, DbErr};
-use tracing::{info, warn};
+use tracing::warn;
 
-use crate::services::channel_pairing::{self, FEISHU};
+use crate::services::channel_pairing::{self, FEISHU, PrivateText};
+use crate::services::channel_platform::ChannelPlatform;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
@@ -38,63 +39,67 @@ pub async fn consume_code_keys(
     channel_pairing::consume_code_keys(db, FEISHU, keys, raw_code).await
 }
 
-/// Worker entry: classify p2p text, pair, or start Work.
+/// Worker entry for one p2p text.
 pub async fn handle_inbound(event: InboundFeishuText) {
-    let Ok(db) = crate::services::tapp_registry::database() else {
-        warn!("Feishu pairing skipped: database is not connected");
-        return;
-    };
     let inbound = event.inbound();
-    let pairing = match lookup_any(&db, &event.identity_keys).await {
-        Ok(value) => value,
-        Err(error) => {
-            warn!(error = %error, "Feishu pairing lookup failed");
-            return;
+    channel_pairing::handle_private_text(FeishuText { event, inbound }).await;
+}
+
+struct FeishuText {
+    event: InboundFeishuText,
+    inbound: InboundC2cText,
+}
+
+impl PrivateText for FeishuText {
+    const PLATFORM: ChannelPlatform = ChannelPlatform::Feishu;
+
+    fn inbound(&self) -> &InboundC2cText {
+        &self.inbound
+    }
+
+    fn session_chat_id(&self) -> String {
+        self.event.chat_id_key()
+    }
+
+    /// A Feishu sender has several ids (open / union / user); any may be bound.
+    async fn lookup(&self, db: &DatabaseConnection) -> Result<PairingLookup, DbErr> {
+        lookup_any(db, &self.event.identity_keys).await
+    }
+
+    async fn consume(
+        &self,
+        db: &DatabaseConnection,
+        code: &str,
+    ) -> Result<PairingBindResult, DbErr> {
+        consume_code_keys(db, &self.event.identity_keys, code).await
+    }
+
+    async fn reply(&self, _db: &DatabaseConnection, text: &str) {
+        send_text(&self.event.chat_id_key(), text).await;
+    }
+
+    async fn start_work(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i32,
+        input: &str,
+        session_key: &str,
+    ) {
+        if let Err(error) =
+            channel_pairing::ensure_aliases(db, FEISHU, user_id, &self.event.identity_keys).await
+        {
+            warn!(error = %error, "Feishu pairing alias write failed");
         }
-    };
-    let chat_id = event.chat_id_key();
-    match ingest_channel_text(&inbound, pairing, false, "feishu", &chat_id) {
-        InboundDecision::Duplicate { .. } => {}
-        InboundDecision::PairingRequired { reply, .. } => {
-            send_text(&chat_id, &reply).await;
-        }
-        InboundDecision::ConsumePairingCode { code, .. } => {
-            let result = match consume_code_keys(&db, &event.identity_keys, &code).await {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(error = %error, "Feishu pairing consume failed");
-                    PairingBindResult::InvalidOrExpired
-                }
-            };
-            if let PairingBindResult::Bound { user_id } = result {
-                info!(user_id, "Feishu p2p paired");
-            }
-            send_text(&chat_id, pairing_bind_reply_for(result, "feishu")).await;
-        }
-        InboundDecision::StartWork {
+        crate::services::feishu_work::start_paired_work_with_images(
+            db,
             user_id,
+            &self.event.open_id,
+            &self.event.chat_id_key(),
             input,
+            &self.event.images,
             session_key,
-            msg_id,
-            ..
-        } => {
-            if let Err(error) =
-                channel_pairing::ensure_aliases(&db, FEISHU, user_id, &event.identity_keys).await
-            {
-                warn!(error = %error, "Feishu pairing alias write failed");
-            }
-            crate::services::feishu_work::start_paired_work_with_images(
-                &db,
-                user_id,
-                &event.open_id,
-                &chat_id,
-                &input,
-                &event.images,
-                &session_key,
-                &msg_id,
-            )
-            .await;
-        }
+        )
+        .await;
     }
 }
 
@@ -141,7 +146,7 @@ async fn send_text(chat_id: &str, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myriad_agent_rules::channel::InboundC2cText;
+    use myriad_agent_rules::channel::{InboundDecision, ingest_channel_text};
 
     #[test]
     fn unpaired_plain_text_is_not_a_work_request() {

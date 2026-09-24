@@ -105,20 +105,9 @@ fn platform_label(platform: &str, locale: &str) -> String {
     if platform.eq_ignore_ascii_case("netease") {
         return pick_msg(locale, "网易云音乐", "网易雲音楽", "NetEase Cloud Music").to_string();
     }
-    match platform {
-        "github" => "GitHub",
-        "bilibili" => "Bilibili",
-        "steam" => "Steam",
-        "bangumi" => "Bangumi",
-        "x" => "X",
-        "discord" => "Discord",
-        "mal" => "MyAnimeList",
-        "xbox" => "Xbox",
-        "psn" => "PSN",
-        "youtube" => "YouTube",
-        other => other,
-    }
-    .to_string()
+    crate::services::platform_id::PlatformId::from_slug(platform)
+        .map_or(platform, |id| id.display_name())
+        .to_string()
 }
 
 fn pick_msg<'a>(locale: &str, zh: &'a str, ja: &'a str, en: &'a str) -> &'a str {

@@ -216,11 +216,7 @@ export function useNoteEditorSession({
   const visualEditing = useRef(false)
   /** 服务端 revision 只走 ref：变了不该触发任何 effect。 */
   const revisionRef = useRef(1)
-  const titleRef = useRef('')
   const contentMdRef = useRef('')
-  const topicRef = useRef<string | null>(null)
-  const coverRef = useRef<string | null>(null)
-  const publishedAtRef = useRef<number | null>(null)
   const paneRef = useRef<Pane>('visual')
   const coverPreview = useMemo(
     () => cover || firstMarkdownImage(contentMd),
@@ -241,11 +237,7 @@ export function useNoteEditorSession({
   const canConfigureWidget = noteWidgetCanConfigure(selectedWidgetEntry)
   const bodyChars = useMemo(() => countNoteChars(contentMd), [contentMd])
   htmlRef.current = html
-  titleRef.current = title
   contentMdRef.current = contentMd
-  topicRef.current = topic
-  coverRef.current = cover
-  publishedAtRef.current = publishedAt
   paneRef.current = pane
   const {
     syncVisualFromMarkdown,
@@ -276,11 +268,7 @@ export function useNoteEditorSession({
   const applyMergedFields = useCallback((fields: NoteCloudFields) => {
     // 远端合进来的是原文；可视层若还标着自己在改，会跳过灌 DOM。
     visualEditing.current = false
-    titleRef.current = fields.title
     contentMdRef.current = expandJammedDefinitions(fields.contentMd)
-    topicRef.current = fields.topic
-    coverRef.current = fields.cover
-    publishedAtRef.current = fields.publishedAt
     setTitle(fields.title)
     setContentMd(contentMdRef.current)
     setTopic(fields.topic)

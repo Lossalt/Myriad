@@ -52,16 +52,7 @@ pub(crate) async fn unstar_item(
     update_item_state(&db, &viewer, item_id, None, Some(false)).await
 }
 
-pub(crate) fn visible_state_sources(is_admin: bool) -> sea_orm::Select<phantasi_sources::Entity> {
-    let query = phantasi_sources::Entity::find()
-        .select_only()
-        .column(phantasi_sources::Column::Id);
-    if is_admin {
-        query
-    } else {
-        query.filter(phantasi_sources::Column::AdminOnly.eq(false))
-    }
-}
+pub(crate) use crate::services::phantasi_reading::visible_state_sources;
 
 pub(crate) async fn update_item_state(
     db: &DatabaseConnection,
@@ -70,131 +61,21 @@ pub(crate) async fn update_item_state(
     is_read: Option<bool>,
     is_starred: Option<bool>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    use crate::services::phantasi_reading::{MarkStateError, mark_item_state};
     let (user_id, is_admin) = get_phantasi_user_and_admin_status(viewer, db).await?;
     if is_starred.is_some() && !is_admin {
         return Err(phantasi_http_err(StatusCode::FORBIDDEN, "Forbidden"));
     }
-    let visible_sources = visible_state_sources(is_admin).into_query();
-
-    let now = Utc::now();
-
-    let transaction = db
-        .begin()
-        .await
-        .map_err(|error| phantasi_store_http("begin reading state write", error))?;
-    // Lock the article even before a state row exists, then lock existing state.
-    // This serializes first writes and keeps the count delta tied to the state read.
-    let item_result = phantasi_items::Entity::find_by_id(item_id)
-        .filter(phantasi_items::Column::SourceId.in_subquery(visible_sources))
-        .select_only()
-        .column(phantasi_items::Column::Title)
-        .lock_exclusive()
-        .into_tuple::<String>()
-        .one(&transaction)
-        .await;
-    let existing = phantasi_user_states::Entity::find()
-        .filter(phantasi_user_states::Column::UserId.eq(user_id))
-        .filter(phantasi_user_states::Column::ItemId.eq(item_id))
-        .lock_exclusive()
-        .one(&transaction)
-        .await;
-
-    let title = match item_result {
-        Ok(Some(title)) => title,
-        Ok(None) => {
-            return Err(phantasi_http_err(StatusCode::NOT_FOUND, "Item not found"));
+    match mark_item_state(db, user_id, is_admin, item_id, is_read, is_starred).await {
+        Ok(marked) => Ok(Json(json!({
+            "success": true,
+            "previous_revision": marked.previous_revision,
+            "revision": marked.revision,
+        }))),
+        Err(MarkStateError::NotVisible) => {
+            Err(phantasi_http_err(StatusCode::NOT_FOUND, "Item not found"))
         }
-        Err(e) => {
-            return Err(phantasi_store_http("find article", e));
-        }
-    };
-
-    let was_starred = match &existing {
-        Ok(Some(state)) => state.is_starred,
-        _ => false,
-    };
-
-    match existing {
-        Ok(Some(state)) => {
-            let previous_revision = state.revision;
-            let mut active: phantasi_user_states::ActiveModel = state.into();
-
-            if let Some(read) = is_read {
-                active.is_read = Set(read);
-                if read {
-                    active.read_at = Set(Some(now.into()));
-                }
-            }
-            if let Some(starred) = is_starred {
-                active.is_starred = Set(starred);
-                if starred {
-                    active.starred_at = Set(Some(now.into()));
-                }
-            }
-            active.updated_at = Set(now.into());
-
-            match active.update(&transaction).await {
-                Ok(saved) => {
-                    transaction
-                        .commit()
-                        .await
-                        .map_err(|error| phantasi_store_http("commit reading state", error))?;
-                    if is_starred == Some(true) && !was_starred {
-                        crate::services::agent::merope::spawn_ingest(
-                            user_id,
-                            "phantasi.starred",
-                            format!("Starred \"{}\"", title),
-                        );
-                    }
-                    Ok(Json(
-                        json!({ "success": true, "previous_revision": previous_revision, "revision": saved.revision }),
-                    ))
-                }
-                Err(e) => Err(phantasi_store_http("update reading state", e)),
-            }
-        }
-        Ok(None) => {
-            // 创建新记录
-            let new_state = phantasi_user_states::ActiveModel {
-                user_id: Set(user_id),
-                item_id: Set(item_id),
-                is_read: Set(is_read.unwrap_or(false)),
-                is_starred: Set(is_starred.unwrap_or(false)),
-                read_at: Set(if is_read == Some(true) {
-                    Some(now.into())
-                } else {
-                    None
-                }),
-                starred_at: Set(if is_starred == Some(true) {
-                    Some(now.into())
-                } else {
-                    None
-                }),
-                updated_at: Set(now.into()),
-                ..Default::default()
-            };
-
-            match new_state.insert(&transaction).await {
-                Ok(saved) => {
-                    transaction
-                        .commit()
-                        .await
-                        .map_err(|error| phantasi_store_http("commit reading state", error))?;
-                    if is_starred == Some(true) {
-                        crate::services::agent::merope::spawn_ingest(
-                            user_id,
-                            "phantasi.starred",
-                            format!("Starred \"{}\"", title),
-                        );
-                    }
-                    Ok(Json(
-                        json!({ "success": true, "previous_revision": 0, "revision": saved.revision }),
-                    ))
-                }
-                Err(e) => Err(phantasi_store_http("create reading state", e)),
-            }
-        }
-        Err(e) => Err(phantasi_store_http("find reading state", e)),
+        Err(MarkStateError::Database(step, error)) => Err(phantasi_store_http(step, error)),
     }
 }
 

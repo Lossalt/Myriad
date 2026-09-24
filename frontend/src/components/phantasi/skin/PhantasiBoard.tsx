@@ -42,7 +42,6 @@ interface PhantasiBoardViewProps {
   docs?: PhantasiNoteDoc[]
   vacant?: ReactNode
   stories?: FeedStory[]
-  onExpandStories?: (direction: 1 | -1) => void
   onJumpSource?: (sourceId: number) => void
   onHoldStories?: () => void
   onReleaseStories?: () => void
@@ -78,7 +77,6 @@ export default function PhantasiBoardView({
   docs = [],
   vacant,
   stories,
-  onExpandStories,
   onJumpSource,
   onHoldStories,
   onReleaseStories,
@@ -133,7 +131,6 @@ export default function PhantasiBoardView({
         toolbar={toolbar}
         vacant={vacant}
         stories={stories}
-        onExpandStories={onExpandStories}
         onJumpSource={onJumpSource}
         onHoldStories={onHoldStories}
         onReleaseStories={onReleaseStories}

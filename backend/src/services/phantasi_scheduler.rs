@@ -9,13 +9,16 @@
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseBackend, DatabaseConnection,
-    EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
-    TransactionTrait, Value as SeaValue, sea_query::OnConflict,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend,
+    DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect,
+    Statement, TransactionTrait, Value as SeaValue, sea_query::OnConflict,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
+use tokio::sync::broadcast;
+
+use crate::services::jobs::{Every, JobHandle, JobRunner};
 
 use crate::models::entities::{phantasi_items, phantasi_sources};
 use crate::services::notion_service::{NotionConfig, NotionService};
@@ -65,6 +68,151 @@ pub(crate) async fn insert_feed_items(
     Ok(inserted)
 }
 
+/// 把一次抓取结果里的新条目入库：按 guid 跳过已有条目、封面走图片缓存、
+/// 统一的字数/阅读时长算法、`ON CONFLICT DO NOTHING` 批量插入、AI 主题建议、
+/// `item_count` 原子自增。调度抓取与 Agent 订阅首批条目共用，返回真正插入的行。
+pub(crate) async fn store_feed_items(
+    db: &DatabaseConnection,
+    source: &phantasi_sources::Model,
+    feed: &ParsedFeed,
+) -> Result<Vec<phantasi_items::Model>, String> {
+    let now = Utc::now();
+
+    // 批量获取所有已存在的 guid，避免 N+1 查询
+    let all_guids: Vec<&str> = feed.items.iter().map(|item| item.guid.as_str()).collect();
+    let existing_guids: std::collections::HashSet<String> = phantasi_items::Entity::find()
+        .filter(phantasi_items::Column::SourceId.eq(source.id))
+        .filter(phantasi_items::Column::Guid.is_in(all_guids))
+        .select_only()
+        .column(phantasi_items::Column::Guid)
+        .into_tuple::<String>()
+        .all(db)
+        .await
+        .map_err(|error| phantasi_store_failed("check existing items", error))?
+        .into_iter()
+        .collect();
+
+    let mut new_items: Vec<phantasi_items::ActiveModel> = Vec::new();
+
+    let image_cache = crate::services::image_cache::ImageCacheService::new();
+    let newcomers: Vec<_> = feed
+        .items
+        .iter()
+        .filter(|item| !existing_guids.contains(&item.guid))
+        .cloned()
+        .collect();
+    let mut processed_images: Vec<_> = stream::iter(newcomers.iter().cloned().enumerate())
+        .map(|(index, item)| {
+            let image_cache = image_cache.clone();
+            async move {
+                let processed = image_cache.process_image_url(item.image.as_deref()).await;
+                (index, processed)
+            }
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+    processed_images.sort_by_key(|(index, _)| *index);
+
+    for (item, (_, processed_image)) in newcomers.into_iter().zip(processed_images) {
+        let content_for_stats = item
+            .content
+            .as_deref()
+            .or(item.summary.as_deref())
+            .unwrap_or("");
+        let (word_count, reading_time) = calculate_reading_stats(content_for_stats);
+
+        let new_item = phantasi_items::ActiveModel {
+            source_id: Set(source.id),
+            guid: Set(item.guid.clone()),
+            title: Set(item.title.clone()),
+            link: Set(item.link.clone()),
+            summary: Set(item.summary.clone()),
+            content: Set(item.content.clone()),
+            author: Set(item.author.clone()),
+            image: Set(processed_image),
+            audio_url: Set(item.audio_url.clone()),
+            video_url: Set(item.video_url.clone()),
+            enclosures: Set(if item.enclosures.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&item.enclosures).ok()
+            }),
+            categories: Set(if item.categories.is_empty() {
+                None
+            } else {
+                serde_json::to_value(&item.categories).ok()
+            }),
+            published_at: Set(item.published_at.unwrap_or(now).into()),
+            fetched_at: Set(now.into()),
+            word_count: Set(Some(word_count)),
+            reading_time: Set(Some(reading_time)),
+            fulltext_fetched: Set(item.content.is_some()),
+            // 主题由入库后的 AI 建议或站长手填；这里保持 NULL。
+            topic: Set(None),
+            ..Default::default()
+        };
+
+        new_items.push(new_item);
+    }
+
+    if new_items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Concurrent-safe batch insert (unique: source_id + guid).
+    //
+    // Strategy: ON CONFLICT DO NOTHING + RETURNING so:
+    // - only rows PostgreSQL actually inserted are counted (no over-count on race);
+    // - all-conflict / empty RETURNING is intentional success with 0 inserts, not a
+    //   hard failure (another worker may have inserted the same guids first);
+    // - real DB errors still fail the fetch.
+    // Counts and notification titles come only from returned models.
+    let candidate_len = new_items.len();
+    let inserted = match insert_feed_items(db, new_items).await {
+        Ok(models) => models,
+        // SeaORM may surface zero RETURNING rows as RecordNotInserted; for our
+        // DO NOTHING path that means concurrent/idempotent skips — count 0.
+        Err(sea_orm::DbErr::RecordNotInserted) => {
+            tracing::debug!(
+                source_id = source.id,
+                candidates = candidate_len,
+                "[PhantasiScheduler] insert skipped all candidates (concurrent ON CONFLICT DO NOTHING)"
+            );
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::error!(%e, source_id = source.id, "failed to batch insert phantasi items");
+            return Err("Failed to batch insert items".to_string());
+        }
+    };
+    if inserted.is_empty() {
+        return Ok(inserted);
+    }
+
+    let topic_db = db.clone();
+    let topic_ids: Vec<i32> = inserted.iter().map(|m| m.id).collect();
+    tokio::spawn(async move {
+        crate::services::phantasi_topics::recommend_topics_for_item_ids(&topic_db, &topic_ids)
+            .await;
+    });
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE phantasi_sources SET item_count = item_count + $2, updated_at = $3::timestamptz \
+         WHERE id = $1",
+        [
+            SeaValue::Int(Some(source.id)),
+            SeaValue::Int(Some(i32::try_from(inserted.len()).unwrap_or(i32::MAX))),
+            SeaValue::String(Some(now.to_rfc3339())),
+        ],
+    ))
+    .await
+    .map_err(|error| phantasi_store_failed("update source counts", error))?;
+
+    Ok(inserted)
+}
+
 // 调度器常量
 
 /// 每轮 tick 最多处理的订阅源数量
@@ -108,17 +256,34 @@ pub(crate) fn retry_interval_sql() -> String {
     )
 }
 
-pub(crate) fn due_sources_select_sql() -> String {
+/// 抓取租约时长。覆盖一次抓取的最坏耗时（上游 30s 超时、RSSHub 逐实例故障转移、
+/// 新条目封面缓存），并给崩溃进程留下的租约一个自动到期的上限。
+const FETCH_LEASE_MINUTES: i32 = 15;
+
+/// 租约空闲（从未占用或已过期）的判定。租约用数据库时钟，多实例之间不受应用主机时钟偏差影响。
+const LEASE_FREE_SQL: &str = "(fetch_lease_until IS NULL OR fetch_lease_until <= NOW())";
+
+/// 原子地领走一批到期订阅源：到期判定在 WHERE（LIMIT 之前），`SKIP LOCKED` 让并发
+/// tick 分到互不相交的行，同一语句写入租约，抓取期间别的抓取者看不到这些行。
+pub(crate) fn claim_due_sources_sql() -> String {
     format!(
-        "SELECT * FROM phantasi_sources \
-         WHERE enabled = TRUE \
-           AND source_type NOT IN ('link', 'note') \
-           AND ( \
-             last_fetched_at IS NULL \
-             OR last_fetched_at <= $1::timestamptz - make_interval(mins => ({interval})) \
-           ) \
-         ORDER BY last_fetched_at ASC NULLS FIRST \
-         LIMIT $2",
+        "WITH due AS MATERIALIZED ( \
+           SELECT id FROM phantasi_sources \
+           WHERE enabled = TRUE \
+             AND source_type NOT IN ('link', 'note') \
+             AND {LEASE_FREE_SQL} \
+             AND ( \
+               last_fetched_at IS NULL \
+               OR last_fetched_at <= $1::timestamptz - make_interval(mins => ({interval})) \
+             ) \
+           ORDER BY last_fetched_at ASC NULLS FIRST, id \
+           LIMIT $2 \
+           FOR UPDATE SKIP LOCKED \
+         ) \
+         UPDATE phantasi_sources s \
+         SET fetch_lease_until = NOW() + make_interval(mins => $3) \
+         FROM due WHERE s.id = due.id \
+         RETURNING s.*",
         interval = retry_interval_sql()
     )
 }
@@ -138,31 +303,135 @@ pub(crate) fn source_is_due(
     }
 }
 
-pub(crate) async fn load_due_sources(
+pub(crate) async fn claim_due_sources(
     db: &DatabaseConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<Vec<phantasi_sources::Model>, String> {
     phantasi_sources::Model::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        due_sources_select_sql(),
+        claim_due_sources_sql(),
         [
             SeaValue::String(Some(now.to_rfc3339())),
             SeaValue::Int(Some(
                 i32::try_from(MAX_SOURCES_PER_TICK).unwrap_or(i32::MAX),
             )),
+            SeaValue::Int(Some(FETCH_LEASE_MINUTES)),
         ],
     ))
     .all(db)
     .await
     .map_err(|error| {
-        tracing::error!(%error, "failed to query phantasi sources");
+        tracing::error!(%error, "failed to claim phantasi sources");
         "Failed to query sources".to_string()
     })
+}
+
+/// 手动刷新用的单源租约。别的抓取者正持有时返回 `Busy`，调用方不再重复联网。
+pub(crate) enum RefreshClaim {
+    Claimed(Box<phantasi_sources::Model>),
+    Busy,
+    NotFound,
+}
+
+pub(crate) async fn claim_source_for_refresh(
+    db: &DatabaseConnection,
+    source_id: i32,
+) -> Result<RefreshClaim, String> {
+    let claimed = phantasi_sources::Model::find_by_statement(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        format!(
+            "UPDATE phantasi_sources \
+             SET fetch_lease_until = NOW() + make_interval(mins => $2) \
+             WHERE id = $1 AND {LEASE_FREE_SQL} \
+             RETURNING *"
+        ),
+        [
+            SeaValue::Int(Some(source_id)),
+            SeaValue::Int(Some(FETCH_LEASE_MINUTES)),
+        ],
+    ))
+    .one(db)
+    .await
+    .map_err(|error| phantasi_store_failed("claim source", error))?;
+    if let Some(source) = claimed {
+        return Ok(RefreshClaim::Claimed(Box::new(source)));
+    }
+    let exists = phantasi_sources::Entity::find_by_id(source_id)
+        .select_only()
+        .column(phantasi_sources::Column::Id)
+        .into_tuple::<i32>()
+        .one(db)
+        .await
+        .map_err(|error| phantasi_store_failed("find source", error))?
+        .is_some();
+    Ok(if exists {
+        RefreshClaim::Busy
+    } else {
+        RefreshClaim::NotFound
+    })
+}
+
+/// 抓取在写回前就失败（存储错误）时尽力归还租约，免得这个源干等到租约过期。
+async fn release_fetch_lease(db: &DatabaseConnection, source_id: i32) {
+    if let Err(error) = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "UPDATE phantasi_sources SET fetch_lease_until = NULL WHERE id = $1",
+            [SeaValue::Int(Some(source_id))],
+        ))
+        .await
+    {
+        tracing::warn!(%error, source_id, "failed to release phantasi fetch lease");
+    }
+}
+
+/// 记一次抓取失败并归还租约。连续失败数在 SQL 里自增，返回的是自增后的值，
+/// 第 `MAX_ERROR_COUNT` 次通知据此只发一次。
+async fn record_fetch_failure(
+    db: &DatabaseConnection,
+    source_id: i32,
+    now: chrono::DateTime<Utc>,
+    error: &str,
+) -> Result<i32, String> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "UPDATE phantasi_sources \
+             SET error_count = error_count + 1, last_error = $2, \
+                 last_fetched_at = $3::timestamptz, fetch_lease_until = NULL \
+             WHERE id = $1 \
+             RETURNING error_count",
+            [
+                SeaValue::Int(Some(source_id)),
+                SeaValue::String(Some(error.to_string())),
+                SeaValue::String(Some(now.to_rfc3339())),
+            ],
+        ))
+        .await
+        .map_err(|error| phantasi_store_failed("update source", error))?
+        .ok_or_else(|| phantasi_store_failed("update source", "source disappeared"))?;
+    row.try_get::<i32>("", "error_count")
+        .map_err(|error| phantasi_store_failed("update source", error))
+}
+
+/// 手动刷新时源正被另一个抓取者（调度 tick 或另一次手动刷新）持有。
+pub const SOURCE_REFRESH_IN_PROGRESS: &str = "Source is already being refreshed";
+
+/// `refresh_all_enabled` 的汇总。`busy` 是正被别的抓取者持有、本次跳过的源。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RefreshAllSummary {
+    pub attempted: usize,
+    pub refreshed: usize,
+    pub failed: usize,
+    pub busy: usize,
+    pub new_items: i32,
 }
 
 /// 调度器检查间隔（秒）
 const SCHEDULER_INTERVAL_SECS: u64 = 60;
 const NOTE_SCHEDULE_INTERVAL_SECS: u64 = 15;
+/// 抓取 tick 的随机延后上限，错开共享同一张租约表的副本。
+const FEED_TICK_JITTER_SECS: u64 = 5;
 
 /// 通知广播通道容量
 const NOTIFICATION_CHANNEL_SIZE: usize = 100;
@@ -193,8 +462,17 @@ pub struct PhantasiSchedulerEngine {
     rsshub_service: RsshubService,
     /// 前端通知通道
     notification_tx: broadcast::Sender<NewItemsNotification>,
-    /// 是否正在运行
-    running: Arc<RwLock<bool>>,
+    /// 抓取与定时发布两个循环在进程 job runner 里的句柄；空表示未运行。
+    jobs: std::sync::Mutex<Vec<JobHandle>>,
+}
+
+/// Result of one fetch attempt, after the source row was updated.
+enum FetchOutcome {
+    Fetched {
+        new_count: i32,
+        source: Box<phantasi_sources::Model>,
+    },
+    Failed(String),
 }
 
 impl PhantasiSchedulerEngine {
@@ -207,7 +485,7 @@ impl PhantasiSchedulerEngine {
             parser: FeedParser::new(),
             notion_service: NotionService::new(),
             notification_tx,
-            running: Arc::new(RwLock::new(false)),
+            jobs: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -216,61 +494,69 @@ impl PhantasiSchedulerEngine {
         self.notification_tx.subscribe()
     }
 
-    /// 启动调度引擎
-    pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
+    /// 启动调度引擎：订阅源抓取与手帐定时发布各是进程 job runner 上的一个循环，
+    /// 慢的抓取不再拖住定时发布。重复调用不会叠出第二组循环。
+    pub fn start(&self) {
+        self.start_on(crate::services::jobs::jobs());
+    }
+
+    fn start_on(&self, runner: &JobRunner) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        if jobs.iter().any(|job| !job.is_cancelled()) {
             tracing::warn!("[PhantasiScheduler] Already running");
             return;
         }
-        *running = true;
-        drop(running);
+        jobs.clear();
 
         tracing::info!("[PhantasiScheduler] 🍵 Starting Phantasi scheduler engine");
 
-        let db = self.db.clone();
-        let running = self.running.clone();
-        let notification_tx = self.notification_tx.clone();
-
-        tokio::spawn(async move {
-            let mut feeds =
-                tokio::time::interval(tokio::time::Duration::from_secs(SCHEDULER_INTERVAL_SECS));
-            let mut notes = tokio::time::interval(tokio::time::Duration::from_secs(
-                NOTE_SCHEDULE_INTERVAL_SECS,
-            ));
-            feeds.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            notes.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                tokio::select! {
-                    _ = notes.tick() => {
-                        if !*running.read().await {
-                            tracing::info!("[PhantasiScheduler] Scheduler stopped");
-                            break;
-                        }
-                        if let Err(e) = crate::services::note_publish::publish_due_note_docs(&db).await {
-                            tracing::error!("[PhantasiScheduler] Note schedule error: {}", e);
-                        }
+        let note_db = self.db.clone();
+        jobs.push(runner.periodic(
+            "phantasi note publish",
+            Every::new(Duration::from_secs(NOTE_SCHEDULE_INTERVAL_SECS)),
+            move || {
+                let db = note_db.clone();
+                async move {
+                    if let Err(e) = crate::services::note_publish::publish_due_note_docs(&db).await
+                    {
+                        tracing::error!("[PhantasiScheduler] Note schedule error: {}", e);
                     }
-                    _ = feeds.tick() => {
-                        if !*running.read().await {
-                            tracing::info!("[PhantasiScheduler] Scheduler stopped");
-                            break;
-                        }
+                }
+            },
+        ));
+        let feed_db = self.db.clone();
+        let notification_tx = self.notification_tx.clone();
+        jobs.push(
+            runner.periodic(
+                "phantasi feeds",
+                Every::new(Duration::from_secs(SCHEDULER_INTERVAL_SECS))
+                    .jitter(Duration::from_secs(FEED_TICK_JITTER_SECS)),
+                move || {
+                    let db = feed_db.clone();
+                    let notification_tx = notification_tx.clone();
+                    async move {
                         if let Err(e) = Self::tick(&db, &notification_tx).await {
                             tracing::error!("[PhantasiScheduler] Tick error: {}", e);
                         }
                     }
-                }
-            }
-        });
+                },
+            ),
+        );
     }
 
-    /// 停止调度引擎
-    pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+    /// 停止调度引擎：不再发起新 tick；在途的一轮抓取照常写完并释放租约。
+    pub fn stop(&self) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        for job in jobs.drain(..) {
+            job.cancel();
+        }
         tracing::info!("[PhantasiScheduler] 🍵 Stopping Phantasi scheduler engine");
+    }
+
+    /// 两个循环是否在跑（`stop` 之后为 false）。
+    pub fn is_running(&self) -> bool {
+        let jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        jobs.iter().any(|job| !job.is_cancelled())
     }
 
     /// 主调度循环 tick
@@ -281,8 +567,9 @@ impl PhantasiSchedulerEngine {
         let now = Utc::now();
         tracing::debug!("[PhantasiScheduler] Tick at {}", now);
 
-        // Due predicate is in SQL so LIMIT cannot starve later-due sources.
-        let due_sources = load_due_sources(db, now).await?;
+        // Due predicate is in SQL so LIMIT cannot starve later-due sources; the same
+        // statement leases the rows so a concurrent tick or manual refresh skips them.
+        let due_sources = claim_due_sources(db, now).await?;
 
         if due_sources.is_empty() {
             tracing::debug!("[PhantasiScheduler] No sources due for update");
@@ -368,22 +655,66 @@ impl PhantasiSchedulerEngine {
             source.feed_type
         );
 
+        let parser = FeedParser::new();
+        let notion_service = NotionService::new();
+        let rsshub_service = RsshubService::new(db.clone());
+        match Self::fetch_and_apply(
+            db,
+            notification_tx,
+            (&parser, &notion_service, &rsshub_service),
+            source,
+            now,
+        )
+        .await?
+        {
+            FetchOutcome::Fetched { new_count, .. } => Ok(new_count),
+            FetchOutcome::Failed(_) => Ok(0),
+        }
+    }
+
+    /// Fetch one source and apply the result to its row: metadata backfill on
+    /// success, failure bookkeeping and the one-time error notification on
+    /// failure. Scheduled ticks and manual refresh share it so they cannot
+    /// drift. `Err` is a storage failure; a fetch failure is an outcome.
+    ///
+    /// The caller must hold the source's fetch lease (`claim_due_sources` /
+    /// `claim_source_for_refresh`); both outcomes release it with their write,
+    /// and a storage failure releases it best-effort.
+    async fn fetch_and_apply(
+        db: &DatabaseConnection,
+        notification_tx: &broadcast::Sender<NewItemsNotification>,
+        services: (&FeedParser, &NotionService, &RsshubService),
+        source: phantasi_sources::Model,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<FetchOutcome, String> {
+        let source_id = source.id;
+        let outcome =
+            Self::fetch_and_apply_leased(db, notification_tx, services, source, now).await;
+        if outcome.is_err() {
+            release_fetch_lease(db, source_id).await;
+        }
+        outcome
+    }
+
+    async fn fetch_and_apply_leased(
+        db: &DatabaseConnection,
+        notification_tx: &broadcast::Sender<NewItemsNotification>,
+        (parser, notion_service, rsshub_service): (&FeedParser, &NotionService, &RsshubService),
+        source: phantasi_sources::Model,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<FetchOutcome, String> {
         let mut active: phantasi_sources::ActiveModel = source.clone().into();
         // 提前更新 last_fetched_at，即使失败也记录，避免频繁重试失败源
         active.last_fetched_at = Set(Some(now.into()));
 
-        let parser = FeedParser::new();
-        let notion_service = NotionService::new();
-        let rsshub_service = RsshubService::new(db.clone());
-
         let fetch_result: Result<(ParsedFeed, Option<String>), String> = match source.feed_type {
             phantasi_sources::FeedType::Notion => {
-                Self::fetch_notion_source(&notion_service, &source)
+                Self::fetch_notion_source(notion_service, &source)
                     .await
                     .map(|feed| (feed, None))
             }
             phantasi_sources::FeedType::RssHub => {
-                Self::fetch_rsshub_source(&rsshub_service, &source)
+                Self::fetch_rsshub_source(rsshub_service, &source)
                     .await
                     .map(|feed| (feed, None))
             }
@@ -402,6 +733,7 @@ impl PhantasiSchedulerEngine {
                 active.last_success_at = Set(Some(now.into()));
                 active.last_error = Set(None);
                 active.error_count = Set(0);
+                active.fetch_lease_until = Set(None);
 
                 if let Some(new_url) = permanent_url {
                     if new_url != source.url {
@@ -446,7 +778,10 @@ impl PhantasiSchedulerEngine {
                         updated_source.name
                     );
                 }
-                Ok(new_count)
+                Ok(FetchOutcome::Fetched {
+                    new_count,
+                    source: Box::new(updated_source),
+                })
             }
             Err(e) => {
                 tracing::warn!(
@@ -455,9 +790,7 @@ impl PhantasiSchedulerEngine {
                     e
                 );
 
-                active.last_error = Set(Some(e.clone()));
-                let failures = source.error_count + 1;
-                active.error_count = Set(failures);
+                let failures = record_fetch_failure(db, source.id, now, &e).await?;
 
                 if failures == MAX_ERROR_COUNT {
                     tracing::warn!(
@@ -487,11 +820,7 @@ impl PhantasiSchedulerEngine {
                     );
                 }
 
-                active
-                    .update(db)
-                    .await
-                    .map_err(|error| phantasi_store_failed("update source", error))?;
-                Ok(0)
+                Ok(FetchOutcome::Failed(e))
             }
         }
     }
@@ -529,154 +858,24 @@ impl PhantasiSchedulerEngine {
         }
     }
 
-    /// 存储新文章
-    /// 性能优化：批量检查文章是否存在，避免 N+1 查询
+    /// 存储新文章并通知前端。
     async fn save_items(
         db: &DatabaseConnection,
         source: &phantasi_sources::Model,
         feed: &ParsedFeed,
         notification_tx: &broadcast::Sender<NewItemsNotification>,
     ) -> Result<i32, String> {
-        let now = Utc::now();
-
-        // 批量获取所有已存在的 guid，避免 N+1 查询
-        let all_guids: Vec<&str> = feed.items.iter().map(|item| item.guid.as_str()).collect();
-        let existing_guids: std::collections::HashSet<String> = phantasi_items::Entity::find()
-            .filter(phantasi_items::Column::SourceId.eq(source.id))
-            .filter(phantasi_items::Column::Guid.is_in(all_guids))
-            .select_only()
-            .column(phantasi_items::Column::Guid)
-            .into_tuple::<String>()
-            .all(db)
-            .await
-            .map_err(|error| phantasi_store_failed("check existing items", error))?
-            .into_iter()
-            .collect();
-
-        let mut new_items: Vec<phantasi_items::ActiveModel> = Vec::new();
-
-        let image_cache = crate::services::image_cache::ImageCacheService::new();
-        let newcomers: Vec<_> = feed
-            .items
-            .iter()
-            .filter(|item| !existing_guids.contains(&item.guid))
-            .cloned()
-            .collect();
-        let mut processed_images: Vec<_> = stream::iter(newcomers.iter().cloned().enumerate())
-            .map(|(index, item)| {
-                let image_cache = image_cache.clone();
-                async move {
-                    let processed = image_cache.process_image_url(item.image.as_deref()).await;
-                    (index, processed)
-                }
-            })
-            .buffer_unordered(4)
-            .collect()
-            .await;
-        processed_images.sort_by_key(|(index, _)| *index);
-
-        for (item, (_, processed_image)) in newcomers.into_iter().zip(processed_images) {
-            let content_for_stats = item
-                .content
-                .as_deref()
-                .or(item.summary.as_deref())
-                .unwrap_or("");
-            let (word_count, reading_time) = calculate_reading_stats(content_for_stats);
-
-            let new_item = phantasi_items::ActiveModel {
-                source_id: Set(source.id),
-                guid: Set(item.guid.clone()),
-                title: Set(item.title.clone()),
-                link: Set(item.link.clone()),
-                summary: Set(item.summary.clone()),
-                content: Set(item.content.clone()),
-                author: Set(item.author.clone()),
-                image: Set(processed_image),
-                audio_url: Set(item.audio_url.clone()),
-                video_url: Set(item.video_url.clone()),
-                enclosures: Set(if item.enclosures.is_empty() {
-                    None
-                } else {
-                    serde_json::to_value(&item.enclosures).ok()
-                }),
-                categories: Set(if item.categories.is_empty() {
-                    None
-                } else {
-                    serde_json::to_value(&item.categories).ok()
-                }),
-                published_at: Set(item.published_at.unwrap_or(now).into()),
-                fetched_at: Set(now.into()),
-                word_count: Set(Some(word_count)),
-                reading_time: Set(Some(reading_time)),
-                fulltext_fetched: Set(item.content.is_some()),
-                // 主题由入库后的 AI 建议或站长手填；这里保持 NULL。
-                topic: Set(None),
-                ..Default::default()
-            };
-
-            new_items.push(new_item);
-        }
-
-        // Concurrent-safe batch insert (unique: source_id + guid).
-        //
-        // Strategy: ON CONFLICT DO NOTHING + RETURNING so:
-        // - only rows PostgreSQL actually inserted are counted (no over-count on race);
-        // - all-conflict / empty RETURNING is intentional success with 0 inserts, not a
-        //   hard failure (another worker may have inserted the same guids first);
-        // - real DB errors still fail the fetch.
-        // new_count and notification titles come only from returned models.
-        let (new_count, new_titles) = if new_items.is_empty() {
-            (0_i32, Vec::new())
-        } else {
-            let candidate_len = new_items.len();
-            let inserted = match insert_feed_items(db, new_items).await {
-                Ok(models) => models,
-                // SeaORM may surface zero RETURNING rows as RecordNotInserted; for our
-                // DO NOTHING path that means concurrent/idempotent skips — count 0.
-                Err(sea_orm::DbErr::RecordNotInserted) => {
-                    tracing::debug!(
-                        source_id = source.id,
-                        candidates = candidate_len,
-                        "[PhantasiScheduler] insert skipped all candidates (concurrent ON CONFLICT DO NOTHING)"
-                    );
-                    Vec::new()
-                }
-                Err(e) => {
-                    tracing::error!(%e, source_id = source.id, "failed to batch insert phantasi items");
-                    return Err("Failed to batch insert items".to_string());
-                }
-            };
-            if !inserted.is_empty() {
-                let topic_db = db.clone();
-                let topic_ids: Vec<i32> = inserted.iter().map(|m| m.id).collect();
-                tokio::spawn(async move {
-                    crate::services::phantasi_topics::recommend_topics_for_item_ids(
-                        &topic_db, &topic_ids,
-                    )
-                    .await;
-                });
-            }
-            let titles: Vec<String> = inserted.iter().map(|m| m.title.clone()).take(5).collect();
-            (inserted.len() as i32, titles)
-        };
-
+        let inserted = store_feed_items(db, source, feed).await?;
+        let new_count = i32::try_from(inserted.len()).unwrap_or(i32::MAX);
         if new_count > 0 {
-            let mut source_active: phantasi_sources::ActiveModel = source.clone().into();
-            source_active.item_count = Set(source.item_count + new_count);
-            source_active.updated_at = Set(now.into());
-            source_active
-                .update(db)
-                .await
-                .map_err(|error| phantasi_store_failed("update source counts", error))?;
-
             let notification = NewItemsNotification {
                 msg_type: "phantasi:new_items".to_string(),
                 user_id: source.user_id,
                 source_id: source.id,
                 source_name: source.name.clone(),
                 new_count,
-                titles: new_titles,
-                timestamp: now.timestamp_millis(),
+                titles: inserted.iter().map(|m| m.title.clone()).take(5).collect(),
+                timestamp: Utc::now().timestamp_millis(),
             };
 
             if let Some(manager) = crate::services::agent::notifications::get_notification_manager()
@@ -752,7 +951,11 @@ impl PhantasiSchedulerEngine {
             .await
     }
 
-    /// 手动刷新单个订阅源
+    /// 手动刷新单个订阅源。
+    ///
+    /// 与调度 tick 占同一把抓取租约：源正被别的抓取者持有时直接返回
+    /// [`SOURCE_REFRESH_IN_PROGRESS`]，不排队等待——在途那次抓取写回的就是本次想要的
+    /// 结果，等它结束再抓一遍只会对上游多发一次请求，还会把管理员请求挂上数分钟。
     pub async fn refresh_source(&self, source_id: i32) -> Result<i32, String> {
         let source = phantasi_sources::Entity::find_by_id(source_id)
             .one(&self.db)
@@ -760,78 +963,29 @@ impl PhantasiSchedulerEngine {
             .map_err(|error| phantasi_store_failed("find source", error))?
             .ok_or_else(|| "Source not found".to_string())?;
 
-        // 手动刷新也保持为无操作，且不写入 last_fetched_at/last_error。
+        // 手动刷新也保持为无操作，且不写入 last_fetched_at/last_error/租约。
         if !source.source_type.is_fetchable() {
             return Ok(0);
         }
-
-        let now = Utc::now();
-
-        let mut active: phantasi_sources::ActiveModel = source.clone().into();
-        active.last_fetched_at = Set(Some(now.into()));
-
-        let fetch_result: Result<(ParsedFeed, Option<String>), String> = match source.feed_type {
-            phantasi_sources::FeedType::Notion => {
-                Self::fetch_notion_source(&self.notion_service, &source)
-                    .await
-                    .map(|feed| (feed, None))
-            }
-            phantasi_sources::FeedType::RssHub => {
-                Self::fetch_rsshub_source(&self.rsshub_service, &source)
-                    .await
-                    .map(|feed| (feed, None))
-            }
-            _ => self
-                .parser
-                .fetch_feed(&source.url)
-                .await
-                .map(|fetched| (fetched.feed, fetched.permanent_url))
-                .map_err(|error| {
-                    tracing::warn!(%error, "phantasi fetch failed");
-                    error.user_message()
-                }),
+        let source = match claim_source_for_refresh(&self.db, source_id).await? {
+            RefreshClaim::Claimed(source) => *source,
+            RefreshClaim::Busy => return Err(SOURCE_REFRESH_IN_PROGRESS.to_string()),
+            RefreshClaim::NotFound => return Err("Source not found".to_string()),
         };
 
-        match fetch_result {
-            Ok((feed, permanent_url)) => {
-                active.last_success_at = Set(Some(now.into()));
-                active.last_error = Set(None);
-                active.error_count = Set(0);
-
-                if let Some(new_url) = permanent_url {
-                    if new_url != source.url {
-                        tracing::info!(
-                            old = %source.url,
-                            new = %new_url,
-                            source = %source.name,
-                            "[PhantasiScheduler] Feed permanently moved; updating URL"
-                        );
-                        active.url = Set(new_url);
-                    }
-                }
-
-                if source.description.is_none() {
-                    active.description = Set(feed.description.clone());
-                }
-                if source.site_url.is_none() {
-                    active.site_url = Set(feed.site_url.clone());
-                }
-                if source.icon.is_none() {
-                    if let Some(icon_url) = &feed.icon {
-                        Self::try_download_icon(&mut active, source.id, &source.name, icon_url)
-                            .await;
-                    }
-                }
-
-                let updated_source = active
-                    .update(&self.db)
-                    .await
-                    .map_err(|error| phantasi_store_failed("update source", error))?;
-
-                let new_count =
-                    Self::save_items(&self.db, &updated_source, &feed, &self.notification_tx)
-                        .await?;
-
+        match Self::fetch_and_apply(
+            &self.db,
+            &self.notification_tx,
+            (&self.parser, &self.notion_service, &self.rsshub_service),
+            source,
+            Utc::now(),
+        )
+        .await?
+        {
+            FetchOutcome::Fetched {
+                new_count,
+                source: updated_source,
+            } => {
                 // Best-effort: push categorized phantasi into phantasi-recommend rings
                 if new_count > 0
                     && updated_source
@@ -846,24 +1000,15 @@ impl PhantasiSchedulerEngine {
                     )
                     .await;
                 }
-
                 Ok(new_count)
             }
-            Err(e) => {
-                active.last_error = Set(Some(e.clone()));
-                active.error_count = Set(source.error_count + 1);
-                active
-                    .update(&self.db)
-                    .await
-                    .map_err(|error| phantasi_store_failed("update source", error))?;
-
-                Err(e)
-            }
+            FetchOutcome::Failed(error) => Err(error),
         }
     }
 
     /// Refresh enabled fetchable sources now. Caps at `MAX_SOURCES_PER_TICK`, stale first.
-    pub async fn refresh_all_enabled(&self) -> Result<(usize, usize, usize, i32), String> {
+    /// Sources another fetcher is holding are counted as `busy`, not failed.
+    pub async fn refresh_all_enabled(&self) -> Result<RefreshAllSummary, String> {
         let sources = phantasi_sources::Entity::find()
             .filter(phantasi_sources::Column::Enabled.eq(true))
             .filter(
@@ -879,27 +1024,28 @@ impl PhantasiSchedulerEngine {
                 "Failed to query sources".to_string()
             })?;
 
-        let attempted = sources.len();
-        let mut refreshed = 0usize;
-        let mut failed = 0usize;
-        let mut new_items = 0i32;
+        let mut summary = RefreshAllSummary {
+            attempted: sources.len(),
+            ..RefreshAllSummary::default()
+        };
         for source in sources {
             match self.refresh_source(source.id).await {
                 Ok(n) => {
-                    refreshed += 1;
-                    new_items += n;
+                    summary.refreshed += 1;
+                    summary.new_items += n;
                 }
+                Err(error) if error == SOURCE_REFRESH_IN_PROGRESS => summary.busy += 1,
                 Err(error) => {
                     tracing::warn!(
                         source_id = source.id,
                         %error,
                         "[PhantasiScheduler] refresh_all source failed"
                     );
-                    failed += 1;
+                    summary.failed += 1;
                 }
             }
         }
-        Ok((attempted, refreshed, failed, new_items))
+        Ok(summary)
     }
 }
 
@@ -907,13 +1053,21 @@ impl PhantasiSchedulerEngine {
 static PHANTASI_SCHEDULER: once_cell::sync::OnceCell<Arc<PhantasiSchedulerEngine>> =
     once_cell::sync::OnceCell::new();
 
-/// 初始化 Phantasi 调度引擎
-pub async fn init_phantasi_scheduler(db: DatabaseConnection) {
-    let engine = Arc::new(PhantasiSchedulerEngine::new(db));
-    engine.start().await;
-
-    if PHANTASI_SCHEDULER.set(engine).is_err() {
+/// 初始化 Phantasi 调度引擎。
+///
+/// 先登记实例再启动：重复调用拿不到槽位就什么也不启动。反过来（先启动再
+/// `set`）会让落选的那个引擎循环照跑，却没有任何句柄能停掉它。
+/// 循环随进程 job runner 停机（`services::jobs::shutdown`）。
+pub fn init_phantasi_scheduler(db: DatabaseConnection) {
+    if PHANTASI_SCHEDULER
+        .set(Arc::new(PhantasiSchedulerEngine::new(db)))
+        .is_err()
+    {
         tracing::warn!("[PhantasiScheduler] Scheduler already initialized");
+        return;
+    }
+    if let Some(engine) = PHANTASI_SCHEDULER.get() {
+        engine.start();
     }
 }
 
@@ -922,16 +1076,60 @@ pub fn get_phantasi_scheduler() -> Option<Arc<PhantasiSchedulerEngine>> {
     PHANTASI_SCHEDULER.get().cloned()
 }
 
-/// 停止 Phantasi 调度引擎
-pub async fn shutdown_phantasi_scheduler() {
-    if let Some(engine) = PHANTASI_SCHEDULER.get() {
-        engine.stop().await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scheduled_and_manual_fetches_share_one_apply_path() {
+        let src = include_str!("phantasi_scheduler.rs");
+        // Match the definitions (indented method lines), not string literals.
+        for entry in [
+            "\n    async fn process_source(",
+            "\n    pub async fn refresh_source(",
+        ] {
+            let body = src
+                .split(entry)
+                .nth(1)
+                .and_then(|rest| rest.split("\n    }\n").next())
+                .expect(entry);
+            assert!(body.contains("fetch_and_apply("), "{entry}");
+            assert!(
+                !body.contains("fetch_feed("),
+                "{entry} must not fetch on its own"
+            );
+        }
+    }
+
     use super::*;
+
+    #[tokio::test]
+    async fn repeated_start_does_not_stack_loops_and_stop_releases_them() {
+        let runner = JobRunner::new();
+        let engine = PhantasiSchedulerEngine::new(DatabaseConnection::default());
+        engine.start_on(&runner);
+        engine.start_on(&runner);
+        assert_eq!(engine.jobs.lock().unwrap().len(), 2);
+        assert!(engine.is_running());
+        engine.stop();
+        assert!(!engine.is_running());
+        // A stop/start cycle replaces the loops instead of adding to them.
+        engine.start_on(&runner);
+        assert_eq!(engine.jobs.lock().unwrap().len(), 2);
+        runner.shutdown(Duration::from_secs(5)).await;
+        assert!(!engine.is_running());
+    }
+
+    #[test]
+    fn init_publishes_the_engine_before_starting_it() {
+        let src = include_str!("phantasi_scheduler.rs");
+        let body = src
+            .split("pub fn init_phantasi_scheduler(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap();
+        let set = body.find("PHANTASI_SCHEDULER\n        .set(").unwrap();
+        let start = body.find("engine.start()").unwrap();
+        assert!(set < start, "a losing engine must never be started");
+    }
 
     #[test]
     fn healthy_and_briefly_failing_sources_keep_their_interval() {
@@ -977,12 +1175,17 @@ mod tests {
 
     #[test]
     fn due_predicate_is_applied_before_limit() {
-        let sql = due_sources_select_sql();
+        let sql = claim_due_sources_sql();
         let interval_at = sql.find("error_count").expect("due interval");
         let limit_at = sql.find("LIMIT").expect("limit");
         assert!(
             interval_at < limit_at,
             "due predicate must be in WHERE, not after LIMIT"
+        );
+        assert!(sql.contains("FOR UPDATE SKIP LOCKED"));
+        assert!(
+            sql.find(LEASE_FREE_SQL).expect("lease predicate") < limit_at,
+            "leased rows must be excluded before LIMIT"
         );
         assert!(sql.contains(&BACKOFF_START_ERRORS.to_string()));
         assert!(sql.contains(&BACKOFF_MAX_MINUTES.to_string()));
@@ -1000,7 +1203,7 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("async fn process_source").next())
             .expect("tick");
-        assert!(tick.contains("load_due_sources"));
+        assert!(tick.contains("claim_due_sources"));
         assert!(
             !tick.contains("into_iter()"),
             "tick must not filter due sources in memory after LIMIT"
@@ -1103,7 +1306,7 @@ mod tests {
         .insert(&db)
         .await
         .unwrap();
-        let loaded = load_due_sources(&db, now).await.unwrap();
+        let loaded = claim_due_sources(&db, now).await.unwrap();
         assert!(
             loaded.iter().any(|source| source.id == due.id),
             "a due source after 50 not-due rows must still be selected"
@@ -1117,5 +1320,154 @@ mod tests {
             )),
             "SQL due rows must match the rust due predicate"
         );
+    }
+
+    async fn insert_due_source(db: &DatabaseConnection, tag: &str) -> phantasi_sources::Model {
+        use crate::models::entities::phantasi_sources::{FeedType, SourceType};
+        db.execute_unprepared(
+            "INSERT INTO users (id, username) VALUES (1, 'phantasi-lease') ON CONFLICT DO NOTHING",
+        )
+        .await
+        .unwrap();
+        let now = Utc::now();
+        phantasi_sources::ActiveModel {
+            user_id: Set(1),
+            name: Set(tag.to_string()),
+            url: Set(format!("https://{tag}.example/feed")),
+            feed_type: Set(FeedType::Rss),
+            source_type: Set(SourceType::Rss),
+            update_interval: Set(30),
+            enabled: Set(true),
+            error_count: Set(0),
+            item_count: Set(0),
+            admin_only: Set(false),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn concurrent_claims_lease_disjoint_sources_and_block_manual_refresh() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = fixture.db.clone();
+        let mut ids = Vec::new();
+        for i in 0..8 {
+            ids.push(insert_due_source(&db, &format!("lease-{i}")).await.id);
+        }
+        let now = Utc::now();
+        let (left, right) = tokio::join!(claim_due_sources(&db, now), claim_due_sources(&db, now));
+        let (left, right) = (left.unwrap(), right.unwrap());
+        let mut claimed: Vec<i32> = left.iter().chain(&right).map(|s| s.id).collect();
+        claimed.sort_unstable();
+        let total = claimed.len();
+        claimed.dedup();
+        assert_eq!(
+            total,
+            claimed.len(),
+            "two ticks must not claim the same source"
+        );
+        assert_eq!(claimed, ids, "every due source is claimed exactly once");
+        assert!(
+            left.iter()
+                .chain(&right)
+                .all(|s| s.fetch_lease_until.is_some()),
+            "claimed rows come back with their lease"
+        );
+
+        // While leased: the next tick sees nothing and a manual refresh is refused.
+        assert!(claim_due_sources(&db, now).await.unwrap().is_empty());
+        assert!(matches!(
+            claim_source_for_refresh(&db, ids[0]).await.unwrap(),
+            RefreshClaim::Busy
+        ));
+        assert!(matches!(
+            claim_source_for_refresh(&db, i32::MAX).await.unwrap(),
+            RefreshClaim::NotFound
+        ));
+
+        // A released lease (normal finish) and an expired one (crashed fetcher) are both free.
+        release_fetch_lease(&db, ids[0]).await;
+        db.execute_unprepared(&format!(
+            "UPDATE phantasi_sources SET fetch_lease_until = NOW() - INTERVAL '1 minute' \
+             WHERE id = {}",
+            ids[1]
+        ))
+        .await
+        .unwrap();
+        let (a, b) = tokio::join!(
+            claim_source_for_refresh(&db, ids[0]),
+            claim_source_for_refresh(&db, ids[0])
+        );
+        let won = [a.unwrap(), b.unwrap()]
+            .iter()
+            .filter(|claim| matches!(claim, RefreshClaim::Claimed(_)))
+            .count();
+        assert_eq!(
+            won, 1,
+            "two manual refreshes of one source: exactly one fetches"
+        );
+        let retaken = claim_due_sources(&db, now).await.unwrap();
+        assert_eq!(
+            retaken.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![ids[1]],
+            "only the expired lease is due again"
+        );
+
+        drop(db);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_failures_are_counted_exactly_and_notify_once() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = fixture.db.clone();
+        let source = insert_due_source(&db, "failing").await;
+        db.execute_unprepared(&format!(
+            "UPDATE phantasi_sources SET error_count = {}, \
+             fetch_lease_until = NOW() + INTERVAL '5 minutes' WHERE id = {}",
+            MAX_ERROR_COUNT - 3,
+            source.id
+        ))
+        .await
+        .unwrap();
+        let now = Utc::now();
+        let results = futures::future::join_all(
+            (0..6).map(|_| record_fetch_failure(&db, source.id, now, "boom")),
+        )
+        .await;
+        let mut seen: Vec<i32> = results.into_iter().map(Result::unwrap).collect();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            ((MAX_ERROR_COUNT - 2)..=(MAX_ERROR_COUNT + 3)).collect::<Vec<_>>(),
+            "each failure observes its own increment"
+        );
+        assert_eq!(
+            seen.iter().filter(|&&n| n == MAX_ERROR_COUNT).count(),
+            1,
+            "the MAX_ERROR_COUNT notification fires exactly once"
+        );
+        let row = phantasi_sources::Entity::find_by_id(source.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.error_count, MAX_ERROR_COUNT + 3);
+        assert_eq!(row.last_error.as_deref(), Some("boom"));
+        assert!(
+            row.fetch_lease_until.is_none(),
+            "a recorded failure releases the lease"
+        );
+
+        drop(db);
+        fixture.close().await;
     }
 }

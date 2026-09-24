@@ -226,20 +226,10 @@ pub async fn create_admin(
     .map_err(|error| auth_store_app("lock admin setup", error))?;
 
     // Setup-only: reject if any admin already exists (any auth_provider).
-    let admin_exists_result = txn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT EXISTS (
-                SELECT 1 FROM users WHERE is_admin = true OR COALESCE(is_owner, false) = true
-            ) as exists",
-            vec![],
-        ))
+    // Asked inside the locked transaction; an unreadable claim is an error.
+    let admin_exists = crate::services::principal::installation_claimed(&txn)
         .await
         .map_err(|error| auth_store_app("check existing admin", error))?;
-
-    let admin_exists: bool = admin_exists_result
-        .and_then(|row| row.try_get("", "exists").ok())
-        .unwrap_or(false);
 
     if let Err(err) = create_admin_gate(admin_exists) {
         tracing::error!(
@@ -390,7 +380,8 @@ pub async fn local_login(
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "Invalid credentials",
-                    "message": "Username or password is incorrect"
+                    "message": "Username or password is incorrect",
+                    "code": "invalid_credentials"
                 })),
             )));
         }
@@ -420,12 +411,8 @@ pub async fn local_login(
 
     let is_admin: bool = user_row.try_get("", "is_admin").unwrap_or(false);
     let is_owner: bool = user_row.try_get("", "is_owner").unwrap_or(false);
-    let token_version: i64 = user_row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| user_row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
+    let token_version = crate::middleware::auth::row_session_epoch(&user_row)
+        .map_err(|error| auth_store_http("read user data", error))?;
 
     let local_login_disabled: bool = user_row
         .try_get("", "local_login_disabled")
@@ -437,7 +424,8 @@ pub async fn local_login(
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "Local login disabled",
-                "message": "This account has been linked to GitHub. Please use GitHub OAuth to login."
+                "message": "This account has been linked to GitHub. Please use GitHub OAuth to login.",
+                "code": "local_login_disabled"
             })),
         )));
     }
@@ -509,13 +497,12 @@ pub async fn change_password(
             )
         })?;
 
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user ID")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user ID")),
+        ))
+    })?;
 
     tracing::info!("Password change request for user ID: {}", user_id);
 
@@ -608,12 +595,8 @@ pub async fn change_password(
         .map_err(|error| auth_store_http("change password", error))?
         .ok_or_else(|| auth_store_http("change password", "no user row returned"))?;
 
-    let new_tv: i64 = updated
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| updated.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(claims.tv + 1);
+    let new_tv = crate::middleware::auth::row_session_epoch(&updated)
+        .map_err(|error| auth_store_http("change password", error))?;
 
     if let Err(error) = notify_auth_cache_invalidation(&db, user_id).await {
         tracing::warn!(
@@ -809,7 +792,8 @@ async fn verify_password(password: &str, hash: &str) -> Result<(), HttpError> {
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "Invalid credentials",
-                    "message": "Username or password is incorrect"
+                    "message": "Username or password is incorrect",
+                    "code": "invalid_credentials"
                 })),
             )))
         }
@@ -849,19 +833,21 @@ pub async fn register(
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "Registration disabled",
-                    "message": "Public registration is disabled. Ask an administrator to create an account."
+                    "message": "Public registration is disabled. Ask an administrator to create an account.",
+                    "code": "registration_disabled"
                 })),
             )));
         }
     }
-    match crate::services::site_owner::installation_has_owner(&db).await {
+    match crate::services::principal::installation_claimed(&db).await {
         Ok(true) => {}
         Ok(false) => {
             return Err(HttpError::from((
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "setup_required",
-                    "message": "Finish the setup wizard before creating an account."
+                    "message": "Finish the setup wizard before creating an account.",
+                    "code": "setup_required"
                 })),
             )));
         }
@@ -889,7 +875,8 @@ pub async fn register(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Username taken",
-                "message": "This username is already in use"
+                "message": "This username is already in use",
+                "code": "username_taken"
             })),
         )));
     }
@@ -964,13 +951,12 @@ pub async fn set_password(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user id")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user id")),
+        ))
+    })?;
 
     validate_password(&req.new_password)?;
 
@@ -1014,20 +1000,14 @@ pub async fn set_password(
         ))
         .await
         .map_err(|error| auth_store_http("set password", error))?;
-    let new_tv = updated
-        .as_ref()
-        .and_then(|row| {
-            row.try_get::<i32>("", "token_version")
-                .ok()
-                .map(i64::from)
-                .or_else(|| row.try_get::<i64>("", "token_version").ok())
-        })
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::NOT_FOUND,
-                Json(AppError::public_json("User not found")),
-            ))
-        })?;
+    let updated = updated.ok_or_else(|| {
+        HttpError::from((
+            StatusCode::NOT_FOUND,
+            Json(AppError::public_json("User not found")),
+        ))
+    })?;
+    let new_tv = crate::middleware::auth::row_session_epoch(&updated)
+        .map_err(|error| auth_store_http("set password", error))?;
     if let Err(error) = notify_auth_cache_invalidation(&db, user_id).await {
         tracing::warn!(
             user_id,
@@ -1084,13 +1064,12 @@ pub async fn toggle_local_login(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::BAD_REQUEST,
-                Json(AppError::public_json("Invalid user id")),
-            ))
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("Invalid user id")),
+        ))
+    })?;
 
     let txn = db
         .begin()
@@ -1176,15 +1155,12 @@ async fn issue_session_cookie(
             vec![SeaValue::Int(Some(user_id))],
         ))
         .await
-        .ok()
-        .flatten()
-        .and_then(|r| {
-            r.try_get::<i32>("", "token_version")
-                .ok()
-                .map(i64::from)
-                .or_else(|| r.try_get::<i64>("", "token_version").ok())
-        })
-        .unwrap_or(0);
+        .map_err(|error| auth_store_http("read session epoch", error))?
+        .ok_or_else(|| auth_store_http("read session epoch", "user row missing"))
+        .and_then(|row| {
+            crate::middleware::auth::row_session_epoch(&row)
+                .map_err(|error| auth_store_http("read session epoch", error))
+        })?;
 
     let claims = mint_session_claims(user_id, username, is_admin, is_owner, token_version);
     let token = encode_session_token(&claims).map_err(|_e| {
@@ -1242,13 +1218,12 @@ pub async fn admin_create_user(
         })?;
     ensure_current_admin_on(&claims, &db).await?;
 
-    let actor_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            HttpError::from((
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            ))
-        })?;
+    let actor_id = claims.durable_user_id().ok_or_else(|| {
+        HttpError::from((
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        ))
+    })?;
     // 仅站点 owner 可创建带 is_admin=true 的账号。
     let actor_is_owner = crate::api::admin_users::actor_is_owner(&db, actor_id).await?;
     if let Some(msg) =
@@ -1278,7 +1253,8 @@ pub async fn admin_create_user(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Username taken",
-                "message": "This username is already in use"
+                "message": "This username is already in use",
+                "code": "username_taken"
             })),
         )));
     }

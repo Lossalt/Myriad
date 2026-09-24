@@ -72,7 +72,7 @@ pub(super) async fn list_all_widgets(
 ) -> Result<Json<ApiResponse<Vec<serde_json::Value>>>, HttpError> {
     let user_id = optional_authenticated_user_id(claims.as_ref());
     let is_admin = match claims.as_ref() {
-        Some(claims) => current_is_admin(claims, &db).await,
+        Some(claims) => current_is_admin(claims, &db).await?,
         None => false,
     };
     let admin_id = find_admin_user_id(&db).await?;

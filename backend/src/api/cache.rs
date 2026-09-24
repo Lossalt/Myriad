@@ -13,6 +13,7 @@ use std::fs;
 
 use crate::services::data_paths::{platform_filtered_file, platforms_cache_dir};
 use crate::services::image_proxy_urls::proxy_image_url;
+use crate::services::platform_id::{PLATFORM_SLUGS, PlatformId};
 
 #[derive(Debug, Serialize)]
 pub struct CacheInfo {
@@ -32,16 +33,10 @@ pub struct ClearCacheRequest {
 ///
 /// GET /api/cache/status
 pub async fn get_cache_status(State(_db): State<DatabaseConnection>) -> (StatusCode, Json<Value>) {
-    let platforms = vec![
-        "netease", "bilibili", "github", "steam", "youtube", "bangumi", "x", "discord", "mal",
-        "xbox", "psn",
-    ];
-    let mut cache_info = Vec::new();
-
-    for platform in platforms {
-        let info = get_platform_cache_info(platform);
-        cache_info.push(info);
-    }
+    let cache_info: Vec<_> = PLATFORM_SLUGS
+        .iter()
+        .map(|platform| get_platform_cache_info(platform))
+        .collect();
 
     // 计算总大小
     let total_size: u64 = cache_info.iter().filter_map(|info| info.size_bytes).sum();
@@ -92,12 +87,8 @@ pub async fn get_platform_cache_preview(
 pub async fn get_all_platform_cache_previews(
     State(_db): State<DatabaseConnection>,
 ) -> (StatusCode, Json<Value>) {
-    let platforms = [
-        "netease", "bilibili", "github", "steam", "youtube", "bangumi", "x", "discord", "mal",
-        "xbox", "psn",
-    ];
     let mut previews = serde_json::Map::new();
-    for platform in platforms {
+    for &platform in PLATFORM_SLUGS {
         previews.insert(
             platform.to_string(),
             build_platform_preview(platform, PreviewOptions::list_card()),
@@ -229,17 +220,12 @@ fn build_platform_preview(slug: &str, opts: PreviewOptions) -> Value {
     })
 }
 
-/// 与 smart_filter / platforms 列表一致的缓存文件 slug。
+/// 与 smart_filter / platforms 列表一致的缓存文件 slug（别名见 [`PlatformId::parse`]）。
+/// 未知平台原样（小写、空格转 `_`）交给缓存层，由它决定是否存在。
 fn normalize_cache_platform_slug(platform: &str) -> String {
-    let key = platform.trim().to_ascii_lowercase().replace(' ', "_");
-    match key.as_str() {
-        "netease_music" | "netease-music" | "neteasecloud" => "netease".into(),
-        "myanimelist" | "my_anime_list" => "mal".into(),
-        "playstation" | "play_station" => "psn".into(),
-        "twitter" | "x_twitter" => "x".into(),
-        "bgm" => "bangumi".into(),
-        other => other.to_string(),
-    }
+    PlatformId::parse(platform)
+        .map(|id| id.slug().to_string())
+        .unwrap_or_else(|| platform.trim().to_ascii_lowercase().replace(' ', "_"))
 }
 
 fn extract_preview_user(data: &Value) -> Value {
@@ -567,26 +553,14 @@ pub async fn clear_platform_cache(
 }
 
 /// POST /api/cache/clear
-/// `platforms: None` (or omitted) clears the 11 hardcoded slugs; `[]` clears nothing.
+/// `platforms: None` (or omitted) clears every registry slug; `[]` clears nothing.
 pub async fn clear_caches(
     State(_db): State<DatabaseConnection>,
     Json(payload): Json<ClearCacheRequest>,
 ) -> (StatusCode, Json<Value>) {
     let platforms = match payload.platforms {
         Some(p) => p,
-        None => vec![
-            "netease".to_string(),
-            "bilibili".to_string(),
-            "github".to_string(),
-            "steam".to_string(),
-            "youtube".to_string(),
-            "bangumi".to_string(),
-            "x".to_string(),
-            "discord".to_string(),
-            "mal".to_string(),
-            "xbox".to_string(),
-            "psn".to_string(),
-        ],
+        None => PLATFORM_SLUGS.iter().map(|p| p.to_string()).collect(),
     };
 
     let mut cleared = Vec::new();

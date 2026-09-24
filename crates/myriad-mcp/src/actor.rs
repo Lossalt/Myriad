@@ -115,13 +115,9 @@ impl ServerHandle {
             .map_err(|_| "MCP server busy or stopped".to_string())?;
         tokio::time::timeout_at(deadline, result)
             .await
+            .map_err(|_| crate::outcome_unknown("MCP call timed out (including queue wait)"))?
             .map_err(|_| {
-                "Execution outcome is unknown: MCP call timed out (including queue wait)"
-                    .to_string()
-            })?
-            .map_err(|_| {
-                "Execution outcome is unknown: MCP server stopped before acknowledging the call"
-                    .to_string()
+                crate::outcome_unknown("MCP server stopped before acknowledging the call")
             })?
     }
 
@@ -239,8 +235,8 @@ async fn run(
                     retry_count = 0;
                 }
                 let result = result.map_err(|error| {
-                    if error.starts_with("Execution outcome is unknown:") { error }
-                    else { format!("Execution outcome is unknown: {error}") }
+                    if error.starts_with(crate::OUTCOME_UNKNOWN_PREFIX) { error }
+                    else { crate::outcome_unknown(error) }
                 });
                 let _ = call.response.send(result);
             },

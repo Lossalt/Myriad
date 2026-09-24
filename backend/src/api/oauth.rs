@@ -279,10 +279,10 @@ pub async fn provider_link(
             ))
         })?;
 
-    let user_id = match claims.sub.parse::<i32>() {
-        Ok(id) if id > 0 => id,
-        Ok(_) => return Err(err_400("Guest sessions cannot link OAuth providers")),
-        Err(_) => return Err(err_400("Invalid user id")),
+    let user_id = match claims.subject_id() {
+        Some(id) if id > 0 => id,
+        Some(_) => return Err(err_400("Guest sessions cannot link OAuth providers")),
+        None => return Err(err_400("Invalid user id")),
     };
     if is_pairing_provider(&slug) {
         return Err(err_400("Channel pairing is not an OAuth provider"));
@@ -295,7 +295,10 @@ pub async fn provider_link(
 
     let issued = issue_state(StoredState {
         provider_slug: slug.clone(),
-        purpose: OAuthPurpose::LinkAccount(user_id),
+        purpose: OAuthPurpose::LinkAccount {
+            user_id,
+            session_epoch: claims.tv,
+        },
     })
     .await
     .map_err(oauth_start_failed)?;
@@ -478,8 +481,20 @@ pub async fn provider_callback(
     // 若误入登录 callback 则友好重定向提示。
     // Always clear oauth_tx — map all Err paths to browser redirects so cookie is cleared.
     let response: Response = match stored.purpose {
-        OAuthPurpose::LinkAccount(link_user_id) => {
-            match handle_link(&db, &slug, link_user_id, &profile, &frontend_base).await {
+        OAuthPurpose::LinkAccount {
+            user_id: link_user_id,
+            session_epoch,
+        } => {
+            match handle_link(
+                &db,
+                &slug,
+                link_user_id,
+                session_epoch,
+                &profile,
+                &frontend_base,
+            )
+            .await
+            {
                 Ok(resp) => resp,
                 Err(err) => {
                     // handle_link usually returns Ok(redirect) for business errors;
@@ -554,9 +569,10 @@ async fn handle_callback_replay(
     frontend_base: &str,
 ) -> Result<Response, HttpError> {
     match &stored.purpose {
-        OAuthPurpose::LinkAccount(link_user_id) => {
-            handle_link_replay(db, slug, *link_user_id, frontend_base).await
-        }
+        OAuthPurpose::LinkAccount {
+            user_id: link_user_id,
+            ..
+        } => handle_link_replay(db, slug, *link_user_id, frontend_base).await,
         OAuthPurpose::Login => {
             tracing::info!(
                 provider = %slug,
@@ -653,23 +669,20 @@ async fn handle_link(
     db: &DatabaseConnection,
     slug: &str,
     link_user_id: i32,
+    session_epoch: i64,
     profile: &NormalizedProfile,
     frontend_url: &str,
 ) -> Result<Response, HttpError> {
-    // 验证发起绑定的用户仍然存在
-    let user = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT id FROM users WHERE id = $1",
-            vec![SeaValue::Int(Some(link_user_id))],
-        ))
+    // The session that started the link must still be live: a logout or a
+    // password change during the flow must not leave a new login method behind.
+    let live = crate::middleware::auth::live_session_roles(db, link_user_id, session_epoch)
         .await
         .map_err(|e| {
             tracing::error!("OAuth DB error: {e}");
             err_500("Database error")
         })?;
 
-    if user.is_none() {
+    if live.is_none() {
         let url = format!(
             "{}/?link=error&reason=user_not_found",
             frontend_url.trim_end_matches('/')
@@ -748,12 +761,10 @@ async fn handle_login(
     let is_admin: bool = row.try_get("", "is_admin").unwrap_or(false);
     let is_owner: bool = row.try_get("", "is_owner").unwrap_or(false);
     let username: String = row.try_get("", "username").unwrap_or_default();
-    let token_version: i64 = row
-        .try_get::<i32>("", "token_version")
-        .ok()
-        .map(i64::from)
-        .or_else(|| row.try_get::<i64>("", "token_version").ok())
-        .unwrap_or(0);
+    let token_version = crate::middleware::auth::row_session_epoch(&row).map_err(|e| {
+        tracing::error!("OAuth session epoch unreadable: {e}");
+        err_500("Database error")
+    })?;
 
     let claims = mint_session_claims(user_id, &username, is_admin, is_owner, token_version);
     let token = encode_session_token(&claims).map_err(|e| {
@@ -1184,7 +1195,8 @@ pub async fn provider_unlink(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     if is_pairing_provider(&slug) {
@@ -1254,7 +1266,8 @@ pub async fn provider_unlink(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "Cannot unlink last identity",
-                "message": "Keep a usable local login (password set and not disabled), or link another provider."
+                "message": "Keep a usable local login (password set and not disabled), or link another provider.",
+                "code": "last_sign_in_method"
             })),
         )));
     }
@@ -1307,7 +1320,8 @@ pub async fn list_my_identities(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     let rows = db
@@ -1373,7 +1387,8 @@ pub async fn set_primary_identity(
                 Json(AppError::public_json("Unauthorized")),
             ))
         })?;
-    let user_id = crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    let user_id = claims
+        .durable_user_id()
         .ok_or_else(|| err_400("Invalid user id"))?;
 
     let row = db

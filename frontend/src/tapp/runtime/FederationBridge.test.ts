@@ -1,7 +1,8 @@
 import type { TappInstance, TappMessage } from '../types'
 import type { TappBridge } from './TappBridge'
 import assert from 'node:assert/strict'
-import { afterEach, describe, it } from 'node:test'
+import { afterEach, describe, it, mock } from 'node:test'
+import { federationApi } from '../../services/federationApi.ts'
 import { setKnownAuthState } from '../../utils/authState.ts'
 import { registerFederationHandlers } from './FederationBridge.ts'
 
@@ -151,6 +152,43 @@ describe('registerFederationHandlers', { concurrency: false }, () => {
     assert.equal(bridge.grantCalls, 0)
     await invoke(bridge, 'federation.getFeed')
     assert.equal(bridge.grantCalls, 1)
+    stop()
+  })
+
+  it('gives every publish call its own idempotency key', async () => {
+    installLocalStorage()
+    const keys: Array<string | undefined> = []
+    const reply = async (_req: unknown, _grant?: string, key?: string) => {
+      keys.push(key)
+      return {
+        success: true,
+        activity_id: 'a',
+        content_type: 'note',
+        content_id: 'note_1',
+        visibility: 'public',
+        delivered_queued: 0,
+        author_timeline: true,
+      }
+    }
+    mock.method(federationApi, 'createNote', reply)
+    mock.method(federationApi, 'publish', reply)
+    const bridge = new FakeBridge()
+    const stop = registerFederationHandlers(
+      bridge as unknown as TappBridge,
+      instance,
+    )
+    for (const [action, req] of [
+      ['federation.createNote', { text: 'one' }],
+      ['federation.createNote', { text: 'one' }],
+      ['federation.publish', { content_type: 'note', text: 'two' }],
+    ] as const) {
+      const out = await invoke(bridge, action, [req])
+      assert.equal((out as { success: boolean }).success, true)
+    }
+    assert.equal(keys.length, 3)
+    for (const key of keys) assert.match(key ?? '', /^publish-/)
+    assert.equal(new Set(keys).size, 3)
+    mock.restoreAll()
     stop()
   })
 })

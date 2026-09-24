@@ -90,9 +90,12 @@ fn session_pagination(query: &SessionListQuery) -> Result<(u64, u64), HttpError>
         return Err(HttpError(AppError::bad_request("page must be >= 1")));
     }
     if query.limit < SESSION_LIMIT_MIN || query.limit > SESSION_LIMIT_MAX {
-        return Err(HttpError(AppError::bad_request(format!(
-            "limit must be between {SESSION_LIMIT_MIN} and {SESSION_LIMIT_MAX}"
-        ))));
+        return Err(HttpError(
+            AppError::bad_request(format!(
+                "limit must be between {SESSION_LIMIT_MIN} and {SESSION_LIMIT_MAX}"
+            ))
+            .with_code("pagination_invalid"),
+        ));
     }
     let page_index = query.page - 1;
     if page_index.checked_mul(query.limit).is_none() {
@@ -411,11 +414,62 @@ pub(crate) async fn persist_user_message(
         metadata: Set(None),
         created_at: Set(now),
     };
-    agent_messages::Entity::insert(msg)
+    let inserted = agent_messages::Entity::insert(msg)
         .exec(db)
         .await
         .map_err(|error| session_store_failed("save user message", error))?;
+    bind_message_media(db, session_id, inserted.last_insert_id, content, None).await;
     Ok(())
+}
+
+/// Protect media a stored message shows. History is read long after the run,
+/// so its images must not look unreferenced in the media library. Bound as
+/// the session owner: a message cannot pin someone else's media, and guests
+/// bind nothing. Never fails the message write: dead links are skipped and
+/// a binding error is only logged.
+async fn bind_message_media(
+    db: &DatabaseConnection,
+    session_id: &str,
+    message_id: i32,
+    content: &str,
+    metadata: Option<&Value>,
+) {
+    use crate::services::media::{Authority, Citations, Consumer, MediaActor, Unresolved, bind};
+    use sea_orm::TransactionTrait;
+    let owner = agent_sessions::Entity::find_by_id(session_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|session| session.user_id);
+    let actor = owner.and_then(|id| MediaActor::user(id).ok());
+    let authority = actor
+        .as_ref()
+        .map_or(Authority::Anonymous, Authority::Actor);
+    let origins = crate::services::media::upgrade::configured_origins().await;
+    let mut citations = Citations::fields(&origins, None, content);
+    if let Some(metadata) = metadata {
+        for citation in Citations::strings(&origins, metadata, |i| format!("meta:{i}")).iter() {
+            citations.push_path(citation.slot.clone(), citation.path.clone());
+        }
+    }
+    let result = async {
+        let txn = db.begin().await?;
+        bind(
+            &txn,
+            &Consumer::agent_message(message_id),
+            &citations,
+            authority,
+            Unresolved::Skip,
+        )
+        .await?;
+        txn.commit().await?;
+        Ok::<_, crate::services::media::MediaError>(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, message_id, "agent message media references not recorded");
+    }
 }
 
 pub(crate) async fn persist_assistant_message(
@@ -426,6 +480,7 @@ pub(crate) async fn persist_assistant_message(
     metadata: Option<Value>,
 ) -> Result<(), String> {
     let now = Utc::now().fixed_offset();
+    let cited_metadata = metadata.clone();
     let msg = agent_messages::ActiveModel {
         id: sea_orm::ActiveValue::NotSet,
         session_id: Set(session_id.to_string()),
@@ -435,10 +490,18 @@ pub(crate) async fn persist_assistant_message(
         metadata: Set(metadata),
         created_at: Set(now),
     };
-    agent_messages::Entity::insert(msg)
+    let inserted = agent_messages::Entity::insert(msg)
         .exec(db)
         .await
         .map_err(|error| session_store_failed("save assistant message", error))?;
+    bind_message_media(
+        db,
+        session_id,
+        inserted.last_insert_id,
+        content,
+        cited_metadata.as_ref(),
+    )
+    .await;
 
     // 更新会话消息计数和最后活跃时间
     if let Ok(Some(session)) = agent_sessions::Entity::find_by_id(session_id).one(db).await {
@@ -657,5 +720,77 @@ mod title_endpoint_tests {
             .await
             .unwrap();
         admin.close().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod message_media_tests {
+    use super::*;
+    use crate::services::media::{
+        MediaActor, MediaContext, MediaExposure, MediaService, MediaSource, NewMediaBytes,
+        active_count,
+    };
+    use sea_orm::ConnectionTrait;
+
+    fn png() -> Vec<u8> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWNw6fj/H4QBFnsFlbfmtiMAAAAASUVORK5CYII=")
+            .unwrap()
+    }
+
+    async fn upload(
+        db: &DatabaseConnection,
+        service: &MediaService,
+        owner: i32,
+    ) -> crate::services::media::MediaAsset {
+        service
+            .create_from_bytes(
+                db,
+                MediaContext::user(MediaActor::user(owner).unwrap(), MediaSource::Generated)
+                    .unwrap(),
+                NewMediaBytes {
+                    bytes: png().into(),
+                    claimed_mime: "image/png".into(),
+                    filename: "g.png".into(),
+                    max_bytes: 1024 * 1024,
+                    derived_from_id: None,
+                    exposure: MediaExposure::Public,
+                },
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stored_messages_protect_the_owners_media_only() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "message_media").await;
+        let db = isolated.db.clone();
+        db.execute_unprepared(
+            "INSERT INTO users (id, username) VALUES (1, 'owner'), (2, 'other');
+             INSERT INTO agent_sessions (id, user_id, created_at, last_active_at) VALUES ('s1', 1, NOW(), NOW())",
+        )
+        .await
+        .unwrap();
+        let service = MediaService::new(
+            std::env::temp_dir().join(format!("message_media_{}", uuid::Uuid::new_v4().simple())),
+        );
+        let own = upload(&db, &service, 1).await;
+        let foreign = upload(&db, &service, 2).await;
+        let dead = format!("/api/phantasi/image-cache/ab/ab{}.png", "0".repeat(62));
+        let content = format!("![a]({}) ![b]({}) ![c]({dead})", own.url, foreign.url);
+        persist_assistant_message(&db, "s1", None, &content, None)
+            .await
+            .expect("a dead link never fails the message");
+        assert_eq!(active_count(&db, own.id).await.unwrap(), 1);
+        assert_eq!(
+            active_count(&db, foreign.id).await.unwrap(),
+            0,
+            "a message cannot pin another user's media"
+        );
+        let _ = tokio::fs::remove_dir_all(service.store().root()).await;
     }
 }

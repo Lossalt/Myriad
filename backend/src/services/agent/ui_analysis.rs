@@ -666,21 +666,7 @@ pub fn extract_route_context(path: &str, params: &HashMap<String, Value>) -> Val
     if page_type == "platform" {
         if let Some(platform) = segments.get(1).or(segments.first()) {
             let platform_lower = platform.to_lowercase();
-            if [
-                "bilibili",
-                "bangumi",
-                "steam",
-                "github",
-                "netease",
-                "mal",
-                "x",
-                "discord",
-                "xbox",
-                "psn",
-                "playstation",
-            ]
-            .contains(&platform_lower.as_str())
-            {
+            if crate::services::platform_id::PlatformId::parse(&platform_lower).is_some() {
                 context["platform"] = json!(platform_lower);
             }
         }

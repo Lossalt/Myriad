@@ -429,7 +429,8 @@ pub async fn initiate_e2e_key_exchange(
             Json(json!({
                 "error": format!(
                     "Channel is {status}; wait until active/accepted before E2E key exchange"
-                )
+                ),
+                "code": "channel_not_ready",
             })),
         ));
     }

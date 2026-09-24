@@ -11,10 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Platforms accepted by POST /api/tasks reprocess (smart_filter ids; seeds use `netease_music`).
-pub(crate) const TASK_SUPPORTED_PLATFORMS: &[&str] = &[
-    "netease", "bilibili", "github", "steam", "youtube", "bangumi", "x", "discord", "mal", "xbox",
-    "psn",
-];
+pub(crate) const TASK_SUPPORTED_PLATFORMS: &[&str] = crate::services::platform_id::PLATFORM_SLUGS;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskStatus {

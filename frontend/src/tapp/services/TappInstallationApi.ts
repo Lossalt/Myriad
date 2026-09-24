@@ -415,6 +415,22 @@ export async function installDirect(
   })
 }
 
+const NO_APPROVALS = 'myriad:no-approved-permissions'
+
+/**
+ * Carry the install's approvals, never its granted view: granted is filtered
+ * by the viewer's role and is empty while re-authorization is pending, and an
+ * empty list asks the install API to approve everything declared.
+ */
+export function exportedApprovals(approved: string[] | undefined): string[] {
+  if (!approved) {
+    throw new Error('Only an admin can export an install package with its approvals')
+  }
+  // A non-empty list is intersected with the manifest; a name no manifest
+  // declares therefore re-installs with no approvals instead of all of them.
+  return approved.length ? approved : [NO_APPROVALS]
+}
+
 export async function buildInstallPackageFromInstalled(
   tappId: string,
   options?: { maxBytes?: number },
@@ -433,9 +449,7 @@ export async function buildInstallPackageFromInstalled(
   const pkg: DirectInstallPackage = {
     manifest: detail.manifest,
     modules: resources.modules || {},
-    permissions: detail.granted_permissions?.length
-      ? detail.granted_permissions
-      : detail.manifest.permissions,
+    permissions: exportedApprovals(detail.approved_permissions),
   }
   if (resources.coreStyles) pkg.coreStyles = resources.coreStyles
   if (resources.pageStyles) pkg.pageStyles = resources.pageStyles

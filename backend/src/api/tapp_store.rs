@@ -70,6 +70,7 @@ pub use store_sources::*;
 pub use types::{ApiResponse, TappDetail, TappListItem};
 use types::{api_error, api_http_error, api_response_err};
 pub use uninstall::prune_stale_private_tapps;
+pub(crate) use installation::install_generated;
 pub(crate) use uninstall::uninstall_tapp_for_user;
 use uninstall::{cleanup_temporary_tapps, uninstall_tapp};
 pub(crate) use validation::*;

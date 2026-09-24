@@ -91,9 +91,7 @@ export default function PersonaEditStep({
           o.regeneratePersonaFailed,
           o.generationTimeout,
           {
-            pro_unavailable: o.proUnavailable,
             persona_draft_failed: o.regeneratePersonaFailed,
-            persona_unusable: o.personaUnusable,
           },
         ),
       )
@@ -103,8 +101,6 @@ export default function PersonaEditStep({
     }
   }, [
     o.generationTimeout,
-    o.personaUnusable,
-    o.proUnavailable,
     o.regeneratePersonaFailed,
     onRegenerate,
   ])
@@ -329,10 +325,8 @@ export default function PersonaEditStep({
                   o.saveFailed,
                   o.generationTimeout,
                   {
-                    pro_unavailable: o.proUnavailable,
                     persona_contract_invalid: o.saveFailed,
                     persona_draft_failed: o.regeneratePersonaFailed,
-                    persona_unusable: o.personaUnusable,
                   },
                 ),
               )

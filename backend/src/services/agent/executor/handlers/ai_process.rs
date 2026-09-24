@@ -7,10 +7,10 @@ use super::HandlerContext;
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::models::entities::phantasi_items;
 use crate::services::agent::ai_process_pure::{
-    IMAGE_PROMPT_MAX_CHARS, USER_TEXT_MAX_CHARS, append_memory_to_system_prompt,
-    capability_needs_conversation_context, capability_needs_memory, extract_semantic_text,
-    inject_directive_to_params, inject_steering_to_params, merge_system_prompt,
-    resolve_image_dimensions, resolve_image_prompt, sanitize_prompt_input,
+    IMAGE_PROMPT_MAX_CHARS, USER_TEXT_MAX_CHARS, agent_image_producer_key,
+    append_memory_to_system_prompt, capability_needs_conversation_context, capability_needs_memory,
+    extract_semantic_text, inject_directive_to_params, inject_steering_to_params,
+    merge_system_prompt, resolve_image_dimensions, resolve_image_prompt, sanitize_prompt_input,
     take_recent_conversation_messages, task_image_envelope, task_json_envelope, task_text_envelope,
     with_system_guidance,
 };
@@ -59,7 +59,8 @@ fn inject_role_identity(
         }
     }
 
-    // 2. 注入记忆上下文（`capability_needs_memory`）
+    // 2. 记忆是不可信数据。工具循环写入的 memory_context 也走这里，
+    //    必须包在 <untrusted_memory> 里，不能当系统指令。
     if capability_needs_memory(capability_id) {
         if let Some(ref mem_ctx) = exec_ctx.memory_context {
             let existing = params
@@ -1033,13 +1034,11 @@ async fn execute_ai_image(
     let persisted = crate::services::image_generation::persist_generated_with_status(
         ctx.db,
         crate::services::media::task_media_context(ctx.user_id, ctx.user_id).with_producer_key(
-            ctx.task_id
-                .as_deref()
-                .map(|id| format!("agent:{id}:image"))
-                .unwrap_or_default(),
+            agent_image_producer_key(ctx.task_id.as_deref(), ctx.step_id.as_deref()),
         ),
         generated,
         "generated",
+        crate::services::media::MediaExposure::Public,
     )
     .await
     .map_err(|error| error.to_string())?;

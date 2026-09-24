@@ -30,6 +30,12 @@ export interface AppEventMap {
   'auth-state-changed': { isAuthenticated: boolean, isAdmin: boolean }
   'tapp-subject-ready': { isAuthenticated: boolean }
 
+  // Site appearance (config saves and the wallpaper loader)
+  'wallpaperChanged': { url: string, timestamp: number, fromCache: boolean }
+  'wallpaperConfigChanged': void
+  'footerConfigChanged': void
+  'islandContentChanged': void
+
   // Shell chrome
   'config-loaded': void
   'open-control-panel': { tab?: 'notifications' } | undefined
@@ -91,14 +97,4 @@ type DetailArgs<K extends AppEventName> = [AppEventMap[K]] extends [void]
 export function emitAppEvent<K extends AppEventName>(type: K, ...[detail]: DetailArgs<K>): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent(type, { detail }))
-}
-
-/** Subscribes to a cataloged event; resolves the unsubscribe. */
-export function onAppEvent<K extends AppEventName>(
-  type: K,
-  handler: (detail: AppEventMap[K]) => void,
-): () => void {
-  const listener = (event: Event) => handler((event as AppEvent<K>).detail)
-  window.addEventListener(type, listener)
-  return () => window.removeEventListener(type, listener)
 }

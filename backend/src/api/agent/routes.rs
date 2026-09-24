@@ -219,14 +219,6 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
-        // 确认敏感操作（需要认证）
-        .route(
-            "/confirm/stream",
-            post(confirm_operation_stream).route_layer(from_fn_with_state(
-                app_state.clone(),
-                middleware::auth::auth_middleware,
-            )),
-        )
         // 执行追踪列表（需要认证）
         .route(
             "/traces",

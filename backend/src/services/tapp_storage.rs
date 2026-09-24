@@ -9,7 +9,7 @@ use sea_orm::{
 use serde_json::Value;
 
 pub use myriad_tapp_contract::storage::{
-    HOST_STORAGE_KEY_PREFIXES, is_host_storage_key, is_reserved_storage_route_key,
+    HostNamespace, is_host_storage_key, is_reserved_storage_route_key,
     validate_sandbox_storage_key, validate_storage_key,
 };
 
@@ -175,26 +175,21 @@ pub struct SandboxStorageEntry {
 /// SQL-level boundary for subject-private sandbox storage. Queries using this
 /// predicate never load host-managed records or their encrypted columns into
 /// the generic storage response path.
-const SANDBOX_STORAGE_PREDICATE_SQL: &str = r#"
-key <> '_settings'
-AND key <> '_private'
-AND NOT starts_with(key, '_settings.')
-AND NOT starts_with(key, '_credentials.')
-AND NOT starts_with(key, '_shared.')
-AND NOT starts_with(key, '_private.')
-AND NOT starts_with(key, '_component:')
-AND NOT starts_with(key, '_shortcut:')
-AND NOT starts_with(key, '_report:')
-"#;
+fn sandbox_predicate() -> &'static str {
+    static PREDICATE: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(myriad_tapp_contract::storage::sandbox_key_predicate_sql);
+    &PREDICATE
+}
 
 pub async fn sandbox_storage_entries(
     db: &impl ConnectionTrait,
     user_id: i32,
     tapp_id: &str,
 ) -> Result<Vec<SandboxStorageEntry>, TappStorageError> {
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT id, key, value, created_at, updated_at FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL}) \
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate}) \
          ORDER BY id"
     );
     SandboxStorageEntry::find_by_statement(Statement::from_sql_and_values(
@@ -218,9 +213,10 @@ pub async fn sandbox_storage_keys(
     struct KeyRow {
         key: String,
     }
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT key FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL}) \
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate}) \
          ORDER BY id"
     );
     KeyRow::find_by_statement(Statement::from_sql_and_values(
@@ -243,9 +239,10 @@ pub async fn sandbox_storage_count(
     struct CountRow {
         count: i64,
     }
+    let predicate = sandbox_predicate();
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL})"
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate})"
     );
     CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -263,9 +260,10 @@ pub async fn clear_sandbox_storage(
     user_id: i32,
     tapp_id: &str,
 ) -> Result<(), TappStorageError> {
+    let predicate = sandbox_predicate();
     let sql = format!(
         "DELETE FROM tapp_storage \
-         WHERE user_id = $1 AND tapp_id = $2 AND ({SANDBOX_STORAGE_PREDICATE_SQL})"
+         WHERE user_id = $1 AND tapp_id = $2 AND ({predicate})"
     );
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -326,9 +324,13 @@ SELECT key, value
 FROM tapp_storage
 WHERE user_id = $1
   AND tapp_id = $2
-  AND starts_with(key, '_settings.')
+  AND starts_with(key, $3)
 "#,
-        vec![owner_id.into(), tapp_id.into()],
+        vec![
+            owner_id.into(),
+            tapp_id.into(),
+            HostNamespace::Settings.prefix().into(),
+        ],
     ))
     .all(db)
     .await
@@ -336,7 +338,7 @@ WHERE user_id = $1
 
     let mut stored_by_key = std::collections::BTreeMap::new();
     for row in stored {
-        if let Some(key) = row.key.strip_prefix("_settings.") {
+        if let Some(key) = HostNamespace::Settings.strip(&row.key) {
             stored_by_key.insert(key.to_string(), row.value);
         }
     }
@@ -386,34 +388,95 @@ pub async fn write_storage_value(
     key: &str,
     value: Value,
 ) -> Result<(), TappStorageError> {
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"
+    use sea_orm::TransactionTrait;
+    // One transaction: the upsert's row lock orders concurrent writes of a
+    // key, so the recorded references always match the stored value.
+    let txn = db.begin().await.map_err(|_| TappStorageError::Database)?;
+    let row = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
 INSERT INTO tapp_storage (tapp_id, user_id, key, value, created_at, updated_at)
 VALUES ($1, $2, $3, $4, NOW(), NOW())
 ON CONFLICT (user_id, tapp_id, key) DO UPDATE SET
     value = EXCLUDED.value,
     updated_at = NOW()
+RETURNING id
 "#,
-        vec![tapp_id.into(), user_id.into(), key.into(), value.into()],
-    ))
-    .await
-    .map_err(|error| {
-        if is_storage_quota_exceeded(&error) {
-            TappStorageError::TooLarge
-        } else {
-            TappStorageError::Database
+            vec![
+                tapp_id.into(),
+                user_id.into(),
+                key.into(),
+                value.clone().into(),
+            ],
+        ))
+        .await
+        .map_err(|error| {
+            if is_storage_quota_exceeded(&error) {
+                TappStorageError::TooLarge
+            } else {
+                TappStorageError::Database
+            }
+        })?;
+    if let Some(id) = row.and_then(|row| row.try_get::<i32>("", "id").ok()) {
+        bind_storage_media(&txn, id, user_id, &value).await;
+    }
+    txn.commit().await.map_err(|_| TappStorageError::Database)
+}
+
+/// Apps keep generated results (and any media URL) in storage long after the
+/// task that produced them expired. Protect what the stored value shows, as
+/// the namespace's user: an app cannot pin someone else's media and guest
+/// namespaces bind nothing. Never fails the write. Deleted rows are pruned by
+/// media maintenance, so the many delete paths need no hook.
+async fn bind_storage_media(
+    txn: &sea_orm::DatabaseTransaction,
+    row_id: i32,
+    user_id: i32,
+    value: &Value,
+) {
+    use crate::services::media::{Authority, Citations, Consumer, MediaActor, Unresolved, bind};
+    use sea_orm::TransactionTrait;
+    let origins = crate::services::media::upgrade::configured_origins().await;
+    let citations = Citations::strings(&origins, value, |i| format!("value:{i}"));
+    let consumer = Consumer::tapp_storage(row_id);
+    let actor = MediaActor::user(user_id).ok();
+    let authority = actor
+        .as_ref()
+        .map_or(Authority::Anonymous, Authority::Actor);
+    // A savepoint: a binding error is logged and rolled back alone, never
+    // failing the write it describes.
+    let result = async {
+        let savepoint = txn.begin().await?;
+        match bind(
+            &savepoint,
+            &consumer,
+            &citations,
+            authority,
+            Unresolved::Skip,
+        )
+        .await
+        {
+            Ok(_) => savepoint.commit().await?,
+            Err(error) => {
+                savepoint.rollback().await?;
+                return Err(error);
+            }
         }
-    })?;
-    Ok(())
+        Ok::<_, crate::services::media::MediaError>(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, row_id, "tapp storage media references not recorded");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SANDBOX_STORAGE_PREDICATE_SQL, TappStorageAccess, TappStorageAccessError,
-        can_write_installation_settings, is_host_storage_key, validate_sandbox_storage_key,
-        validate_storage_key, validate_storage_value_size,
+        TappStorageAccess, TappStorageAccessError, can_write_installation_settings,
+        is_host_storage_key, validate_sandbox_storage_key, validate_storage_key,
+        validate_storage_value_size,
     };
     use serde_json::json;
 
@@ -439,15 +502,17 @@ mod tests {
 
     #[test]
     fn sandbox_query_predicate_covers_every_host_storage_prefix() {
-        assert!(SANDBOX_STORAGE_PREDICATE_SQL.contains("key <> '_settings'"));
-        assert!(SANDBOX_STORAGE_PREDICATE_SQL.contains("key <> '_private'"));
-        for prefix in super::HOST_STORAGE_KEY_PREFIXES {
+        let predicate = super::sandbox_predicate();
+        assert!(predicate.contains("key <> '_settings'"));
+        assert!(predicate.contains("key <> '_private'"));
+        for namespace in super::HostNamespace::ALL {
+            let prefix = namespace.prefix();
             assert!(
-                SANDBOX_STORAGE_PREDICATE_SQL.contains(&format!("starts_with(key, '{prefix}')")),
+                predicate.contains(&format!("NOT starts_with(key, '{prefix}')")),
                 "missing SQL exclusion for {prefix}"
             );
         }
-        assert!(!SANDBOX_STORAGE_PREDICATE_SQL.contains("encrypted_value"));
+        assert!(!predicate.contains("encrypted_value"));
     }
 
     #[test]
@@ -663,5 +728,67 @@ VALUES
             TappStorageAccessError::InstallationReadOnly.status_hint(),
             403
         );
+    }
+}
+
+#[cfg(test)]
+mod media_reference_tests {
+    use super::write_storage_value;
+    use crate::services::media::{
+        MediaActor, MediaContext, MediaExposure, MediaService, MediaSource, NewMediaBytes,
+        active_count, prune_references,
+    };
+    use sea_orm::ConnectionTrait;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn stored_app_values_protect_media_until_the_row_is_gone() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "tapp_storage_media").await;
+        let db = isolated.db.clone();
+        db.execute_unprepared("INSERT INTO users (id, username) VALUES (1, 'owner')")
+            .await
+            .unwrap();
+        let service = MediaService::new(std::env::temp_dir().join(format!(
+            "tapp_storage_media_{}",
+            uuid::Uuid::new_v4().simple()
+        )));
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWNw6fj/H4QBFnsFlbfmtiMAAAAASUVORK5CYII=")
+            .unwrap();
+        let image = service
+            .create_from_bytes(
+                &db,
+                MediaContext::user(MediaActor::user(1).unwrap(), MediaSource::Generated).unwrap(),
+                NewMediaBytes {
+                    bytes: png.into(),
+                    claimed_mime: "image/png".into(),
+                    filename: "g.png".into(),
+                    max_bytes: 1024 * 1024,
+                    derived_from_id: None,
+                    exposure: MediaExposure::Public,
+                },
+            )
+            .await
+            .unwrap();
+        write_storage_value(
+            &db,
+            1,
+            "app.example",
+            "gallery",
+            json!({ "items": [image.url] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(active_count(&db, image.id).await.unwrap(), 1);
+        db.execute_unprepared("DELETE FROM tapp_storage")
+            .await
+            .unwrap();
+        prune_references(&db, 100).await.unwrap();
+        assert_eq!(active_count(&db, image.id).await.unwrap(), 0);
+        let _ = tokio::fs::remove_dir_all(service.store().root()).await;
     }
 }

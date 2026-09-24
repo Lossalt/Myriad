@@ -507,6 +507,17 @@ pub(crate) fn tapp_filesystem_error_message(action: &str, error: &std::io::Error
     filesystem_error_message(action, error.kind(), &error.to_string())
 }
 
+/// Staging or activating an install on disk failed: the Tapp was not saved.
+pub(crate) fn tapp_filesystem_http_error(action: &str, error: &std::io::Error) -> HttpError {
+    HttpError(
+        AppError::from_status_u16(
+            tapp_filesystem_error_status(error).as_u16(),
+            tapp_filesystem_error_message(action, error),
+        )
+        .with_code("tapp_save_failed"),
+    )
+}
+
 /// Add owner/mode context for storage failures without following symlinks.
 pub(crate) fn log_tapp_filesystem_access(path: &FsPath, error: &std::io::Error) {
     if !should_log_filesystem_permission_context(error.kind()) {

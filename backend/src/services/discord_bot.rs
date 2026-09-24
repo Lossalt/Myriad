@@ -26,9 +26,11 @@ use tracing::{info, warn};
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::config::DynamicConfig;
+use crate::services::bot_supervisor::{BotWorker, SessionResult, SupervisorPhase, supervise};
 use crate::services::http_client;
 
-const POLL: Duration = Duration::from_secs(2);
+/// Deadline for the WebSocket handshake (see `run_session`).
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const API_BASE: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "DiscordBot (https://github.com/myriad, 1.0)";
@@ -225,70 +227,40 @@ impl CredentialFingerprint {
 
 /// Owned by the persona supervisor; dropping this future stops channel admission.
 pub(crate) async fn run_worker() {
-    run_loop().await;
+    supervise::<DiscordWorker>().await;
 }
 
-async fn run_loop() {
-    let mut last_permanent: Option<CredentialFingerprint> = None;
-    let mut resume: Option<ResumeState> = None;
-    loop {
-        let fingerprint = {
-            let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-            CredentialFingerprint::from_config(&config)
+struct DiscordWorker;
+
+impl BotWorker for DiscordWorker {
+    const NAME: &'static str = "Discord bot";
+    type Fingerprint = CredentialFingerprint;
+    type Resume = ResumeState;
+
+    fn fingerprint(config: &DynamicConfig) -> CredentialFingerprint {
+        CredentialFingerprint::from_config(config)
+    }
+
+    fn intent(fingerprint: &CredentialFingerprint) -> WorkerIntent {
+        fingerprint.intent()
+    }
+
+    async fn publish(phase: SupervisorPhase, fingerprint: &CredentialFingerprint) {
+        let phase = match phase {
+            SupervisorPhase::Offline => DiscordBotPhase::Offline,
+            SupervisorPhase::Rejected => DiscordBotPhase::Rejected,
+            SupervisorPhase::Connecting => DiscordBotPhase::Connecting,
+            SupervisorPhase::Reconnecting => DiscordBotPhase::Reconnecting,
         };
+        publish_status(phase, fingerprint).await;
+    }
 
-        if fingerprint.intent() != WorkerIntent::Run {
-            last_permanent = None;
-            resume = None;
-            publish_status(DiscordBotPhase::Offline, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        if last_permanent.as_ref() == Some(&fingerprint) {
-            publish_status(DiscordBotPhase::Rejected, &fingerprint).await;
-            tokio::time::sleep(POLL).await;
-            continue;
-        }
-
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let watched = fingerprint.clone();
-        let watch_task = crate::services::channel_work::AbortTask(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(POLL).await;
-                let current = {
-                    let config = GLOBAL_DYNAMIC_CONFIG.read().await;
-                    CredentialFingerprint::from_config(&config)
-                };
-                if current != watched {
-                    let _ = cancel_tx.send(true);
-                    break;
-                }
-            }
-        }));
-
-        publish_status(DiscordBotPhase::Connecting, &fingerprint).await;
-        let result = run_session(&fingerprint, resume.clone(), cancel_rx).await;
-        drop(watch_task);
-        match result {
-            Ok(next) => {
-                last_permanent = None;
-                resume = next;
-                publish_status(DiscordBotPhase::Offline, &fingerprint).await;
-            }
-            Err((ConnectFailureKind::Permanent, _)) => {
-                warn!("Discord bot stopped: credentials rejected");
-                last_permanent = Some(fingerprint.clone());
-                resume = None;
-                publish_status(DiscordBotPhase::Rejected, &fingerprint).await;
-            }
-            Err((kind, next)) => {
-                warn!(?kind, "Discord bot transient failure; will reconnect");
-                resume = next;
-                publish_status(DiscordBotPhase::Reconnecting, &fingerprint).await;
-                tokio::time::sleep(transient_backoff(1)).await;
-            }
-        }
+    fn run_session(
+        fingerprint: &CredentialFingerprint,
+        resume: Option<ResumeState>,
+        cancel: watch::Receiver<bool>,
+    ) -> impl Future<Output = SessionResult<ResumeState>> + Send {
+        run_session(fingerprint, resume, cancel)
     }
 }
 
@@ -328,15 +300,23 @@ async fn gateway_session(
 
     let (ws, _) = tokio::select! {
         _ = cancel.changed() => return Ok(resume),
-        result = tokio_tungstenite::connect_async_with_config(&connect_url, Some(
+        // connect_async has no deadline of its own; without one a dead path
+        // leaves the worker "connecting" forever (as QQ and Feishu learned).
+        result = tokio::time::timeout(WS_CONNECT_TIMEOUT, tokio_tungstenite::connect_async_with_config(&connect_url, Some(
                 tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
                     .max_message_size(Some(crate::services::bot_ingress::MAX_GATEWAY_MESSAGE_BYTES))
                     .max_frame_size(Some(crate::services::bot_ingress::MAX_GATEWAY_MESSAGE_BYTES)),
-            ), false) => {
-            result.map_err(|err| {
-                log_transport("Discord Gateway connect failed", &err, token);
-                (ConnectFailureKind::Transient, resume.clone())
-            })?
+            ), false)) => {
+            match result {
+                Ok(connected) => connected.map_err(|err| {
+                    log_transport("Discord Gateway connect failed", &err, token);
+                    (ConnectFailureKind::Transient, resume.clone())
+                })?,
+                Err(_) => {
+                    warn!("Discord Gateway connect timed out");
+                    return Err((ConnectFailureKind::Transient, resume.clone()));
+                }
+            }
         }
     };
     let (mut write, mut read) = ws.split();
@@ -919,15 +899,6 @@ async fn discord_request(
         return Err(ConnectFailureKind::Permanent);
     }
     Ok((status, text))
-}
-
-fn transient_backoff(attempt: u32) -> Duration {
-    let secs = if attempt >= 6 {
-        30
-    } else {
-        1u64 << attempt.min(5)
-    };
-    Duration::from_secs(secs.min(30))
 }
 
 fn redact_token(input: &str, token: &str) -> String {

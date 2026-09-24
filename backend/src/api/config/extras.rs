@@ -196,10 +196,30 @@ pub struct TappWindowSchemesPayload {
     pub schemes: String,
 }
 
+/// Stored schemes stay a JSON array small enough to ship in `/config/ui`.
+const MAX_WINDOW_SCHEMES_BYTES: usize = 64 * 1024;
+const MAX_WINDOW_SCHEMES: usize = 50;
+
+fn valid_window_schemes(raw: &str) -> bool {
+    raw.len() <= MAX_WINDOW_SCHEMES_BYTES
+        && serde_json::from_str::<Vec<serde_json::Map<String, Value>>>(raw)
+            .is_ok_and(|schemes| schemes.len() <= MAX_WINDOW_SCHEMES)
+}
+
 pub async fn update_tapp_window_schemes(
     crate::extract::Db(db): crate::extract::Db,
     Json(payload): Json<TappWindowSchemesPayload>,
 ) -> (StatusCode, Json<Value>) {
+    if !valid_window_schemes(&payload.schemes) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "Invalid window schemes",
+                "code": "bad_request",
+            })),
+        );
+    }
     let config_service = crate::services::config_service::ConfigService::new(db);
     let mut updates = std::collections::HashMap::new();
 
@@ -528,5 +548,32 @@ mod hitokoto_catalog_tests {
             default_url,
             "https://v1.hitokoto.cn/?c=d&c=i&c=k&encode=json"
         );
+    }
+}
+
+#[cfg(test)]
+mod window_scheme_tests {
+    use super::{MAX_WINDOW_SCHEMES, valid_window_schemes};
+
+    #[test]
+    fn window_schemes_must_be_a_bounded_array_of_objects() {
+        assert!(valid_window_schemes("[]"));
+        assert!(valid_window_schemes(r#"[{"id":"a","windows":[]}]"#));
+        assert!(!valid_window_schemes("not json"));
+        assert!(!valid_window_schemes(r#"{"id":"a"}"#));
+        assert!(!valid_window_schemes("[1,2]"));
+        let many = format!("[{}]", vec!["{}"; MAX_WINDOW_SCHEMES + 1].join(","));
+        assert!(!valid_window_schemes(&many));
+    }
+
+    #[test]
+    fn window_schemes_route_is_admin_only() {
+        let router = include_str!("../../router/base.rs");
+        let route = router
+            .split("\"/api/config/tapp-window-schemes\"")
+            .nth(1)
+            .and_then(|rest| rest.split(".route(").next())
+            .expect("route");
+        assert!(route.contains("admin_middleware"));
     }
 }

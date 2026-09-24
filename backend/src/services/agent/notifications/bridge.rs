@@ -144,72 +144,68 @@ pub(super) async fn persist(
     Ok(())
 }
 
-pub(super) fn spawn(manager: Arc<NotificationManager>) {
+/// Register the LISTEN bridge as a supervised job on the process runner: it
+/// reconnects with backoff and stops at shutdown.
+pub(super) fn start(manager: Arc<NotificationManager>) {
     let Some(db) = manager.db.as_ref() else {
         return;
     };
     let pool = db.get_postgres_connection_pool().clone();
-    tokio::spawn(async move {
-        loop {
-            match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
-                Ok(mut listener) => {
-                    if listener.listen(CHANNEL).await.is_ok()
-                        && listener.listen(PERSONA_CHANNEL).await.is_ok()
-                    {
-                        // Clear cached data from before a reconnect; DB reads are authoritative.
-                        manager.history.write().await.clear();
-                        let _ = manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
-                        // try_recv returns None after a connection loss, so silent reconnects
-                        // also generate resync instead of losing the gap invisibly.
-                        loop {
-                            let received = listener.try_recv().await;
-                            match received {
-                                Ok(Some(message)) => {
-                                    if message.channel() == PERSONA_CHANNEL {
-                                        if crate::runtime_role::PERSONA_RUNTIME_LOCAL
-                                            .load(std::sync::atomic::Ordering::Acquire)
-                                        {
-                                            if let Ok(event) =
-                                                serde_json::from_str::<PersonaObservation>(
-                                                    message.payload(),
-                                                )
-                                            {
-                                                if event.origin != origin()
-                                                    && valid_persona_observation(&event)
-                                                {
-                                                    super::super::merope::spawn_ingest(
-                                                        event.user_id,
-                                                        event.event_key,
-                                                        event.summary,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                    if let Ok(change) =
-                                        serde_json::from_str::<Change>(message.payload())
-                                    {
-                                        if change.origin != origin() && change.id.len() <= 512 {
-                                            manager.receive_external(change).await;
-                                        }
-                                    }
-                                }
-                                Ok(None) => {
-                                    manager.history.write().await.clear();
-                                    let _ =
-                                        manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
-                                }
-                                Err(_) => break,
-                            }
-                        }
+    crate::services::jobs::jobs().supervised(
+        "notification listener",
+        crate::services::jobs::Backoff::new(Duration::from_secs(2), Duration::from_secs(60)),
+        move || listen(pool.clone(), manager.clone()),
+    );
+}
+
+/// One LISTEN session: returns when the connection is lost for good.
+async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) {
+    let mut listener = match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::warn!(%error, "notification listener unavailable");
+            return;
+        }
+    };
+    if listener.listen(CHANNEL).await.is_err() || listener.listen(PERSONA_CHANNEL).await.is_err() {
+        return;
+    }
+    // Clear cached data from before a reconnect; DB reads are authoritative.
+    manager.history.write().await.clear();
+    let _ = manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
+    // try_recv returns None after a connection loss, so silent reconnects
+    // also generate resync instead of losing the gap invisibly.
+    loop {
+        match listener.try_recv().await {
+            Ok(Some(message)) => {
+                if message.channel() == PERSONA_CHANNEL {
+                    receive_persona_observation(message.payload());
+                    continue;
+                }
+                if let Ok(change) = serde_json::from_str::<Change>(message.payload()) {
+                    if change.origin != origin() && change.id.len() <= 512 {
+                        manager.receive_external(change).await;
                     }
                 }
-                Err(error) => tracing::warn!(%error, "notification listener unavailable"),
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            Ok(None) => {
+                manager.history.write().await.clear();
+                let _ = manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
+            }
+            Err(_) => return,
         }
-    });
+    }
+}
+
+fn receive_persona_observation(payload: &str) {
+    if !crate::runtime_role::PERSONA_RUNTIME_LOCAL.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    if let Ok(event) = serde_json::from_str::<PersonaObservation>(payload) {
+        if event.origin != origin() && valid_persona_observation(&event) {
+            super::super::merope::spawn_ingest(event.user_id, event.event_key, event.summary);
+        }
+    }
 }
 
 impl NotificationManager {

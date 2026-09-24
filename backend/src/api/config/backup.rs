@@ -327,7 +327,15 @@ pub async fn export_settings(
     State(db): State<DatabaseConnection>,
     user_id: i32,
 ) -> (StatusCode, Json<Value>) {
-    let effective_config = build_config(&db, true).await;
+    let effective_config = match build_config(&db, true).await {
+        Ok(config) => config,
+        Err(message) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": message, "code": "CONFIG_UNREADABLE" })),
+            );
+        }
+    };
     let rows = match db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
@@ -497,6 +505,8 @@ pub async fn preview_settings_restore(
 pub(crate) enum RestoreWriteError {
     Db(sea_orm::DbErr),
     Media(crate::services::media::MediaError),
+    /// What the restore wrote would not load; nothing was committed.
+    Unreadable(anyhow::Error),
 }
 
 impl From<sea_orm::DbErr> for RestoreWriteError {
@@ -537,8 +547,9 @@ async fn bind_restored_media(
         let text = restored_setting_text(&entry.value);
         let raw = text.as_deref().unwrap_or("");
         let (stored, dead) = match entry.key.as_str() {
-            "ui_wallpaper_url" => {
-                crate::services::media::bind_restored_wallpaper(txn, raw, origins, legacy).await?
+            key @ ("ui_wallpaper_url" | "site_og_image" | "site_favicon") => {
+                crate::services::media::bind_restored_site_image(txn, key, raw, origins, legacy)
+                    .await?
             }
             "dashboard_layout" => {
                 crate::services::media::bind_restored_dashboard_layout(txn, raw, origins, legacy)
@@ -660,7 +671,10 @@ pub async fn restore_settings(
         }
     };
 
-    let restore_result: Result<Vec<UnresolvedRestoredMedia>, RestoreWriteError> = async {
+    let restore_result: Result<
+        (Vec<UnresolvedRestoredMedia>, crate::config::DynamicConfig),
+        RestoreWriteError,
+    > = async {
         let unresolved =
             write_restored_configurations(&transaction, entries, &origins, &legacy).await?;
 
@@ -689,13 +703,19 @@ pub async fn restore_settings(
             )));
         }
 
+        // Read the restored settings back the way the runtime will, before
+        // they become the only copy: a restore that cannot load rolls back.
+        let restored =
+            crate::services::config_service::ConfigService::load_config_on(&transaction)
+                .await
+                .map_err(RestoreWriteError::Unreadable)?;
         transaction.commit().await?;
-        Ok(unresolved)
+        Ok((unresolved, restored))
     }
     .await;
 
-    let unresolved_media = match restore_result {
-        Ok(unresolved) => unresolved,
+    let (unresolved_media, new_config) = match restore_result {
+        Ok(restored) => restored,
         Err(RestoreWriteError::Media(error)) => {
             // Invalid media, or media that exists here but cannot be protected
             // yet, answers like saving the setting: nothing is restored.
@@ -711,28 +731,25 @@ pub async fn restore_settings(
                 ),
             );
         }
-    };
-
-    let config_service = crate::services::config_service::ConfigService::new(db.clone());
-    match config_service.load_config().await {
-        Ok(new_config) => {
-            // Same Arc as AppState.dynamic_config after from_shared — write via State.
-            let cadence = new_config.site_seo_review_cadence.clone();
-            *dynamic_config.write().await = new_config;
-            crate::services::http_client::reload_global_client().await;
-            crate::services::oauth::registry::REGISTRY.reload().await;
-            crate::services::agent::heartbeat::sync_seo_review_cadence(&cadence).await;
-        }
-        Err(error) => {
-            tracing::error!("Settings restored but runtime reload failed: {}", error);
+        Err(RestoreWriteError::Unreadable(error)) => {
+            tracing::error!(%error, "settings restore rolled back: restored settings would not load");
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(AppError::public_json(
-                    "Settings restored, but runtime reload failed",
-                )),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "error": "Restored settings could not be loaded; nothing was changed",
+                    "code": "CONFIG_UNREADABLE",
+                })),
             );
         }
-    }
+    };
+
+    // The configuration just proven to load inside the committed transaction.
+    // Same Arc as AppState.dynamic_config after from_shared — write via State.
+    let cadence = new_config.site_seo_review_cadence.clone();
+    *dynamic_config.write().await = new_config;
+    crate::services::http_client::reload_global_client().await;
+    crate::services::oauth::registry::REGISTRY.reload().await;
+    crate::services::agent::heartbeat::sync_seo_review_cadence(&cadence).await;
 
     if let Err(error) = reconcile_platform_auto_refresh(&db).await {
         tracing::error!(
@@ -1045,7 +1062,13 @@ mod settings_backup_tests {
                 .all(|(_, on)| !*on)
         );
 
+        // The fetcher needs both; an API key alone never produces data.
         config.steam_api_key = Some("k".into());
+        let map: std::collections::HashMap<_, _> =
+            platform_configured_flags(&config).into_iter().collect();
+        assert_eq!(map.get("steam"), Some(&false));
+
+        config.steam_id = Some("7656".into());
         let map: std::collections::HashMap<_, _> =
             platform_configured_flags(&config).into_iter().collect();
         assert_eq!(map.get("steam"), Some(&true));
@@ -1835,6 +1858,11 @@ mod settings_backup_tests {
         assert!(should_write_env_field("token", "ghp_real_token"));
         assert!(should_write_env_field("username", "octocat"));
         assert!(should_write_env_field("username", ""));
+        // One rule with what storage seals: certificates are secrets, token
+        // quotas are not (an empty quota must not be written as a cleared secret).
+        assert!(!should_write_env_field("agora_app_certificate", ""));
+        assert!(should_write_env_field("user_ai_daily_tokens", ""));
+        assert!(should_write_env_field("openai_max_tokens", ""));
     }
 
     #[test]

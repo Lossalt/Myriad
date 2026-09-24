@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::models::entities::{platform_reports, tapp_storage};
 use crate::services::platform_cache::validate_platform_name;
 
-const REPORT_KEY_PREFIX: &str = "_report:";
+const REPORT_KEY_PREFIX: &str = myriad_tapp_contract::storage::HostNamespace::Report.prefix();
 
 /// Domain errors for report catalog reads.
 #[derive(Debug, Clone, PartialEq, Eq)]

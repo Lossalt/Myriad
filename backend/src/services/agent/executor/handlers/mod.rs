@@ -26,6 +26,8 @@ pub struct HandlerContext<'a> {
     /// Executor-owned task identity. Capability input is never trusted to
     /// choose which task an asynchronous Tapp result will resume.
     pub task_id: Option<String>,
+    /// Recipe step within `task_id`; one task may run several image steps.
+    pub step_id: Option<String>,
     /// 执行上下文快照（包含对话历史、角色身份等）
     pub execution_context: Option<ExecutionContext>,
     pub autonomy_permission_cap: Option<Vec<String>>,

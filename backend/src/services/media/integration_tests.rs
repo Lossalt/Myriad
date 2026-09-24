@@ -148,7 +148,7 @@ async fn postgres_html_publish_and_stickers_protect_assets() {
     };
     let image = f.image().await;
     let txn = f.db.begin().await.unwrap();
-    let (_, body) = publish_cited_media(
+    let (_, body) = normalize_cited_media(
         &txn,
         &[],
         None,
@@ -318,10 +318,10 @@ async fn postgres_persona_url_rewrite_preserves_generation_and_public_avatar() {
         "INSERT INTO agent_persona(id,name,personality,portrait_asset_id,avatar_asset_id,avatar_generation,updated_at) VALUES ('site','Test','Test',$1,$2,'{\"fingerprint\":\"keep\"}',NOW())",
         [portrait.content_path.clone().into(), avatar.content_path.clone().into()])).await.unwrap();
     let txn = f.db.begin().await.unwrap();
-    let portrait_url = publish_local_url(&txn, &portrait.content_path, &[])
+    let portrait_url = normalize_local_url(&txn, &portrait.content_path, &[])
         .await
         .unwrap();
-    let avatar_url = publish_local_url(&txn, &avatar.content_path, &[])
+    let avatar_url = normalize_local_url(&txn, &avatar.content_path, &[])
         .await
         .unwrap();
     let persona = merope::get_persona_on(&txn).await.unwrap().unwrap();
@@ -728,7 +728,7 @@ async fn postgres_upgrade_repairs_preexisting_duplicate_cache_catalog() {
         Some(owner)
     );
     assert!(matches!(
-        resolve_alias_or_legacy(&f.db, f.service.store(), &paths, &phantasi, true)
+        resolve_alias_or_legacy(&f.db, f.service.store(), &paths, &phantasi)
             .await
             .unwrap(),
         ServeOutcome::File(_)
@@ -1454,11 +1454,8 @@ async fn generated_portrait_and_sticker_urls_serve_real_bytes_after_publication(
             )
             .await
             .unwrap();
-        let txn = f.db.begin().await.unwrap();
-        let public = publish_local_url(&txn, &image.catalog_url(), &[])
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
+        let public = f.service.publish(&f.db, image.id).await.unwrap().url;
+        assert_eq!(public, image.catalog_url(), "publishing keeps the address");
         let catalog = crate::services::media_catalog::list_assets(&f.db, &Default::default())
             .await
             .unwrap();
@@ -1589,7 +1586,7 @@ async fn postgres_upgrade_backfills_existing_wallpaper_reference() {
     .unwrap();
     let image = f.image().await;
     let txn = f.db.begin().await.unwrap();
-    let public = publish_local_url(&txn, &image.content_path, &[])
+    let public = normalize_local_url(&txn, &image.content_path, &[])
         .await
         .unwrap();
     txn.commit().await.unwrap();
@@ -2105,6 +2102,570 @@ async fn dashboard_save_protects_sticker_urls_under_the_site_origin() {
     assert_eq!(
         stored_config(&f, "dashboard_layout").await,
         Some(json!(saved))
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_producer_key_is_released_after_delete_and_missing() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let ctx = || {
+        MediaContext::site(MediaActor::admin(1).unwrap(), MediaSource::Generated)
+            .with_producer_key("ai-task:t1:image")
+    };
+    let bytes = || NewMediaBytes {
+        bytes: png().into(),
+        claimed_mime: "image/png".into(),
+        filename: "generated.png".into(),
+        max_bytes: 1024 * 1024,
+        derived_from_id: None,
+        exposure: MediaExposure::Public,
+    };
+    let (first, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(created);
+    let (again, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(again.id, first.id);
+    f.service.delete(&f.db, first.id).await.unwrap();
+    let (second, created) = f
+        .service
+        .persist_ready_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert!(created, "a deleted asset must not burn its producer key");
+    assert_ne!(second.id, first.id);
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET state = 'missing' WHERE id = {}",
+        second.id
+    ))
+    .await
+    .unwrap();
+    let third = f
+        .service
+        .create_from_bytes(&f.db, ctx(), bytes())
+        .await
+        .unwrap();
+    assert_ne!(third.id, second.id);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_publishing_ids_requires_managing_private_assets() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let foreign = f
+        .service
+        .create_from_bytes(
+            &f.db,
+            MediaContext::user(MediaActor::user(2).unwrap(), MediaSource::Upload).unwrap(),
+            NewMediaBytes {
+                bytes: png().into(),
+                claimed_mime: "image/png".into(),
+                filename: "private.png".into(),
+                max_bytes: 1024 * 1024,
+                derived_from_id: None,
+                exposure: MediaExposure::Private,
+            },
+        )
+        .await
+        .unwrap();
+    // Request-supplied citations on a public consumer: another user's draft
+    // reads as missing; the owner or an admin publishes it by citing it.
+    let citations = Citations::urls(&[], &[foreign.url.clone()], |i| format!("a:{i}"));
+    let cite_as = |actor: MediaActor| {
+        let citations = citations.clone();
+        let db = f.db.clone();
+        async move {
+            bind(
+                &db,
+                &Consumer::federation_activity("act"),
+                &citations,
+                Authority::Actor(&actor),
+                Unresolved::Reject,
+            )
+            .await
+        }
+    };
+    let user = MediaActor::user(1).unwrap();
+    assert_eq!(
+        cite_as(user.clone()).await.unwrap_err(),
+        MediaError::Missing
+    );
+    let row = assets::find_by_id(&f.db, foreign.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.exposure.as_deref(), Some("private"));
+    cite_as(MediaActor::user(2).unwrap()).await.unwrap();
+    let row = assets::find_by_id(&f.db, foreign.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.exposure.as_deref(), Some("public"));
+    // Already public: citing it needs no further right.
+    cite_as(user).await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_note_history_skips_dead_media_the_author_removed() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let live = f.image().await;
+    let dead = format!("/api/phantasi/image-cache/ab/ab{}.png", "0".repeat(62));
+    let body = format!("![live]({}) ![dead]({dead})", live.content_path);
+    let doc: i32 = f
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO phantasi_note_docs(user_id, title, content_md) VALUES (1, 'n', $1) RETURNING id",
+            [body.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    // The author removes the dead image; the trigger snapshots the old body.
+    f.db.execute_unprepared(&format!(
+        "UPDATE phantasi_note_docs SET content_md = 'clean', revision = 2 WHERE id = {doc}"
+    ))
+    .await
+    .unwrap();
+    cite::sync_note_history_refs(&f.db, doc, 0, &[])
+        .await
+        .unwrap();
+    let refs = references::active_count(&f.db, live.id).await.unwrap();
+    assert_eq!(refs, 1, "live media in history stays protected");
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_message_payload_binds_only_the_senders_media() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let upload = |owner: i32| {
+        f.service.create_from_bytes(
+            &f.db,
+            MediaContext::user(MediaActor::user(owner).unwrap(), MediaSource::Channel).unwrap(),
+            NewMediaBytes {
+                bytes: png().into(),
+                claimed_mime: "image/png".into(),
+                filename: "inbound.png".into(),
+                max_bytes: 1024 * 1024,
+                derived_from_id: None,
+                exposure: MediaExposure::Private,
+            },
+        )
+    };
+    let own = upload(1).await.unwrap();
+    let foreign = upload(2).await.unwrap();
+    let payload = json!({ "attachments": [
+        { "url": own.content_path },
+        { "url": foreign.content_path },
+    ]});
+    let sender = MediaActor::user(1).unwrap();
+    cite::bind_run_input(&f.db, "run_a", &payload, &[], Some(&sender))
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
+    assert_eq!(
+        references::active_count(&f.db, foreign.id).await.unwrap(),
+        0,
+        "a message must not pin another user's media"
+    );
+    cite::bind_run_input(&f.db, "run_guest", &payload, &[], None)
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, own.id).await.unwrap(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_note_cites_absolute_site_urls_under_configured_origins() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let body = format!("![a](https://site.example{})", image.content_path);
+    let doc: i32 = f
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO phantasi_note_docs(user_id, title, content_md) VALUES (1, 'n', $1) RETURNING id",
+            [body.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let origins = vec!["https://site.example".to_string()];
+    cite::bind_note_draft(&f.db, doc, 1, None, &body, &origins)
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_share_image_and_favicon_are_published_and_bound() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    for key in ["site_og_image", "site_favicon"] {
+        let image = f.image().await;
+        let txn = f.db.begin().await.unwrap();
+        let stored = cite::bind_and_publish_site_image(&txn, key, &image.content_path, &[])
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert!(stored.starts_with("/media/assets/"), "{key}: {stored}");
+        let row = assets::find_by_id(&f.db, image.id).await.unwrap().unwrap();
+        assert_eq!(row.exposure.as_deref(), Some("public"));
+        assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
+        // A published site image cannot be made private under the crawler.
+        assert_eq!(
+            f.service.unpublish(&f.db, image.id).await.unwrap_err(),
+            MediaError::PublicInUse
+        );
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_unpublish_waits_for_reference_scan_like_delete() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    f.service.publish(&f.db, image.id).await.unwrap();
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET references_complete = FALSE WHERE id = {}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        f.service.unpublish(&f.db, image.id).await.unwrap_err(),
+        MediaError::PublicInUse
+    );
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET references_complete = TRUE WHERE id = {}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    f.service.unpublish(&f.db, image.id).await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_one_permanent_address_for_private_and_public() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-other')")
+        .await
+        .unwrap();
+    let image = f.image().await;
+    assert!(image.url.starts_with("/media/assets/"), "{}", image.url);
+    assert_eq!(image.catalog_url(), image.url);
+    let file = image.url.rsplit('/').next().unwrap().to_string();
+    let store = f.service.store();
+    let anonymous = resolve_public_asset(&f.db, store, image.public_id, &file)
+        .await
+        .unwrap();
+    assert!(matches!(anonymous, ServeOutcome::NotFound { .. }));
+    let stranger = MediaActor::user(2).unwrap();
+    let denied = resolve_private_asset(&f.db, store, image.public_id, &file, &stranger)
+        .await
+        .unwrap();
+    assert!(matches!(denied, ServeOutcome::NotFound { .. }));
+    let admin = MediaActor::admin(1).unwrap();
+    match resolve_private_asset(&f.db, store, image.public_id, &file, &admin)
+        .await
+        .unwrap()
+    {
+        ServeOutcome::File(served) => assert_eq!(served.cache_control, NO_STORE),
+        other => panic!("an admin reads any private asset: {other:?}"),
+    }
+    let published = f.service.publish(&f.db, image.id).await.unwrap();
+    assert_eq!(published.url, image.url, "publishing never moves the asset");
+    let private = f.service.unpublish(&f.db, image.id).await.unwrap();
+    assert_eq!(private.url, image.url);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_catalog_rows_move_to_the_permanent_address() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    f.db.execute_unprepared(&format!(
+        "UPDATE media_assets SET url = '/api/media/{0}/content' WHERE id = {0}",
+        image.id
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        maintenance::normalize_catalog_urls(&f.db, 16)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        maintenance::normalize_catalog_urls(&f.db, 16)
+            .await
+            .unwrap(),
+        0
+    );
+    let row = assets::find_by_id(&f.db, image.id).await.unwrap().unwrap();
+    assert_eq!(row.url, image.url);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_cited_cache_file_becomes_a_durable_aliased_asset() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let legacy_root = f.service.store().root().join("legacy");
+    let paths = LegacyPaths {
+        federation_root: legacy_root.join("federation"),
+        cache_images: legacy_root.join("cache"),
+    };
+    let hash = format!("cd{}", "0".repeat(62));
+    let url = format!("/api/phantasi/image-cache/cd/{hash}.png");
+    let source = paths.cache_images.join("cd").join(format!("{hash}.png"));
+    tokio::fs::create_dir_all(source.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&source, png()).await.unwrap();
+    let txn = f.db.begin().await.unwrap();
+    let id = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .expect("cached file imports");
+    txn.commit().await.unwrap();
+    // Both spellings of the cached file resolve to the one asset.
+    assert_eq!(resolve_asset_id(&f.db, &url).await.unwrap(), Some(id));
+    let brew = url.replace("/api/phantasi/", "/api/brew/");
+    assert_eq!(
+        binding_resolves(&f.db, &brew).await,
+        Some(id),
+        "brew spelling of the same cached file"
+    );
+    let row = assets::find_by_id(&f.db, id).await.unwrap().unwrap();
+    assert_eq!(row.state.as_deref(), Some("ready"));
+    assert_eq!(row.exposure.as_deref(), Some("public"));
+    assert!(row.references_complete, "new imports bind transactionally");
+    // Evicting the cache no longer matters.
+    tokio::fs::remove_file(&source).await.unwrap();
+    let asset = assets::to_domain(row, 0).unwrap();
+    let file = asset.url.rsplit('/').next().unwrap().to_string();
+    assert!(matches!(
+        resolve_public_asset(&f.db, f.service.store(), asset.public_id, &file)
+            .await
+            .unwrap(),
+        ServeOutcome::File(_)
+    ));
+    // A cache path whose file is gone is not importable.
+    let txn = f.db.begin().await.unwrap();
+    let gone = format!("/api/phantasi/image-cache/ef/ef{}.png", "0".repeat(62));
+    assert_eq!(
+        migration::import_cached_citation(&txn, f.service.store(), &paths, &gone)
+            .await
+            .unwrap(),
+        None
+    );
+    txn.rollback().await.unwrap();
+    f.close().await;
+}
+
+async fn binding_resolves(db: &sea_orm::DatabaseConnection, path: &str) -> Option<i32> {
+    match resolve_asset_id(db, path).await.unwrap() {
+        Some(id) => Some(id),
+        None => resolve_asset_id(db, &legacy::cache_equivalent_path(path)?)
+            .await
+            .unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn postgres_references_of_gone_consumers_are_pruned() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let id = image.id;
+    f.db.execute_unprepared(&format!(
+        "INSERT INTO media_references (asset_id, consumer_type, consumer_id, slot, expires_at, created_at) VALUES
+         ({id}, 'channel_message', 'agent_messages:987654', 'body:0', NULL, NOW()),
+         ({id}, 'ai_task', 'old-task', 'result', NOW() - interval '2 days', NOW() - interval '3 days'),
+         ({id}, 'channel_message', 'run_abc', 'inbound:0', NULL, NOW() - interval '2 days'),
+         ({id}, 'ai_task', 'live-task', 'result', NOW() + interval '1 hour', NOW()),
+         ({id}, 'tapp_storage', '424242', 'value:0', NULL, NOW()),
+         ({id}, 'note_draft', '1', 'body:0', NULL, NOW())"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 4);
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
+    assert_eq!(references::active_count(&f.db, id).await.unwrap(), 2);
+    f.close().await;
+}
+
+/// 撤回修复之前撤回的帖子：已发布行没了、且有以原 Create 为对象的本地 Delete
+/// 时，引用被释放；仍在发布的、没有 Delete 的、别人的 Delete、远端活动都不动。
+#[tokio::test]
+async fn postgres_references_of_withdrawn_publications_are_pruned() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let image = f.image().await;
+    let id = image.id;
+    f.db.execute_unprepared(&format!(
+        r#"
+        INSERT INTO users (id, username) VALUES (2, 'media-other');
+        INSERT INTO federation_activities
+            (activity_id, user_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES
+            ('https://s/a/withdrawn', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/withdrawn-obj', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/live', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/no-delete', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/a/foreign-delete', 1, 'Create', 'Note', '{{}}', true, NOW()),
+            ('https://s/d/1', 1, 'Delete', 'note', '{{"object": "https://s/a/withdrawn"}}', true, NOW()),
+            ('https://s/d/2', 1, 'Delete', 'note', '{{"object": {{"id": "https://s/a/withdrawn-obj"}}}}', true, NOW()),
+            ('https://s/d/3', 1, 'Delete', 'note', '{{"object": "https://s/a/live"}}', true, NOW()),
+            ('https://s/d/4', 2, 'Delete', 'note', '{{"object": "https://s/a/foreign-delete"}}', true, NOW());
+        INSERT INTO federation_activities
+            (activity_id, activity_type, object_type, object_json, is_local, published_at)
+        VALUES ('https://r/a/remote', 'Create', 'Note', '{{}}', false, NOW());
+        INSERT INTO federation_published_content
+            (user_id, content_type, content_id, activity_id, visibility, published_at)
+        VALUES (1, 'note', 'live', 'https://s/a/live', 'public', NOW());
+        INSERT INTO media_references (asset_id, consumer_type, consumer_id, slot, expires_at, created_at) VALUES
+            ({id}, 'federation_activity', 'https://s/a/withdrawn', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/withdrawn-obj', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/live', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/no-delete', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://s/a/foreign-delete', 'attachment:0', NULL, NOW()),
+            ({id}, 'federation_activity', 'https://r/a/remote', 'attachment:0', NULL, NOW());
+        "#
+    ))
+    .await
+    .unwrap();
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 2);
+    assert_eq!(maintenance::prune_references(&f.db, 100).await.unwrap(), 0);
+    assert_eq!(references::active_count(&f.db, id).await.unwrap(), 4);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_feeds_never_publish_what_they_cite() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let private = f.image().await;
+    let public = f.image().await;
+    f.service.publish(&f.db, public.id).await.unwrap();
+    // A subscribed feed names a private draft by its sequential id.
+    let payload = json!({
+        "content": format!(
+            "<img src=\"{}\"> <img src=\"{}\">",
+            content_path(private.id),
+            public.url
+        )
+    });
+    let txn = f.db.begin().await.unwrap();
+    bind_rss_item(&txn, 9, &payload, &[]).await.unwrap();
+    txn.commit().await.unwrap();
+    let row = assets::find_by_id(&f.db, private.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.exposure.as_deref(),
+        Some("private"),
+        "a feed never publishes"
+    );
+    assert_eq!(
+        references::active_count(&f.db, private.id).await.unwrap(),
+        0
+    );
+    assert_eq!(references::active_count(&f.db, public.id).await.unwrap(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_rolled_back_cache_import_is_reused_by_the_retry() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let paths = LegacyPaths {
+        federation_root: f.service.store().root().join("legacy/federation"),
+        cache_images: f.service.store().root().join("legacy/cache"),
+    };
+    let hash = format!("ab{}", "1".repeat(62));
+    let url = format!("/api/phantasi/image-cache/ab/{hash}.png");
+    let source = paths.cache_images.join("ab").join(format!("{hash}.png"));
+    tokio::fs::create_dir_all(source.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&source, png()).await.unwrap();
+    let identity = |id| {
+        let db = f.db.clone();
+        async move {
+            assets::find_by_id(&db, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .public_id
+        }
+    };
+    let txn = f.db.begin().await.unwrap();
+    let first = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .unwrap();
+    let first_identity = assets::find_by_id(&txn, first)
+        .await
+        .unwrap()
+        .unwrap()
+        .public_id;
+    txn.rollback().await.unwrap();
+    let txn = f.db.begin().await.unwrap();
+    let second = migration::import_cached_citation(&txn, f.service.store(), &paths, &url)
+        .await
+        .unwrap()
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(
+        identity(second).await,
+        first_identity,
+        "same file, same identity"
     );
     f.close().await;
 }

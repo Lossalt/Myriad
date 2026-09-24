@@ -357,10 +357,11 @@ pub(super) fn build_base_api_router(
         )
         .route(
             "/api/config/tapp-window-schemes",
+            // Site-wide presets served to every visitor through /config/ui.
             post(api::config::update_tapp_window_schemes).route_layer(from_fn_with_state(
                 app_state.clone(),
-                middleware::auth::auth_middleware,
-            )), // 登录用户可保存
+                middleware::auth::admin_middleware,
+            )),
         )
         .route(
             "/api/config/module-visibility",

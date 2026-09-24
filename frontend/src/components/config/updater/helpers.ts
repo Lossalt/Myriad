@@ -4,7 +4,14 @@ import type {
   UpdateMode,
   UpdaterStatus,
 } from '../../../services/updaterApi'
+import { currentCopy } from '../../../i18n/localeCopy'
 import { UpdaterError } from '../../../services/updaterApi'
+import { resolveErrorCode } from '../../../utils/errorCodes'
+import {
+  httpStatusMessage,
+  isUselessErrorText,
+  userFacingError,
+} from '../../../utils/userFacingError'
 import { computeAgo } from '../updaterCheckFreshness'
 
 export type U = ReturnType<typeof useI18n>['t']['config']
@@ -93,6 +100,52 @@ export function isTransientUpdaterError(e: unknown): boolean {
   return /failed to fetch|networkerror|load failed|aborted|timeout|network/i.test(
     msg,
   )
+}
+
+/**
+ * Updater admin errors. Coded failures read the shared `errors.byCode` table;
+ * the rest keep this page's operator wording (UPDATE_TOKEN, manual-override,
+ * dev-stack hints), which only makes sense here and mostly describes replies
+ * from the updater service itself, which carry no code.
+ */
+export function explainUpdaterError(e: unknown, u: U): string {
+  if (!(e instanceof UpdaterError)) return userFacingError(e)
+  const code = resolveErrorCode(e.code, e.message)
+  // Operator instructions (env vars / dev-stack command) beat the generic
+  // "isn't set up" / "couldn't reach" copy on the one page that can act on them.
+  if (code === 'updater_not_configured') return u.updaterErrNotConfigured
+  if (code === 'updater_unreachable') return u.updaterErrUpstream
+  const table: Readonly<Record<string, string | undefined>> =
+    currentCopy().errors.byCode
+  if (code && table[code]) return userFacingError(e)
+  if (e.status === 401) {
+    // Backend session vs. updater's own token: only the text tells them apart.
+    if (/admin|login|authorization|session/i.test(e.message)) {
+      return u.updaterErr401Admin
+    }
+    return u.updaterErr401
+  }
+  if (e.status === 403) {
+    // 403 is also CSRF / admin deny; not always manual-override
+    if (/csrf/i.test(e.message)) return u.updaterErr403Csrf
+    if (/admin|forbidden|permission/i.test(e.message)) {
+      return u.updaterErr403Admin
+    }
+    if (/manual|override|exit-maintenance|forget-current|rescue/i.test(e.message)) {
+      return u.updaterErr403
+    }
+    return userFacingError(e, u.updaterErr403Generic)
+  }
+  if (e.status === 409) return u.updaterErr409
+  if (e.status === 412) return userFacingError(e, u.updaterErr412)
+  if (e.status >= 500) {
+    if (e.status === 502 || e.status === 503) return u.updaterErrUpstream
+    const detail = upstreamDetail(e.message)
+    if (detail && !isUselessErrorText(detail)) {
+      return format(u.updaterErrServer, { msg: detail })
+    }
+  }
+  return userFacingError(e, httpStatusMessage(e.status))
 }
 
 export function upstreamDetail(message: string): string {

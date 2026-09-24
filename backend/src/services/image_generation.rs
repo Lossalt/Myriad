@@ -19,7 +19,7 @@ use crate::{
         image_cache::ImageCacheService,
         media::{
             LegacyPaths, MediaContext, MediaExposure, MediaService, MediaStore, NewMediaBytes,
-            legacy::legacy_disk_path,
+            ServeOutcome, resolve_alias_or_legacy, resolve_public_asset,
         },
     },
 };
@@ -454,17 +454,21 @@ pub async fn load_local_reference(url: &str) -> Result<ImageReference, ImageGene
     if let Ok((bytes, media_type)) = ImageCacheService::new().read_local_public_url(url).await {
         return ImageReference::new(bytes, media_type);
     }
-    let (bytes, media_type) = read_persisted_local_bytes(url)
+    let (bytes, media_type) = read_public_local_media(url)
         .await
         .ok_or_else(|| ImageGenerationError::Provider("local reference is missing".into()))?;
     ImageReference::new(bytes, media_type)
 }
 
+/// `exposure`: results handed to a sandboxed Tapp or an Agent conversation are
+/// read by `<img>` without the login cookie (opaque origin, guests, channels),
+/// so they persist public. Drafts that a later save publishes stay private.
 pub async fn persist_generated_with_status(
     db: &DatabaseConnection,
     ctx: MediaContext,
     generated: GeneratedImage,
     filename: &str,
+    exposure: MediaExposure,
 ) -> Result<PersistedGeneratedImage, ImageGenerationError> {
     let (bytes, media_type) = load_generated_bytes(generated).await?;
     let (asset, created) = MediaService::from_data_paths(paths())
@@ -476,7 +480,7 @@ pub async fn persist_generated_with_status(
                 claimed_mime: media_type,
                 filename: filename.to_string(),
                 derived_from_id: None,
-                exposure: MediaExposure::Private,
+                exposure,
                 bytes: bytes.into(),
             },
         )
@@ -511,42 +515,30 @@ pub async fn remove_persisted_generated(
     }
 }
 
-async fn read_persisted_local_bytes(url: &str) -> Option<(Vec<u8>, String)> {
-    let store = MediaStore::new(paths().media.clone());
-    if let Some(path) = public_asset_disk(&store, url) {
-        if let Ok(bytes) = tokio::fs::read(&path).await {
-            let mime = mime_from_filename(&path).to_string();
-            return Some((bytes, mime));
-        }
-    }
-    let disk = legacy_disk_path(&LegacyPaths::from_data_paths(paths()), url)?;
-    let bytes = tokio::fs::read(&disk).await.ok()?;
-    Some((bytes, mime_from_filename(&disk).to_string()))
-}
-
-fn public_asset_disk(store: &MediaStore, url: &str) -> Option<std::path::PathBuf> {
+/// Read a local reference exactly as the public media routes would serve it:
+/// only ready public assets or live legacy aliases. Unpublished or deleting
+/// assets must not leak into generation just because their UUID is known.
+pub(crate) async fn read_public_local_media(url: &str) -> Option<(Vec<u8>, String)> {
     let path = crate::services::media::registered_local_path(url)?;
-    let rest = path.strip_prefix("/media/assets/")?;
-    let (id, file) = rest.split_once('/')?;
-    let public_id = uuid::Uuid::parse_str(id).ok()?;
-    let ext = std::path::Path::new(file).extension()?.to_str()?;
-    let key = crate::services::media::storage_key(public_id, ext).ok()?;
-    store.final_path(&key).ok()
-}
-
-fn mime_from_filename(path: &std::path::Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        _ => "application/octet-stream",
-    }
+    let db = crate::services::tapp_registry::database().ok()?;
+    let store = MediaStore::new(paths().media.clone());
+    let outcome = if let Some(rest) = path.strip_prefix("/media/assets/") {
+        let (id, file) = rest.split_once('/')?;
+        let public_id = uuid::Uuid::parse_str(id).ok()?;
+        resolve_public_asset(&db, &store, public_id, file)
+            .await
+            .ok()?
+    } else {
+        let legacy = LegacyPaths::from_data_paths(paths());
+        resolve_alias_or_legacy(&db, &store, &legacy, &path)
+            .await
+            .ok()?
+    };
+    let ServeOutcome::File(file) = outcome else {
+        return None;
+    };
+    let bytes = tokio::fs::read(&file.path).await.ok()?;
+    Some((bytes, file.mime))
 }
 
 pub(crate) async fn load_generated_bytes(

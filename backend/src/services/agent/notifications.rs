@@ -21,7 +21,9 @@ use tokio::sync::{RwLock, broadcast};
 
 use crate::models::entities::agent_notifications as notif_entity;
 
-use super::notification_preferences::{self, NotificationPreferences};
+use super::notification_preferences::{
+    self, ACTION_OPEN_AGENT, EVENT_KEY_FIELD, NotificationEventKey, NotificationPreferences,
+};
 
 /// 全局通知管理器单例
 static NOTIFICATION_MANAGER: OnceLock<Arc<NotificationManager>> = OnceLock::new();
@@ -199,10 +201,21 @@ impl Notification {
         self
     }
 
+    /// 事件键只能经由类型化目录写入：生产者无法拼出目录外的键。
+    pub fn with_event(self, event: NotificationEventKey, mut metadata: serde_json::Value) -> Self {
+        if !metadata.is_object() {
+            metadata = serde_json::Value::Object(serde_json::Map::new());
+        }
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(EVENT_KEY_FIELD.to_string(), event.key().into());
+        }
+        self.with_metadata(metadata)
+    }
+
     pub fn event_key(&self) -> Option<&str> {
         self.metadata
             .as_ref()
-            .and_then(|metadata| metadata.get("event_key"))
+            .and_then(|metadata| metadata.get(EVENT_KEY_FIELD))
             .and_then(|value| value.as_str())
     }
 }
@@ -310,17 +323,11 @@ impl NotificationManager {
                 return false;
             }
         };
-        if let Some(event_key) = notification.event_key() {
-            preferences.allows(event_key)
-        } else {
-            // 缺少精细事件键时，仍必须服从总开关和来源开关。
-            preferences.enabled
-                && preferences
-                    .sources
-                    .get(notification.notification_type.source_key())
-                    .copied()
-                    .unwrap_or(true)
-        }
+        // 缺少或未登记精细事件键时，仍必须服从总开关和按类型推出的来源开关。
+        preferences.allows(
+            notification.event_key(),
+            notification.notification_type.source_key(),
+        )
     }
 
     /// 创建带持久化的管理器，并从 DB 恢复最近历史
@@ -553,19 +560,19 @@ impl NotificationManager {
             "waiting_for_input" => NotificationPriority::High,
             _ => NotificationPriority::Normal,
         };
-        let event_key = match status {
-            "completed" => "agent.task_completed",
-            "failed" => "agent.task_failed",
-            "cancelled" => "agent.task_cancelled",
-            "waiting_for_input" => "agent.clarification",
-            _ => "agent.task_progress",
+        let event = match status {
+            "completed" => NotificationEventKey::AgentTaskCompleted,
+            "failed" => NotificationEventKey::AgentTaskFailed,
+            "cancelled" => NotificationEventKey::AgentTaskCancelled,
+            "waiting_for_input" => NotificationEventKey::AgentClarification,
+            _ => NotificationEventKey::AgentTaskProgress,
         };
         // Heartbeat already notifies admins via `notify_heartbeat_result`.
         if user_id == crate::services::agent::SYSTEM_USER_ID {
             return;
         }
-        if event_key != "agent.task_progress" {
-            crate::services::agent::merope::spawn_ingest(user_id, event_key, body);
+        if event != NotificationEventKey::AgentTaskProgress {
+            crate::services::agent::merope::spawn_ingest(user_id, event.key(), body);
         }
         // Looking at the Agent panel: no Agent notification of any kind, including
         // in-progress snapshots. Speech still goes through ingest → face.
@@ -584,7 +591,6 @@ impl NotificationManager {
             _ => None,
         };
         let mut metadata = serde_json::json!({
-            "event_key": event_key,
             "run_id": run_id,
             "task_id": task_id,
             "session_id": session_id,
@@ -595,10 +601,10 @@ impl NotificationManager {
         // Flag off must look exactly like before: no landing hint of its own,
         // the panel keeps resolving these by notification type and session id.
         if merope_on {
-            metadata["action"] = serde_json::json!("open_agent");
+            metadata["action"] = serde_json::json!(ACTION_OPEN_AGENT);
         }
         let mut notification = Notification::new(user_id, notification_type, priority, title, body)
-            .with_metadata(metadata);
+            .with_event(event, metadata);
         notification.id = format!("agent_run_{}", run_id);
         self.upsert(notification).await;
     }
@@ -918,19 +924,27 @@ pub async fn init_notification_publisher(db: DatabaseConnection) {
 pub async fn init_notifications(db: DatabaseConnection) {
     let manager = Arc::new(NotificationManager::new_with_db(200, db).await);
     let _ = NOTIFICATION_MANAGER.set(manager.clone());
-    bridge::spawn(manager.clone());
+    bridge::start(manager.clone());
 
-    // 每日清理 30 天前的通知
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            manager.cleanup_old(30).await;
-        }
-    });
+    start_cleanup(
+        crate::services::jobs::jobs(),
+        manager,
+        crate::services::jobs::Every::new(std::time::Duration::from_secs(86400)),
+    );
 
     tracing::info!("[Notifications] Manager initialized (persistent)");
+}
+
+/// 每日清理 30 天前的通知。挂在进程 job runner 上，停机时随其他后台任务一起停。
+fn start_cleanup(
+    runner: &crate::services::jobs::JobRunner,
+    manager: Arc<NotificationManager>,
+    every: crate::services::jobs::Every,
+) -> crate::services::jobs::JobHandle {
+    runner.periodic("notification cleanup", every, move || {
+        let manager = manager.clone();
+        async move { manager.cleanup_old(30).await }
+    })
 }
 
 /// 获取全局通知管理器
@@ -1006,6 +1020,42 @@ mod tests {
             max_history: 10,
             db: None,
         }
+    }
+
+    #[tokio::test]
+    async fn cleanup_runs_on_the_job_runner_and_stops_with_it() {
+        use crate::services::jobs::{Every, JobRunner};
+        let manager = Arc::new(test_manager());
+        let old = || {
+            let mut notification = Notification::new(
+                9,
+                NotificationType::TaskCompleted,
+                NotificationPriority::Normal,
+                "old",
+                "old",
+            );
+            notification.created_at = Utc::now() - chrono::Duration::days(31);
+            notification
+        };
+        manager.history.write().await.push_back(old());
+        let runner = JobRunner::new();
+        let handle = super::start_cleanup(
+            &runner,
+            manager.clone(),
+            Every::new(std::time::Duration::from_millis(1)),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !manager.history.read().await.is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not clean expired notifications");
+        runner.shutdown(std::time::Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        manager.history.write().await.push_back(old());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(manager.history.read().await.len(), 1);
     }
 
     #[tokio::test]
@@ -1265,6 +1315,30 @@ mod tests {
                 "legacy",
                 "body",
             ))
+            .await;
+
+        assert!(manager.get_history_for_user(user_id, 10).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unregistered_event_key_cannot_bypass_the_source_switch() {
+        let manager = test_manager();
+        let user_id = 9005;
+        let mut preferences = NotificationPreferences::default();
+        preferences.sources.insert("federation".to_string(), false);
+        notification_preferences::set_cached_for_test(user_id, preferences).await;
+
+        manager
+            .notify(
+                Notification::new(
+                    user_id,
+                    NotificationType::FederationFollow,
+                    NotificationPriority::High,
+                    "unregistered",
+                    "body",
+                )
+                .with_metadata(serde_json::json!({"event_key": "federation.not_in_catalog"})),
+            )
             .await;
 
         assert!(manager.get_history_for_user(user_id, 10).await.is_empty());

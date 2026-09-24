@@ -147,10 +147,14 @@ async fn write_published_item<C: ConnectionTrait>(
     published_at_ms: Option<i64>,
     author: Option<String>,
 ) -> Result<PublishedNote, HttpError> {
-    let (rewritten_cover, rewritten_body) =
-        crate::services::media::publish_cited_media(db, &[], image.as_deref(), content_md)
-            .await
-            .map_err(media_bind_http)?;
+    let (rewritten_cover, rewritten_body) = crate::services::media::normalize_cited_media(
+        db,
+        &crate::services::media::upgrade::configured_origins().await,
+        image.as_deref(),
+        content_md,
+    )
+    .await
+    .map_err(media_bind_http)?;
     let content_md = rewritten_body;
     let image = rewritten_cover.or(image);
     validate_note(title, &content_md).map_err(validation_err)?;
@@ -277,37 +281,17 @@ async fn mark_doc_published<C: ConnectionTrait>(
 /// 发布一篇云端文档：写 `phantasi_items` + 标文档已发布，一个事务。
 ///
 /// `doc` 里的字段就是要发布的内容（调用方已把请求里的改动合进去）。
-pub async fn publish_doc(
-    db: &DatabaseConnection,
-    doc: phantasi_note_docs::Model,
-    published_at_ms: Option<i64>,
-) -> Result<(PublishedNote, phantasi_note_docs::Model), HttpError> {
-    let txn = db
-        .begin()
-        .await
-        .map_err(|e| phantasi_store_http("begin note publish", e))?;
-    let outcome = publish_doc_on(&txn, doc, published_at_ms).await;
-    match outcome {
-        Ok(result) => {
-            txn.commit()
-                .await
-                .map_err(|e| phantasi_store_http("commit note publish", e))?;
-            Ok(result)
-        }
-        Err(error) => {
-            if let Err(rollback) = txn.rollback().await {
-                tracing::warn!(error = %rollback, "note publish rollback failed");
-            }
-            Err(error)
-        }
-    }
-}
-
-/// `publish_doc` 的事务内部分：调用方负责 begin/commit/rollback。
-async fn publish_doc_on<C: ConnectionTrait>(
+/// Publish a document inside the caller's transaction.
+///
+/// `history_since` is the first revision this transaction captured into
+/// history. A caller that already advanced the draft in the same transaction
+/// (the editor's publish) passes the revision it started from, so that
+/// snapshot's media is bound too; otherwise it is the document's revision.
+pub async fn publish_doc_on<C: ConnectionTrait>(
     txn: &C,
     doc: phantasi_note_docs::Model,
     published_at_ms: Option<i64>,
+    history_since: i64,
 ) -> Result<(PublishedNote, phantasi_note_docs::Model), HttpError> {
     {
         let author = crate::services::note_authors::note_author_line(txn, doc.id).await?;
@@ -327,10 +311,10 @@ async fn publish_doc_on<C: ConnectionTrait>(
         crate::services::media::bind_note_draft(
             txn,
             saved.id,
-            saved.revision - 1,
+            history_since,
             saved.image.as_deref(),
             &saved.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -339,7 +323,7 @@ async fn publish_doc_on<C: ConnectionTrait>(
             item.id,
             saved.image.as_deref(),
             &saved.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -379,9 +363,15 @@ pub async fn delete_note_with_doc(
                 .await
                 .map_err(media_bind_http)?;
         }
-        crate::services::media::bind_note_published(&txn, item_id, None, "", &[])
-            .await
-            .map_err(media_bind_http)?;
+        crate::services::media::bind_note_published(
+            &txn,
+            item_id,
+            None,
+            "",
+            &crate::services::media::upgrade::configured_origins().await,
+        )
+        .await
+        .map_err(media_bind_http)?;
         phantasi_items::Entity::delete_by_id(item_id)
             .exec(&txn)
             .await
@@ -466,9 +456,14 @@ pub async fn update_note_doc_topic(
                 "Note draft was updated elsewhere",
             ));
         }
-        crate::services::media::sync_note_history_refs(&txn, doc_id, expected_revision, &[])
-            .await
-            .map_err(media_bind_http)?;
+        crate::services::media::sync_note_history_refs(
+            &txn,
+            doc_id,
+            expected_revision,
+            &crate::services::media::upgrade::configured_origins().await,
+        )
+        .await
+        .map_err(media_bind_http)?;
         phantasi_note_docs::Entity::find_by_id(doc_id)
             .one(&txn)
             .await
@@ -600,7 +595,8 @@ pub async fn publish_due_note_docs(db: &DatabaseConnection) -> Result<usize, Str
                 return Err(format!("savepoint scheduled note publish: {error}"));
             }
         };
-        let outcome = publish_doc_on(&savepoint, doc, published_at).await;
+        let history_since = doc.revision;
+        let outcome = publish_doc_on(&savepoint, doc, published_at, history_since).await;
         let committed = match outcome {
             Ok(_) => match savepoint.commit().await {
                 Ok(()) => txn.commit().await.map(|()| true),
@@ -787,7 +783,7 @@ pub async fn write_note_with_doc(
             doc.revision - 1,
             doc.image.as_deref(),
             &doc.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -796,7 +792,7 @@ pub async fn write_note_with_doc(
             item.id,
             doc.image.as_deref(),
             &doc.content_md,
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(media_bind_http)?;
@@ -1633,20 +1629,9 @@ mod tests {
     #[test]
     fn publish_and_write_run_in_a_transaction() {
         let src = include_str!("note_publish.rs");
-        for signature in [
-            "pub async fn publish_doc",
-            "pub async fn write_note_with_doc",
-        ] {
-            let body = body_of(src, signature);
-            assert!(
-                body.contains(".begin()"),
-                "{signature} must open a transaction"
-            );
-            assert!(body.contains("commit()"), "{signature} must commit");
-            assert!(
-                body.contains("rollback()"),
-                "{signature} must roll back on error"
-            );
-        }
+        let body = body_of(src, "pub async fn write_note_with_doc");
+        assert!(body.contains(".begin()"), "must open a transaction");
+        assert!(body.contains("commit()"), "must commit");
+        assert!(body.contains("rollback()"), "must roll back on error");
     }
 }

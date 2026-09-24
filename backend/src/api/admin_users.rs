@@ -367,13 +367,12 @@ pub async fn update_user(
     AdminClaims(claims): AdminClaims,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let self_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            )
-        })?;
+    let self_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        )
+    })?;
     let actor_is_owner = load_is_owner(&db, self_id).await?;
 
     let target = db
@@ -647,13 +646,12 @@ pub async fn delete_user(
     Path(user_id): Path<i32>,
     AdminClaims(claims): AdminClaims,
 ) -> Result<Json<Value>, ApiError> {
-    let self_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::FORBIDDEN,
-                Json(AppError::public_json("A durable user account is required")),
-            )
-        })?;
+    let self_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(AppError::public_json("A durable user account is required")),
+        )
+    })?;
     let actor_is_owner = load_is_owner(&db, self_id).await?;
 
     if user_id == self_id {
@@ -699,7 +697,7 @@ pub async fn delete_user(
     }
     // 关联数据的生命周期归 schema（`migrations/user_lifecycle.sql`）：FK 级联 +
     // 主体表删除触发器在同一语句内完成；任一约束失败整条删除回滚。磁盘上的
-    // Tapp 安装目录不属于数据库，不在此处理。
+    // Tapp 安装目录在提交后删除（见下）。
     let result = txn
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
@@ -717,6 +715,15 @@ pub async fn delete_user(
 
     txn.commit().await.map_err(db_error("commit user delete"))?;
     crate::services::agent::consciousness::clear_user_attention(user_id);
+    // The cascade removed every install row of this user; their packages on
+    // disk would otherwise stay behind forever. Only after the commit, only
+    // this user's own install root, best effort.
+    if user_id > 0 {
+        let install_root = crate::services::data_paths::paths().tapp_user_dir(user_id);
+        if let Err(error) = crate::api::tapp_store::remove_path_best_effort(&install_root).await {
+            tracing::warn!(user_id, %error, "deleted user's Tapp packages were not removed");
+        }
+    }
 
     // Invalidate locally after the destructive commit, then fan out a best-
     // effort PostgreSQL notification.  If the notification is missed, the
@@ -755,7 +762,7 @@ mod tests {
     fn admin_actor_id_is_not_decoded_to_zero() {
         let src = include_str!("admin_users.rs");
         let production = src.split("#[cfg(test)]").next().expect("production");
-        assert!(production.contains("positive_user_id"));
+        assert!(production.contains("durable_user_id()"));
         assert!(!production.contains("claims.sub.parse().unwrap_or(0)"));
     }
 

@@ -64,6 +64,11 @@ pub struct TappDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     pub granted_permissions: Vec<String>,
+    /// Approved install permissions, for admins only (install management and
+    /// export). Granted is the role-filtered runtime view and must never be
+    /// reused as an approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_permissions: Option<Vec<String>>,
     #[serde(default)]
     pub needs_reauthorization: bool,
     pub installed_at: String,
@@ -237,6 +242,7 @@ pub fn tapp_detail_from_model(
     let (status, error_message) = projected_status(&tapp);
     let visibility =
         crate::services::tapp_ownership::normalize_tapp_visibility(&tapp.visibility).to_string();
+    let approved_for_admin = (role == UserRole::Admin).then(|| approved_permissions.clone());
     TappDetail {
         id: tapp.tapp_id,
         name: tapp.name,
@@ -249,6 +255,7 @@ pub fn tapp_detail_from_model(
         error_message,
         manifest: tapp.manifest,
         granted_permissions,
+        approved_permissions: approved_for_admin,
         needs_reauthorization,
         installed_at: tapp.installed_at.to_rfc3339(),
         last_run_at: tapp.last_run_at.map(|date| date.to_rfc3339()),

@@ -241,7 +241,7 @@ pub(super) async fn execute_phantasi_read(
     ctx: &HandlerContext<'_>,
 ) -> Result<Value, String> {
     let filters = parse_phantasi_read_filters(params);
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
 
     let sources = visible_sources_query(is_admin)
         .all(ctx.db)
@@ -443,7 +443,7 @@ pub(super) async fn execute_phantasi_sources(
         .filter(|s| !s.is_empty())
         .map(normalize_phantasi_source_type_filter);
 
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
     let mut source_query =
         phantasi_sources::Entity::find().order_by_asc(phantasi_sources::Column::Name);
     if !is_admin {
@@ -685,7 +685,7 @@ pub(super) async fn execute_phantasi_items(
     let mut available_sources: Vec<String> = Vec::new();
     let mut all_authors: Vec<String> = Vec::new();
 
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
     let sources = visible_sources_query(is_admin)
         .all(ctx.db)
         .await
@@ -998,7 +998,7 @@ async fn load_article_with_source(
     ctx: &HandlerContext<'_>,
     item: phantasi_items::Model,
 ) -> Result<Value, String> {
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
     let source = phantasi_sources::Entity::find_by_id(item.source_id)
         .one(ctx.db)
         .await
@@ -1070,7 +1070,7 @@ pub(super) async fn execute_phantasi_stats(
     ctx: &HandlerContext<'_>,
 ) -> Result<Value, String> {
     let user_id = ctx.user_id;
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, user_id).await?;
     // One statement returns all four counters. Reading stats only apply to a
     // signed-in subject ($1 > 0); starred stays admin-only as before.
     let stats_sql = if is_admin {

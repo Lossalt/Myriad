@@ -122,6 +122,7 @@ where
         media,
         generated,
         "generated",
+        crate::services::media::MediaExposure::Public,
     )
     .await
     .map_err(image_provider_error)?;

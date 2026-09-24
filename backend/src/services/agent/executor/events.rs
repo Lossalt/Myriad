@@ -113,66 +113,6 @@ impl StepEventEmitter {
         }
     }
 
-    /// 发送 StepDebug 开始事件
-    pub async fn debug_start(
-        &self,
-        step_id: &str,
-        capability_id: &str,
-        directive: Option<String>,
-        user_request: Option<String>,
-        params: Option<Value>,
-        is_dynamic: bool,
-    ) {
-        if let Some(ref tx) = self.tx {
-            let _ = tx
-                .send(AgentProgressEvent::StepDebug {
-                    step_id: step_id.to_string(),
-                    phase: "start".to_string(),
-                    capability_id: capability_id.to_string(),
-                    directive,
-                    user_request,
-                    params,
-                    output_preview: None,
-                    is_dynamic,
-                    duration_ms: None,
-                    success: None,
-                    error: None,
-                })
-                .await;
-        }
-    }
-
-    /// 发送 StepDebug 完成事件
-    #[allow(clippy::too_many_arguments)]
-    pub async fn debug_complete(
-        &self,
-        step_id: &str,
-        capability_id: &str,
-        is_dynamic: bool,
-        duration_ms: u64,
-        success: bool,
-        output_preview: Option<String>,
-        error: Option<String>,
-    ) {
-        if let Some(ref tx) = self.tx {
-            let _ = tx
-                .send(AgentProgressEvent::StepDebug {
-                    step_id: step_id.to_string(),
-                    phase: "complete".to_string(),
-                    capability_id: capability_id.to_string(),
-                    directive: None,
-                    user_request: None,
-                    params: None,
-                    output_preview,
-                    is_dynamic,
-                    duration_ms: Some(duration_ms),
-                    success: Some(success),
-                    error,
-                })
-                .await;
-        }
-    }
-
     /// 发送 WaitingForInput 事件
     pub async fn waiting_for_input(&self, task_id: &str, question: &UserQuestion) {
         if let Some(ref tx) = self.tx {

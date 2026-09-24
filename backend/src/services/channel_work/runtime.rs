@@ -131,10 +131,8 @@ pub(super) async fn start_delivery(
 }
 
 pub(crate) async fn revoke_pairing(db: &DatabaseConnection, provider: &str, user_id: i32) {
-    let platform = if provider == "discord_dm" {
-        "discord"
-    } else {
-        provider
+    let Some(platform) = ChannelPlatform::from_provider(provider) else {
+        return;
     };
     let candidates: Vec<_> = ACTIVE
         .lock()
@@ -148,7 +146,7 @@ pub(crate) async fn revoke_pairing(db: &DatabaseConnection, provider: &str, user
             stop_delivery(&key).await;
         }
     }
-    if let Ok(rows) = shared_registry::list(db, session_ns(platform), Some(user_id), None).await {
+    if let Ok(rows) = shared_registry::list(db, platform.session_ns(), Some(user_id), None).await {
         for row in rows {
             if let Ok(session) = serde_json::from_value::<StoredSession>(row.payload) {
                 // A new pairing may already exist after the revocation transaction committed.
@@ -166,7 +164,7 @@ pub(crate) async fn revoke_pairing(db: &DatabaseConnection, provider: &str, user
 
 async fn destroy_session(
     db: &DatabaseConnection,
-    platform: &str,
+    platform: ChannelPlatform,
     user_id: i32,
     key: &str,
     session: &StoredSession,
@@ -184,7 +182,7 @@ async fn destroy_session(
         if let Err(error) = db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
             "DELETE FROM tapp_runtime_registry WHERE subject_id = $1 AND \
              ((namespace IN ($2, $3, $4) AND record_id = $5) OR (namespace = $6 AND starts_with(record_id, $5 || ':')))",
-            [user_id.into(), session_ns(platform).into(), pending_ns(platform).into(), outbound_ns(platform).into(), key.into(), inbound_ns(platform).into()])).await {
+            [user_id.into(), platform.session_ns().into(), platform.pending_ns().into(), platform.outbound_ns().into(), key.into(), platform.inbound_ns().into()])).await {
             warn!(%error, "revoked channel projection cleanup failed");
         }
     }).await;
@@ -241,7 +239,7 @@ pub(super) async fn recover_session(
     if !binding.is_current(db).await {
         return false;
     }
-    let outbox = shared_registry::list(db, outbound_ns(platform), Some(binding.user_id), None)
+    let outbox = shared_registry::list(db, platform.outbound_ns(), Some(binding.user_id), None)
         .await
         .is_ok_and(|rows| rows.iter().any(|row| row.record_id == key));
     let run =
@@ -307,8 +305,8 @@ pub(crate) async fn run_recovery_worker() {
         let Ok(db) = shared_registry::database() else {
             continue;
         };
-        for platform in ["qq", "telegram", "discord", "feishu"] {
-            let Ok(rows) = shared_registry::list(&db, session_ns(platform), None, None).await
+        for platform in ChannelPlatform::ALL {
+            let Ok(rows) = shared_registry::list(&db, platform.session_ns(), None, None).await
             else {
                 continue;
             };

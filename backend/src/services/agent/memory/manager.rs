@@ -69,21 +69,6 @@ impl AgentMemory {
         text
     }
 
-    /// 该用户召回时要查的分片 key。
-    ///
-    /// 系统用户（`user_id == 0`）在 [`entry_visible_to`] 里能看到全部条目，
-    /// 所以它查所有分片；普通用户只查自己那片。
-    fn visible_shards(
-        user_id: i32,
-        indexes: &HashMap<Option<i32>, TfIdfIndex>,
-    ) -> Vec<Option<i32>> {
-        if user_id == 0 {
-            indexes.keys().copied().collect()
-        } else {
-            vec![Some(user_id)]
-        }
-    }
-
     // 写入
 
     /// 记住一条记忆
@@ -832,7 +817,7 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
         true
     }
 
-    /// 更新指定 ID 的记忆内容（`entry_visible_to`：所有者或系统用户）
+    /// 更新指定 ID 的记忆内容（`entry_visible_to`：仅条目所有者）
     ///
     /// 锁顺序：index 先，entries 后（与其他所有路径一致，避免死锁）
     pub async fn update_memory(&self, memory_id: &str, new_content: &str, user_id: i32) -> bool {
@@ -886,20 +871,20 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             return Vec::new();
         }
 
-        // TF-IDF 搜索 — 只在调用者可见的分片里取候选，`limit * 3` 余量留给层级和类型过滤。
+        // 未指定调用者时返回空结果，不扫描全部分片。
+        let Some(uid) = params.user_id else {
+            return Vec::new();
+        };
+
+        // TF-IDF 搜索 — 只查调用者自己的分片 `Some(uid)`：用户 0 不跨分片，遗留 `None`
+        // 分片不进任何人的候选池。`limit * 3` 余量留给层级和类型过滤。
         // 读锁：IDF 已由写入方在写锁内重建。
         let tfidf_results = {
             let indexes = self.indexes.read().await;
-            let shards = match params.user_id {
-                Some(uid) => Self::visible_shards(uid, &indexes),
-                // user_id 为 None 时扫全部分片；过滤阶段也不做用户隔离
-                None => indexes.keys().copied().collect(),
-            };
-            let mut merged: Vec<(String, f32)> = shards
-                .iter()
-                .filter_map(|shard| indexes.get(shard))
-                .flat_map(|shard| shard.search(&params.query, params.limit * 3))
-                .collect();
+            let mut merged: Vec<(String, f32)> = indexes
+                .get(&Some(uid))
+                .map(|shard| shard.search(&params.query, params.limit * 3))
+                .unwrap_or_default();
             merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             merged.truncate(params.limit * 3);
             merged
@@ -920,11 +905,8 @@ JSON: {{"memories": [{{"content": "...", "memory_type": "preference|entity_knowl
             .filter_map(|(id, sim_score)| {
                 let entry = entries.get(&id)?;
 
-                // 用户隔离
-                if let Some(uid) = params.user_id {
-                    if !entry_visible_to(entry, uid) {
-                        return None;
-                    }
+                if !entry_visible_to(entry, uid) {
+                    return None;
                 }
 
                 // 层级过滤
@@ -1346,11 +1328,27 @@ pub async fn init_memory(memory_dir: PathBuf) {
     let memory = Arc::new(AgentMemory::new(memory_dir).await);
     let _ = AGENT_MEMORY.set(memory.clone());
 
-    // 后台维护：每 10 分钟清理过期短期记忆 + 提升高频记忆 + 批量落盘访问计数
-    tokio::spawn(async move {
-        let interval = tokio::time::Duration::from_secs(10 * 60);
-        loop {
-            tokio::time::sleep(interval).await;
+    start_maintenance(
+        crate::services::jobs::jobs(),
+        memory,
+        std::time::Duration::from_secs(10 * 60),
+    );
+}
+
+/// 后台维护：每 10 分钟清理过期短期记忆 + 提升高频记忆 + 批量落盘访问计数。
+/// 挂在进程 job runner 上，停机时随其他后台任务一起停；每轮结束后再等满一个
+/// 间隔，与原先的 sleep 循环一致。
+fn start_maintenance(
+    runner: &crate::services::jobs::JobRunner,
+    memory: Arc<AgentMemory>,
+    interval: std::time::Duration,
+) -> crate::services::jobs::JobHandle {
+    let every = crate::services::jobs::Every::new(interval)
+        .after(interval)
+        .spaced();
+    runner.periodic("agent memory maintenance", every, move || {
+        let memory = memory.clone();
+        async move {
             let cleaned = memory.cleanup_short_term().await;
             let promoted = memory.promote_memories().await;
             memory.flush_if_dirty().await;
@@ -1362,7 +1360,7 @@ pub async fn init_memory(memory_dir: PathBuf) {
                 );
             }
         }
-    });
+    })
 }
 
 /// 获取全局记忆管理器
@@ -1373,6 +1371,30 @@ pub fn get_memory() -> Option<&'static Arc<AgentMemory>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn maintenance_runs_on_the_job_runner_and_stops_with_it() {
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!(
+            "myriad-agent-memory-job-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let memory = Arc::new(AgentMemory::new(dir.clone()).await);
+        memory.dirty.store(true, Ordering::Relaxed);
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = start_maintenance(&runner, memory.clone(), Duration::from_millis(1));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while memory.dirty.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("runner job did not flush dirty memory");
+        runner.shutdown(Duration::from_secs(1)).await;
+        assert!(handle.is_cancelled());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // TF-IDF 分词测试
 
@@ -1539,9 +1561,16 @@ mod tests {
         };
         assert!(entry_visible_to(&a, 1));
         assert!(!entry_visible_to(&a, 2));
-        assert!(entry_visible_to(&a, 0)); // system sees all
-        assert!(!entry_visible_to(&legacy, 1)); // orphan legacy not visible to users
-        assert!(entry_visible_to(&legacy, 0));
+        assert!(!entry_visible_to(&a, 0)); // user 0 is not a cross-user reader
+        assert!(!entry_visible_to(&legacy, 1));
+        assert!(!entry_visible_to(&legacy, 0)); // legacy rows are not recallable yet
+        let own = MemoryEntry {
+            user_id: Some(0),
+            content: "system-owned".into(),
+            ..a.clone()
+        };
+        assert!(entry_visible_to(&own, 0));
+        assert!(!entry_visible_to(&own, 1));
     }
 
     // 用户分片
@@ -1652,7 +1681,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_system_user_still_recalls_across_every_shard() {
+    async fn the_system_user_recalls_only_its_own_entries() {
         let (memory, _dir) = scratch_memory().await;
         memory
             .remember("用户一的订阅偏好", MemoryType::Preference, 1)
@@ -1660,12 +1689,39 @@ mod tests {
         memory
             .remember("用户二的订阅偏好", MemoryType::Preference, 2)
             .await;
+        memory
+            .remember("心跳自己的订阅偏好", MemoryType::Preference, 0)
+            .await;
 
         let hits = memory.recall_with_params(recall("订阅偏好", 0, 10)).await;
-        assert_eq!(
-            hits.len(),
-            2,
-            "system sees every entry, per entry_visible_to"
+        assert_eq!(hits.len(), 1, "user 0 must not read other users' memory");
+        assert!(hits.iter().all(|entry| entry.user_id == Some(0)));
+        assert_eq!(hits[0].content, "心跳自己的订阅偏好");
+
+        let as_user = memory.recall_with_params(recall("订阅偏好", 1, 10)).await;
+        assert!(as_user.iter().all(|entry| entry.user_id == Some(1)));
+        assert!(!as_user.iter().any(|entry| entry.user_id == Some(0)));
+    }
+
+    #[tokio::test]
+    async fn recall_without_a_user_id_returns_nothing() {
+        let (memory, _dir) = scratch_memory().await;
+        memory
+            .remember("用户一的秘密偏好", MemoryType::Preference, 1)
+            .await;
+        memory
+            .remember("心跳自己的秘密偏好", MemoryType::Preference, 0)
+            .await;
+
+        let unspecified = RecallQuery {
+            query: "秘密偏好".into(),
+            limit: 10,
+            ..Default::default()
+        };
+        assert!(unspecified.user_id.is_none());
+        assert!(
+            memory.recall_with_params(unspecified).await.is_empty(),
+            "a missing caller must not scan every shard"
         );
     }
 
@@ -1741,12 +1797,12 @@ mod tests {
                 .await
                 .is_empty()
         );
-        assert_eq!(
+        assert!(
             memory
                 .recall_with_params(recall("订阅记录", 0, 10))
                 .await
-                .len(),
-            1
+                .is_empty(),
+            "legacy rows stay unrecalled until the phase-3 migration"
         );
     }
 

@@ -1,20 +1,25 @@
 import { API_URL } from '../config'
-import { ApiError } from '../services/api'
-import { readJsonOk } from './apiHelper'
+import { ApiError, apiService } from '../services/api'
+import { emitAppEvent } from './appEvents'
+import { authSubject } from './authSubject'
 import { httpStatusMessage } from './httpStatus'
 import { normalizeJsonMediaUrls } from './proxyImageUrl'
 import { RequestCache } from './requestCache'
 import { isUselessErrorText } from './uselessErrorText'
 
-async function fetchDedupedJson(url: string): Promise<any> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    signal: AbortSignal.timeout(30000),
-  })
-  return readJsonOk(response)
+/**
+ * GET an `/api` path through apiService like every other request: locale
+ * headers, rate-limit and session-failure handling included. Cache keys stay
+ * the full URL the invalidation helpers already use.
+ */
+async function fetchDedupedJson(apiPath: string): Promise<any> {
+  return apiService.get(apiPath, { timeout: 30_000 })
 }
 
 const requestCache = new RequestCache(50)
+// A cached response belongs to the identity that fetched it: after a sign-in,
+// sign-out or account switch nothing here may be served to the next one.
+authSubject.subscribe(() => requestCache.clear())
 const DEFAULT_CACHE_TTL = 30 * 1000
 
 export interface DedupOptions {
@@ -53,10 +58,25 @@ export function clearLibraryDataCache(): void {
   clearDedupCacheByPrefix(`${endpoint}?`)
 }
 
+const UI_CONFIG_KEY = `${API_URL}/api/config/ui`
+
+/** Events whose listeners re-read the public UI config. */
+export type UIConfigChange = 'wallpaperConfigChanged' | 'footerConfigChanged' | 'islandContentChanged'
+
+/**
+ * The one way to say "the public UI config changed": drop the cached copy
+ * and, when given, tell the surfaces that re-read it. Callers no longer
+ * rebuild the cache key or remember the paired event.
+ */
+export function invalidateUIConfig(change?: UIConfigChange): void {
+  clearDedupCache(UI_CONFIG_KEY)
+  if (change) emitAppEvent(change)
+}
+
 export async function getUIConfigDeduped(): Promise<any> {
   return dedupedFetch(
-    `${API_URL}/api/config/ui`,
-    () => fetchDedupedJson(`${API_URL}/api/config/ui`),
+    UI_CONFIG_KEY,
+    () => fetchDedupedJson('/config/ui'),
     { cacheTTL: 30 * 1000 },
   )
 }
@@ -67,7 +87,7 @@ export async function getLatestReportDeduped(
   const cacheKey = `${API_URL}/api/reports/latest`
   const data = await dedupedFetch(
     cacheKey,
-    () => fetchDedupedJson(`${API_URL}/api/reports/latest`),
+    () => fetchDedupedJson('/reports/latest'),
     { cacheTTL: 30 * 1000, forceRefresh: options.forceRefresh },
   )
 
@@ -91,7 +111,7 @@ export function invalidateLatestReportCache(): void {
 export async function getPublicConfigDeduped(): Promise<any> {
   return dedupedFetch(
     `${API_URL}/api/config/public`,
-    () => fetchDedupedJson(`${API_URL}/api/config/public`),
+    () => fetchDedupedJson('/config/public'),
     { cacheTTL: 30 * 1000 },
   )
 }
@@ -169,7 +189,7 @@ export async function getLibraryStatsDeduped(): Promise<LibraryTypeCounts> {
   const url = `${API_URL}/api/library?counts_only=true`
   const data = await dedupedFetch(
     url,
-    () => fetchDedupedJson(url),
+    () => fetchDedupedJson('/library?counts_only=true'),
     { cacheTTL: 2 * 60 * 1000 },
   )
   const stats = libraryStatsFromResponse(data)
@@ -200,10 +220,10 @@ export async function getLibraryDataPageDeduped(
     limit: String(safeLimit),
   })
   if (itemType && itemType !== 'all') params.set('type', itemType)
-  const url = `${API_URL}/api/library?${params.toString()}`
+  const path = `/library?${params.toString()}`
   return dedupedFetch(
-    url,
-    async () => normalizeJsonMediaUrls(await fetchDedupedJson(url)),
+    `${API_URL}/api${path}`,
+    async () => normalizeJsonMediaUrls(await fetchDedupedJson(path)),
     { cacheTTL: 2 * 60 * 1000 },
   )
 }

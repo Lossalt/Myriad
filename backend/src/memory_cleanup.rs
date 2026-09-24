@@ -1,29 +1,28 @@
 //! Process-owned reclamation, including workers that never receive HTTP requests.
 use std::time::Duration;
 
+/// Both jobs live on the process job runner, so shutdown drains them with the
+/// other background jobs; dropping the guard also stops them.
 pub(crate) struct MemoryCleanup(
-    tokio::task::JoinHandle<()>,
-    Option<tokio::task::JoinHandle<()>>,
+    crate::services::jobs::JobHandle,
+    Option<crate::services::jobs::JobHandle>,
 );
 
 impl Drop for MemoryCleanup {
     fn drop(&mut self) {
-        self.0.abort();
+        self.0.cancel();
         if let Some(upgrade) = &self.1 {
-            upgrade.abort();
+            upgrade.cancel();
         }
     }
 }
 
 pub(crate) fn start(automatic_media_upgrade: bool) -> MemoryCleanup {
-    let cleanup = tokio::spawn(async {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            reclaim().await;
-        }
-    });
+    let cleanup = crate::services::jobs::jobs().periodic(
+        "memory cleanup",
+        crate::services::jobs::Every::new(Duration::from_secs(60)),
+        reclaim,
+    );
     MemoryCleanup(
         cleanup,
         automatic_media_upgrade.then(crate::services::media::start_upgrade_worker),
@@ -37,6 +36,7 @@ async fn reclaim() {
     analyzer::cleanup_shape_memo();
     crate::services::tapp_api_service::cleanup_response_cache().await;
     agent::consciousness::cleanup_attention();
+    crate::services::oauth::state::cleanup_used_nonces().await;
     crate::api::merope_rig::cleanup_verified_packages().await;
     if tokio::time::timeout(
         Duration::from_secs(30),

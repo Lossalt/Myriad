@@ -6,7 +6,10 @@ use axum::{
 };
 use chrono::{Duration, Local, NaiveDate, Utc};
 use myriad_error::AppError;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, Value as SeaValue};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait,
+    Value as SeaValue,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -79,15 +82,10 @@ static RATE_LIMIT: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, (Instant, u32
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 static VIEW_DEDUPE: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, Instant>>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
-/// Admin summary cache: `{from}..{to}` (YYYY-MM-DD) → (stored_at, body). Invalidated on write.
-pub(crate) static SUMMARY_CACHE: once_cell::sync::Lazy<
-    Arc<Mutex<HashMap<String, (Instant, Value)>>>,
-> = once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 pub(crate) const SUMMARY_CACHE_TTL: StdDuration = StdDuration::from_secs(45);
-/// Public visitor-card aggregate (today / all-time / trend). The per-visitor
-/// ordinal is **never** cached here — it is looked up per request.
-pub(crate) static VISITOR_CARD_CACHE: once_cell::sync::Lazy<Arc<Mutex<Option<(Instant, Value)>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Admin summary and public visitor-card caches. Invalidated on every write.
+pub(crate) static SUMMARY_CACHES: once_cell::sync::Lazy<Mutex<SummaryCaches>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(SummaryCaches::default()));
 /// IP → country (code, name) cache for analytics intake.
 static COUNTRY_CACHE: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, (Instant, CountryInfo)>>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -102,9 +100,75 @@ pub(crate) struct CountryInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AnalyticsSaltUnavailable;
 
+/// Summary cache entries plus a generation that every invalidation bumps.
+///
+/// A summary is computed without holding the lock, so an intake can commit and
+/// invalidate while it runs. The computing side reads [`Self::generation`]
+/// before querying and stores through `store_*`, which drop the result when
+/// the generation has moved: otherwise the stale body would be written back
+/// over the invalidation and served for a whole TTL. Bump and clear happen
+/// under the same lock as the check-and-store, so there is no window between.
+#[derive(Default)]
+pub(crate) struct SummaryCaches {
+    generation: u64,
+    /// `{from}..{to}` (YYYY-MM-DD) → (stored_at, body).
+    summary: HashMap<String, (Instant, Value)>,
+    /// Public visitor-card aggregate (today / all-time / trend). The
+    /// per-visitor ordinal is **never** cached here — it is looked up per request.
+    card: Option<(Instant, Value)>,
+}
+
+impl SummaryCaches {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn summary(&self, key: &str) -> Option<Value> {
+        self.summary
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < SUMMARY_CACHE_TTL)
+            .map(|(_, body)| body.clone())
+    }
+
+    /// Stores only if nothing was invalidated since `generation` was read.
+    pub(crate) fn store_summary(&mut self, generation: u64, key: String, body: Value) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.summary.insert(key, (Instant::now(), body));
+        // Keep map small (only a few day windows are ever queried)
+        if self.summary.len() > 12 {
+            self.summary
+                .retain(|_, (at, _)| at.elapsed() < SUMMARY_CACHE_TTL * 2);
+        }
+        true
+    }
+
+    pub(crate) fn card(&self) -> Option<Value> {
+        self.card
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < SUMMARY_CACHE_TTL)
+            .map(|(_, body)| body.clone())
+    }
+
+    /// Stores only if nothing was invalidated since `generation` was read.
+    pub(crate) fn store_card(&mut self, generation: u64, body: Value) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.card = Some((Instant::now(), body));
+        true
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.summary.clear();
+        self.card = None;
+    }
+}
+
 pub(crate) async fn invalidate_summary_cache() {
-    *VISITOR_CARD_CACHE.lock().await = None;
-    SUMMARY_CACHE.lock().await.clear();
+    SUMMARY_CACHES.lock().await.invalidate();
 }
 
 // ── Request types ──────────────────────────────────────────────────────────
@@ -247,7 +311,7 @@ pub(crate) fn try_analytics_salt() -> Result<String, AnalyticsSaltUnavailable> {
     static ERR_PROD: std::sync::Once = std::sync::Once::new();
 
     let env_salt = std::env::var("ANALYTICS_SALT").ok();
-    let jwt_secret = std::env::var("JWT_SECRET").ok();
+    let jwt_secret = crate::middleware::auth::session_secret();
     let production = is_production_environment();
     let result = resolve_analytics_salt(env_salt.as_deref(), production, jwt_secret.as_deref());
 
@@ -760,58 +824,112 @@ async fn is_duplicate_view(visitor: &str, path: &str) -> bool {
 }
 
 // ── DB writes ──────────────────────────────────────────────────────────────
+//
+// Every "seen set + counter" pair is written by **one statement**: a
+// data-modifying CTE inserts into the seen set and the counter upsert adds
+// `count(*)` of what that insert actually returned. A failure anywhere rolls
+// back both halves, so a visitor can never be marked seen while the counter
+// misses them; a concurrent duplicate blocks on the seen key, then hits
+// `DO NOTHING`, returns no row and adds 0.
 
-async fn mark_visitor_seen(
-    db: &DatabaseConnection,
-    day: NaiveDate,
-    path: &str,
-    visitor: &str,
-) -> Result<bool, sea_orm::DbErr> {
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
-VALUES ($1, $2, $3)
-ON CONFLICT (day, path, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    Ok(insert.rows_affected() > 0)
-}
+const PAGEVIEW_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, path, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $2, $4, fresh.n, 0, 0
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+WHERE $4 > 0 OR fresh.n > 0
+ON CONFLICT (day, path) DO UPDATE SET
+  views = analytics_page_daily.views + EXCLUDED.views,
+  unique_visitors = analytics_page_daily.unique_visitors + EXCLUDED.unique_visitors
+"#;
 
-async fn bump_pageview(
+/// Site-unique bump. Returns the post-increment `unique_visitors` only when
+/// this call inserted the seen row; no row when the visitor was already seen.
+const SITE_UNIQUE_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_visitor_seen (day, path, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, path, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $2, 0, 1, 0, 0 FROM ins
+ON CONFLICT (day, path) DO UPDATE SET
+  unique_visitors = analytics_page_daily.unique_visitors + 1
+RETURNING unique_visitors
+"#;
+
+const ENGAGEMENT_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
+    VALUES ($1, $2, $3, '', $4)
+    ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
+SELECT $1, $3, 0, 0, $5, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+ON CONFLICT (day, path) DO UPDATE SET
+  engagement_ms = analytics_page_daily.engagement_ms + EXCLUDED.engagement_ms,
+  engaged_views = analytics_page_daily.engaged_views + EXCLUDED.engaged_views
+"#;
+
+const EVENT_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_event_daily (day, event_name, path, target, count, unique_visitors)
+SELECT $1, $2, $3, $4, 1, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+ON CONFLICT (day, event_name, path, target) DO UPDATE SET
+  count = analytics_event_daily.count + 1,
+  unique_visitors = analytics_event_daily.unique_visitors + EXCLUDED.unique_visitors
+"#;
+
+const COUNTRY_SQL: &str = r#"
+WITH ins AS (
+    INSERT INTO analytics_country_visitor (day, country_code, visitor_hash)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (day, country_code, visitor_hash) DO NOTHING
+    RETURNING 1
+)
+INSERT INTO analytics_country_daily (day, country_code, country_name, views, unique_visitors)
+SELECT $1, $2, $4, $5, fresh.n
+FROM (SELECT count(*)::bigint AS n FROM ins) fresh
+WHERE $5 > 0 OR fresh.n > 0
+ON CONFLICT (day, country_code) DO UPDATE SET
+  views = analytics_country_daily.views + EXCLUDED.views,
+  unique_visitors = analytics_country_daily.unique_visitors + EXCLUDED.unique_visitors,
+  country_name = CASE
+    WHEN EXCLUDED.country_name <> '' THEN EXCLUDED.country_name
+    ELSE analytics_country_daily.country_name
+  END
+"#;
+
+pub(super) async fn bump_pageview(
     db: &DatabaseConnection,
     day: NaiveDate,
     path: &str,
     visitor: &str,
     count_view: bool,
 ) -> Result<(), sea_orm::DbErr> {
-    let is_new = mark_visitor_seen(db, day, path, visitor).await?;
-    let unique_inc: i64 = if is_new { 1 } else { 0 };
     let view_inc: i64 = if count_view { 1 } else { 0 };
-    if view_inc == 0 && unique_inc == 0 {
-        return Ok(());
-    }
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, $3, $4, 0, 0)
-ON CONFLICT (day, path) DO UPDATE SET
-  views = analytics_page_daily.views + EXCLUDED.views,
-  unique_visitors = analytics_page_daily.unique_visitors + EXCLUDED.unique_visitors
-"#,
+        PAGEVIEW_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(path.to_string()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(view_inc),
-            SeaValue::from(unique_inc),
         ],
     ))
     .await?;
@@ -823,7 +941,7 @@ ON CONFLICT (day, path) DO UPDATE SET
 /// `0`/absent means unknown (no number to show). Non-`SITE_PATH` rows never store an ordinal.
 /// Callers treat unknown as "no number to show" rather than "visitor #0".
 pub(crate) async fn read_visitor_ordinal(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     day: NaiveDate,
     visitor: &str,
 ) -> Result<Option<i64>, sea_orm::DbErr> {
@@ -856,47 +974,54 @@ WHERE day = $1 AND path = $2 AND visitor_hash = $3
 /// `RETURNING` and written onto the visitor's row. `RETURNING` on the single
 /// counter row is atomic per statement, so concurrent first-visits can never
 /// come away holding the same number.
-async fn record_site_unique(
+///
+/// Seen row and counter are one statement ([`SITE_UNIQUE_SQL`]); the ordinal
+/// write shares its transaction, so a failure leaves nothing behind and the
+/// next pageview simply retries as a first visit.
+pub(super) async fn record_site_unique(
     db: &DatabaseConnection,
     day: NaiveDate,
     visitor: &str,
 ) -> Result<Option<i64>, sea_orm::DbErr> {
-    let is_new = mark_visitor_seen(db, day, SITE_PATH, visitor).await?;
-    if !is_new {
-        return read_visitor_ordinal(db, day, visitor).await;
-    }
-    let ordinal = db
+    let txn = db.begin().await?;
+    let bumped = txn
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, 0, 1, 0, 0)
-ON CONFLICT (day, path) DO UPDATE SET
-  unique_visitors = analytics_page_daily.unique_visitors + 1
-RETURNING unique_visitors
-"#,
-            [SeaValue::from(day), SeaValue::from(SITE_PATH.to_string())],
-        ))
-        .await?
-        .and_then(|r| r.try_get::<i64>("", "unique_visitors").ok())
-        .filter(|n| *n > 0);
-
-    if let Some(n) = ordinal {
-        db.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-UPDATE analytics_visitor_seen SET ordinal = $4
-WHERE day = $1 AND path = $2 AND visitor_hash = $3
-"#,
+            SITE_UNIQUE_SQL,
             [
                 SeaValue::from(day),
                 SeaValue::from(SITE_PATH.to_string()),
                 SeaValue::from(visitor.to_string()),
-                SeaValue::from(n),
             ],
         ))
         .await?;
-    }
+    let ordinal = match bumped {
+        None => read_visitor_ordinal(&txn, day, visitor).await?,
+        Some(row) => {
+            let ordinal = row
+                .try_get::<i64>("", "unique_visitors")
+                .ok()
+                .filter(|n| *n > 0);
+            if let Some(n) = ordinal {
+                txn.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"
+UPDATE analytics_visitor_seen SET ordinal = $4
+WHERE day = $1 AND path = $2 AND visitor_hash = $3
+"#,
+                    [
+                        SeaValue::from(day),
+                        SeaValue::from(SITE_PATH.to_string()),
+                        SeaValue::from(visitor.to_string()),
+                        SeaValue::from(n),
+                    ],
+                ))
+                .await?;
+            }
+            ordinal
+        }
+    };
+    txn.commit().await?;
     Ok(ordinal)
 }
 
@@ -904,7 +1029,9 @@ WHERE day = $1 AND path = $2 AND visitor_hash = $3
 /// for path today". Not shown in public event list.
 pub(crate) const ENGAGE_MARKER: &str = "__engage__";
 
-async fn bump_engagement(
+/// First engagement report for (day, path, visitor) → +1 engaged_views.
+/// Later soft-flushes only add ms (otherwise avg time and bounce break).
+pub(super) async fn bump_engagement(
     db: &DatabaseConnection,
     day: NaiveDate,
     path: &str,
@@ -915,47 +1042,22 @@ async fn bump_engagement(
     if ms < MIN_ENGAGEMENT_MS {
         return Ok(());
     }
-    // First engagement report for (day, path, visitor) → +1 engaged_views.
-    // Later soft-flushes only add ms (otherwise avg time and bounce break).
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
-VALUES ($1, $2, $3, '', $4)
-ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(ENGAGE_MARKER.to_string()),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let engaged_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
-
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_page_daily (day, path, views, unique_visitors, engagement_ms, engaged_views)
-VALUES ($1, $2, 0, 0, $3, $4)
-ON CONFLICT (day, path) DO UPDATE SET
-  engagement_ms = analytics_page_daily.engagement_ms + EXCLUDED.engagement_ms,
-  engaged_views = analytics_page_daily.engaged_views + EXCLUDED.engaged_views
-"#,
+        ENGAGEMENT_SQL,
         [
             SeaValue::from(day),
+            SeaValue::from(ENGAGE_MARKER.to_string()),
             SeaValue::from(path.to_string()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(ms),
-            SeaValue::from(engaged_inc),
         ],
     ))
     .await?;
     Ok(())
 }
 
-async fn bump_event(
+pub(super) async fn bump_event(
     db: &DatabaseConnection,
     day: NaiveDate,
     name: &str,
@@ -963,39 +1065,15 @@ async fn bump_event(
     target: &str,
     visitor: &str,
 ) -> Result<(), sea_orm::DbErr> {
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_event_visitor (day, event_name, path, target, visitor_hash)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (day, event_name, path, target, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(name.to_string()),
-                SeaValue::from(path.to_string()),
-                SeaValue::from(target.to_string()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let unique_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_event_daily (day, event_name, path, target, count, unique_visitors)
-VALUES ($1, $2, $3, $4, 1, $5)
-ON CONFLICT (day, event_name, path, target) DO UPDATE SET
-  count = analytics_event_daily.count + 1,
-  unique_visitors = analytics_event_daily.unique_visitors + EXCLUDED.unique_visitors
-"#,
+        EVENT_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(name.to_string()),
             SeaValue::from(path.to_string()),
             SeaValue::from(target.to_string()),
-            SeaValue::from(unique_inc),
+            SeaValue::from(visitor.to_string()),
         ],
     ))
     .await?;
@@ -1021,7 +1099,7 @@ ON CONFLICT (day, host) DO UPDATE SET
     Ok(())
 }
 
-async fn bump_country(
+pub(super) async fn bump_country(
     db: &DatabaseConnection,
     day: NaiveDate,
     country: &CountryInfo,
@@ -1029,47 +1107,15 @@ async fn bump_country(
     count_view: bool,
 ) -> Result<(), sea_orm::DbErr> {
     let view_inc: i64 = if count_view { 1 } else { 0 };
-
-    // First (day, country, visitor) → +1 unique_visitors
-    let insert = db
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            r#"
-INSERT INTO analytics_country_visitor (day, country_code, visitor_hash)
-VALUES ($1, $2, $3)
-ON CONFLICT (day, country_code, visitor_hash) DO NOTHING
-"#,
-            [
-                SeaValue::from(day),
-                SeaValue::from(country.code.clone()),
-                SeaValue::from(visitor.to_string()),
-            ],
-        ))
-        .await?;
-    let unique_inc: i64 = if insert.rows_affected() > 0 { 1 } else { 0 };
-    if view_inc == 0 && unique_inc == 0 {
-        return Ok(());
-    }
-
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-INSERT INTO analytics_country_daily (day, country_code, country_name, views, unique_visitors)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (day, country_code) DO UPDATE SET
-  views = analytics_country_daily.views + EXCLUDED.views,
-  unique_visitors = analytics_country_daily.unique_visitors + EXCLUDED.unique_visitors,
-  country_name = CASE
-    WHEN EXCLUDED.country_name <> '' THEN EXCLUDED.country_name
-    ELSE analytics_country_daily.country_name
-  END
-"#,
+        COUNTRY_SQL,
         [
             SeaValue::from(day),
             SeaValue::from(country.code.clone()),
+            SeaValue::from(visitor.to_string()),
             SeaValue::from(country.name.clone()),
             SeaValue::from(view_inc),
-            SeaValue::from(unique_inc),
         ],
     ))
     .await?;
@@ -1109,11 +1155,29 @@ async fn maybe_prune(db: &DatabaseConnection) {
 
 // ── Shared intake ──────────────────────────────────────────────────────────
 
-struct IntakeCtx {
+pub(super) struct IntakeCtx {
     db: DatabaseConnection,
     visitor: String,
     day: NaiveDate,
     country: Option<CountryInfo>,
+}
+
+/// `true` when the write landed; a failure is logged, never surfaced.
+///
+/// Intake is best-effort for the client on purpose. The browser flush treats
+/// any 5xx as "retry the whole batch" (`frontend/src/utils/siteAnalytics.ts`),
+/// and views / event counts are not idempotent, so failing the request over
+/// one side counter would double-count every item that did land. Each write is
+/// atomic on its own (see the SQL above), so a logged failure loses exactly
+/// that one increment and never leaves a seen row without its count.
+fn intake_write_ok<T>(write: &'static str, result: Result<T, sea_orm::DbErr>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(write, %error, "analytics intake write failed");
+            false
+        }
+    }
 }
 
 async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
@@ -1125,19 +1189,25 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                 let Some(path) = item.path.as_deref().and_then(normalize_path) else {
                     continue;
                 };
-                let _ = record_site_unique(&ctx.db, ctx.day, &ctx.visitor).await;
+                intake_write_ok(
+                    "site_unique",
+                    record_site_unique(&ctx.db, ctx.day, &ctx.visitor).await,
+                );
                 let dup = is_duplicate_view(&ctx.visitor, &path).await;
-                if bump_pageview(&ctx.db, ctx.day, &path, &ctx.visitor, !dup)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "pageview",
+                    bump_pageview(&ctx.db, ctx.day, &path, &ctx.visitor, !dup).await,
+                ) {
                     accepted += 1;
                     if let Some(ref country) = ctx.country {
-                        let _ = bump_country(&ctx.db, ctx.day, country, &ctx.visitor, !dup).await;
+                        intake_write_ok(
+                            "country",
+                            bump_country(&ctx.db, ctx.day, country, &ctx.visitor, !dup).await,
+                        );
                     }
                 }
                 if let Some(host) = item.referrer.as_deref().and_then(normalize_referrer_host) {
-                    let _ = bump_referrer(&ctx.db, ctx.day, &host).await;
+                    intake_write_ok("referrer", bump_referrer(&ctx.db, ctx.day, &host).await);
                 }
             }
             "engagement" => {
@@ -1145,10 +1215,10 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                     continue;
                 };
                 let ms = item.ms.unwrap_or(0);
-                if bump_engagement(&ctx.db, ctx.day, &path, &ctx.visitor, ms)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "engagement",
+                    bump_engagement(&ctx.db, ctx.day, &path, &ctx.visitor, ms).await,
+                ) {
                     accepted += 1;
                 }
             }
@@ -1166,10 +1236,10 @@ async fn process_items(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
                     .as_deref()
                     .map(normalize_target)
                     .unwrap_or_default();
-                if bump_event(&ctx.db, ctx.day, &name, &path, &target, &ctx.visitor)
-                    .await
-                    .is_ok()
-                {
+                if intake_write_ok(
+                    "event",
+                    bump_event(&ctx.db, ctx.day, &name, &path, &target, &ctx.visitor).await,
+                ) {
                     accepted += 1;
                 }
             }
@@ -1226,74 +1296,132 @@ pub(crate) fn analytics_collection_enabled(config: &DynamicConfig) -> bool {
     config.analytics_enabled
 }
 
-/// POST /api/analytics/collect — preferred batch endpoint.
-pub async fn collect(
-    axum::extract::State(dynamic_config): axum::extract::State<Arc<RwLock<DynamicConfig>>>,
-    crate::extract::Db(db): crate::extract::Db,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    request: Request,
-) -> (StatusCode, Json<Value>) {
-    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
-    let (ip, ua, is_staff, body) = match parse_json_body::<CollectRequest>(&db, request).await {
-        Ok(v) => v,
-        Err(e) => {
-            let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
-            return (status, Json(e.0.to_json()));
+type IntakeResponse = (StatusCode, Json<Value>);
+
+/// Body of one intake endpoint: where its `vid` is and how it flattens into
+/// [`CollectItem`]s. Validation runs inside [`admit_intake`], after the
+/// disabled / staff / bot / rate-limit gates and before the salt.
+pub(super) trait IntakeBody: for<'de> Deserialize<'de> {
+    fn vid(&self) -> Option<&str>;
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse>;
+}
+
+impl IntakeBody for CollectRequest {
+    fn vid(&self) -> Option<&str> {
+        self.vid.as_deref()
+    }
+
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse> {
+        if self.items.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, Json(AppError::fail_json("empty"))));
         }
-    };
+        Ok(self.items)
+    }
+}
+
+impl IntakeBody for PageviewRequest {
+    fn vid(&self) -> Option<&str> {
+        self.vid.as_deref()
+    }
+
+    fn into_items(self) -> Result<Vec<CollectItem>, IntakeResponse> {
+        let Some(path) = normalize_path(&self.path) else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(AppError::fail_json("invalid_path")),
+            ));
+        };
+        Ok(vec![CollectItem {
+            kind: "pageview".into(),
+            path: Some(path),
+            referrer: self.referrer,
+            ms: None,
+            name: None,
+            target: None,
+        }])
+    }
+}
+
+fn intake_skipped(reason: &'static str) -> IntakeResponse {
+    (
+        StatusCode::OK,
+        Json(json!({ "success": true, "skipped": reason, "accepted": 0 })),
+    )
+}
+
+/// The one gate chain for every intake endpoint, in order: body parse (with
+/// staff detection) → collection disabled → staff → bot UA → per-IP rate
+/// limit → body validation → visitor salt → country. `Err` is the response
+/// to send as-is.
+pub(super) async fn admit_intake<T: IntakeBody>(
+    dynamic_config: &RwLock<DynamicConfig>,
+    db: &DatabaseConnection,
+    peer: SocketAddr,
+    request: Request,
+) -> Result<(IntakeCtx, Vec<CollectItem>), IntakeResponse> {
+    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
+    let (ip, ua, is_staff, body) = parse_json_body::<T>(db, request).await.map_err(|e| {
+        let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
+        (status, Json(e.0.to_json()))
+    })?;
 
     if !analytics_collection_enabled(&*dynamic_config.read().await) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "disabled", "accepted": 0 })),
-        );
+        return Err(intake_skipped("disabled"));
     }
-
     if is_staff {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "staff", "accepted": 0 })),
-        );
+        return Err(intake_skipped("staff"));
     }
-
     if is_bot_ua(&ua) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "bot", "accepted": 0 })),
-        );
+        return Err(intake_skipped("bot"));
     }
 
     let ip_key = ip
         .map(|i| i.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     if rate_limited(&ip_key).await {
-        return (
+        return Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(AppError::fail_json("rate_limited")),
-        );
+        ));
     }
 
-    if body.items.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(AppError::fail_json("empty")));
-    }
-
-    let Some(visitor) = resolve_visitor_hash(body.vid.as_deref(), ip, &ua) else {
-        return salt_unavailable_response();
+    let vid = body.vid().map(str::to_owned);
+    let items = body.into_items()?;
+    let Some(visitor) = resolve_visitor_hash(vid.as_deref(), ip, &ua) else {
+        return Err(salt_unavailable_response());
     };
-    let day = analytics_today();
-    let country = resolve_country(ip, header_country).await;
     let ctx = IntakeCtx {
         db: db.clone(),
         visitor,
-        day,
-        country,
+        day: analytics_today(),
+        country: resolve_country(ip, header_country).await,
     };
-    let accepted = process_items(&ctx, &body.items).await;
+    Ok((ctx, items))
+}
+
+/// Write the admitted items, then invalidate caches and maybe prune.
+async fn run_intake(ctx: &IntakeCtx, items: &[CollectItem]) -> usize {
+    let accepted = process_items(ctx, items).await;
     if accepted > 0 {
         invalidate_summary_cache().await;
     }
-    maybe_prune(&db).await;
+    maybe_prune(&ctx.db).await;
+    accepted
+}
 
+/// POST /api/analytics/collect — preferred batch endpoint.
+pub async fn collect(
+    axum::extract::State(dynamic_config): axum::extract::State<Arc<RwLock<DynamicConfig>>>,
+    crate::extract::Db(db): crate::extract::Db,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+) -> IntakeResponse {
+    let (ctx, items) =
+        match admit_intake::<CollectRequest>(&dynamic_config, &db, peer, request).await {
+            Ok(admitted) => admitted,
+            Err(response) => return response,
+        };
+    let accepted = run_intake(&ctx, &items).await;
     (
         StatusCode::OK,
         Json(json!({
@@ -1309,79 +1437,14 @@ pub async fn record_pageview(
     crate::extract::Db(db): crate::extract::Db,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
-) -> (StatusCode, Json<Value>) {
-    let header_country = country_from_headers(request.headers(), Some(peer.ip()));
-    let (ip, ua, is_staff, body) = match parse_json_body::<PageviewRequest>(&db, request).await {
-        Ok(v) => v,
-        Err(e) => {
-            let status = StatusCode::from_u16(e.0.status_u16()).unwrap_or(StatusCode::BAD_REQUEST);
-            return (status, Json(e.0.to_json()));
-        }
-    };
-
-    if !analytics_collection_enabled(&*dynamic_config.read().await) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "disabled" })),
-        );
-    }
-
-    if is_staff {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "staff" })),
-        );
-    }
-
-    if is_bot_ua(&ua) {
-        return (
-            StatusCode::OK,
-            Json(json!({ "success": true, "skipped": "bot" })),
-        );
-    }
-
-    let ip_key = ip
-        .map(|i| i.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    if rate_limited(&ip_key).await {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(AppError::fail_json("rate_limited")),
-        );
-    }
-
-    let Some(path) = normalize_path(&body.path) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(AppError::fail_json("invalid_path")),
-        );
-    };
-
-    let Some(visitor) = resolve_visitor_hash(body.vid.as_deref(), ip, &ua) else {
-        return salt_unavailable_response();
-    };
-    let day = analytics_today();
-    let country = resolve_country(ip, header_country).await;
-    let items = vec![CollectItem {
-        kind: "pageview".into(),
-        path: Some(path.clone()),
-        referrer: body.referrer,
-        ms: None,
-        name: None,
-        target: None,
-    }];
-    let ctx = IntakeCtx {
-        db: db.clone(),
-        visitor,
-        day,
-        country,
-    };
-    let accepted = process_items(&ctx, &items).await;
-    if accepted > 0 {
-        invalidate_summary_cache().await;
-    }
-    maybe_prune(&db).await;
-
+) -> IntakeResponse {
+    let (ctx, items) =
+        match admit_intake::<PageviewRequest>(&dynamic_config, &db, peer, request).await {
+            Ok(admitted) => admitted,
+            Err(response) => return response,
+        };
+    let accepted = run_intake(&ctx, &items).await;
+    let path = items.first().and_then(|item| item.path.clone());
     (
         StatusCode::OK,
         Json(json!({

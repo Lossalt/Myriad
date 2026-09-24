@@ -128,17 +128,22 @@ impl MigrationTrait for Migration {
                     // 规范化 URL 比较键（url_match_key），由应用写入
                     .col(ColumnDef::new(PhantasiSources::UrlKey).text())
                     .col(ColumnDef::new(PhantasiSources::SiteUrlKey).text())
+                    // 抓取租约：调度器与手动刷新互斥占用，过期自动释放
+                    .col(
+                        ColumnDef::new(PhantasiSources::FetchLeaseUntil).timestamp_with_time_zone(),
+                    )
                     .to_owned(),
             )
             .await?;
 
-        // 索引：按规范化 URL 去重查找
+        // 唯一索引：订阅源是全站目录，规范化 URL 只能有一行
         manager
             .create_index(
                 Index::create()
                     .name("idx_phantasi_sources_url_key")
                     .table(PhantasiSources::Table)
                     .col(PhantasiSources::UrlKey)
+                    .unique()
                     .if_not_exists()
                     .to_owned(),
             )
@@ -1182,6 +1187,7 @@ enum PhantasiSources {
     UpdatedAt,
     UrlKey,
     SiteUrlKey,
+    FetchLeaseUntil,
 }
 
 #[derive(DeriveIden)]

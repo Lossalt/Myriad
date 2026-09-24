@@ -189,22 +189,6 @@ pub fn current_ai_attribution() -> Option<AiLedgerAttribution> {
     current_attribution()
 }
 
-/// Re-install the current attribution inside a detached task.
-pub fn spawn_with_current_ai_attribution<F, Fut>(f: F)
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let attribution = current_attribution();
-    tokio::spawn(async move {
-        let fut = f();
-        match attribution {
-            Some(attr) => with_ai_ledger_attribution(attr, fut).await,
-            None => fut.await,
-        }
-    });
-}
-
 /// Length/4 estimate used by the text analyzer hook.
 pub fn estimate_text_tokens(chars: usize) -> i32 {
     i32::try_from(chars / 4).unwrap_or(i32::MAX)

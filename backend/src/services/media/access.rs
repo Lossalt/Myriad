@@ -42,6 +42,7 @@ mod tests {
             state: MediaState::Ready,
             exposure,
             kind: "upload".into(),
+            url: "/media/assets/00000000-0000-0000-0000-000000000000/a.png".into(),
             content_path: "/api/media/1/content".into(),
             public_path: None,
             created_at: Utc::now(),

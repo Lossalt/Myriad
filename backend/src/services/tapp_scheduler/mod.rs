@@ -7,7 +7,7 @@ mod display_tests;
 mod engine;
 mod types_frontend; // Display for ExecutionTarget + unit tests
 
-pub use accessors::{init_scheduler, scheduler_engine, shutdown_scheduler, try_scheduler_engine};
+pub use accessors::{init_scheduler, scheduler_engine, try_scheduler_engine};
 pub use types_frontend::{
     MAX_SCHEDULER_RETRIES, MAX_SCHEDULER_RETRY_DELAY_MS, SCHEDULER_MAILBOX_POLL_MILLIS,
     SCHEDULER_PRESENCE_REFRESH_SECONDS, TappSchedulerEngine, active_frontend_subject_count,

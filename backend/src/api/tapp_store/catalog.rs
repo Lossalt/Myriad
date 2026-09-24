@@ -58,7 +58,7 @@ pub(super) async fn list_tapps(
 ) -> Result<Json<ApiResponse<Vec<TappListItem>>>, HttpError> {
     let user_id = optional_authenticated_user_id(claims.as_ref());
     let is_admin = match claims.as_ref() {
-        Some(claims) => current_is_admin(claims, &db).await,
+        Some(claims) => current_is_admin(claims, &db).await?,
         None => false,
     };
     let scope = parse_catalog_scope(query.scope.as_deref());
@@ -122,7 +122,7 @@ pub(super) async fn list_tapp_details(
 ) -> Result<Json<ApiResponse<Vec<TappDetail>>>, HttpError> {
     let user_id = optional_authenticated_user_id(claims.as_ref());
     let is_admin = match claims.as_ref() {
-        Some(claims) => current_is_admin(claims, &db).await,
+        Some(claims) => current_is_admin(claims, &db).await?,
         None => false,
     };
     let scope = parse_catalog_scope(query.scope.as_deref());
@@ -253,7 +253,7 @@ pub(super) async fn get_tapp(
 ) -> Result<Json<ApiResponse<TappDetail>>, HttpError> {
     let user_id = optional_authenticated_user_id(claims.as_ref());
     let is_admin = match claims.as_ref() {
-        Some(claims) => current_is_admin(claims, &db).await,
+        Some(claims) => current_is_admin(claims, &db).await?,
         None => false,
     };
     let visible = find_visible_tapp(&db, user_id, &tapp_id)

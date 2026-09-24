@@ -260,7 +260,12 @@ pub struct MediaAsset {
     pub state: MediaState,
     pub exposure: MediaExposure,
     pub kind: String,
+    /// The asset's one permanent address, whatever its exposure. Access is
+    /// decided when it is served; publishing never changes it.
+    pub url: String,
+    /// Legacy authenticated alias (`/api/media/{id}/content`), still served.
     pub content_path: String,
+    /// `url` when the asset is public, for callers that branch on exposure.
     pub public_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub usage_count: i64,
@@ -274,9 +279,7 @@ pub struct MediaAsset {
 
 impl MediaAsset {
     pub fn catalog_url(&self) -> String {
-        self.public_path
-            .clone()
-            .unwrap_or_else(|| self.content_path.clone())
+        self.url.clone()
     }
 }
 

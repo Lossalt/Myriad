@@ -9,6 +9,7 @@ import {
   registerActionHandler,
   unregisterActionHandler,
 } from '../services/agent/frontendActions'
+import { isInSitePath } from '../services/agent/navigateTarget'
 import { emitAppEvent } from '../utils/appEvents'
 import { phantasiSubject } from '../utils/phantasiSubject'
 import { useMusicPlayerControl } from './MusicPlayerContext'
@@ -257,6 +258,10 @@ export function AgentGlobalActions() {
           console.warn('[AgentGlobalActions] Navigate action without path')
           return false
         }
+        if (!isInSitePath(targetPath)) {
+          console.warn('[AgentGlobalActions] Navigate target leaves the site')
+          return false
+        }
 
         if (
           action.query &&
@@ -389,14 +394,11 @@ export function AgentGlobalActions() {
 
         navigate('/journal')
       } else {
-        const event = new CustomEvent('agent:open-phantasi-article', {
-          detail: {
-            articleId: params?.articleId,
-            articleLink: params?.articleLink,
-            openLatest: params?.openLatest ?? true,
-          },
+        emitAppEvent('agent:open-phantasi-article', {
+          articleId: params?.articleId,
+          articleLink: params?.articleLink,
+          openLatest: params?.openLatest ?? true,
         })
-        window.dispatchEvent(event)
       }
 
       return true

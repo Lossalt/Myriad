@@ -41,6 +41,35 @@ pub const HEARTBEAT_TASK_TIMEOUT_SECS: u64 = 600;
 /// 认领卡住后允许重认领的阈值（秒），略长于执行超时
 const CLAIM_STALE_SECS: i64 = 900;
 
+/// 一次多副本认领的结果。只有 `Claimed` 允许执行。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimAttempt {
+    /// 本副本拿到了这个 (task_id, minute_bucket)。
+    Claimed,
+    /// 别的副本正持有，或这个桶已经完成。
+    Held,
+    /// 认领查询失败。无法确认别的副本没在跑，按失败关闭处理：本轮跳过。
+    StoreFailed,
+}
+
+/// 执行结束时写回 `heartbeat_claims.status` 的终态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimStatus {
+    /// 成功完成，同分钟桶不可再认领。
+    Done,
+    /// 超时/失败，允许后续重认领（见 `try_claim_execution`）。
+    Failed,
+}
+
+impl ClaimStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// Reserved heartbeat managed from site SEO settings, not the task list.
 pub const SEO_REVIEW_TASK_ID: &str = "seo-review";
 const SEO_REVIEW_TASK_NAME: &str = "SEO review";
@@ -583,12 +612,13 @@ impl HeartbeatManager {
     /// - `failed` 可立即重认领（超时/失败后允许同桶恢复，由调度侧 last_reserved 防风暴）
     /// - 卡住超过 `CLAIM_STALE_SECS` 的 running 可重认领
     /// - 已 `done` 的桶不再执行
-    /// - DB 不可用时返回 `true`（单机降级，依赖进程内 last_reserved）
+    /// - 认领查询失败返回 [`ClaimAttempt::StoreFailed`]，本轮不执行：库不可用时
+    ///   无法证明别的副本没在跑同一个桶，宁可错过一次也不重复执行
     pub async fn try_claim_execution(
         db: &DatabaseConnection,
         task_id: &str,
         minute_bucket: i64,
-    ) -> bool {
+    ) -> ClaimAttempt {
         let sql = format!(
             r#"
             INSERT INTO heartbeat_claims (task_id, minute_bucket, status, claimed_at)
@@ -614,37 +644,35 @@ impl HeartbeatManager {
             ))
             .await
         {
-            Ok(Some(_)) => true,
+            Ok(Some(_)) => ClaimAttempt::Claimed,
             Ok(None) => {
                 tracing::debug!(
                     task_id = %task_id,
                     minute_bucket,
                     "[Heartbeat] Claim skipped (held by another replica or already done)"
                 );
-                false
+                ClaimAttempt::Held
             }
             Err(e) => {
                 tracing::warn!(
                     task_id = %task_id,
+                    minute_bucket,
                     error = %e,
-                    "[Heartbeat] Claim query failed; allowing local execution"
+                    "[Heartbeat] Claim query failed; skipping this run"
                 );
-                true
+                ClaimAttempt::StoreFailed
             }
         }
     }
 
-    /// 将认领标为 done（不可再认领）或 failed（可立即重认领）。
-    ///
-    /// - `done`：成功完成，同分钟桶不可再认领
-    /// - `failed`：超时/失败，允许后续重认领（见 try_claim）
+    /// 将认领标为 done（不可再认领）或 failed（可立即重认领），见 [`ClaimStatus`]。
     pub async fn complete_claim(
         db: &DatabaseConnection,
         task_id: &str,
         minute_bucket: i64,
-        status: &str,
+        status: ClaimStatus,
     ) {
-        let status = if status == "failed" { "failed" } else { "done" };
+        let status = status.as_str();
         let result = db
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,

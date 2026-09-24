@@ -8,7 +8,6 @@ pub mod error;
 pub mod external;
 pub mod image;
 pub mod phantasi;
-pub mod plan_contract;
 pub mod prompt;
 pub mod retry;
 pub mod schedule;
@@ -20,7 +19,7 @@ pub use data_read::{
     extract_json_array_from_ai_response, extract_json_object_from_ai_response,
     parse_rsshub_radar_rules, project_time_info, weekday_zh,
 };
-pub use error::{ErrorAnalysis, ErrorCategory, ParamFix, analyze_error, apply_param_fixes};
+pub use error::{OUTCOME_UNKNOWN_PREFIX, StepError, StepOutcome};
 pub use external::{
     HTTP_FETCH_MAX_BODY_BYTES, SCRAPE_SKIP_TAGS, WEB_SCRAPE_DEFAULT_MAX_LENGTH,
     WEB_SCRAPE_MAX_HTML_BYTES, classify_outbound_fetch, compress_and_truncate_text,
@@ -41,19 +40,11 @@ pub use phantasi::{
     is_disallowed_subscribe_ip, platform_write_cap_error, platform_write_items_over_cap,
     sanitize_feed_name, take_feed_urls_to_try, validate_subscribe_url_policy,
 };
-pub use plan_contract::{
-    MAX_PLAN_STEPS, PLAN_DATA_FLOW_RULE, PLAN_DEPENDENCY_RULE, plan_image_size_rule,
-    plan_step_cap_rule,
-};
 pub use prompt::{
-    append_memory_to_system_prompt, merge_system_prompt, sanitize_prompt_input,
-    take_recent_conversation_messages, untrusted_block,
+    append_memory_to_system_prompt, merge_system_prompt, neutralize_untrusted_markers,
+    sanitize_prompt_input, take_recent_conversation_messages, untrusted_block,
 };
-pub use retry::{
-    FailureStrategy, RETRY_BASE_DELAY_FLOOR_MS, RETRY_DEFAULT_BASE_DELAY_MS, RETRY_DELAY_CAP_MS,
-    RetryConfig, compute_retry_delay_ms, format_retry_final_error, prepend_step_id,
-    should_retry_step,
-};
+pub use retry::{FailureStrategy, RetryConfig};
 pub use schedule::{
     AgentExecutionTarget, AgentScheduleType, PhantasiScheduleAction, build_schedule_config,
     extract_raw_backend_actions, heartbeat_task_id, heartbeat_update_has_fields,

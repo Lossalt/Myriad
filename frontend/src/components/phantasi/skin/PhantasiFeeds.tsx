@@ -75,7 +75,6 @@ interface PhantasiFeedsProps {
   toolbar?: ReactNode
   vacant?: ReactNode
   stories?: FeedStory[]
-  onExpandStories?: (direction: 1 | -1) => void
   onJumpSource?: (sourceId: number) => void
   onHoldStories?: () => void
   onReleaseStories?: () => void
@@ -101,7 +100,6 @@ function PhantasiFeeds({
   toolbar,
   vacant,
   stories = [],
-  onExpandStories,
   onJumpSource,
   onHoldStories,
   onReleaseStories,
@@ -139,13 +137,8 @@ function PhantasiFeeds({
   )
   const paintedElRef = useRef<HTMLElement | null>(null)
   const siteElsRef = useRef(new Map<number, HTMLElement>())
-  const focusIdRef = useRef<number | null>(
-    sources.length > 0 ? LATEST_FEED_ID : null,
-  )
-  focusIdRef.current = focusId
   const focusTimerRef = useRef(0)
   const growFrameRef = useRef(0)
-  const reactMountStaleRef = useRef(false)
   const lastEagerRef = useRef<{ from: number; to: number }>({ from: 1, to: 8 })
   const storyWarmRef = useRef<() => void>(() => {})
   const grabbingRef = useRef(false)
@@ -466,10 +459,6 @@ function PhantasiFeeds({
   )
   const liveToRef = useRef(Math.min(RAIL_MOUNT_GROW_AHEAD, RAIL_MOUNT_BOOT_TO))
   const storySetLiveRef = useRef<(next: number) => void>(() => {})
-  const expandRef = useRef(onExpandStories)
-  expandRef.current = onExpandStories
-  const jumpRef = useRef(onJumpSource)
-  jumpRef.current = onJumpSource
   const holdStoriesRef = useRef(onHoldStories)
   holdStoriesRef.current = onHoldStories
   const releaseStoriesRef = useRef(onReleaseStories)
@@ -590,7 +579,6 @@ function PhantasiFeeds({
     }
     if (next.from !== prev.from || next.to !== prev.to) {
       mountColsRef.current = next
-      reactMountStaleRef.current = true
     }
     const prevLive = liveToRef.current
     liveToRef.current = railLiveTo(ideal.to, next.to, prevLive)
@@ -721,10 +709,6 @@ function PhantasiFeeds({
           )
       if (grown.from !== prevCols.from || grown.to !== prevCols.to) {
         const prevLive = liveToRef.current
-        if (grabbingRef.current) {
-          mountColsRef.current = grown
-          reactMountStaleRef.current = true
-        }
         mountColsRef.current = grown
         liveToRef.current = railLiveTo(
           ideal.to,

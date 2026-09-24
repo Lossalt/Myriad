@@ -5,6 +5,7 @@
 //! This is an in-flight oneshot, not WaitingForInput — the user never sees a
 //! question card. No SSE listener (sync `process`) skips the wait.
 
+use crate::services::agent::capability::CapabilityRef;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -169,7 +170,7 @@ pub async fn publish_and_await_snapshots(
 ) -> Value {
     // MCP fields are remote data, not platform-issued browser commands. This
     // boundary is shared by Work and saved Recipes, including their resumes.
-    if capability_id.starts_with("mcp.") {
+    if CapabilityRef::parse(&capability_id).is_mcp() {
         if send_visible {
             emitter
                 .step_succeeded(

@@ -681,7 +681,14 @@ pub(super) fn upload_session_action(
                 "Transfer finalization state is inconsistent",
             )),
         )),
-        _ => Err(bad_request(format!("Transfer is {}", status))),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                AppError::bad_request(format!("Transfer is {}", status))
+                    .with_code("transfer_inactive")
+                    .to_json(),
+            ),
+        )),
     }
 }
 

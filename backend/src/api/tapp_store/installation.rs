@@ -16,8 +16,7 @@ use super::{
     cleanup_reinstall_orphans, current_user_role, ensure_tapp_install_allowed,
     filter_install_permissions, get_admin_user_id, installation_conflict_owner_ids,
     lock_tapp_lifecycle, log_install_failure, log_tapp_filesystem_access,
-    reconcile_manifest_widgets, tapp_dir_for, tapp_filesystem_error_message,
-    tapp_filesystem_error_status, validate_tapp_id,
+    reconcile_manifest_widgets, tapp_dir_for, tapp_filesystem_http_error, validate_tapp_id,
 };
 use axum::{
     Extension, Json,
@@ -145,11 +144,10 @@ pub(super) async fn install_tapp(
     Json(req): Json<InstallTappRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let is_current_admin = role == UserRole::Admin;
     let install_permit = acquire_install_permit().await?;
     let InstallTappRequest {
@@ -253,6 +251,47 @@ pub(super) async fn install_tapp(
     Ok(result)
 }
 
+/// Install a package an Agent generated through the same core as a direct
+/// install: install gate and permit, store policy, full manifest validation,
+/// conflict check, canonical installation owner and staged activation.
+/// A second install path would skip all of that and write the live directory.
+pub(crate) async fn install_generated(
+    db: &DatabaseConnection,
+    user_id: i32,
+    manifest: TappManifest,
+    modules: std::collections::HashMap<String, String>,
+) -> Result<(), HttpError> {
+    ensure_tapp_install_allowed(db, user_id).await?;
+    let is_current_admin = crate::services::agent::user_is_current_admin(db, user_id)
+        .await
+        .map_err(|error| HttpError(myriad_error::AppError::internal(error)))?;
+    let role = if is_current_admin {
+        UserRole::Admin
+    } else {
+        UserRole::User
+    };
+    let package = PreparedTappPackage::from_resources(
+        manifest,
+        PreparedTappResources {
+            modules,
+            ..Default::default()
+        },
+    );
+    install_prepared_package(
+        db,
+        &crate::GLOBAL_DYNAMIC_CONFIG,
+        user_id,
+        role,
+        is_current_admin,
+        package,
+        None,
+        false,
+        None,
+    )
+    .await
+    .map(|_| ())
+}
+
 /// 409 body for an existing install. Carries the metadata the overwrite prompt
 /// needs (both versions plus which declared permissions are new) — no secrets.
 fn install_conflict_error(manifest: &TappManifest, existing: &tapps::Model) -> HttpError {
@@ -338,10 +377,7 @@ async fn install_prepared_package(
                 Some(&final_tapp_dir),
                 &error,
             );
-            api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to create Tapp staging directory", &error),
-            )
+            tapp_filesystem_http_error("Failed to create Tapp staging directory", &error)
         })?;
     let tapp_dir = stage.path();
     let now = Utc::now().fixed_offset();
@@ -447,9 +483,9 @@ async fn install_prepared_package(
                 Some(&final_tapp_dir),
                 &error,
             );
-            return Err(api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to activate staged Tapp", &error),
+            return Err(tapp_filesystem_http_error(
+                "Failed to activate staged Tapp",
+                &error,
             ));
         }
     };
@@ -667,11 +703,10 @@ pub(super) async fn install_tapp_file(
     mut multipart: axum::extract::Multipart,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let is_current_admin = role == UserRole::Admin;
     let install_permit = acquire_install_permit().await?;
     // 读取上传的文件
@@ -784,11 +819,10 @@ pub(super) async fn update_tapp(
     Json(req): Json<UpdateTappRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
     ensure_tapp_install_allowed(&db, user_id).await?;
-    let role = current_user_role(&claims, &db).await;
+    let role = current_user_role(&claims, &db).await?;
     let _update_permit = acquire_install_permit().await?;
     validate_tapp_id(&tapp_id).map_err(|error| api_http_error(StatusCode::BAD_REQUEST, error))?;
     let admin_id = get_admin_user_id(&db).await?;
@@ -893,13 +927,7 @@ pub(super) async fn update_tapp(
                 Some(&final_tapp_dir),
                 &error,
             );
-            api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message(
-                    "Failed to create Tapp update staging directory",
-                    &error,
-                ),
-            )
+            tapp_filesystem_http_error("Failed to create Tapp update staging directory", &error)
         })?;
     let tapp_dir = stage.path();
     let now = Utc::now().fixed_offset();
@@ -959,9 +987,9 @@ pub(super) async fn update_tapp(
                 %error,
                 "Tapp update activate failed"
             );
-            return Err(api_http_error(
-                tapp_filesystem_error_status(&error),
-                tapp_filesystem_error_message("Failed to activate staged Tapp update", &error),
+            return Err(tapp_filesystem_http_error(
+                "Failed to activate staged Tapp update",
+                &error,
             ));
         }
     };

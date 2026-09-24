@@ -65,6 +65,7 @@ import {
   homeLayoutsHaveTiles,
   homeWidgetsForView,
   isHomeStickerItem,
+  keepUnrenderedTiles,
   layoutsAfterWidgetRegistry,
   peekStoredHomeLayoutMode,
   persistHomeLayoutMode,
@@ -131,6 +132,7 @@ export default function Home() {
   const [stickerPicking, setStickerPicking] = useState(false)
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const layoutImportInFlightRef = useRef(false)
+  const pendingLayoutSaveRef = useRef(false)
   const gridRef = useRef<WidgetGridHandle>(null)
   useImmersiveChrome('home-edit-mode', isEditMode)
   useEffect(() => {
@@ -205,7 +207,11 @@ export default function Home() {
     [t.widgets],
   )
 
-  const { tappWidgets, isLoading: isTappWidgetsLoading } = useTappWidgets()
+  const {
+    tappWidgets,
+    isLoading: isTappWidgetsLoading,
+    error: tappWidgetsError,
+  } = useTappWidgets()
 
   const ALL_AVAILABLE_WIDGETS = useMemo(() => {
     return [...AVAILABLE_WIDGETS, ...tappWidgets]
@@ -412,10 +418,18 @@ export default function Home() {
   const handleWidgetsChange = (newWidgets: WidgetConfig[]) => {
     if (layoutImportInFlightRef.current) return
     const registeredWidgetIds = new Set(ALL_AVAILABLE_WIDGETS.map((w) => w.id))
-    let validWidgets = isTappWidgetsLoading
-      ? newWidgets
-      : newWidgets.filter(
-          (w) => isHomeStickerItem(w) || registeredWidgetIds.has(w.type),
+    const isRenderable = (w: WidgetConfig) =>
+      isHomeStickerItem(w) || registeredWidgetIds.has(w.type)
+    // Only a registry that loaded completely may prune unknown tiles. After a
+    // failed Tapp sync every Tapp widget is "unknown", and saving that would
+    // delete them all.
+    const registryComplete = !isTappWidgetsLoading && !tappWidgetsError
+    let validWidgets = registryComplete
+      ? newWidgets.filter(isRenderable)
+      : keepUnrenderedTiles(
+          newWidgets,
+          rawLayouts?.[effectiveMode] ?? layoutsRef.current[effectiveMode],
+          isRenderable,
         )
     if (effectiveMode === 'standard') {
       validWidgets = validWidgets.filter((w) => !isHomeStickerItem(w))
@@ -426,8 +440,16 @@ export default function Home() {
       [effectiveMode]: validWidgets,
     }
     setLayouts(nextLayouts)
+    // The registry effect re-derives layouts from rawLayouts; a stale source
+    // would silently drop tiles added since load and the next save persists that.
+    setRawLayouts(nextLayouts)
 
-    if (!isAdmin || isTappWidgetsLoading) return
+    if (!isAdmin) return
+    if (isTappWidgetsLoading) {
+      pendingLayoutSaveRef.current = true
+      return
+    }
+    pendingLayoutSaveRef.current = false
 
     if (layoutSaveTimerRef.current) {
       clearTimeout(layoutSaveTimerRef.current)
@@ -439,6 +461,9 @@ export default function Home() {
             layout: serializeDashboardLayout(nextLayouts),
           })
           setLayouts(current => applyPublishedStickerUrls(current, nextLayouts, saved.layout))
+          setRawLayouts(current =>
+            current && applyPublishedStickerUrls(current, nextLayouts, saved.layout),
+          )
         } catch (err) {
           console.error('保存小组件配置失败:', err)
           showError(await formatUserFacingError(err, t.errors.dashboardLayoutSaveFailed))
@@ -446,6 +471,17 @@ export default function Home() {
       })()
     }, 500)
   }
+  // Sticker requests outlive the render that started them; always commit
+  // through the latest closure (mode, loading state, layouts).
+  const handleWidgetsChangeRef = useRef(handleWidgetsChange)
+  handleWidgetsChangeRef.current = handleWidgetsChange
+
+  // Edits made while Tapp widgets were loading were not saved; flush them once
+  // the registry settles so they survive a reload.
+  useEffect(() => {
+    if (isTappWidgetsLoading || !pendingLayoutSaveRef.current) return
+    handleWidgetsChangeRef.current(layoutsRef.current[effectiveMode])
+  }, [isTappWidgetsLoading, effectiveMode])
 
   const startStickerPick = () => {
     setStickerDraft(null)
@@ -471,7 +507,7 @@ export default function Home() {
         slotCols: slot.w,
         slotRows: slot.h,
       })
-      handleWidgetsChange([
+      handleWidgetsChangeRef.current([
         ...layoutsRef.current.free,
         createHomeStickerItem({
           size: stickerDraft.size,
@@ -503,7 +539,7 @@ export default function Home() {
     try {
       const { uploadHomeSticker } = await import('../utils/homeStickers')
       const uploaded = await uploadHomeSticker({ image })
-      handleWidgetsChange([
+      handleWidgetsChangeRef.current([
         ...layoutsRef.current.free,
         createHomeStickerItem({
           size: stickerDraft.size,

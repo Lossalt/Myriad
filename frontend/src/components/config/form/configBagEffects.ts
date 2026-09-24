@@ -10,6 +10,7 @@ import {
   clearDedupCache,
   clearLibraryDataCache,
   invalidatePublicConfigCache,
+  invalidateUIConfig,
 } from '../../../utils/requestDedup'
 import {
   configChangesNeedFooterReload,
@@ -43,11 +44,10 @@ export function configBagEffects(
     effects.push({
       id: 'wallpaper',
       run: async () => {
-        clearDedupCache(`${API_URL}/api/config/ui`)
         const { invalidateWallpaperLoadCache } =
           await import('../../../hooks/useWallpaper')
         invalidateWallpaperLoadCache()
-        window.dispatchEvent(new CustomEvent('wallpaperConfigChanged'))
+        invalidateUIConfig('wallpaperConfigChanged')
       },
     })
   }
@@ -66,8 +66,7 @@ export function configBagEffects(
     effects.push({
       id: 'footer',
       run: () => {
-        clearDedupCache(`${API_URL}/api/config/ui`)
-        window.dispatchEvent(new CustomEvent('footerConfigChanged'))
+        invalidateUIConfig('footerConfigChanged')
       },
     })
   }
@@ -75,8 +74,7 @@ export function configBagEffects(
     effects.push({
       id: 'island',
       run: () => {
-        clearDedupCache(`${API_URL}/api/config/ui`)
-        window.dispatchEvent(new CustomEvent(ISLAND_CONTENT_CHANGED_EVENT))
+        invalidateUIConfig(ISLAND_CONTENT_CHANGED_EVENT)
       },
     })
   }
@@ -84,7 +82,7 @@ export function configBagEffects(
     effects.push({
       id: 'pwa',
       run: async () => {
-        clearDedupCache(`${API_URL}/api/config/ui`)
+        invalidateUIConfig()
         const raw = next.ui_config.config_fields.find(
           (field) => field.key === 'pwa_enabled',
         )?.value

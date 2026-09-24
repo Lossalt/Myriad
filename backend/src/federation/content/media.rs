@@ -1,14 +1,6 @@
 //! Federation media MIME classification and attachment URL checks.
 //! Uploads persist through the platform media service, not this module.
 
-use std::path::PathBuf;
-
-pub fn federation_media_root() -> PathBuf {
-    crate::services::data_paths::paths()
-        .root
-        .join("federation_media")
-}
-
 struct StoredMediaKind {
     attachment_type: &'static str,
     #[cfg(test)]

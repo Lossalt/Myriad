@@ -1,5 +1,6 @@
 import type { AgentAttachment } from './agentAttachments'
 import type { AgentPanelMode } from './agentPanelMode'
+import { authSubject } from '../../utils/authSubject'
 import { createStore, patchStore } from '../../utils/store'
 import { getAgentPanelMode, isAgentPanelMode } from './agentPanelMode'
 
@@ -133,6 +134,11 @@ const panelQueue = createStore<{ open: QueuedAgentPanelOpen | null, attached: bo
 })
 let queuedAgentSessionOpen: QueuedAgentSessionOpen | null = null
 let engineAttached = false
+
+// 排队的会话 id 属于排队时的主体；换号后交给新主体的引擎会打开别人的会话。
+authSubject.subscribe(() => {
+  queuedAgentSessionOpen = null
+})
 
 /** Fires when a panel open is queued, consumed or discarded, or the panel attaches/detaches. */
 export const subscribeAgentOpenQueue = panelQueue.subscribe

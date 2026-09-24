@@ -142,6 +142,9 @@ pub struct FailedUpdate {
     pub at: DateTime<Utc>,
     pub reason: String,
     pub job_id: String,
+    /// Machine-readable failure code (see `UpdaterError::code`); absent for most failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +194,10 @@ pub enum Phase {
     SwapTag,
     StartingNew,
     HealthProbing,
+    /// Updaters up to v0.5.3 recorded `swapping_proxy` between health probing and
+    /// finalize: after the update committed, in the same post-swap window. Job
+    /// files persist indefinitely and every admission scans them.
+    #[serde(alias = "swapping_proxy")]
     Finalize,
     RollbackInProgress,
     StopNew,
@@ -199,6 +206,11 @@ pub enum Phase {
     StartOld,
     NeedsManual,
     Cleanup,
+    /// A phase this updater does not recognize (e.g. one added by a newer release).
+    /// Captured so forward state files still deserialize instead of failing;
+    /// recovery treats it as non-post-swap and clears the stale maintenance.
+    #[serde(other)]
+    Unknown,
 }
 
 impl Phase {
@@ -330,6 +342,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v053_update_job_with_swapping_proxy_parses_as_finalize() {
+        let job: Job =
+            serde_json::from_str(include_str!("testdata/job-v0.5.3-update.json")).unwrap();
+        let phases: Vec<_> = job.steps.iter().map(|step| step.phase).collect();
+        assert_eq!(
+            phases,
+            [
+                Phase::Preflight,
+                Phase::MaintenanceOn,
+                Phase::Stopping,
+                Phase::Snapshotting,
+                Phase::SwapTag,
+                Phase::StartingNew,
+                Phase::HealthProbing,
+                Phase::Finalize,
+                Phase::Finalize,
+            ]
+        );
+        assert!(job.steps[7].phase.is_post_swap());
+    }
+
+    #[test]
     fn v053_snapshot_index_survives_removal_of_sample_hash() {
         let old = serde_json::json!({"schema_version":1,"items":[{
             "id":"before-upgrade", "created_at":"2026-09-21T02:20:54Z",
@@ -380,5 +414,14 @@ mod tests {
         assert!(Phase::MaintenanceOn.takes_site_offline());
         assert!(Phase::Stopping.takes_site_offline());
         assert!(Phase::NeedsManual.takes_site_offline());
+    }
+
+    #[test]
+    fn unknown_future_phases_deserialize_into_unknown() {
+        // A phase added by a newer release must not fail this updater's state load.
+        let phase: Phase = serde_json::from_str(r#""future_phase""#).unwrap();
+        assert_eq!(phase, Phase::Unknown);
+        assert!(!phase.is_post_swap());
+        assert!(!phase.is_rollback());
     }
 }

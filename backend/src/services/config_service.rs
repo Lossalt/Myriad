@@ -13,6 +13,260 @@ fn opt_nonempty_string(v: &JsonValue) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Keys whose stored value maps onto the `DynamicConfig` field of the same
+/// name by one standard rule. A key that needs its own parsing stays in
+/// `parse_config`. Either way, every key the settings form saves must be read
+/// back; `every_saved_setting_is_read_back` checks that.
+macro_rules! standard_fields {
+    ($($rule:ident: [$($field:ident),* $(,)?]),* $(,)?) => {
+        #[cfg(test)]
+        const STANDARD_KEYS: &[&str] = &[$($(stringify!($field)),*),*];
+
+        fn read_standard_fields(config: &mut DynamicConfig, map: &HashMap<String, JsonValue>) {
+            $($(
+                if let Some(v) = map.get(stringify!($field)) {
+                    read_rule!($rule, config.$field, v);
+                }
+            )*)*
+        }
+    };
+}
+
+macro_rules! read_rule {
+    (text, $slot:expr, $v:ident) => {
+        if let Some(s) = $v.as_str() {
+            $slot = s.to_string();
+        }
+    };
+    (opt_text, $slot:expr, $v:ident) => {
+        $slot = $v.as_str().map(str::to_string);
+    };
+    (opt_nonempty, $slot:expr, $v:ident) => {
+        $slot = opt_nonempty_string($v);
+    };
+    (flag, $slot:expr, $v:ident) => {
+        if let Some(b) = $v.as_bool() {
+            $slot = b;
+        }
+    };
+    (flag_or_text, $slot:expr, $v:ident) => {
+        if let Some(b) = $v.as_bool() {
+            $slot = b;
+        } else if let Some(s) = $v.as_str() {
+            $slot = s == "true";
+        }
+    };
+    (opt_flag_or_text, $slot:expr, $v:ident) => {
+        if let Some(b) = $v.as_bool() {
+            $slot = Some(b);
+        } else if let Some(s) = $v.as_str() {
+            $slot = Some(s == "true");
+        }
+    };
+    (int32, $slot:expr, $v:ident) => {
+        if let Some(n) = $v.as_i64() {
+            $slot = n as i32;
+        }
+    };
+}
+
+standard_fields! {
+    text: [
+        ai_provider,
+        gemini_model,
+        openai_model,
+        openai_base_url,
+        topic_style,
+        lite_ai_provider,
+        lite_gemini_model,
+        lite_openai_model,
+        lite_openai_base_url,
+        pro_ai_provider,
+        pro_gemini_model,
+        pro_openai_model,
+        pro_openai_base_url,
+        ai_image_provider,
+        ai_image_model,
+        ai_image_volcengine_base_url,
+        speech_provider,
+        speech_openai_base_url,
+        provider_openai_base_url,
+        provider_volcengine_base_url,
+        ai_source,
+        lite_ai_source,
+        pro_ai_source,
+        ai_image_source,
+        speech_source,
+        speech_stt_model,
+        speech_tts_model,
+        speech_tts_voice,
+        agora_app_id,
+        agora_app_certificate,
+        agora_customer_id,
+        agora_api_base,
+        site_visibility_policy,
+    ],
+    opt_text: [
+        gemini_api_key,
+        openai_api_key,
+        openweather_api_key,
+        lite_gemini_api_key,
+        lite_openai_api_key,
+        pro_gemini_api_key,
+        pro_openai_api_key,
+        ui_wallpaper_url,
+        ui_theme,
+        ui_primary_color,
+        ui_secondary_color,
+        ai_image_openai_api_key,
+        ai_image_openrouter_api_key,
+        ai_image_volcengine_api_key,
+        tripo_api_key,
+        tencent_secret_id,
+        tencent_secret_key,
+        tencent_region,
+        speech_openai_api_key,
+        speech_openrouter_api_key,
+        provider_openai_api_key,
+        provider_openrouter_api_key,
+        provider_gemini_api_key,
+        provider_tinyfish_api_key,
+        provider_volcengine_api_key,
+        agora_customer_secret,
+        base_url,
+        site_title,
+        site_description,
+        site_favicon,
+        site_keywords,
+        site_og_image,
+        google_site_verification,
+        site_ai_intro,
+        ga_measurement_id,
+        umami_website_id,
+        umami_script_url,
+        site_icp,
+        site_gongan,
+        cloud_sponsors,
+        site_footer_custom,
+        music_source,
+        music_playlist_id,
+        proxy_url,
+        proxy_bypass,
+        gemini_base_url,
+        github_api_base_url,
+    ],
+    opt_nonempty: [
+        github_token,
+        github_username,
+        bilibili_uid,
+        steam_api_key,
+        steam_id,
+        youtube_api_key,
+        youtube_channel_id,
+        netease_user_id,
+        bangumi_username,
+        bangumi_access_token,
+        bangumi_user_agent,
+        x_username,
+        x_bearer_token,
+        discord_access_token,
+        discord_refresh_token,
+        mal_username,
+        mal_client_id,
+        xbox_gamertag,
+        openxbl_api_key,
+        psn_online_id,
+        psn_npsso,
+        see_through_hf_token,
+        qq_bot_app_secret,
+        telegram_bot_token,
+        discord_bot_token,
+        feishu_bot_app_secret,
+    ],
+    flag: [
+        ui_evocative_parallax,
+        ui_evocative_dynamic_blur,
+        ui_evocative_ripple,
+        enable_auto_fetch,
+        user_perm_ai_generate,
+        user_perm_ai_analyze,
+        user_perm_ai_chat,
+        user_perm_ai_search,
+        user_perm_ai_image,
+        user_perm_3d_generate,
+        user_perm_report_write,
+        user_perm_network_fetch,
+        user_perm_media_control,
+        user_perm_component_theme,
+        user_perm_shortcut_register,
+        user_perm_event_publish,
+        user_perm_scheduler_register,
+        user_perm_speech_tts,
+        user_perm_speech_asr,
+        user_perm_storage_write,
+        user_perm_federation_post,
+        user_perm_federation_channel,
+        user_perm_federation_room,
+        user_perm_phantasi_comment_write,
+        guest_perm_ai_generate,
+        guest_perm_ai_analyze,
+        guest_perm_ai_chat,
+        guest_perm_ai_search,
+        guest_perm_ai_image,
+        guest_perm_3d_generate,
+        guest_perm_report_write,
+        guest_perm_network_fetch,
+        guest_perm_media_control,
+        guest_perm_component_theme,
+        guest_perm_shortcut_register,
+        guest_perm_event_publish,
+        guest_perm_scheduler_register,
+        guest_perm_speech_tts,
+        guest_perm_speech_asr,
+        guest_perm_storage_write,
+        guest_perm_federation_post,
+        guest_perm_federation_channel,
+        guest_perm_federation_room,
+        guest_perm_phantasi_comment_write,
+        proxy_enabled,
+    ],
+    flag_or_text: [
+        lite_enabled,
+        pro_enabled,
+        site_noindex,
+    ],
+    opt_flag_or_text: [
+        github_enabled,
+        bilibili_enabled,
+        steam_enabled,
+        youtube_enabled,
+        netease_enabled,
+        bangumi_enabled,
+        x_enabled,
+        discord_enabled,
+        mal_enabled,
+        xbox_enabled,
+        psn_enabled,
+    ],
+    int32: [
+        openai_max_tokens,
+        ui_wallpaper_blur,
+        ui_evocative_fps,
+        fetch_interval_hours,
+        control_panel_rows,
+        user_ai_daily_calls,
+        user_ai_daily_tokens,
+        user_ai_cooldown_seconds,
+        guest_ai_daily_calls,
+        guest_ai_daily_tokens,
+        guest_ai_cooldown_seconds,
+        stash_hidden_capacity,
+        stash_hidden_idle_seconds,
+        resident_quota_per_app,
+        resident_quota_site_total,
+    ],
+}
+
 /// 配置服务 - 用于从数据库读写动态配置
 pub struct ConfigService {
     db: DatabaseConnection,
@@ -67,10 +321,14 @@ impl ConfigService {
 
     /// 从数据库加载所有配置
     pub async fn load_config(&self) -> Result<DynamicConfig> {
-        // 使用 ConnectionTrait 的方法进行查询
+        Self::load_config_on(&self.db).await
+    }
+
+    /// Full configuration as seen by `db`, which may be an open transaction:
+    /// a writer can prove what it wrote still loads before committing it.
+    pub async fn load_config_on(db: &impl ConnectionTrait) -> Result<DynamicConfig> {
         let sql = "SELECT key, value FROM configurations";
-        let rows = self
-            .db
+        let rows = db
             .query_all_raw(Statement::from_string(
                 sea_orm::DatabaseBackend::Postgres,
                 sql.to_string(),
@@ -98,256 +356,7 @@ impl ConfigService {
     /// 从配置映射解析为 DynamicConfig
     fn parse_config(map: HashMap<String, JsonValue>) -> DynamicConfig {
         let mut config = DynamicConfig::default();
-
-        // AI 配置
-        if let Some(v) = map.get("ai_provider") {
-            if let Some(s) = v.as_str() {
-                config.ai_provider = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("gemini_api_key") {
-            config.gemini_api_key = v.as_str().map(|s| s.to_string());
-        }
-
-        if let Some(v) = map.get("gemini_model") {
-            if let Some(s) = v.as_str() {
-                config.gemini_model = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("openai_api_key") {
-            config.openai_api_key = v.as_str().map(|s| s.to_string());
-        }
-
-        if let Some(v) = map.get("openai_model") {
-            if let Some(s) = v.as_str() {
-                config.openai_model = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("openai_base_url") {
-            if let Some(s) = v.as_str() {
-                config.openai_base_url = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("openai_max_tokens") {
-            if let Some(n) = v.as_i64() {
-                config.openai_max_tokens = n as i32;
-            }
-        }
-
-        if let Some(v) = map.get("openweather_api_key") {
-            config.openweather_api_key = v.as_str().map(str::to_string);
-        }
-
-        if let Some(v) = map.get("topic_style") {
-            if let Some(s) = v.as_str() {
-                config.topic_style = s.to_string();
-            }
-        }
-
-        // AI Lite 模型配置
-        if let Some(v) = map.get("lite_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.lite_enabled = b;
-            } else if let Some(s) = v.as_str() {
-                config.lite_enabled = s == "true";
-            }
-        }
-        if let Some(v) = map.get("lite_ai_provider") {
-            if let Some(s) = v.as_str() {
-                config.lite_ai_provider = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("lite_gemini_api_key") {
-            config.lite_gemini_api_key = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("lite_gemini_model") {
-            if let Some(s) = v.as_str() {
-                config.lite_gemini_model = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("lite_openai_api_key") {
-            config.lite_openai_api_key = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("lite_openai_model") {
-            if let Some(s) = v.as_str() {
-                config.lite_openai_model = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("lite_openai_base_url") {
-            if let Some(s) = v.as_str() {
-                config.lite_openai_base_url = s.to_string();
-            }
-        }
-
-        // AI Pro 模型配置
-        if let Some(v) = map.get("pro_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.pro_enabled = b;
-            } else if let Some(s) = v.as_str() {
-                config.pro_enabled = s == "true";
-            }
-        }
-
-        if let Some(v) = map.get("pro_ai_provider") {
-            if let Some(s) = v.as_str() {
-                config.pro_ai_provider = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("pro_gemini_api_key") {
-            config.pro_gemini_api_key = v.as_str().map(|s| s.to_string());
-        }
-
-        if let Some(v) = map.get("pro_gemini_model") {
-            if let Some(s) = v.as_str() {
-                config.pro_gemini_model = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("pro_openai_api_key") {
-            config.pro_openai_api_key = v.as_str().map(|s| s.to_string());
-        }
-
-        if let Some(v) = map.get("pro_openai_model") {
-            if let Some(s) = v.as_str() {
-                config.pro_openai_model = s.to_string();
-            }
-        }
-
-        if let Some(v) = map.get("pro_openai_base_url") {
-            if let Some(s) = v.as_str() {
-                config.pro_openai_base_url = s.to_string();
-            }
-        }
-
-        // 平台配置
-        if let Some(v) = map.get("github_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.github_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.github_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("github_token") {
-            config.github_token = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("github_username") {
-            config.github_username = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("bilibili_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.bilibili_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.bilibili_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("bilibili_uid") {
-            config.bilibili_uid = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("steam_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.steam_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.steam_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("steam_api_key") {
-            config.steam_api_key = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("steam_id") {
-            config.steam_id = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("youtube_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.youtube_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.youtube_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("youtube_api_key") {
-            config.youtube_api_key = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("youtube_channel_id") {
-            config.youtube_channel_id = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("netease_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.netease_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.netease_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("netease_user_id") {
-            config.netease_user_id = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("bangumi_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.bangumi_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.bangumi_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("bangumi_username") {
-            config.bangumi_username = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("bangumi_access_token") {
-            config.bangumi_access_token = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("bangumi_user_agent") {
-            config.bangumi_user_agent = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("x_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.x_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.x_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("x_username") {
-            config.x_username = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("x_bearer_token") {
-            config.x_bearer_token = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("discord_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.discord_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.discord_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("discord_access_token") {
-            config.discord_access_token = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("discord_refresh_token") {
-            config.discord_refresh_token = opt_nonempty_string(v);
-        }
+        read_standard_fields(&mut config, &map);
 
         if let Some(v) = map.get("discord_token_expires_at") {
             config.discord_token_expires_at = v.as_str().map(|s| s.to_string()).or_else(|| {
@@ -355,54 +364,6 @@ impl ConfigService {
                     .map(|n| n.to_string())
                     .or_else(|| v.as_u64().map(|n| n.to_string()))
             });
-        }
-
-        if let Some(v) = map.get("mal_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.mal_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.mal_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("mal_username") {
-            config.mal_username = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("mal_client_id") {
-            config.mal_client_id = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("xbox_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.xbox_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.xbox_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("xbox_gamertag") {
-            config.xbox_gamertag = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("openxbl_api_key") {
-            config.openxbl_api_key = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("psn_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.psn_enabled = Some(b);
-            } else if let Some(s) = v.as_str() {
-                config.psn_enabled = Some(s == "true");
-            }
-        }
-
-        if let Some(v) = map.get("psn_online_id") {
-            config.psn_online_id = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("psn_npsso") {
-            config.psn_npsso = opt_nonempty_string(v);
         }
 
         if let Some(v) = map.get("discord_user_id") {
@@ -433,48 +394,11 @@ impl ConfigService {
         }
 
         // UI 配置
-        if let Some(v) = map.get("ui_wallpaper_url") {
-            config.ui_wallpaper_url = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("ui_wallpaper_blur") {
-            if let Some(n) = v.as_i64() {
-                config.ui_wallpaper_blur = n as i32;
-            }
-        }
         // Evocative 壁纸动效
-        if let Some(v) = map.get("ui_evocative_parallax") {
-            if let Some(b) = v.as_bool() {
-                config.ui_evocative_parallax = b;
-            }
-        }
-        if let Some(v) = map.get("ui_evocative_dynamic_blur") {
-            if let Some(b) = v.as_bool() {
-                config.ui_evocative_dynamic_blur = b;
-            }
-        }
-        if let Some(v) = map.get("ui_evocative_ripple") {
-            if let Some(b) = v.as_bool() {
-                config.ui_evocative_ripple = b;
-            }
-        }
-        if let Some(v) = map.get("ui_evocative_fps") {
-            if let Some(n) = v.as_i64() {
-                config.ui_evocative_fps = n as i32;
-            }
-        }
         if let Some(v) = map.get("ui_evocative_ripple_quality") {
             if let Some(n) = v.as_f64() {
                 config.ui_evocative_ripple_quality = n;
             }
-        }
-        if let Some(v) = map.get("ui_theme") {
-            config.ui_theme = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("ui_primary_color") {
-            config.ui_primary_color = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("ui_secondary_color") {
-            config.ui_secondary_color = v.as_str().map(str::to_string);
         }
         if let Some(v) = map.get("analytics_enabled") {
             if let Some(b) = v.as_bool() {
@@ -492,35 +416,11 @@ impl ConfigService {
         }
 
         // AI 图片生成配置
-        if let Some(v) = map.get("ai_image_provider") {
-            if let Some(s) = v.as_str() {
-                config.ai_image_provider = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("ai_image_model") {
-            if let Some(s) = v.as_str() {
-                config.ai_image_model = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("ai_image_openai_api_key") {
-            config.ai_image_openai_api_key = v.as_str().map(str::to_string);
-        }
         if let Some(v) = map.get("ai_image_openai_base_url") {
             if let Some(s) = v.as_str() {
                 if !s.trim().is_empty() {
                     config.ai_image_openai_base_url = s.to_string();
                 }
-            }
-        }
-        if let Some(v) = map.get("ai_image_openrouter_api_key") {
-            config.ai_image_openrouter_api_key = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("ai_image_volcengine_api_key") {
-            config.ai_image_volcengine_api_key = v.as_str().map(str::to_string);
-        }
-        if let Some(v) = map.get("ai_image_volcengine_base_url") {
-            if let Some(s) = v.as_str() {
-                config.ai_image_volcengine_base_url = s.to_string();
             }
         }
 
@@ -543,9 +443,6 @@ impl ConfigService {
                 .filter(|value| !value.is_empty())
                 .and_then(crate::services::merope_rig::normalize_asset_id);
         }
-        if let Some(v) = map.get("see_through_hf_token") {
-            config.see_through_hf_token = opt_nonempty_string(v);
-        }
 
         // Tripo 3D 独立配置
         if let Some(v) = map.get("tripo_enabled") {
@@ -553,9 +450,6 @@ impl ConfigService {
                 .as_bool()
                 .or_else(|| v.as_str().map(|s| s == "true"))
                 .unwrap_or(config.tripo_enabled);
-        }
-        if let Some(v) = map.get("tripo_api_key") {
-            config.tripo_api_key = v.as_str().map(str::to_string);
         }
         if let Some(v) = map.get("tripo_base_url").and_then(|v| v.as_str()) {
             if !v.trim().is_empty() {
@@ -586,61 +480,11 @@ impl ConfigService {
             config.tripo_max_download_mb = v as i32;
         }
         // 腾讯云语音服务配置 (TTS/ASR)
-        if let Some(v) = map.get("tencent_secret_id") {
-            config.tencent_secret_id = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("tencent_secret_key") {
-            config.tencent_secret_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("tencent_region") {
-            config.tencent_region = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("speech_provider") {
-            if let Some(s) = v.as_str() {
-                config.speech_provider = s.to_string();
-            }
-        }
         if let Some(v) = map.get("speech_reuse_text_credentials") {
             if let Some(b) = v.as_bool() {
                 config.speech_reuse_text_credentials = b;
             } else if let Some(s) = v.as_str() {
                 config.speech_reuse_text_credentials = s == "true" || s == "1";
-            }
-        }
-        if let Some(v) = map.get("speech_openai_api_key") {
-            config.speech_openai_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("speech_openai_base_url") {
-            if let Some(s) = v.as_str() {
-                config.speech_openai_base_url = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("speech_openrouter_api_key") {
-            config.speech_openrouter_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_openai_api_key") {
-            config.provider_openai_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_openai_base_url") {
-            if let Some(s) = v.as_str() {
-                config.provider_openai_base_url = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("provider_openrouter_api_key") {
-            config.provider_openrouter_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_gemini_api_key") {
-            config.provider_gemini_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_tinyfish_api_key") {
-            config.provider_tinyfish_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_volcengine_api_key") {
-            config.provider_volcengine_api_key = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("provider_volcengine_base_url") {
-            if let Some(s) = v.as_str() {
-                config.provider_volcengine_base_url = s.to_string();
             }
         }
         if let Some(v) = map.get("ai_vendor_sources") {
@@ -654,74 +498,11 @@ impl ConfigService {
                 }
             }
         }
-        if let Some(v) = map.get("ai_source") {
-            if let Some(s) = v.as_str() {
-                config.ai_source = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("lite_ai_source") {
-            if let Some(s) = v.as_str() {
-                config.lite_ai_source = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("pro_ai_source") {
-            if let Some(s) = v.as_str() {
-                config.pro_ai_source = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("ai_image_source") {
-            if let Some(s) = v.as_str() {
-                config.ai_image_source = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("speech_source") {
-            if let Some(s) = v.as_str() {
-                config.speech_source = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("speech_stt_model") {
-            if let Some(s) = v.as_str() {
-                config.speech_stt_model = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("speech_tts_model") {
-            if let Some(s) = v.as_str() {
-                config.speech_tts_model = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("speech_tts_voice") {
-            if let Some(s) = v.as_str() {
-                config.speech_tts_voice = s.to_string();
-            }
-        }
         if let Some(v) = map.get("agora_convo_enabled") {
             config.agora_convo_enabled = v
                 .as_bool()
                 .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
                 .unwrap_or(config.agora_convo_enabled);
-        }
-        if let Some(v) = map.get("agora_app_id") {
-            if let Some(s) = v.as_str() {
-                config.agora_app_id = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("agora_app_certificate") {
-            if let Some(s) = v.as_str() {
-                config.agora_app_certificate = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("agora_customer_id") {
-            if let Some(s) = v.as_str() {
-                config.agora_customer_id = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("agora_customer_secret") {
-            config.agora_customer_secret = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("agora_api_base") {
-            if let Some(s) = v.as_str() {
-                config.agora_api_base = s.to_string();
-            }
         }
         if let Some(v) = map.get("qq_bot_enabled") {
             config.qq_bot_enabled = v
@@ -732,26 +513,17 @@ impl ConfigService {
         if let Some(v) = map.get("qq_bot_app_id") {
             config.qq_bot_app_id = v.as_str().map(str::trim).unwrap_or("").to_string();
         }
-        if let Some(v) = map.get("qq_bot_app_secret") {
-            config.qq_bot_app_secret = opt_nonempty_string(v);
-        }
         if let Some(v) = map.get("telegram_bot_enabled") {
             config.telegram_bot_enabled = v
                 .as_bool()
                 .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
                 .unwrap_or(config.telegram_bot_enabled);
         }
-        if let Some(v) = map.get("telegram_bot_token") {
-            config.telegram_bot_token = opt_nonempty_string(v);
-        }
         if let Some(v) = map.get("discord_bot_enabled") {
             config.discord_bot_enabled = v
                 .as_bool()
                 .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
                 .unwrap_or(config.discord_bot_enabled);
-        }
-        if let Some(v) = map.get("discord_bot_token") {
-            config.discord_bot_token = opt_nonempty_string(v);
         }
         if let Some(v) = map.get("feishu_bot_enabled") {
             config.feishu_bot_enabled = v
@@ -761,20 +533,6 @@ impl ConfigService {
         }
         if let Some(v) = map.get("feishu_bot_app_id") {
             config.feishu_bot_app_id = v.as_str().map(str::trim).unwrap_or("").to_string();
-        }
-        if let Some(v) = map.get("feishu_bot_app_secret") {
-            config.feishu_bot_app_secret = opt_nonempty_string(v);
-        }
-
-        if let Some(v) = map.get("enable_auto_fetch") {
-            if let Some(b) = v.as_bool() {
-                config.enable_auto_fetch = b;
-            }
-        }
-        if let Some(v) = map.get("fetch_interval_hours") {
-            if let Some(n) = v.as_i64() {
-                config.fetch_interval_hours = n as i32;
-            }
         }
 
         // OAuth providers 列表
@@ -814,11 +572,6 @@ impl ConfigService {
                 .or_else(|| v.as_u64().map(|n| n as i64))
                 .unwrap_or(14);
             config.tapp_private_install_inactivity_days = days.clamp(1, 365) as i32;
-        }
-
-        // 站点 URL 配置
-        if let Some(v) = map.get("base_url") {
-            config.base_url = v.as_str().map(|s| s.to_string());
         }
 
         // 仪表盘配置
@@ -886,11 +639,6 @@ impl ConfigService {
                 config.control_panel_layout = Some(v.to_string());
             }
         }
-        if let Some(v) = map.get("control_panel_rows") {
-            if let Some(n) = v.as_i64() {
-                config.control_panel_rows = n as i32;
-            }
-        }
 
         // Tapp 多窗口方案配置
         if let Some(v) = map.get("tapp_window_schemes") {
@@ -902,39 +650,6 @@ impl ConfigService {
         }
 
         // 网站元数据配置
-        if let Some(v) = map.get("site_title") {
-            config.site_title = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_description") {
-            config.site_description = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_favicon") {
-            config.site_favicon = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_keywords") {
-            config.site_keywords = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_og_image") {
-            config.site_og_image = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("google_site_verification") {
-            config.google_site_verification = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_noindex") {
-            if let Some(b) = v.as_bool() {
-                config.site_noindex = b;
-            } else if let Some(s) = v.as_str() {
-                config.site_noindex = s == "true";
-            }
-        }
-        if let Some(v) = map.get("site_visibility_policy") {
-            if let Some(s) = v.as_str() {
-                config.site_visibility_policy = s.to_string();
-            }
-        }
-        if let Some(v) = map.get("site_ai_intro") {
-            config.site_ai_intro = v.as_str().map(|s| s.to_string());
-        }
         if let Some(v) = map.get("site_seo_review_cadence") {
             config.site_seo_review_cadence =
                 crate::api::seo_policy::normalize_seo_review_cadence(v.as_str().unwrap_or(""))
@@ -955,27 +670,6 @@ impl ConfigService {
             // Policy empty + noindex → private, for consumers that read policy.
             config.site_visibility_policy = "private".to_string();
         }
-        if let Some(v) = map.get("ga_measurement_id") {
-            config.ga_measurement_id = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("umami_website_id") {
-            config.umami_website_id = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("umami_script_url") {
-            config.umami_script_url = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_icp") {
-            config.site_icp = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_gongan") {
-            config.site_gongan = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("cloud_sponsors") {
-            config.cloud_sponsors = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("site_footer_custom") {
-            config.site_footer_custom = v.as_str().map(|s| s.to_string());
-        }
 
         // 音乐配置
         if let Some(v) = map.get("music_enabled") {
@@ -985,12 +679,6 @@ impl ConfigService {
             } else {
                 v.as_str().map(|s| s.to_string())
             };
-        }
-        if let Some(v) = map.get("music_source") {
-            config.music_source = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("music_playlist_id") {
-            config.music_playlist_id = v.as_str().map(|s| s.to_string());
         }
         if let Some(v) = map.get("music_proxy_enabled") {
             if let Some(b) = v.as_bool() {
@@ -1043,265 +731,6 @@ impl ConfigService {
             }
         }
 
-        // Tapp 权限下放配置
-        // 普通用户授予路径读取的配置字段
-        if let Some(v) = map.get("user_perm_ai_generate") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_ai_generate = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_ai_analyze") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_ai_analyze = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_ai_chat") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_ai_chat = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_ai_search") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_ai_search = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_ai_image") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_ai_image = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_3d_generate") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_3d_generate = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_report_write") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_report_write = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_network_fetch") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_network_fetch = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_media_control") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_media_control = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_component_theme") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_component_theme = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_shortcut_register") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_shortcut_register = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_event_publish") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_event_publish = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_scheduler_register") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_scheduler_register = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_speech_tts") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_speech_tts = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_speech_asr") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_speech_asr = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_storage_write") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_storage_write = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_federation_post") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_federation_post = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_federation_channel") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_federation_channel = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_federation_room") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_federation_room = b;
-            }
-        }
-        if let Some(v) = map.get("user_perm_phantasi_comment_write") {
-            if let Some(b) = v.as_bool() {
-                config.user_perm_phantasi_comment_write = b;
-            }
-        }
-
-        // 游客授予路径读取的配置字段（若干恒 false，见各字段）
-        if let Some(v) = map.get("guest_perm_ai_generate") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_ai_generate = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_ai_analyze") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_ai_analyze = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_ai_chat") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_ai_chat = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_ai_search") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_ai_search = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_ai_image") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_ai_image = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_3d_generate") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_3d_generate = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_report_write") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_report_write = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_network_fetch") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_network_fetch = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_media_control") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_media_control = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_component_theme") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_component_theme = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_shortcut_register") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_shortcut_register = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_event_publish") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_event_publish = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_scheduler_register") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_scheduler_register = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_speech_tts") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_speech_tts = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_speech_asr") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_speech_asr = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_storage_write") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_storage_write = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_federation_post") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_federation_post = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_federation_channel") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_federation_channel = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_federation_room") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_federation_room = b;
-            }
-        }
-        if let Some(v) = map.get("guest_perm_phantasi_comment_write") {
-            if let Some(b) = v.as_bool() {
-                config.guest_perm_phantasi_comment_write = b;
-            }
-        }
-
-        // AI 使用限额配置
-        if let Some(v) = map.get("user_ai_daily_calls") {
-            if let Some(n) = v.as_i64() {
-                config.user_ai_daily_calls = n as i32;
-            }
-        }
-        if let Some(v) = map.get("user_ai_daily_tokens") {
-            if let Some(n) = v.as_i64() {
-                config.user_ai_daily_tokens = n as i32;
-            }
-        }
-        if let Some(v) = map.get("user_ai_cooldown_seconds") {
-            if let Some(n) = v.as_i64() {
-                config.user_ai_cooldown_seconds = n as i32;
-            }
-        }
-        if let Some(v) = map.get("guest_ai_daily_calls") {
-            if let Some(n) = v.as_i64() {
-                config.guest_ai_daily_calls = n as i32;
-            }
-        }
-        if let Some(v) = map.get("guest_ai_daily_tokens") {
-            if let Some(n) = v.as_i64() {
-                config.guest_ai_daily_tokens = n as i32;
-            }
-        }
-        if let Some(v) = map.get("guest_ai_cooldown_seconds") {
-            if let Some(n) = v.as_i64() {
-                config.guest_ai_cooldown_seconds = n as i32;
-            }
-        }
-
-        // 沙箱生命周期配额
-        if let Some(v) = map.get("stash_hidden_capacity") {
-            if let Some(n) = v.as_i64() {
-                config.stash_hidden_capacity = n as i32;
-            }
-        }
-        if let Some(v) = map.get("stash_hidden_idle_seconds") {
-            if let Some(n) = v.as_i64() {
-                config.stash_hidden_idle_seconds = n as i32;
-            }
-        }
-        if let Some(v) = map.get("resident_quota_per_app") {
-            if let Some(n) = v.as_i64() {
-                config.resident_quota_per_app = n as i32;
-            }
-        }
-        if let Some(v) = map.get("resident_quota_site_total") {
-            if let Some(n) = v.as_i64() {
-                config.resident_quota_site_total = n as i32;
-            }
-        }
-
         // 内存节约（高级设置）
         if let Some(v) = map.get("memory_saver_enabled") {
             if let Some(b) = v.as_bool() {
@@ -1318,25 +747,6 @@ impl ConfigService {
             } else if let Some(s) = v.as_str() {
                 config.precise_location_enabled = s == "true" || s == "1";
             }
-        }
-
-        // 网络代理配置
-        if let Some(v) = map.get("proxy_enabled") {
-            if let Some(b) = v.as_bool() {
-                config.proxy_enabled = b;
-            }
-        }
-        if let Some(v) = map.get("proxy_url") {
-            config.proxy_url = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("proxy_bypass") {
-            config.proxy_bypass = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("gemini_base_url") {
-            config.gemini_base_url = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = map.get("github_api_base_url") {
-            config.github_api_base_url = v.as_str().map(|s| s.to_string());
         }
 
         config
@@ -1432,6 +842,93 @@ async fn upsert_configuration(
 
 #[cfg(test)]
 mod tests {
+    /// CLAUDE.md: a configuration key the settings form saves must be read
+    /// back from the database, or the saved value silently does nothing.
+    #[test]
+    fn every_saved_setting_is_read_back() {
+        fn literal_keys(source: &str, before: &str) -> std::collections::BTreeSet<String> {
+            let mut keys = std::collections::BTreeSet::new();
+            for piece in source.split(before).skip(1) {
+                if let Some(key) = piece
+                    .strip_prefix('"')
+                    .and_then(|rest| rest.split('"').next())
+                {
+                    keys.insert(key.to_string());
+                }
+            }
+            keys
+        }
+        let own = include_str!("config_service.rs");
+        let parse = own
+            .split("fn parse_config(map: HashMap<String, JsonValue>)")
+            .nth(1)
+            .and_then(|rest| rest.split("\n        config\n    }").next())
+            .expect("parse_config");
+        let mut read: std::collections::BTreeSet<String> = super::STANDARD_KEYS
+            .iter()
+            .map(|key| key.to_string())
+            .collect();
+        read.extend(literal_keys(&parse.replace(".get(\n", ".get("), ".get("));
+
+        let save = include_str!("../api/config/save.rs");
+        let collect = save
+            .split("pub(crate) fn collect_database_updates_with_vendor(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("collect_database_updates_with_vendor");
+        let mut written = std::collections::BTreeSet::new();
+        for marker in [
+            "updates.insert(",
+            "=> (",
+            "insert_platform_field(&mut updates, ",
+        ] {
+            let flattened = collect.replace(&format!("{marker}\n"), marker);
+            for key in literal_keys(&flattened.replace(marker, "\u{1}"), "\u{1}") {
+                written.insert(key);
+            }
+        }
+        for line in collect.lines() {
+            if let Some(key) = line
+                .trim()
+                .split("=> \"")
+                .nth(1)
+                .and_then(|rest| rest.strip_suffix("\","))
+            {
+                written.insert(key.to_string());
+            }
+        }
+        assert!(
+            written.len() > 50,
+            "found only {} saved keys",
+            written.len()
+        );
+        let unread: Vec<_> = written.difference(&read).collect();
+        assert!(unread.is_empty(), "saved but never read back: {unread:?}");
+    }
+
+    /// CLAUDE.md: a new configuration field needs its database read-back
+    /// branch. For delegation flags the table is the source: every key it
+    /// names must round-trip through `parse_config`.
+    #[test]
+    fn every_delegation_flag_reads_back_from_the_database() {
+        use crate::services::permission_service::DELEGATIONS;
+        for row in DELEGATIONS {
+            let parsed = super::ConfigService::parse_config(std::collections::HashMap::from([(
+                row.user_key.to_string(),
+                serde_json::json!(true),
+            )]));
+            assert!((row.user)(&parsed), "{} is not read back", row.user_key);
+            if let (Some(key), Some(guest)) = (row.guest_key, row.guest) {
+                let parsed =
+                    super::ConfigService::parse_config(std::collections::HashMap::from([(
+                        key.to_string(),
+                        serde_json::json!(true),
+                    )]));
+                assert!(guest(&parsed), "{key} is not read back");
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires a disposable MYRIAD_RUNTIME_ISOLATION_TEST_DB"]
     async fn permission_policy_observes_commits_without_worker_cache_refresh() {
@@ -2287,6 +1784,11 @@ mod tests {
 
         let mut visitor = MapGetVisitor::default();
         visitor.visit_impl_item_fn(parse_config);
+        // `standard_fields!` reads each of these keys into the field of the
+        // same name.
+        visitor
+            .parsed_fields
+            .extend(super::STANDARD_KEYS.iter().map(|key| key.to_string()));
         let exemptions: HashSet<&str> = EXEMPTIONS.iter().map(|(field, _)| *field).collect();
         assert!(
             EXEMPTIONS

@@ -467,7 +467,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 tracing::info!("✅ Agent notification system initialized");
 
                 // Initialize Tapp scheduler engine
-                api::tapp_scheduler::init_scheduler(db.clone()).await;
+                api::tapp_scheduler::init_scheduler(db.clone());
                 tracing::info!("✅ Tapp scheduler engine initialized");
 
                 // Reconcile Myriad Core platform refresh jobs after the shared
@@ -487,7 +487,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 }
 
                 // Initialize Phantasi scheduler engine (RSS/Atom feed updates)
-                services::phantasi_scheduler::init_phantasi_scheduler(db.clone()).await;
+                services::phantasi_scheduler::init_phantasi_scheduler(db.clone());
                 tracing::info!("✅ Phantasi scheduler engine initialized");
 
                 // Process-global DB must be wired before persona boot recovery.
@@ -501,13 +501,13 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 {
                     let db = db.clone();
                     let dyn_cfg = GLOBAL_DYNAMIC_CONFIG.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(900)).await;
-                        let mut interval =
-                            tokio::time::interval(std::time::Duration::from_secs(86400));
-                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                        loop {
-                            interval.tick().await;
+                    let every = services::jobs::Every::new(std::time::Duration::from_secs(86400))
+                        .after(std::time::Duration::from_secs(900))
+                        .jitter(std::time::Duration::from_secs(60));
+                    services::jobs::jobs().periodic("private tapp prune", every, move || {
+                        let db = db.clone();
+                        let dyn_cfg = dyn_cfg.clone();
+                        async move {
                             let (mode, days) = {
                                 let cfg = dyn_cfg.read().await;
                                 let mode =
@@ -518,7 +518,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                                 (mode, days)
                             };
                             if mode != "inactivity" {
-                                continue;
+                                return;
                             }
                             match api::tapp_store::prune_stale_private_tapps(&db, days).await {
                                 Ok(n) if n > 0 => {
@@ -651,7 +651,7 @@ async fn export_settings(
     extract::AdminClaims(claims): extract::AdminClaims,
     extract::Db(db): extract::Db,
 ) -> Response {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid authenticated user")),
@@ -694,7 +694,7 @@ async fn restore_settings(
     >,
     Json(payload): Json<api::config::SettingsBackup>,
 ) -> Response {
-    let Some(user_id) = crate::services::tapp_ownership::positive_user_id(&claims.sub) else {
+    let Some(user_id) = claims.durable_user_id() else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid authenticated user")),
@@ -772,9 +772,9 @@ async fn shutdown_signal() {
 
     tracing::info!("Starting graceful shutdown...");
 
-    // 停止调度器引擎
-    api::tapp_scheduler::shutdown_scheduler().await;
-    services::phantasi_scheduler::shutdown_phantasi_scheduler().await;
+    // 停止全部后台 job（含 Tapp / Phantasi 调度器）：先停发新 tick，
+    // 在期限内等在途 tick 收尾，超时中止。
+    services::jobs::shutdown(services::jobs::SHUTDOWN_DRAIN).await;
 
     persona::shutdown().await;
 }

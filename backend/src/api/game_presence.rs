@@ -804,14 +804,7 @@ async fn parse_enka_zzz(uid: &str, lang: &str, body: &Value) -> Result<GamePrese
 
 /// 优先读 DB 配置（配置页保存后即时生效），env 作为回退
 async fn xbox_api_key(dynamic_config: &Arc<RwLock<DynamicConfig>>) -> String {
-    let config = dynamic_config.read().await;
-    config
-        .openxbl_api_key
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("OPENXBL_API_KEY").ok())
-        .or_else(|| std::env::var("XBL_API_KEY").ok())
-        .unwrap_or_default()
+    crate::services::platform_id::openxbl_api_key(&*dynamic_config.read().await).unwrap_or_default()
 }
 
 /// 解析 OpenXBL presence 响应（数组 / 对象两种形态），返回 (state, 正在玩的标题)
@@ -1088,13 +1081,7 @@ async fn fetch_xbox(
 
 /// 优先读 DB 配置（配置页保存后即时生效），env 作为回退
 async fn psn_npsso(dynamic_config: &Arc<RwLock<DynamicConfig>>) -> String {
-    let config = dynamic_config.read().await;
-    config
-        .psn_npsso
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("PSN_NPSSO").ok())
-        .unwrap_or_default()
+    crate::services::platform_id::psn_npsso(&*dynamic_config.read().await).unwrap_or_default()
 }
 
 /// legacy profile2 的 presences[0] → (onlineStatus, titleName)
@@ -1505,28 +1492,13 @@ pub async fn get_game_presence_capabilities(
         std::sync::Arc<tokio::sync::RwLock<crate::config::DynamicConfig>>,
     >,
 ) -> Json<Value> {
-    let (db_openxbl, db_psn) = {
+    let (openxbl, psn) = {
         let config = dynamic_config.read().await;
         (
-            config
-                .openxbl_api_key
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty()),
-            config
-                .psn_npsso
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty()),
+            crate::services::platform_id::openxbl_api_key(&config).is_some(),
+            crate::services::platform_id::psn_npsso(&config).is_some(),
         )
     };
-    let openxbl = db_openxbl
-        || std::env::var("OPENXBL_API_KEY")
-            .or_else(|_| std::env::var("XBL_API_KEY"))
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-    let psn = db_psn
-        || std::env::var("PSN_NPSSO")
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
 
     Json(json!({
         "platforms": {

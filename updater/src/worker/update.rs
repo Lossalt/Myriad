@@ -865,6 +865,7 @@ async fn finish_pre_swap_failure(
             at: Utc::now(),
             reason: original_err.to_string(),
             job_id: rec.job_id.clone(),
+            code: original_err.code().map(str::to_owned),
         });
         let _ = worker.state().write_updater(&st);
     }
@@ -957,6 +958,7 @@ async fn finish_with_rollback(
                     at: Utc::now(),
                     reason: original_err.to_string(),
                     job_id: rec.job_id.clone(),
+                    code: original_err.code().map(str::to_owned),
                 });
                 if let Err(e) = worker.state().write_updater(&st) {
                     warn!(err = %e, "auto-rollback: write_updater failed after services restored");
@@ -995,6 +997,7 @@ async fn finish_with_rollback(
                     at: Utc::now(),
                     reason: format!("{original_err}; rollback also failed: {rb_err}"),
                     job_id: rec.job_id.clone(),
+                    code: None,
                 });
                 let _ = worker.state().write_updater(&st);
             }
@@ -1025,6 +1028,7 @@ fn record_preflight_failure(
             at: Utc::now(),
             reason: format!("preflight: {err}"),
             job_id: rec.job_id.clone(),
+            code: err.code().map(str::to_owned),
         });
         if let Err(error) = store.write_updater(&state) {
             warn!(%error, "cannot record preflight failure");
@@ -1304,6 +1308,24 @@ mod health_match_tests {
     }
 
     #[test]
+    fn compose_override_preflight_failure_records_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::state::StateDir::open(dir.path()).unwrap();
+        state.write_updater(&UpdaterStateFile::default()).unwrap();
+        let rec = PhaseRecorder {
+            state: &state,
+            job_id: "attempt".into(),
+            from_version: None,
+            to_version: DeployTag::parse("v1.2.3").ok(),
+        };
+        record_preflight_failure(&state, &rec, &UpdaterError::ComposeOverrideRequired);
+        let failed = state.read_updater().unwrap().last_failed_update.unwrap();
+        assert_eq!(failed.code.as_deref(), Some("compose_override_required"));
+        let json = serde_json::to_value(&failed).unwrap();
+        assert_eq!(json["code"], "compose_override_required");
+    }
+
+    #[test]
     fn successful_deploy_preserves_previous_rollback_slot() {
         let previous = DeployTag::parse("v0.2.2").unwrap();
         let target = DeployTag::parse("v0.2.3").unwrap();
@@ -1332,6 +1354,7 @@ mod health_match_tests {
                 at: Utc::now(),
                 reason: "preflight".into(),
                 job_id: "job-1".into(),
+                code: None,
             }),
             ..UpdaterStateFile::default()
         };

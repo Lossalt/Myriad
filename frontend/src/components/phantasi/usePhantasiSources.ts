@@ -6,11 +6,17 @@ import type {
 } from '../../types/phantasi'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { ApiError } from '../../services/api'
 import * as phantasiApi from '../../services/phantasiApi'
 import { phantasiItemState } from '../../utils/phantasiItemState'
 import { RequestTurn } from './logic/requestTurn'
 import { connectSourceUpdates } from './logic/sourceConnection'
 import { reportPhantasiError } from './phantasiNotice'
+
+/** The server already has a fetch of this source in flight. */
+export function isRefreshInProgress(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'source_refresh_in_progress'
+}
 
 function applyReadMutation(
   source: PhantasiSource,
@@ -242,7 +248,10 @@ export function usePhantasiSources(
       try {
         await phantasiApi.refreshSource(sourceId)
       } catch (err) {
-        reportPhantasiError(err, labels.refreshFailed, setError)
+        // Another fetch of this source is in flight; its result is what this
+        // refresh wanted, and the reload below picks it up.
+        if (!isRefreshInProgress(err))
+          reportPhantasiError(err, labels.refreshFailed, setError)
       } finally {
         reloadBoard()
       }

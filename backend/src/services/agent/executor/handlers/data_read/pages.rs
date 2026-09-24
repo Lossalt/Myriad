@@ -35,7 +35,7 @@ pub(super) async fn execute_phantasi_page_content(
         .filter(|s| !s.is_empty())
         .map(normalize_phantasi_category_filter);
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
-    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await;
+    let is_admin = crate::services::agent::user_is_current_admin(ctx.db, ctx.user_id).await?;
 
     match level {
         "sources" => {

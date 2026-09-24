@@ -27,11 +27,6 @@ import {
 } from '../../services/updaterApi'
 import { showToast } from '../../utils/toastManager'
 import {
-  httpStatusMessage,
-  isUselessErrorText,
-  userFacingError,
-} from '../../utils/userFacingError'
-import {
   ButtonItem,
   ManagedList,
   SettingGroup,
@@ -47,6 +42,7 @@ import {
   channelLabel,
   deriveMood,
   deriveSelection,
+  explainUpdaterError,
   format,
   formatBytes,
   infraCompatibility,
@@ -57,7 +53,6 @@ import {
   POLL_INTERVAL,
   rememberDismissedLastFailed,
   snapshotDeleteBlockReason,
-  upstreamDetail,
 } from './updater/helpers'
 import { SnapshotLimitPrefs } from './updater/SnapshotLimitPrefs'
 import { ProgressCard, StatusHero } from './updater/StatusHero'
@@ -162,48 +157,7 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
   const statusRef = useRef<UpdaterStatus | null>(null)
   statusRef.current = status
 
-  const explain = useCallback(
-    (e: unknown): string => {
-      if (e instanceof UpdaterError) {
-        if (e.status === 401) {
-          if (/admin|login|authorization|session/i.test(e.message)) {
-            return u.updaterErr401Admin
-          }
-          return u.updaterErr401
-        }
-        if (e.status === 403) {
-          // 403 is also CSRF / admin deny; not always manual-override
-          if (/csrf/i.test(e.message)) return u.updaterErr403Csrf
-          if (/admin|forbidden|permission/i.test(e.message)) {
-            return u.updaterErr403Admin
-          }
-          if (
-            /manual|override|exit-maintenance|forget-current|rescue/i.test(
-              e.message,
-            )
-          ) {
-            return u.updaterErr403
-          }
-          return userFacingError(e, u.updaterErr403Generic)
-        }
-        if (e.status === 409) return u.updaterErr409
-        if (e.status === 412) return userFacingError(e, u.updaterErr412)
-        if (e.status >= 500) {
-          if (/not configured/i.test(e.message))
-            return u.updaterErrNotConfigured
-          if (e.status === 502 || e.status === 503) return u.updaterErrUpstream
-          const detail = upstreamDetail(e.message)
-          if (detail && !isUselessErrorText(detail)) {
-            return format(u.updaterErrServer, { msg: detail })
-          }
-          return userFacingError(e, httpStatusMessage(e.status))
-        }
-        return userFacingError(e, httpStatusMessage(e.status))
-      }
-      return userFacingError(e)
-    },
-    [u],
-  )
+  const explain = useCallback((e: unknown): string => explainUpdaterError(e, u), [u])
 
   const stopMaintPoll = useCallback(() => {
     if (maintPollStopRef.current) {
@@ -462,7 +416,11 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
     async (
       target: string,
       mode: UpdateMode,
-      opts: { isDowngrade: boolean; needsRisk: boolean },
+      opts: {
+        isDowngrade: boolean
+        needsRisk: boolean
+        composeOverride?: boolean
+      },
     ) => {
       if (!target) return
       if (tokenRequired) {
@@ -470,7 +428,9 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
         return
       }
       const current = status?.current_version ?? '—'
-      if (opts.isDowngrade) {
+      if (opts.composeOverride) {
+        if (!confirm(u.updaterConfirmComposeOverride)) return
+      } else if (opts.isDowngrade) {
         if (
           !confirm(
             format(u.updaterConfirmDowngrade, { version: target, current }),
@@ -494,6 +454,7 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
           commit: mode === 'commit',
           allowDowngrade: opts.isDowngrade,
           allowRisk: opts.needsRisk || opts.isDowngrade,
+          allowComposeOverride: opts.composeOverride || undefined,
           idemKey: `update-${target}-${Date.now()}`,
         })
         emitUpdaterToast({
@@ -503,40 +464,6 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
         beginMaintWatch(r.job_id)
         await refresh()
       } catch (e) {
-        if (
-          e instanceof UpdaterError &&
-          e.status === 412 &&
-          /allow_downgrade|downgrade|allow_risk|diverged|unknown|irreversible/i.test(
-            e.message,
-          )
-        ) {
-          const msg = /compose/i.test(e.message)
-            ? u.updaterConfirmComposeOverride
-            : /irreversible|diverged|unknown|allow_risk/i.test(e.message)
-              ? u.updaterConfirmRisk
-              : format(u.updaterConfirmDowngrade, { version: target, current })
-          if (confirm(msg)) {
-            try {
-              const r = await api.triggerUpdate(target, {
-                mode,
-                commit: mode === 'commit',
-                allowDowngrade: true,
-                allowRisk: true,
-                idemKey: `update-dl-${target}-${Date.now()}`,
-              })
-              emitUpdaterToast({
-                kind: 'ok',
-                text: format(u.updaterDispatched, { jobId: r.job_id }),
-              })
-              beginMaintWatch(r.job_id)
-              await refresh()
-              return
-            } catch (e2) {
-              emitUpdaterToast({ kind: 'error', text: explain(e2) })
-              return
-            }
-          }
-        }
         emitUpdaterToast({ kind: 'error', text: explain(e) })
       } finally {
         setBusy(null)
@@ -841,6 +768,18 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
     }
   }, [api, refresh, status?.last_failed_update])
 
+  // Preflight runs after the job is accepted, so the compose-overwrite gate can
+  // only be acknowledged from the failure it leaves behind.
+  const retryWithComposeOverride = useCallback(() => {
+    const target = status?.last_failed_update?.to_version
+    if (!target || busy) return
+    void dispatchUpdate(target, modeForTarget(target, selOption.mode), {
+      isDowngrade: false,
+      needsRisk: false,
+      composeOverride: true,
+    })
+  }, [status?.last_failed_update?.to_version, busy, dispatchUpdate, selOption.mode])
+
   const dismissSelfUpdateLast = useCallback(async () => {
     const at = status?.self_update_last?.at
     if (at) setDismissedSelfLastAt(at)
@@ -916,9 +855,23 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
               {format(u.updaterLastFailedBody, {
                 from: status.last_failed_update.from_version ?? '—',
                 to: status.last_failed_update.to_version ?? '—',
-                reason: status.last_failed_update.reason,
+                reason:
+                  status.last_failed_update.code === 'compose_override_required'
+                    ? u.updaterLastFailedComposeReason
+                    : status.last_failed_update.reason,
               })}
             </span>
+            {status.last_failed_update.code === 'compose_override_required' &&
+              status.last_failed_update.to_version && (
+                <button
+                  type="button"
+                  className="updater-last-failed-action"
+                  disabled={!!busy || tokenRequired}
+                  onClick={retryWithComposeOverride}
+                >
+                  {u.updaterLastFailedComposeRetry}
+                </button>
+              )}
           </div>
         )}
 
@@ -1155,6 +1108,20 @@ export const UpdaterInlinePanel: React.FC<UpdaterInlinePanelProps> = ({
                     {u.updaterSelfUpdateButton}
                   </SettingsButton>
                 </div>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup
+              title={u.updaterInfraProxyTitle}
+              description={u.updaterInfraProxyDesc}
+              icon={<FaServer />}
+              className="updater-infra-card"
+            >
+              <div className="updater-infra-card-body">
+                <p className="updater-infra-current">
+                  {u.updaterInfraCurrent}{' '}
+                  <code>{status?.proxy_version ?? '—'}</code>
+                </p>
               </div>
             </SettingGroup>
           </SettingGroupGrid>

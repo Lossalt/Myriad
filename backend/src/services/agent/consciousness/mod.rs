@@ -6,6 +6,7 @@
 //! Planner / Executor path.
 
 mod attention;
+mod authorize;
 mod dispatch;
 mod engine;
 mod grant;
@@ -26,6 +27,7 @@ pub(crate) fn semantic_probe_contract(soul: &str, kind: &str) -> (String, serde_
 }
 
 pub use attention::{AttentionSegment, last_attention, next_attention_segment, touch_attention};
+pub use authorize::{authorize_capability, effective_granted, missing_permission};
 pub use dispatch::{
     AutonomyClaim, autonomy_cap_from_grant, autonomy_claim_decision, build_autonomy_work_request,
 };
@@ -36,7 +38,7 @@ pub use engine::{
 pub use grant::{
     AutonomyGrantView, AutonomyGrantWriteError, AutonomyVerdict, autonomy_cap_still_allows,
     autonomy_execute_permission_error, effective_granted_permissions, evaluate_autonomy_grant,
-    intention_may_enter_work, prepare_personal_grant, required_permissions_within_cap,
+    intention_may_enter_work, prepare_personal_grant,
     revoke_personal_grant, skips_user_review,
 };
 pub use grant_store::AutonomyGrantStore;

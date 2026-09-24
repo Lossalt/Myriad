@@ -1,8 +1,7 @@
 import type { WallpaperErrorCopy } from '../utils/wallpaperError'
 import { useCallback, useEffect, useState } from 'react'
-import { API_URL } from '../config'
 import { useI18n } from '../contexts/I18nContext'
-import { fetchJsonWithRetry } from '../utils/apiRetry'
+import { emitAppEvent } from '../utils/appEvents'
 import { cssBackgroundImage } from '../utils/cssUrl'
 import { loadImagePooled } from '../utils/objectPool'
 import { proxyImageUrl } from '../utils/proxyImageUrl'
@@ -62,8 +61,6 @@ interface LoadWallpaperResult {
   blur: number
 
   verified: boolean
-  /** @deprecated 使用 evocative 替代 */
-  parallaxEnabled: boolean
 
   evocative: {
     parallax: boolean
@@ -446,18 +443,8 @@ async function applyWallpaperToDOM(
 async function fetchWallpaperConfig(): Promise<WallpaperConfig | null> {
   console.debug('[Wallpaper] Fetching wallpaper config...')
   try {
-    // 先走去重缓存；失败再带重试的独立请求。
-    const data = await getUIConfigDeduped().catch(() =>
-      fetchJsonWithRetry<any>(`${API_URL}/api/config/ui`, {
-        maxRetries: 3,
-        timeout: 10000,
-        onRetry: (error, attempt, delay) => {
-          console.warn(
-            `壁纸配置获取失败 (尝试 ${attempt}): ${error.message}. ${delay}ms后重试...`,
-          )
-        },
-      }),
-    )
+    // apiService already retries transient failures of this read.
+    const data = await getUIConfigDeduped()
 
     const evocative = {
       evocative_parallax: asConfigBool(data.evocative_parallax, true),
@@ -583,7 +570,6 @@ export function useWallpaper() {
               verified:
                 !!verifiedUrl &&
                 areUrlsEquivalent(verifiedUrl, DEFAULT_FALLBACK_WALLPAPER_URL),
-              parallaxEnabled: evocative.parallax,
               evocative,
             }
             lastLoadResult = result
@@ -623,7 +609,6 @@ export function useWallpaper() {
             actualUrl,
             blur,
             verified,
-            parallaxEnabled: evocative.parallax,
             evocative,
           })
 
@@ -773,15 +758,11 @@ export function useWallpaper() {
       setWallpaperUrl(verifiedUrl)
       setBlur(config.wallpaper_blur)
 
-      window.dispatchEvent(
-        new CustomEvent('wallpaperChanged', {
-          detail: {
-            url: verifiedUrl,
-            timestamp: wallpaperState.getAppliedTimestamp(),
-            fromCache: !!cachedAlternative,
-          },
-        }),
-      )
+      emitAppEvent('wallpaperChanged', {
+        url: verifiedUrl,
+        timestamp: wallpaperState.getAppliedTimestamp(),
+        fromCache: !!cachedAlternative,
+      })
 
       return verifiedUrl
     } catch (error) {

@@ -10,7 +10,7 @@ use crate::models::entities::media_references;
 
 use super::assets;
 use super::error::MediaError;
-use super::types::MediaState;
+use super::types::{MediaExposure, MediaState};
 
 const CONSUMER_TYPES: &[&str] = &[
     "rss_item",
@@ -21,10 +21,12 @@ const CONSUMER_TYPES: &[&str] = &[
     "persona_portrait",
     "sticker",
     "site_wallpaper",
+    "site_setting",
     "ai_task",
     "federation_activity",
     "federation_outbox",
     "channel_message",
+    "tapp_storage",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +80,7 @@ pub(super) async fn has_active(
 }
 
 /// Replace every slot for one consumer. Locks assets in id order.
-pub async fn replace_for_consumer(
+pub(super) async fn replace_for_consumer(
     txn: &impl ConnectionTrait,
     consumer_type: &str,
     consumer_id: &str,
@@ -97,6 +99,14 @@ pub async fn replace_for_consumer(
         let state = row.state.as_deref().unwrap_or("");
         if MediaState::parse(state).ok() != Some(MediaState::Ready) {
             return Err(MediaError::NotReady);
+        }
+        // A public page may only cite what anyone can read. `binding::bind`
+        // publishes first; reaching this means a caller skipped it.
+        let public_ref = refs
+            .iter()
+            .any(|item| item.asset_id == row.id && item.requires_public);
+        if public_ref && row.exposure.as_deref() != Some(MediaExposure::Public.as_str()) {
+            return Err(MediaError::invalid("Public reference to a private asset"));
         }
     }
     media_references::Entity::delete_many()

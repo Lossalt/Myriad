@@ -22,12 +22,12 @@ pub enum ChannelTransport {
 }
 
 impl ChannelTransport {
-    pub(super) fn platform(&self) -> &'static str {
+    pub(super) fn platform(&self) -> ChannelPlatform {
         match self {
-            Self::Telegram { .. } => "telegram",
-            Self::Discord { .. } => "discord",
-            Self::Qq { .. } => "qq",
-            Self::Feishu { .. } => "feishu",
+            Self::Telegram { .. } => ChannelPlatform::Telegram,
+            Self::Discord { .. } => ChannelPlatform::Discord,
+            Self::Qq { .. } => ChannelPlatform::Qq,
+            Self::Feishu { .. } => ChannelPlatform::Feishu,
         }
     }
 
@@ -100,7 +100,7 @@ impl ChannelTransport {
                 Some(telegram_force_reply_markup(placeholder)),
             )
             .await
-            .map_err(|error| format!("{error:?}")),
+            .map_err(|error| SendError::from(error).to_string()),
             Self::Discord { .. } | Self::Qq { .. } | Self::Feishu { .. } => {
                 self.send_text("请直接回复这一问。").await
             }
@@ -147,7 +147,9 @@ impl ChannelTransport {
                     Self::Feishu { .. } => feishu_reply_markup(prompt),
                     Self::Qq { .. } => None,
                 });
-            self.send_text_chunk(chunk, markup).await?;
+            self.send_text_chunk(chunk, markup)
+                .await
+                .map_err(|error| error.to_string())?;
         }
         for (index, url) in images.iter().enumerate() {
             let markup =
@@ -159,7 +161,9 @@ impl ChannelTransport {
                         Self::Feishu { .. } => feishu_reply_markup(prompt),
                         Self::Qq { .. } => None,
                     });
-            self.send_image_chunk(url, markup).await?;
+            self.send_image_chunk(url, markup)
+                .await
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -168,38 +172,37 @@ impl ChannelTransport {
         &self,
         chunk: &str,
         markup: Option<Value>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SendError> {
         match self {
             Self::Telegram { token, chat_id } => {
                 crate::services::telegram_bot::send_outbound(token, chat_id, chunk, markup)
                     .await
-                    .map_err(|error| format!("{error:?}"))
+                    .map_err(SendError::from)
             }
             Self::Discord { token, channel_id } => {
                 crate::services::discord_bot::send_outbound(token, channel_id, chunk, markup)
                     .await
-                    .map_err(|error| format!("{error:?}"))
+                    .map_err(SendError::from)
             }
             Self::Qq {
                 db,
                 openid,
                 inbound_msg_id,
-            } => {
-                crate::services::qq_work::send_c2c(
-                    db,
-                    &crate::services::qq_bot::outbound_auth_header()
-                        .await
-                        .map_err(|_| "QQ credentials unavailable")?,
-                    openid,
-                    chunk,
-                    inbound_msg_id.as_deref(),
-                )
-                .await
-            }
+            } => crate::services::qq_work::send_c2c(
+                db,
+                &crate::services::qq_bot::outbound_auth_header()
+                    .await
+                    .map_err(|_| SendError::Transient)?,
+                openid,
+                chunk,
+                inbound_msg_id.as_deref(),
+            )
+            .await
+            .map_err(SendError::from),
             Self::Feishu { chat_id } => {
                 crate::services::feishu_bot_api::send_outbound(chat_id, chunk, markup)
                     .await
-                    .map_err(|error| format!("{error:?}"))
+                    .map_err(SendError::from)
             }
         }
     }
@@ -208,8 +211,16 @@ impl ChannelTransport {
         &self,
         url: &str,
         markup: Option<Value>,
-    ) -> Result<(), String> {
-        let image = load_channel_image_bytes(url).await?;
+    ) -> Result<(), SendError> {
+        // Unreadable media (a private asset, an expired link) is skipped so the
+        // rest of the reply still goes out; delivery failures still propagate.
+        let image = match load_channel_image_bytes(url).await {
+            Ok(image) => image,
+            Err(error) => {
+                tracing::warn!(%error, "channel reply image skipped");
+                return Ok(());
+            }
+        };
         match self {
             Self::Telegram { token, chat_id } => crate::services::telegram_bot::send_photo(
                 token,
@@ -219,7 +230,7 @@ impl ChannelTransport {
                 markup,
             )
             .await
-            .map_err(|error| format!("{error:?}")),
+            .map_err(SendError::from),
             Self::Discord { token, channel_id } => crate::services::discord_bot::send_photo(
                 token,
                 channel_id,
@@ -228,23 +239,22 @@ impl ChannelTransport {
                 markup,
             )
             .await
-            .map_err(|error| format!("{error:?}")),
+            .map_err(SendError::from),
             Self::Qq {
                 db,
                 openid,
                 inbound_msg_id,
-            } => {
-                crate::services::qq_work::send_c2c_image(
-                    db,
-                    &crate::services::qq_bot::outbound_auth_header()
-                        .await
-                        .map_err(|_| "QQ credentials unavailable")?,
-                    openid,
-                    &image.bytes,
-                    inbound_msg_id.as_deref(),
-                )
-                .await
-            }
+            } => crate::services::qq_work::send_c2c_image(
+                db,
+                &crate::services::qq_bot::outbound_auth_header()
+                    .await
+                    .map_err(|_| SendError::Transient)?,
+                openid,
+                &image.bytes,
+                inbound_msg_id.as_deref(),
+            )
+            .await
+            .map_err(SendError::from),
             Self::Feishu { chat_id } => crate::services::feishu_bot_api::send_photo(
                 chat_id,
                 &image.bytes,
@@ -252,7 +262,7 @@ impl ChannelTransport {
                 markup,
             )
             .await
-            .map_err(|error| format!("{error:?}")),
+            .map_err(SendError::from),
         }
     }
 }
@@ -261,6 +271,12 @@ async fn load_channel_image_bytes(url: &str) -> Result<ChannelImageBytes, String
     let cache = crate::services::image_cache::ImageCacheService::new();
     if cache.local_path_for_public_url(url).is_some() {
         let (bytes, mime) = cache.read_local_public_url(url).await?;
+        return Ok(ChannelImageBytes { bytes, mime });
+    }
+    if url.starts_with("/media/assets/") {
+        let (bytes, mime) = crate::services::image_generation::read_public_local_media(url)
+            .await
+            .ok_or("imageUrl is not readable")?;
         return Ok(ChannelImageBytes { bytes, mime });
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -312,8 +328,7 @@ async fn resolve_inbound_image(
     cache: &crate::services::image_cache::ImageCacheService,
 ) -> Result<(String, String, usize, String), String> {
     if cache.local_path_for_public_url(&image.url).is_some() {
-        let (bytes, mime) = cache.read_local_public_url(&image.url).await?;
-        return Ok((image.url.clone(), mime, bytes.len(), image.name.clone()));
+        return persist_cached(db, user_id, image, &image.url).await;
     }
     if image.url.starts_with("/media/assets/") {
         return Ok((image.url.clone(), image.mime.clone(), 0, image.name.clone()));
@@ -365,13 +380,13 @@ async fn resolve_inbound_image(
         }
     }
     let cached = cache.cache_image(&image.url).await?;
-    finish_cached(cache, image, cached).await
+    persist_cached(db, user_id, image, &cached).await
 }
 
 async fn persist_channel_asset(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
-    platform: &str,
+    platform: ChannelPlatform,
     producer: &str,
     bytes: Vec<u8>,
     mime: String,
@@ -405,22 +420,67 @@ async fn persist_channel_asset(
     Ok((asset.catalog_url(), mime, size, image.name.clone()))
 }
 
-async fn finish_cached(
-    cache: &crate::services::image_cache::ImageCacheService,
+/// Image-cache paths are not citable media; promote the cached bytes to an
+/// asset owned by the sender.
+async fn persist_cached(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
     image: &ChannelImageRef,
-    cached: String,
+    cached: &str,
 ) -> Result<(String, String, usize, String), String> {
-    let (bytes, mime) = cache.read_local_public_url(&cached).await?;
+    let actor =
+        crate::services::media::MediaActor::user(user_id).map_err(|error| error.to_string())?;
+    let ctx = crate::services::media::MediaContext::user(
+        actor,
+        crate::services::media::MediaSource::Channel,
+    )
+    .map_err(|error| error.to_string())?;
+    let asset =
+        crate::services::media::MediaService::from_data_paths(crate::services::data_paths::paths())
+            .persist_cached(
+                db,
+                ctx,
+                cached,
+                Some(&image.mime),
+                &image.name,
+                crate::services::media::MediaExposure::Private,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
     Ok((
-        cached,
-        if image.mime.starts_with("image/") {
-            image.mime.clone()
-        } else {
-            mime
-        },
-        bytes.len(),
+        asset.url,
+        asset.mime,
+        asset.size as usize,
         image.name.clone(),
     ))
+}
+
+/// Why a platform did not accept an outbound item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SendError {
+    /// Network, 5xx, rate limit: the same item may go through later.
+    Transient,
+    /// The platform refused this item (bad request, forbidden, revoked
+    /// token); resending it unchanged cannot succeed.
+    Permanent,
+}
+
+impl From<myriad_agent_rules::channel::ConnectFailureKind> for SendError {
+    fn from(kind: myriad_agent_rules::channel::ConnectFailureKind) -> Self {
+        match kind {
+            myriad_agent_rules::channel::ConnectFailureKind::Transient => Self::Transient,
+            myriad_agent_rules::channel::ConnectFailureKind::Permanent => Self::Permanent,
+        }
+    }
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Transient => "channel send failed; retryable",
+            Self::Permanent => "channel send refused by the platform",
+        })
+    }
 }
 
 /// Persistable routing information. No token or credential can enter the registry.
@@ -484,6 +544,33 @@ impl ChannelAddress {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refused_items_are_not_retried_like_outages() {
+        use myriad_agent_rules::channel::{ConnectFailure, classify_connect_failure};
+        let status = |status: u16| {
+            super::SendError::from(classify_connect_failure(&ConnectFailure::HttpStatus {
+                status,
+                body: "",
+            }))
+        };
+        assert_eq!(status(400), super::SendError::Permanent);
+        assert_eq!(status(403), super::SendError::Permanent);
+        assert_eq!(status(429), super::SendError::Transient);
+        assert_eq!(status(503), super::SendError::Transient);
+        let delivery = include_str!("delivery.rs");
+        let permanent = delivery
+            .split("Err(super::transport::SendError::Permanent)")
+            .nth(1)
+            .expect("delivery handles refusals")
+            .split("Err(error @")
+            .next()
+            .unwrap();
+        assert!(
+            permanent.contains("acknowledge_item"),
+            "a refusal skips the item"
+        );
+    }
+
     #[test]
     fn inbound_platform_files_persist_as_user_channel_assets() {
         let src = include_str!("transport.rs");

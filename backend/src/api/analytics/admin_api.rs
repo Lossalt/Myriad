@@ -51,12 +51,12 @@ use super::intake_helpers::{
     ANALYTICS_BACKUP_FORMAT, ANALYTICS_BACKUP_VERSION, DAILY_RETENTION_DAYS, ENGAGE_MARKER,
     MAX_IMPORT_COUNTRY_DAILY, MAX_IMPORT_COUNTRY_VISITOR, MAX_IMPORT_EVENT_DAILY,
     MAX_IMPORT_EVENT_VISITOR, MAX_IMPORT_PAGE_DAILY, MAX_IMPORT_REFERRER_DAILY,
-    MAX_IMPORT_VISITOR_SEEN, MAX_SUMMARY_DAYS, SITE_PATH, SUMMARY_CACHE, SUMMARY_CACHE_TTL,
-    SummaryQuery, VISITOR_CARD_CACHE, VISITOR_RETENTION_DAYS, analytics_collection_enabled,
-    analytics_today, analytics_tz_label, compare_range_kind, count_distinct_site,
-    invalidate_summary_cache, metric_delta, normalize_country_code, normalize_country_name,
-    normalize_event_name, normalize_path, normalize_referrer_host, normalize_target,
-    read_visitor_ordinal, resolve_visitor_hash, sum_all_time_page_views,
+    MAX_IMPORT_VISITOR_SEEN, MAX_SUMMARY_DAYS, SITE_PATH, SUMMARY_CACHES, SummaryQuery,
+    VISITOR_RETENTION_DAYS, analytics_collection_enabled, analytics_today, analytics_tz_label,
+    compare_range_kind, count_distinct_site, invalidate_summary_cache, metric_delta,
+    normalize_country_code, normalize_country_name, normalize_event_name, normalize_path,
+    normalize_referrer_host, normalize_target, read_visitor_ordinal, resolve_visitor_hash,
+    sum_all_time_page_views,
 };
 
 /// GET /api/analytics/summary?days=7  or  ?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -80,28 +80,24 @@ pub(crate) async fn build_analytics_summary(
     let cache_key = format!("{}..{}", from.format("%Y-%m-%d"), to_day.format("%Y-%m-%d"));
 
     // Short TTL cache — admin UI refresh shouldn't re-scan every open.
-    {
-        let cache = SUMMARY_CACHE.lock().await;
-        if let Some((at, body)) = cache.get(&cache_key) {
-            if at.elapsed() < SUMMARY_CACHE_TTL {
-                return (StatusCode::OK, Json(body.clone()));
-            }
+    let generation = {
+        let caches = SUMMARY_CACHES.lock().await;
+        if let Some(body) = caches.summary(&cache_key) {
+            return (StatusCode::OK, Json(body));
         }
-    }
+        caches.generation()
+    };
 
     let body = match summary_body(db, from, to_day, days).await {
         Ok(body) => body,
         Err(error) => return analytics_db_error(error),
     };
 
-    {
-        let mut cache = SUMMARY_CACHE.lock().await;
-        cache.insert(cache_key, (Instant::now(), body.clone()));
-        // Keep map small (only a few day windows are ever queried)
-        if cache.len() > 12 {
-            cache.retain(|_, (at, _)| at.elapsed() < SUMMARY_CACHE_TTL * 2);
-        }
-    }
+    // Dropped if an intake invalidated while this was computing.
+    SUMMARY_CACHES
+        .lock()
+        .await
+        .store_summary(generation, cache_key, body.clone());
 
     (StatusCode::OK, Json(body))
 }
@@ -144,16 +140,27 @@ CROSS JOIN LATERAL (
 "#;
 
 /// Distinct visitors: the site-wide counts (window, both comparisons,
-/// all-time up to `$2`) in one FILTER pass over the `SITE_PATH` rows, and the
-/// per-path window counts over the disjoint non-site rows.
+/// all-time up to `$2`) in one FILTER pass over the `SITE_PATH` rows, the
+/// per-day site counts over the window, and the per-path window counts over
+/// the disjoint non-site rows.
+///
+/// The seen set is the UV source of truth: day, range and comparison UV all
+/// come from it, so a day can never disagree with the range that contains it.
+/// `(day, path, visitor_hash)` is the primary key, so `COUNT(*)` per day is
+/// already distinct.
 const SUMMARY_VISITOR_SQL: &str = r#"
-SELECT 'site' AS kind, NULL AS path,
+SELECT 'site' AS kind, NULL AS key,
        COUNT(DISTINCT visitor_hash) FILTER (WHERE day >= $1)::bigint AS unique_visitors,
        COUNT(DISTINCT visitor_hash) FILTER (WHERE day = $4)::bigint AS prev_day,
        COUNT(DISTINCT visitor_hash) FILTER (WHERE day >= $5 AND day <= $6)::bigint AS prev_range,
        COUNT(DISTINCT visitor_hash)::bigint AS all_time
 FROM analytics_visitor_seen
 WHERE path = $3 AND day <= $2
+UNION ALL
+SELECT 'day', day::text, COUNT(*)::bigint, 0, 0, 0
+FROM analytics_visitor_seen
+WHERE day >= $1 AND day <= $2 AND path = $3
+GROUP BY day
 UNION ALL
 SELECT 'path', path, COUNT(DISTINCT visitor_hash)::bigint, 0, 0, 0
 FROM analytics_visitor_seen
@@ -297,18 +304,57 @@ async fn summary_body(
             other => return Err(DbErr::Custom(format!("unexpected page row kind {other}"))),
         }
     }
+    // Distinct visitors.
+    let mut uv_by_path: HashMap<String, i64> = HashMap::new();
+    let mut uv_by_day: HashMap<String, i64> = HashMap::new();
+    let mut site_uv = None;
+    for row in &visitor_rows {
+        let kind: String = row.try_get("", "kind")?;
+        let uv: i64 = row.try_get("", "unique_visitors")?;
+        match kind.as_str() {
+            "site" => {
+                site_uv = Some((
+                    uv,
+                    row.try_get::<i64>("", "prev_day")?,
+                    row.try_get::<i64>("", "prev_range")?,
+                    row.try_get::<i64>("", "all_time")?,
+                ))
+            }
+            "day" => {
+                uv_by_day.insert(row.try_get("", "key")?, uv);
+            }
+            "path" => {
+                uv_by_path.insert(row.try_get("", "key")?, uv);
+            }
+            other => {
+                return Err(DbErr::Custom(format!(
+                    "unexpected visitor row kind {other}"
+                )));
+            }
+        }
+    }
+    let (range_uv, prev_day_uv, prev_range_uv, all_time_uv) =
+        site_uv.ok_or_else(|| DbErr::Custom("analytics site visitor row missing".into()))?;
+
+    // Per-day UV from the seen set while it is retained; past
+    // VISITOR_RETENTION_DAYS only the `SITE_PATH` counter rollup is left.
+    let seen_from = analytics_today() - Duration::days(VISITOR_RETENTION_DAYS);
     let mut filled = Vec::new();
     let mut cursor = from;
     while cursor <= today {
         let key = cursor.format("%Y-%m-%d").to_string();
-        filled.push(by_day.remove(&key).unwrap_or_else(|| {
+        let mut value = by_day.remove(&key).unwrap_or_else(|| {
             json!({
                 "day": key,
                 "views": 0,
                 "unique_visitors": 0,
                 "engagement_ms": 0,
             })
-        }));
+        });
+        if cursor >= seen_from {
+            value["unique_visitors"] = json!(uv_by_day.get(&key).copied().unwrap_or(0));
+        }
+        filled.push(value);
         cursor += Duration::days(1);
     }
     let today_views = filled
@@ -319,26 +365,6 @@ async fn summary_body(
         .last()
         .and_then(|v| v.get("unique_visitors").and_then(|x| x.as_i64()))
         .unwrap_or(0);
-
-    // Distinct visitors.
-    let mut uv_by_path: HashMap<String, i64> = HashMap::new();
-    let mut site_uv = None;
-    for row in &visitor_rows {
-        let kind: String = row.try_get("", "kind")?;
-        let uv: i64 = row.try_get("", "unique_visitors")?;
-        if kind == "site" {
-            site_uv = Some((
-                uv,
-                row.try_get::<i64>("", "prev_day")?,
-                row.try_get::<i64>("", "prev_range")?,
-                row.try_get::<i64>("", "all_time")?,
-            ));
-        } else {
-            uv_by_path.insert(row.try_get("", "path")?, uv);
-        }
-    }
-    let (range_uv, prev_day_uv, prev_range_uv, all_time_uv) =
-        site_uv.ok_or_else(|| DbErr::Custom("analytics site visitor row missing".into()))?;
 
     let compare = json!({
         "day": {
@@ -556,28 +582,37 @@ pub(crate) fn vid_from_query(uri: &axum::http::Uri) -> Option<String> {
 pub(crate) async fn visitor_card_aggregate(
     db: &DatabaseConnection,
 ) -> Result<Value, (StatusCode, Json<Value>)> {
-    {
-        let cache = VISITOR_CARD_CACHE.lock().await;
-        if let Some((at, body)) = cache.as_ref() {
-            if at.elapsed() < SUMMARY_CACHE_TTL {
-                return Ok(body.clone());
-            }
+    let generation = {
+        let caches = SUMMARY_CACHES.lock().await;
+        if let Some(body) = caches.card() {
+            return Ok(body);
         }
-    }
+        caches.generation()
+    };
 
     let today = analytics_today();
     let from = today - Duration::days(VISITOR_CARD_DAYS - 1);
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap_or(from);
 
+    // Views from the page rollup; UV from the seen set, like the admin summary.
     let daily_rows = analytics_rows_try!(db.query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
 SELECT day::text AS day,
-       COALESCE(SUM(CASE WHEN path <> $3 THEN views ELSE 0 END), 0)::bigint AS views,
-       COALESCE(MAX(CASE WHEN path = $3 THEN unique_visitors ELSE 0 END), 0)::bigint AS unique_visitors
-FROM analytics_page_daily
-WHERE day >= $1 AND day <= $2
-GROUP BY day
+       COALESCE(p.views, 0)::bigint AS views,
+       COALESCE(s.visitors, 0)::bigint AS unique_visitors
+FROM (
+    SELECT day, SUM(views) AS views
+    FROM analytics_page_daily
+    WHERE day >= $1 AND day <= $2 AND path <> $3
+    GROUP BY day
+) p
+FULL JOIN (
+    SELECT day, COUNT(*) AS visitors
+    FROM analytics_visitor_seen
+    WHERE day >= $1 AND day <= $2 AND path = $3
+    GROUP BY day
+) s USING (day)
 ORDER BY day ASC
 "#,
             [
@@ -627,7 +662,11 @@ ORDER BY day ASC
         "daily": daily,
     });
 
-    *VISITOR_CARD_CACHE.lock().await = Some((Instant::now(), body.clone()));
+    // Dropped if an intake invalidated while this was computing.
+    SUMMARY_CACHES
+        .lock()
+        .await
+        .store_card(generation, body.clone());
     Ok(body)
 }
 

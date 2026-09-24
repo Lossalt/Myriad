@@ -510,12 +510,11 @@ export const AgentEngine: React.FC = () => {
   )
 
   useEffect(() => {
-    const handleOpenSession = (e: Event) => {
-      const detail = (e as CustomEvent).detail as {
-        sessionId?: string
-        runId?: string
-        taskId?: string
-      } | null
+    const openSession = (detail: {
+      sessionId?: string
+      runId?: string
+      taskId?: string
+    } | null) => {
       const sid = detail?.sessionId
       dispatchAgentPanelOpen('messages')
       if (typeof sid !== 'string' || !sid) return
@@ -542,11 +541,10 @@ export const AgentEngine: React.FC = () => {
         'work',
       )
     }
+    const handleOpenSession = (e: Event) => openSession((e as CustomEvent).detail)
     window.addEventListener('arael-open-session', handleOpenSession)
     const { queued, detach } = attachAgentSessionOpenQueue()
-    if (queued) {
-      handleOpenSession(new CustomEvent('arael-open-session', { detail: queued }))
-    }
+    if (queued) openSession(queued)
     return () => {
       window.removeEventListener('arael-open-session', handleOpenSession)
       detach()
@@ -1572,14 +1570,6 @@ export const AgentEngine: React.FC = () => {
           t.agentPanel.executionFailed,
           t.agentPanel.requestTimeout,
           {
-            AI_COOLDOWN_ACTIVE: t.agentPanel.quotaCooldown,
-            AI_DAILY_CALL_LIMIT: t.agentPanel.quotaExhausted,
-            AI_ANONYMOUS_DAILY_CALL_LIMIT: t.agentPanel.quotaExhausted,
-            AI_DAILY_TOKEN_LIMIT: t.agentPanel.quotaExhausted,
-            AI_ANONYMOUS_DAILY_TOKEN_LIMIT: t.agentPanel.quotaExhausted,
-            AI_QUOTA_EXCEEDED: t.agentPanel.quotaExhausted,
-            QUEUE_FULL: t.agentPanel.queueBusy,
-            agent_access_denied: t.agentPanel.accessDenied,
             admin_required: t.agentPanel.accessDenied,
             agent_processing_failed: t.agentPanel.executionFailed,
             NETWORK_ERROR: t.agentPanel.streamError,

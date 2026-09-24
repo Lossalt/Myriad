@@ -70,7 +70,6 @@ impl Agent {
             data_display: None,
             suggestions: vec![],
             task: None,
-            confirmation: None,
             frontend_action: None,
             performance: None,
         })

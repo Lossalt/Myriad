@@ -7,7 +7,6 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
-use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -15,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::env;
 use subtle::ConstantTimeEq;
 
-use crate::middleware::auth::Claims;
+use crate::middleware::auth::{CredentialSource, SessionCredential};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -86,7 +85,7 @@ fn csrf_signing_key(secret: &str) -> Option<[u8; 32]> {
 }
 
 fn configured_csrf_key() -> Option<[u8; 32]> {
-    let secret = env::var("JWT_SECRET").ok()?;
+    let secret = crate::middleware::auth::session_secret()?;
     csrf_signing_key(&secret)
 }
 
@@ -236,46 +235,14 @@ fn verify_csrf_token_with_key(
     Ok(())
 }
 
-/// Extract raw JWT string preferring `auth_token` cookie over Bearer.
-fn extract_raw_jwt(headers: &HeaderMap) -> Option<String> {
-    // Prefer cookie JWT over Bearer so the signed CSRF binding matches the browser session.
-    if let Some(cookie_header) = headers.get(header::COOKIE) {
-        if let Ok(cookies) = cookie_header.to_str() {
-            for cookie in cookies.split(';') {
-                if let Some((name, value)) = cookie.trim().split_once('=') {
-                    if name == AUTH_TOKEN_COOKIE {
-                        let value = value.trim();
-                        if !value.is_empty() && value != "deleted" {
-                            return Some(value.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(auth_header) = headers.get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                let token = token.trim();
-                if !token.is_empty() {
-                    return Some(token.to_string());
-                }
-            }
-        }
-    }
-
-    None
-}
-
 /// Session id used by the CSRF unit tests: the verified JWT signature segment.
 ///
 /// 生产路径走 `extract_session_context`；这一对只服务本文件的 #[cfg(test)]，
 /// 它们锁的是「未经验签的 JWT 形状永远不能当 CSRF 凭据」这条不变量。
 #[cfg(test)]
 fn extract_session_id(headers: &HeaderMap) -> Option<String> {
-    let token = extract_raw_jwt(headers)?;
-    session_id_from_verified_jwt(&token)
+    let credential = SessionCredential::from_headers(headers)?;
+    session_id_from_verified_jwt(credential.token)
 }
 
 #[cfg(test)]
@@ -284,30 +251,27 @@ fn session_id_from_verified_jwt(token: &str) -> Option<String> {
     verified_session_from_jwt(token).map(|_| sig)
 }
 
-/// Verify JWT and return the session binding plus durable epoch carried by its
-/// signed claims. Unverified JWT shape is never accepted as CSRF authority.
+/// Verify the credential the auth layer selects for this request and return
+/// its session binding plus the durable epoch carried by its signed claims.
+/// Unverified JWT shape is never accepted as CSRF authority.
+///
+/// The CSRF layer runs before route-level authentication, so it cannot read
+/// the authenticated claims; it applies the same [`SessionCredential`]
+/// selection instead, which keeps both layers on one credential.
 fn extract_session_context(headers: &HeaderMap) -> Option<VerifiedSession> {
-    let token = extract_raw_jwt(headers)?;
-    verified_session_from_jwt(&token)
+    let credential = SessionCredential::from_headers(headers)?;
+    verified_session_from_jwt(credential.token)
 }
 
 fn verified_session_from_jwt(token: &str) -> Option<VerifiedSession> {
     let sig = jwt_signature_segment(token)?;
-    let jwt_secret = env::var("JWT_SECRET")
-        .ok()
-        .filter(|secret| !secret.is_empty())?;
-    let claims = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &Validation::default(),
-    )
-    .ok()?;
+    let claims = crate::middleware::auth::verify_signed(token).ok()?;
     let digest = Sha256::digest(sig.as_bytes());
     let mut session_id = [0u8; 32];
     session_id.copy_from_slice(&digest);
     Some(VerifiedSession {
         session_id,
-        epoch: claims.claims.tv,
+        epoch: claims.tv,
     })
 }
 
@@ -319,29 +283,19 @@ pub(crate) fn is_state_changing_method(method: &Method) -> bool {
     )
 }
 
-/// Cookie name used for browser JWT sessions (`auth_local` / OAuth).
-pub(crate) const AUTH_TOKEN_COOKIE: &str = "auth_token";
-
-/// True when the request carries an `auth_token` cookie (browser session).
+/// True when the credential the auth layer uses for this request is a
+/// JWT-shaped `auth_token` cookie (browser session).
 ///
 /// Browsers auto-attach cookies on cross-site navigations/forms; that is the
-/// classic CSRF risk. Pure `Authorization: Bearer` clients do not auto-send
-/// cookies and are not the same attack surface.
-pub(crate) fn has_auth_token_cookie(headers: &HeaderMap) -> bool {
-    let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    for cookie in cookie_header.split(';') {
-        if let Some((name, value)) = cookie.trim().split_once('=') {
-            if name == AUTH_TOKEN_COOKIE {
-                let value = value.trim();
-                // Require JWT-shaped value so an empty/deleted cookie does not
-                // force CSRF on guests clearing session.
-                return jwt_signature_segment(value).is_some();
-            }
-        }
-    }
-    false
+/// classic CSRF risk. A request whose selected credential is
+/// `Authorization: Bearer` acts as that token, which a cross-site page cannot
+/// set, even when a cookie rides along. An empty or deleted cookie does not
+/// force CSRF on guests clearing their session.
+pub(crate) fn selects_cookie_session(headers: &HeaderMap) -> bool {
+    SessionCredential::from_headers(headers).is_some_and(|credential| {
+        credential.source == CredentialSource::Cookie
+            && jwt_signature_segment(credential.token).is_some()
+    })
 }
 
 fn jwt_signature_segment(token: &str) -> Option<String> {
@@ -361,10 +315,12 @@ fn jwt_signature_segment(token: &str) -> Option<String> {
 /// Policy (defense in depth for Cookie JWT):
 /// 1. Only state-changing methods
 /// 2. Path not on the hard exempt list
-/// 3. Request has an `auth_token` **cookie** (browser session)
+/// 3. The credential auth selects is the `auth_token` **cookie** (browser
+///    session; see [`SessionCredential`] for the priority)
 ///
 /// Agent routes are **not** path-exempt: cookie sessions must present
-/// `X-CSRF-Token`. Bearer-only callers skip CSRF (no auto cookie attach).
+/// `X-CSRF-Token`. Requests authenticated by `Authorization: Bearer` skip
+/// CSRF (a cross-site page cannot set that header).
 pub(crate) fn csrf_check_needed(path: &str, method: &Method, headers: &HeaderMap) -> bool {
     if !is_state_changing_method(method) {
         return false;
@@ -372,7 +328,7 @@ pub(crate) fn csrf_check_needed(path: &str, method: &Method, headers: &HeaderMap
     if is_csrf_exempt(path) {
         return false;
     }
-    has_auth_token_cookie(headers)
+    selects_cookie_session(headers)
 }
 
 /// CSRF 防护中间件
@@ -380,7 +336,7 @@ pub(crate) fn csrf_check_needed(path: &str, method: &Method, headers: &HeaderMap
 ///
 /// 安全策略：
 /// - Cookie JWT 用户：状态变更必须提供有效的 CSRF Token（含 `/api/agent/*`）
-/// - 纯 Bearer / 游客：跳过 CSRF（无 cookie 自动附带）
+/// - Bearer 会话 / 游客：跳过 CSRF（跨站页面设不了 Authorization）
 /// - 登录、健康检查、公开 proxy 等路径硬豁免
 pub async fn csrf_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
@@ -391,9 +347,8 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
         return next.run(req).await;
     }
 
-    // Cookie session present — bind to the same verified JWT signature and
-    // epoch used by the browser session (cookie preferred when present for
-    // session continuity).
+    // Cookie session selected — bind to the same verified JWT signature and
+    // epoch the auth layer will authenticate.
     let Some(session) = extract_session_context(headers) else {
         // JWT-shaped `auth_token` cookie present but JWT verify failed — fail closed.
         tracing::warn!("🚨 CSRF check failed: auth cookie present but session id missing");
@@ -401,6 +356,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "CSRF token not found",
+                "code": "csrf_failed",
                 "message": "No CSRF token found for this session. Please refresh the page."
             })),
         )
@@ -422,6 +378,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
             StatusCode::FORBIDDEN,
             Json(json!({
                 "error": "CSRF token missing",
+                "code": "csrf_failed",
                 "message": "X-CSRF-Token header is required for state-changing operations"
             })),
         )
@@ -442,6 +399,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "CSRF token expired",
+                    "code": "csrf_failed",
                     "message": "Please refresh the page and try again"
                 })),
             )
@@ -453,6 +411,7 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "error": "CSRF token invalid",
+                    "code": "csrf_failed",
                     "message": "Invalid CSRF token. Please refresh the page and try again."
                 })),
             )
@@ -513,6 +472,7 @@ pub async fn get_csrf_token(headers: HeaderMap) -> impl IntoResponse {
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": "CSRF token unavailable",
+                "code": "csrf_failed",
                 "message": "CSRF token signing is not configured"
             })),
         )
@@ -532,6 +492,7 @@ pub async fn get_csrf_token(headers: HeaderMap) -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware::auth::{AUTH_TOKEN_COOKIE, Claims};
     use axum::body::to_bytes;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use std::sync::Once;
@@ -832,18 +793,18 @@ mod tests {
     }
 
     #[test]
-    fn has_auth_token_cookie_detects_jwt_shaped_cookie() {
+    fn selects_cookie_session_detects_jwt_shaped_cookie() {
         let jwt = "aaa.bbb.signaturecookie";
-        assert!(has_auth_token_cookie(&cookie_headers(jwt)));
-        assert!(!has_auth_token_cookie(&bearer_headers(jwt)));
-        assert!(!has_auth_token_cookie(&HeaderMap::new()));
+        assert!(selects_cookie_session(&cookie_headers(jwt)));
+        assert!(!selects_cookie_session(&bearer_headers(jwt)));
+        assert!(!selects_cookie_session(&HeaderMap::new()));
         // Deleted / empty cookie must not force CSRF.
         let mut empty = HeaderMap::new();
         empty.insert(
             header::COOKIE,
             format!("{AUTH_TOKEN_COOKIE}=deleted").parse().unwrap(),
         );
-        assert!(!has_auth_token_cookie(&empty));
+        assert!(!selects_cookie_session(&empty));
     }
 
     #[test]
@@ -929,8 +890,93 @@ mod tests {
         ));
     }
 
+    /// CSRF binds to exactly the session the auth layer authenticates, for
+    /// every way a request can present credentials, and demands a token
+    /// exactly when that session came from the cookie.
     #[test]
-    fn extract_session_id_prefers_cookie_over_bearer() {
+    fn csrf_binds_to_the_credential_auth_selects() {
+        let cookie_jwt = mint_test_jwt("10", "cookie-user");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let bearer_jwt = mint_test_jwt("11", "bearer-user");
+        let jwt_for = |sub: &str| match sub {
+            "10" => cookie_jwt.clone(),
+            "11" => bearer_jwt.clone(),
+            other => panic!("unexpected subject {other}"),
+        };
+
+        let cookie = format!("{AUTH_TOKEN_COOKIE}={cookie_jwt}");
+        let bearer = format!("Bearer {bearer_jwt}");
+        let cases: Vec<(&str, Vec<(header::HeaderName, String)>)> = vec![
+            ("cookie only", vec![(header::COOKIE, cookie.clone())]),
+            ("bearer only", vec![(header::AUTHORIZATION, bearer.clone())]),
+            (
+                "bearer and cookie",
+                vec![
+                    (header::COOKIE, cookie.clone()),
+                    (header::AUTHORIZATION, bearer.clone()),
+                ],
+            ),
+            (
+                "non-bearer scheme and cookie",
+                vec![
+                    (header::COOKIE, cookie.clone()),
+                    (header::AUTHORIZATION, "Basic dXNlcjpwYXNz".into()),
+                ],
+            ),
+            (
+                "tombstone first",
+                vec![(
+                    header::COOKIE,
+                    format!("{AUTH_TOKEN_COOKIE}=deleted; {cookie}"),
+                )],
+            ),
+            (
+                "split cookie headers",
+                vec![
+                    (header::COOKIE, "other=1".into()),
+                    (header::COOKIE, cookie.clone()),
+                ],
+            ),
+            (
+                "empty bearer and cookie",
+                vec![
+                    (header::COOKIE, cookie.clone()),
+                    (header::AUTHORIZATION, "Bearer ".into()),
+                ],
+            ),
+        ];
+
+        for (name, pairs) in cases {
+            let mut headers = HeaderMap::new();
+            for (header_name, value) in pairs {
+                headers.append(header_name, value.parse().unwrap());
+            }
+            let auth = crate::middleware::auth::verify_request_signature(&headers);
+            let csrf = extract_session_context(&headers);
+            match auth {
+                Ok(claims) => {
+                    let expected = verified_session_from_jwt(&jwt_for(&claims.sub));
+                    assert_eq!(csrf, expected, "{name}: CSRF bound a different session");
+                    let auth_used_cookie = claims.sub == "10";
+                    assert_eq!(
+                        csrf_check_needed("/api/config", &Method::POST, &headers),
+                        auth_used_cookie,
+                        "{name}: CSRF requirement must follow the selected credential"
+                    );
+                }
+                Err(_) => {
+                    assert!(csrf.is_none(), "{name}: CSRF accepted what auth rejects");
+                    assert!(
+                        !csrf_check_needed("/api/config", &Method::POST, &headers),
+                        "{name}: a rejected Bearer is not a cookie session"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extract_session_id_prefers_bearer_over_cookie() {
         let cookie_jwt = mint_test_jwt("10", "cookie-user");
         std::thread::sleep(std::time::Duration::from_millis(5));
         let bearer_jwt = mint_test_jwt("11", "bearer-user");
@@ -945,12 +991,45 @@ mod tests {
         );
         assert_eq!(
             extract_session_id(&h).as_deref(),
-            jwt_signature_segment(&cookie_jwt).as_deref()
-        );
-        assert_ne!(
-            extract_session_id(&h).as_deref(),
             jwt_signature_segment(&bearer_jwt).as_deref()
         );
+        assert!(!csrf_check_needed("/api/config", &Method::POST, &h));
+    }
+
+    /// A request authenticated by Bearer acts as that token even with a
+    /// session cookie riding along, so the cookie does not demand a CSRF token.
+    #[tokio::test]
+    async fn bearer_selected_post_with_cookie_needs_no_csrf_token() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::middleware::from_fn;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        async fn ok() -> &'static str {
+            "ok"
+        }
+
+        let app = Router::new()
+            .route("/api/config", post(ok))
+            .layer(from_fn(csrf_middleware));
+        let cookie_jwt = mint_test_jwt("30", "cookie-user");
+        let bearer_jwt = mint_test_jwt("31", "bearer-user");
+        let request = |bearer: bool| {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/api/config")
+                .header(header::COOKIE, format!("{AUTH_TOKEN_COOKIE}={cookie_jwt}"));
+            if bearer {
+                builder = builder.header(header::AUTHORIZATION, format!("Bearer {bearer_jwt}"));
+            }
+            builder.body(Body::empty()).unwrap()
+        };
+
+        let with_bearer = app.clone().oneshot(request(true)).await.expect("response");
+        assert_eq!(with_bearer.status(), StatusCode::OK);
+        let cookie_only = app.oneshot(request(false)).await.expect("response");
+        assert_eq!(cookie_only.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

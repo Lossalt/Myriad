@@ -1,6 +1,4 @@
-import { API_URL } from '../config'
 import { currentCopy } from '../i18n/localeCopy'
-import { siteMediaUrl } from '../utils/siteMediaUrl'
 import { userFacingError } from '../utils/userFacingError'
 import { ApiError, apiService } from './api'
 
@@ -76,39 +74,12 @@ export async function deleteMedia(id: number): Promise<void> {
   await apiService.delete(`/media/${id}`)
 }
 
-/** Drafts keep the authenticated content path until an explicit publication. */
-export function draftMediaSrc(item: MediaAsset): string {
-  if (item.exposure === 'public' && item.public_path) return item.public_path
-  return item.content_path || item.url
-}
-
-export function isPrivateMediaPath(src: string): boolean {
-  try {
-    const path = new URL(src.trim(), 'https://media.invalid').pathname
-    return /^\/api\/media\/\d+\/content$/.test(path)
-  } catch {
-    return false
-  }
-}
-
-export async function fetchMediaObjectUrl(
-  path: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  path = siteMediaUrl(path.trim(), '')
-  const url = path.startsWith('http') || path.startsWith('//') || path.startsWith('blob:') || path.startsWith('data:')
-    ? path
-    : `${API_URL.replace(/\/$/, '')}${path}`
-  if (url.startsWith('blob:') || url.startsWith('data:')) return url
-  const response = await fetch(url, { credentials: 'include', signal })
-  if (!response.ok) {
-    throw new Error(
-      userFacingError(`Media read failed: ${response.status}`, currentCopy().errors.mediaUploadFailed),
-    )
-  }
-  const blob = await response.blob()
-  signal?.throwIfAborted()
-  return URL.createObjectURL(blob)
+/**
+ * The asset's one permanent address. Publishing never changes it; a private
+ * asset is read there with the site session, like note drafts already are.
+ */
+export function mediaAssetSrc(item: MediaAsset): string {
+  return item.url
 }
 
 export async function publishMedia(id: number): Promise<MediaAsset> {

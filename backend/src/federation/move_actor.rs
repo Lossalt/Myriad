@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::federation::actor::fetch_remote_actor;
-use crate::federation::content::fan_out_to_followers;
+use crate::federation::content::{
+    FollowerRoute, StagedFanOut, deliver_to_local_followers, route_follower,
+};
 use crate::federation::types::*;
 
 // Types
@@ -1411,21 +1413,27 @@ pub async fn rewrite_local_federation_urls(
 struct EmittedMove {
     activity_id: String,
     queued: u32,
-    activity_db_id: i32,
+    /// 同实例粉丝：投递 worker 不往本机发 HTTP，提交后进程内投递。
+    local_followers: Vec<String>,
     activity_json: serde_json::Value,
 }
 
-async fn enqueue_move_to_remote_followers(
+/// 在身份改写事务内为 Move 排队远端投递，并收集同实例粉丝。
+///
+/// 与发布扇出同一套逐粉丝路由（[`route_follower`]），新旧两个 base 下的
+/// 粉丝都算本实例。坏数据的粉丝记日志跳过；只有数据库错误返回 `Err`，
+/// 让整个身份改写回滚。
+async fn stage_move_fan_out(
     db: &impl ConnectionTrait,
     user_id: i32,
     activity_db_id: i32,
     old_base: &str,
     new_base: &str,
-) -> Result<u32, String> {
+) -> Result<StagedFanOut, String> {
     let followers = db
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"SELECT ra.inbox_url, ra.domain
+            r#"SELECT ra.inbox_url, ra.domain, ra.actor_url
                FROM federation_follows f
                JOIN federation_remote_actors ra ON ra.id = f.remote_actor_id
                WHERE f.user_id = $1 AND f.direction = 'incoming' AND f.status = 'accepted'"#,
@@ -1434,26 +1442,41 @@ async fn enqueue_move_to_remote_followers(
         .await
         .map_err(|e| format!("Failed to list Move followers: {}", e))?;
 
-    let mut queued = 0u32;
+    let mut staged = StagedFanOut::default();
     for row in followers {
-        let inbox: String = row.try_get("", "inbox_url").unwrap_or_default();
-        if inbox.is_empty() {
-            tracing::warn!(
-                user_id,
-                activity_db_id,
-                "Move fan-out skip: empty inbox_url"
-            );
-            continue;
+        let column = |name: &str| row.try_get::<Option<String>>("", name).ok().flatten();
+        let (inbox, domain, actor) = (column("inbox_url"), column("domain"), column("actor_url"));
+        let route = |base: &str| {
+            route_follower(base, inbox.as_deref(), domain.as_deref(), actor.as_deref())
+        };
+        let route = match route(old_base) {
+            FollowerRoute::Local(username) => FollowerRoute::Local(username),
+            _ => route(new_base),
+        };
+        match route {
+            FollowerRoute::Local(username) => staged.local_followers.push(username),
+            // 新旧 base 下的非个人收件箱（共享 inbox 等）：投给自己没有意义。
+            FollowerRoute::Remote { inbox, .. }
+                if url_is_under_base(&inbox, old_base) || url_is_under_base(&inbox, new_base) => {}
+            FollowerRoute::Remote { inbox, .. } => {
+                enqueue_delivery(db, activity_db_id, &inbox, "pending")
+                    .await
+                    .map_err(|e| format!("Failed to enqueue Move delivery: {}", e))?;
+                staged.queued += 1;
+            }
+            FollowerRoute::Skip(reason) => {
+                staged.skipped += 1;
+                tracing::warn!(
+                    user_id,
+                    activity_db_id,
+                    follower = actor.as_deref().unwrap_or(""),
+                    reason,
+                    "Move fan-out skipped an unusable follower"
+                );
+            }
         }
-        if url_is_under_base(&inbox, old_base) || url_is_under_base(&inbox, new_base) {
-            continue;
-        }
-        enqueue_delivery(db, activity_db_id, &inbox, "pending")
-            .await
-            .map_err(|e| format!("Failed to enqueue Move delivery: {}", e))?;
-        queued += 1;
     }
-    Ok(queued)
+    Ok(staged)
 }
 
 /// Persist Move activity and remote delivery intent on the given connection.
@@ -1482,22 +1505,23 @@ async fn emit_move_for_user(
     .await
     .map_err(|e| format!("Failed to insert Move activity: {}", e))?;
 
-    let queued =
-        enqueue_move_to_remote_followers(db, user_id, act_db_id, old_base, new_base).await?;
+    let staged = stage_move_fan_out(db, user_id, act_db_id, old_base, new_base).await?;
 
     tracing::info!(
         username,
         old_actor = %old_actor,
         new_actor = %new_actor,
         activity_id = %activity_id,
-        queued,
+        queued = staged.queued,
+        local_followers = staged.local_followers.len(),
+        skipped = staged.skipped,
         "Emitted ActivityPub Move"
     );
 
     Ok(EmittedMove {
         activity_id,
-        queued,
-        activity_db_id: act_db_id,
+        queued: staged.queued,
+        local_followers: staged.local_followers,
         activity_json: move_json,
     })
 }
@@ -1647,7 +1671,7 @@ pub async fn domain_move_all_users(
         match emit_move_for_user(&txn, user_id, &username, &old_base, &new_base).await {
             Ok(emitted) => {
                 enqueued += 1;
-                pending_local.push((user_id, emitted.activity_db_id, emitted.activity_json.clone()));
+                pending_local.push((emitted.local_followers, emitted.activity_json));
                 results.push(DomainMoveUserResult {
                     user_id,
                     username,
@@ -1678,13 +1702,10 @@ pub async fn domain_move_all_users(
         .map_err(federation_move_failed)?;
     txn.commit().await.map_err(db_err)?;
 
-    for (user_id, act_db_id, json) in pending_local {
-        fan_out_to_followers(db, user_id, act_db_id, &json)
-            .await
-            .map_err(|error| {
-                tracing::error!(user_id, act_db_id, %error, "domain-move follower fan-out failed");
-                federation_move_failed(error)
-            })?;
+    // 身份改写与远端投递行已经提交；同实例粉丝逐个尽力投递，失败只记日志，
+    // 不能把已经生效的迁移报成失败。
+    for (local_followers, json) in pending_local {
+        deliver_to_local_followers(db, &local_followers, &json).await;
     }
 
     let total_users = results.len() as u32;

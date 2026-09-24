@@ -27,9 +27,8 @@ pub(super) async fn report_store_stats(
     Json(req): Json<StoreStatsReportRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
+        .subject_id()
+        .ok_or_else(|| api_http_error(StatusCode::UNAUTHORIZED, "Invalid user"))?;
 
     let app_id = req.app_id.trim();
     let version = req.version.trim();

@@ -59,12 +59,10 @@ export function usePhantasiAgentOpen(io: AgentOpenIo) {
   useEffect(() => {
     const timers: number[] = []
 
-    const handleAgentOpenArticle = async (e: Event) => {
+    const openFromDetail = async (detail: AgentOpenDetail) => {
       const { itemsRef, openArticle, webSearchLabel } = ioRef.current
-      const { articleId, articleLink, openLatest, webSearchArticle } = (
-        e as CustomEvent<AgentOpenDetail>
-      ).detail
-      const list = (e as CustomEvent<AgentOpenDetail>).detail.readingList
+      const { articleId, articleLink, openLatest, webSearchArticle } = detail
+      const list = detail.readingList
       const queue = Array.isArray(list?.items)
         ? readingQueue('agent', list.items, list.name)
         : null
@@ -122,6 +120,8 @@ export function usePhantasiAgentOpen(io: AgentOpenIo) {
       }, { queue })
     }
 
+    const handleAgentOpenArticle = (e: Event) =>
+      openFromDetail((e as CustomEvent<AgentOpenDetail>).detail)
     window.addEventListener('agent:open-phantasi-article', handleAgentOpenArticle)
 
     const takePending = (key: string) => {
@@ -165,16 +165,12 @@ export function usePhantasiAgentOpen(io: AgentOpenIo) {
       if (pendingReading.articleId) {
         timers.push(
           window.setTimeout(() => {
-            void handleAgentOpenArticle(
-              new CustomEvent('agent:open-phantasi-article', {
-                detail: {
-                  articleId: pendingReading.articleId,
-                  openLatest: false,
-                  webSearchArticle: pendingReading.webSearchArticle,
-                  readingList: pendingReading.readingList,
-                },
-              }),
-            )
+            void openFromDetail({
+              articleId: pendingReading.articleId,
+              openLatest: false,
+              webSearchArticle: pendingReading.webSearchArticle,
+              readingList: pendingReading.readingList,
+            })
           }, 200),
         )
       }
@@ -184,11 +180,7 @@ export function usePhantasiAgentOpen(io: AgentOpenIo) {
     if (pendingOpen) {
       timers.push(
         window.setTimeout(() => {
-          void handleAgentOpenArticle(
-            new CustomEvent('agent:open-phantasi-article', {
-              detail: pendingOpen,
-            }),
-          )
+          void openFromDetail(pendingOpen)
         }, 100),
       )
     }

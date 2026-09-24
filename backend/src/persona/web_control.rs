@@ -120,7 +120,7 @@ pub async fn handle(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Ok(secret) = std::env::var("JWT_SECRET") else {
+    let Some(secret) = crate::middleware::auth::session_secret() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let now = chrono::Utc::now().timestamp();
@@ -175,21 +175,22 @@ async fn execute(db: &sea_orm::DatabaseConnection, call: Call) -> Result<Value, 
         }
     }
     agent::ensure_agent_usage_allowed(db, call.user_id).await?;
-    let mut granted = agent::get_user_permissions(db, call.user_id).await;
-    if let Some(cap) = &call.autonomy_permission_cap {
-        let cap: HashSet<_> = cap.iter().collect();
-        granted.retain(|p| cap.contains(p));
-    }
     let capability = agent::capability::get_capability_by_id(&call.capability)
         .await
         .ok_or("Unknown web capability")?;
-    if capability
-        .required_permissions
-        .iter()
-        .any(|p| !granted.contains(p))
-    {
-        return Err("Current permission denied".into());
-    }
+    // Same authority as the worker's steps: re-reads the autonomy grant, so a
+    // revocation between the worker's check and this call still stops it.
+    let granted: HashSet<String> = agent::consciousness::authorize_capability(
+        db,
+        call.user_id,
+        call.autonomy_permission_cap.as_deref(),
+        &call.capability,
+        &capability.required_permissions,
+    )
+    .await
+    .map_err(|_| "Current permission denied".to_string())?
+    .into_iter()
+    .collect();
     if call.capability == "scheduler.create" {
         agent::scheduler_create_actions_within_grants(&call.params, &granted)?;
     }
@@ -198,6 +199,7 @@ async fn execute(db: &sea_orm::DatabaseConnection, call: Call) -> Result<Value, 
         ai_analyzer: None,
         user_id: call.user_id,
         task_id: None,
+        step_id: None,
         execution_context: None,
         autonomy_permission_cap: call.autonomy_permission_cap,
     };
@@ -230,8 +232,8 @@ pub async fn call(
     if body.len() > MAX_REQUEST {
         return Err("Web capability request is too large".into());
     }
-    let secret =
-        std::env::var("JWT_SECRET").map_err(|_| "Web capability authentication unavailable")?;
+    let secret = crate::middleware::auth::session_secret()
+        .ok_or("Web capability authentication unavailable")?;
     let time = chrono::Utc::now().timestamp().to_string();
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let signed = signature(&secret, &time, &nonce, &body)
@@ -256,9 +258,9 @@ pub async fn call(
         .body(body)
         .send()
         .await
-        .map_err(|_| "Execution outcome is unknown: web capability request failed")?;
+        .map_err(|_| outcome_unknown("web capability request failed"))?;
     if response.status().is_server_error() || response.status().as_u16() == 409 {
-        return Err("Execution outcome is unknown: web capability did not return a result".into());
+        return Err(outcome_unknown("web capability did not return a result"));
     }
     if !response.status().is_success() {
         return Err(format!(
@@ -270,18 +272,19 @@ pub async fn call(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| "Execution outcome is unknown: web capability response interrupted")?
+        .map_err(|_| outcome_unknown("web capability response interrupted"))?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
-            return Err(
-                "Execution outcome is unknown: web capability response is too large".into(),
-            );
+            return Err(outcome_unknown("web capability response is too large"));
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice::<Result<Value, String>>(&bytes).map_err(|_| {
-        String::from("Execution outcome is unknown: invalid web capability response")
-    })?
+    serde_json::from_slice::<Result<Value, String>>(&bytes)
+        .map_err(|_| outcome_unknown("invalid web capability response"))?
+}
+
+fn outcome_unknown(detail: &str) -> String {
+    format!("{} {detail}", myriad_agent_rules::OUTCOME_UNKNOWN_PREFIX)
 }
 
 #[cfg(test)]

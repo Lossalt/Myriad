@@ -2,6 +2,7 @@
 //!
 //! Provider and registry namespace vary; the bind rules do not.
 
+use crate::services::channel_platform::ChannelPlatform;
 use chrono::{Duration as ChronoDuration, Utc};
 use myriad_agent_rules::channel::{
     PairingBindResult, PairingLookup, encode_pairing_code, extract_pairing_code,
@@ -25,33 +26,24 @@ pub struct PairingChannel {
     pub code_namespace: &'static str,
 }
 
-pub const QQ: PairingChannel = PairingChannel {
-    provider: "qq",
-    code_namespace: "qq_pairing_code",
-};
+impl PairingChannel {
+    pub(crate) const fn of(platform: ChannelPlatform) -> Self {
+        Self {
+            provider: platform.provider(),
+            code_namespace: platform.pairing_code_ns(),
+        }
+    }
+}
 
-pub const TELEGRAM: PairingChannel = PairingChannel {
-    provider: "telegram",
-    code_namespace: "telegram_pairing_code",
-};
-
-pub const DISCORD_DM: PairingChannel = PairingChannel {
-    provider: "discord_dm",
-    code_namespace: "discord_dm_pairing_code",
-};
-
-pub const FEISHU: PairingChannel = PairingChannel {
-    provider: "feishu",
-    code_namespace: "feishu_pairing_code",
-};
+pub const QQ: PairingChannel = PairingChannel::of(ChannelPlatform::Qq);
+pub const TELEGRAM: PairingChannel = PairingChannel::of(ChannelPlatform::Telegram);
+pub const DISCORD_DM: PairingChannel = PairingChannel::of(ChannelPlatform::Discord);
+pub const FEISHU: PairingChannel = PairingChannel::of(ChannelPlatform::Feishu);
 
 /// Pairing rows share `user_identities` with OAuth, but they are not login identities.
 /// `discord` is the login / data-platform slug and must stay out of this set.
 pub fn is_pairing_provider(provider: &str) -> bool {
-    matches!(
-        provider.trim().to_ascii_lowercase().as_str(),
-        "qq" | "telegram" | "discord_dm" | "feishu"
-    )
+    ChannelPlatform::from_provider(provider).is_some()
 }
 
 /// SQL predicate excluding pairing rows from OAuth / avatar identity queries.
@@ -626,6 +618,19 @@ async fn bind_openids(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sql_pairing_predicate_lists_every_platform_provider() {
+        use crate::services::channel_pairing::SQL_NOT_PAIRING_PROVIDER;
+        use crate::services::channel_platform::ChannelPlatform;
+        for platform in ChannelPlatform::ALL {
+            assert!(
+                SQL_NOT_PAIRING_PROVIDER.contains(&format!("'{}'", platform.provider())),
+                "{platform}"
+            );
+        }
+        assert!(!SQL_NOT_PAIRING_PROVIDER.contains("'discord'"));
+    }
+
     use super::{is_pairing_provider, normalized_keys, placeholder_list};
 
     #[test]
@@ -755,4 +760,6 @@ mod tests {
 }
 
 mod binding;
-pub(crate) use binding::{ChannelBinding, credential_scope, provider_for_platform};
+mod entry;
+pub(crate) use binding::{ChannelBinding, credential_scope};
+pub(crate) use entry::{PrivateText, handle_private_text};

@@ -7,7 +7,7 @@ use super::types::PublishedAttachment;
 use crate::federation::types::db_err;
 
 /// Insert Create into the author's local timeline so published local content appears immediately.
-pub(super) async fn insert_author_timeline(
+pub(crate) async fn insert_author_timeline(
     db: &impl ConnectionTrait,
     user_id: i32,
     activity_id: &str,
@@ -39,8 +39,12 @@ pub(super) async fn insert_author_timeline(
     Ok(())
 }
 
-/// Plain preview from an AP Note/Article object (prefers source plain text).
-pub(super) fn preview_from_ap_object(object: &serde_json::Value) -> Option<String> {
+/// Plain timeline preview from an AP object (prefers a Note's plain source text).
+///
+/// The one preview builder for `federation_timeline.content_preview`: the
+/// author's own row, inbound Create / Update / Announce, and shared-inbox
+/// follower distribution all use it.
+pub(crate) fn preview_from_ap_object(object: &serde_json::Value) -> Option<String> {
     object
         .pointer("/source/content")
         .and_then(|v| v.as_str())
@@ -193,20 +197,15 @@ fn attachments_from_ap_object(object: &serde_json::Value) -> Vec<PublishedAttach
 }
 
 fn strip_tags_preview(s: &str, max_chars: usize) -> String {
-    let plain = s
+    let spaced = s
         .replace("<br>", "\n")
         .replace("<br/>", "\n")
         .replace("<br />", "\n")
-        .replace("<p>", "")
-        .replace("</p>", "\n")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"");
-    // Drop remaining simple tags
-    let mut out = String::with_capacity(plain.len());
+        .replace("</p>", "\n");
+    // Drop tags before unescaping: an escaped `&lt;b&gt;` is text, not markup.
+    let mut out = String::with_capacity(spaced.len());
     let mut in_tag = false;
-    for c in plain.chars() {
+    for c in spaced.chars() {
         match c {
             '<' => in_tag = true,
             '>' => in_tag = false,
@@ -214,7 +213,13 @@ fn strip_tags_preview(s: &str, max_chars: usize) -> String {
             _ => {}
         }
     }
-    let trimmed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    // `&amp;` last, so `&amp;lt;` stays the literal text `&lt;`.
+    let plain = out
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&");
+    let trimmed = plain.split_whitespace().collect::<Vec<_>>().join(" ");
     trimmed.chars().take(max_chars).collect()
 }
 
@@ -333,6 +338,34 @@ mod tests {
         assert!(s.len() <= 20 || s.chars().count() <= 20);
         let long = strip_tags_preview(&"a".repeat(100), 10);
         assert_eq!(long.chars().count(), 10);
+    }
+
+    #[test]
+    fn strip_tags_preview_keeps_escaped_markup_as_text() {
+        assert_eq!(
+            strip_tags_preview("<p>a &lt;b&gt; <a href=\"x\">link</a></p>", 50),
+            "a <b> link"
+        );
+        assert_eq!(strip_tags_preview("&amp;lt;", 50), "&lt;");
+    }
+
+    #[test]
+    fn preview_prefers_plain_source_then_falls_back() {
+        let note = json!({"content": "<p>html</p>", "source": {"content": "plain"}});
+        assert_eq!(preview_from_ap_object(&note).as_deref(), Some("plain"));
+        let report = json!({"mfp:summary": "report summary"});
+        assert_eq!(
+            preview_from_ap_object(&report).as_deref(),
+            Some("report summary")
+        );
+        assert_eq!(
+            preview_from_ap_object(&json!("https://x.example/n/1")),
+            None
+        );
+        assert_eq!(
+            preview_from_ap_object(&json!({"content": "<p> </p>"})),
+            None
+        );
     }
 
     #[test]

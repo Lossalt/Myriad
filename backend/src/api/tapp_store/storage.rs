@@ -22,6 +22,7 @@ use axum::{
     http::StatusCode,
 };
 use myriad_error::AppError;
+use myriad_tapp_contract::storage::HostNamespace;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter, QuerySelect,
 };
@@ -86,9 +87,8 @@ pub(crate) async fn write_storage_value(
 /// settings without a login 401.
 fn settings_subject_id(claims: &Claims) -> Result<i32, HttpError> {
     claims
-        .sub
-        .parse::<i32>()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))
 }
 
 async fn authorize_tapp_settings(
@@ -157,7 +157,7 @@ async fn authorize_tapp_setting(
         .into_iter()
         .find(|setting| setting.key == key)
         .ok_or_else(|| HttpError(AppError::not_found("Not found")))?;
-    Ok((access, format!("_settings.{key}"), setting))
+    Ok((access, HostNamespace::Settings.key(key), setting))
 }
 
 async fn authorize_tapp_setting_write(
@@ -172,7 +172,7 @@ async fn authorize_tapp_setting_write(
         .into_iter()
         .find(|setting| setting.key == key)
         .ok_or_else(|| HttpError(AppError::not_found("Not found")))?;
-    Ok((access, format!("_settings.{key}"), setting))
+    Ok((access, HostNamespace::Settings.key(key), setting))
 }
 
 pub(super) async fn get_tapp_settings(
@@ -188,14 +188,14 @@ pub(super) async fn get_tapp_settings(
         .column(tapp_storage_entity::Column::Value)
         .filter(tapp_storage_entity::Column::UserId.eq(access.installation_namespace()))
         .filter(tapp_storage_entity::Column::TappId.eq(&tapp_id))
-        .filter(tapp_storage_entity::Column::Key.starts_with("_settings."))
+        .filter(tapp_storage_entity::Column::Key.starts_with(HostNamespace::Settings.prefix()))
         .into_model::<StorageKeyValueRow>()
         .all(&db)
         .await
         .map_err(|_| HttpError(AppError::internal("Database error")))?
         .into_iter()
         .filter_map(|item| {
-            let key = item.key.strip_prefix("_settings.")?.to_string();
+            let key = HostNamespace::Settings.strip(&item.key)?.to_string();
             declared_keys.contains(&key).then_some((key, item.value))
         })
         .collect();
@@ -222,7 +222,7 @@ pub(super) async fn set_tapp_setting(
     validate_storage_value_size(&value)?;
     let (access, storage_key, setting) =
         authorize_tapp_setting_write(&db, &claims, &tapp_id, &key).await?;
-    if !can_write_installation_settings(access, current_is_admin(&claims, &db).await) {
+    if !can_write_installation_settings(access, current_is_admin(&claims, &db).await?) {
         return Err(HttpError(AppError::forbidden("Forbidden")));
     }
     if !tapp_setting_value_is_valid(&setting, &value) {
@@ -239,8 +239,8 @@ pub(super) async fn set_tapp_setting(
     Ok(Json(ApiResponse::success(())))
 }
 
-const SHARED_KEY_PREFIX: &str = "_shared.";
-const PRIVATE_KEY_PREFIX: &str = "_private.";
+const SHARED_KEY_PREFIX: &str = HostNamespace::Shared.prefix();
+const PRIVATE_KEY_PREFIX: &str = HostNamespace::Private.prefix();
 
 fn prefixed_storage_key(prefix: &str, key: &str) -> Result<String, HttpError> {
     validate_sandbox_storage_key(key)
@@ -368,7 +368,7 @@ async fn require_shared_write(
     claims: &Claims,
     access: TappStorageAccess,
 ) -> Result<(), HttpError> {
-    if can_write_installation_settings(access, current_is_admin(claims, db).await) {
+    if can_write_installation_settings(access, current_is_admin(claims, db).await?) {
         Ok(())
     } else {
         Err(HttpError(AppError::forbidden("Forbidden")))
@@ -512,7 +512,11 @@ async fn authorize_tapp_private(
     validate_tapp_id(tapp_id).map_err(|_| HttpError(AppError::bad_request("Bad request")))?;
     let subject_id = require_private_kv_subject(claims)?;
     let tapp = tapp_common::resolve_accessible_tapp(db, subject_id, tapp_id).await?;
-    decide_private_kv_access(subject_id, tapp.user_id, current_is_admin(claims, db).await)
+    decide_private_kv_access(
+        subject_id,
+        tapp.user_id,
+        current_is_admin(claims, db).await?,
+    )
 }
 
 fn private_storage_key(key: &str) -> Result<String, HttpError> {
@@ -630,10 +634,9 @@ pub(super) async fn list_storage_keys(
     Path(tapp_id): Path<String>,
 ) -> Result<Json<ApiResponse<Vec<String>>>, HttpError> {
     let access = authorize_runtime_storage(&claims, &runtime_grant, &tapp_id)?;
-    let keys =
-        storage_svc::sandbox_storage_keys(&db, access.private_storage_namespace(), &tapp_id)
-            .await
-            .map_err(|error| HttpError::from(storage_status(error)))?;
+    let keys = storage_svc::sandbox_storage_keys(&db, access.private_storage_namespace(), &tapp_id)
+        .await
+        .map_err(|error| HttpError::from(storage_status(error)))?;
     Ok(Json(ApiResponse::success(keys)))
 }
 

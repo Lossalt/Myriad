@@ -758,6 +758,7 @@ pub async fn open_transfer_file(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": format!("Transfer is not ready for download (status={})", status),
+                "code": "transfer_not_ready",
                 "status": status,
             })),
         ));

@@ -319,7 +319,8 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             name: "idx_phantasi_sources_url_key".into(),
             table: "phantasi_sources".into(),
             columns: vec!["url_key".into()],
-            is_unique: false,
+            // 规范化 URL 全站唯一；存量库先经 `ensure_phantasi_source_url_key_unique` 合并重复。
+            is_unique: true,
         },
         IndexDef {
             name: "idx_phantasi_sources_site_url_key".into(),
@@ -782,6 +783,12 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             name: "idx_published_content_unique".into(),
             table: "federation_published_content".into(),
             columns: vec!["content_type".into(), "content_id".into()],
+            is_unique: true,
+        },
+        IndexDef {
+            name: "idx_published_content_idempotency".into(),
+            table: "federation_published_content".into(),
+            columns: vec!["user_id".into(), "idempotency_key".into()],
             is_unique: true,
         },
         IndexDef {

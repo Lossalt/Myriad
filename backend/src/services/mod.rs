@@ -32,6 +32,7 @@ pub mod governed_text; // Governed AI text sink (scheduler + declared-API builti
 pub mod http_client; // Shared HTTP client with proxy support
 pub mod image_generation; // OpenAI / OpenRouter / Volcengine / Gemini image providers
 pub mod image_proxy_urls; // Shared image proxy URL rewrite (profile/export/library)
+pub mod jobs; // Process-owned periodic background jobs and their shutdown
 pub mod json_schema_subset;
 pub mod kugou_service; // Kugou lyrics (KRC) supplement
 pub mod library_items; // Library item models, paging, Bangumi/MAL builders, preferences, assembly cache
@@ -49,8 +50,10 @@ pub mod outbound_security; // Outbound URL validation, DNS pinning, redirect pol
 pub mod permission_service;
 pub mod platform_auto_refresh; // Core platform auto-refresh via Tapp scheduler
 pub mod platform_cache; // Platform filtered-JSON cache
+pub mod platform_id; // PlatformId registry: ids, aliases, credentials/enabled rule
 pub mod platform_items; // Cache → uniform items[] projection
 pub mod platform_refresh; // Platform fetch/cache (profile HTTP + scheduler)
+pub mod principal; // 当前角色、站长、安装是否已认领：唯一来源
 pub mod profile_text; // 名称/简介文案来源（与 avatar 独立）
 pub mod retired_configuration; // Backup denylist for retired configuration keys
 pub mod see_through; // Remote See-through layered-PSD decomposition
@@ -102,7 +105,9 @@ pub mod tripo; // Tripo v3 3D generation + Web GLB persistence
 pub mod updater_client;
 
 pub(crate) mod bot_ingress;
-pub mod channel_pairing; // Shared pairing mint/consume/unbind
+pub(crate) mod bot_supervisor; // One reconnect loop for every chat bot worker
+pub mod channel_pairing;
+pub mod channel_platform; // Shared pairing mint/consume/unbind
 pub mod channel_work; // Shared private-chat Work: session, pending, delivery
 pub mod discord_bot; // Discord DM Gateway worker
 pub mod discord_pairing; // Discord DM pairing codes + user_identities
@@ -120,7 +125,9 @@ pub mod note_authors;
 pub mod note_publish;
 pub mod notion_service;
 pub mod phantasi_parser;
+pub(crate) mod phantasi_reading;
 pub mod phantasi_scheduler;
+pub(crate) mod phantasi_subscribe;
 pub mod phantasi_topics;
 pub mod qq_bot; // QQ C2C Gateway worker
 pub mod qq_pairing; // QQ C2C pairing codes + user_identities

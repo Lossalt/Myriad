@@ -146,20 +146,8 @@ fn merge_cache_only_platforms(
     missing.sort();
 
     for (offset, slug) in missing.into_iter().enumerate() {
-        let display = match slug.as_str() {
-            "netease" => "Netease Music",
-            "github" => "GitHub",
-            "bilibili" => "Bilibili",
-            "steam" => "Steam",
-            "youtube" => "YouTube",
-            "bangumi" => "Bangumi",
-            "mal" => "MyAnimeList",
-            "xbox" => "Xbox",
-            "psn" => "PlayStation",
-            "x" => "X",
-            "discord" => "Discord",
-            other => other,
-        };
+        let display = crate::services::platform_id::PlatformId::from_slug(&slug)
+            .map_or(slug.as_str(), |id| id.display_name());
         platforms.push(platform_json(
             next_id + offset as i32,
             &slug,

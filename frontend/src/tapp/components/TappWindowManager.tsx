@@ -44,6 +44,7 @@ import {
   TAPP_CATEGORY_I18N_KEYS,
 } from '../utils/tappCategories'
 import { getTappIconAccentColor, getTappIconStyle } from '../utils/tappColors'
+import { TappLoadGenerations } from '../utils/tappLoadGenerations'
 import { TappIcon } from './TappIcon'
 import { TappIconBadge } from './TappIconBadge'
 import { TappStore } from './TappStore'
@@ -647,7 +648,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
   onBack,
 }) => {
   const { t, locale, format } = useI18n()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isAdmin } = useAuth()
   const animConfig = useAnimationLevel()
   const noAnimation = isExlight(animConfig)
   useTappSubject()
@@ -664,6 +665,8 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
   const [windows, setWindows] = useState<TappWindow[]>([])
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null)
   const [nextZIndex, setNextZIndex] = useState(100)
+  // 连续两次更新时先发的加载可能后到；只有该应用最新一代的结果能落到窗口。
+  const [loadGenerations] = useState(() => new TappLoadGenerations())
   const [availableTapps, setAvailableTapps] = useState<TappInstance[]>([])
   const [showSchemeMenu, setShowSchemeMenu] = useState(false)
   const [showLaunchpad, setShowLaunchpad] = useState(false)
@@ -832,6 +835,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
     const unsubscribe = runtime.on('tapp:updated', (data) => {
       const tappId = (data as { id: string }).id
       if (isHostPanelId(tappId)) return
+      const generation = loadGenerations.begin(tappId)
       setWindows((prev) =>
         prev.map((item) =>
           item.kind === 'tapp' && item.tappId === tappId
@@ -843,8 +847,9 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
         try {
           const instance = runtime.getTapp(tappId)
           if (!instance) throw new Error(t.tapp.appNotExist)
-          const resources = await loadPageResources(instance)
-          if (cancelled) return
+          const loaded = await loadGenerations.settle(tappId, generation, loadPageResources(instance))
+          if (cancelled || loaded.stale) return
+          const resources = loaded.value
           const code: TappCodeStructure = {
             modules: resources.modules,
             moduleResolutions: resources.moduleResolutions,
@@ -863,7 +868,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
             ),
           )
         } catch (error) {
-          if (cancelled) return
+          if (cancelled || !loadGenerations.isCurrent(tappId, generation)) return
           const message =
             userFacingError(error, t.tapp.loadAppFailed)
           setWindows((prev) =>
@@ -880,7 +885,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
       cancelled = true
       unsubscribe()
     }
-  }, [runtime, t.tapp.appNotExist, t.tapp.loadAppFailed])
+  }, [runtime, loadGenerations, t.tapp.appNotExist, t.tapp.loadAppFailed])
 
   useEffect(() => {
     if (initialTappId && windows.length === 0) {
@@ -995,6 +1000,8 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
       setWindows((prev) => [...prev, newWindow])
       setActiveWindowId(windowId)
       setNextZIndex((prev) => prev + 1)
+      // 打开期间若应用更新，更新处理会接管这个窗口；本次结果让位，不覆盖新代码。
+      const generation = loadGenerations.current(tappId)
 
       try {
         await runtime.waitForSync()
@@ -1011,7 +1018,12 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
           return
         }
 
-        const resources = await loadPageResources(instance)
+        const loaded = await loadGenerations.settle(tappId, generation, loadPageResources(instance))
+        if (loaded.stale) {
+          if (!runtime.isRunning(tappId)) await runtime.startTapp(tappId)
+          return
+        }
+        const resources = loaded.value
         const tappCode: TappCodeStructure = {
           modules: resources.modules,
           moduleResolutions: resources.moduleResolutions,
@@ -1035,6 +1047,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
           ),
         )
       } catch (err) {
+        if (!loadGenerations.isCurrent(tappId, generation)) return
         setWindows((prev) =>
           prev.map((w) =>
             w.windowId === windowId
@@ -1049,7 +1062,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
         )
       }
     },
-    [windows, nextZIndex, runtime, t.tapp.appNotExist, t.tapp.loadAppFailed],
+    [windows, nextZIndex, runtime, loadGenerations, t.tapp.appNotExist, t.tapp.loadAppFailed],
   )
 
   const closeWindow = useCallback(
@@ -1624,7 +1637,8 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                       exit={{ opacity: 0, y: -8, scale: 0.95 }}
                       transition={{ duration: 0.15 }}
                     >
-                      {windows.length > 0 && (
+                      {/* Schemes are site-wide presets; only an admin curates them. */}
+                      {isAdmin && windows.length > 0 && (
                         <motion.button
                           onClick={saveCurrentScheme}
                           disabled={isSaving}
@@ -1654,7 +1668,7 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                         </motion.button>
                       )}
 
-                      {windows.length > 0 && savedSchemes.length > 0 && (
+                      {isAdmin && windows.length > 0 && savedSchemes.length > 0 && (
                         <div
                           className="mx-3 my-1 h-px"
                           style={{ backgroundColor: 'var(--border-color)' }}
@@ -1686,18 +1700,20 @@ export const TappWindowManager: React.FC<TappWindowManagerProps> = ({
                                   })}
                                 </span>
                               </motion.button>
-                              <motion.button
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation()
-                                  deleteScheme(scheme.id)
-                                }}
-                                className={`rounded p-1.5 opacity-0 transition-all group-hover:opacity-100 ${WINDOW_CONTROL_DANGER_HOVER_CLASS}`}
-                                style={WINDOW_CONTROL_DANGER_HOVER_STYLE}
-                                whileTap={{ scale: 0.9 }}
-                                title={t.tapp.deleteScheme}
-                              >
-                                <FaTrash className="h-3.5 w-3.5" />
-                              </motion.button>
+                              {isAdmin && (
+                                <motion.button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation()
+                                    deleteScheme(scheme.id)
+                                  }}
+                                  className={`rounded p-1.5 opacity-0 transition-all group-hover:opacity-100 ${WINDOW_CONTROL_DANGER_HOVER_CLASS}`}
+                                  style={WINDOW_CONTROL_DANGER_HOVER_STYLE}
+                                  whileTap={{ scale: 0.9 }}
+                                  title={t.tapp.deleteScheme}
+                                >
+                                  <FaTrash className="h-3.5 w-3.5" />
+                                </motion.button>
+                              )}
                             </div>
                           ))}
                         </div>

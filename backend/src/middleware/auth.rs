@@ -15,10 +15,11 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 /// Browser / API session lifetime (days). Keep long-lived; revoke via `token_version`.
@@ -53,6 +54,13 @@ impl Claims {
     /// Subject resolved at the auth boundary, if these claims passed it.
     pub fn subject(&self) -> Option<AuthSubject> {
         self.subject
+    }
+
+    /// Raw subject id resolved at the auth boundary: durable users are
+    /// positive, signed guests negative. `None` for claims that never passed
+    /// the boundary. Prefer [`Self::durable_user_id`] unless guests are valid.
+    pub fn subject_id(&self) -> Option<i32> {
+        self.subject.map(AuthSubject::id)
     }
 
     /// Durable user id (`sub > 0`) resolved at the auth boundary.
@@ -131,9 +139,18 @@ pub fn mint_session_claims(
     }
 }
 
+/// The session signing secret. A missing or blank `JWT_SECRET` means none:
+/// an empty HMAC key would let anyone mint a valid session, so every signer
+/// and verifier reads the secret through here.
+pub fn session_secret() -> Option<String> {
+    env::var("JWT_SECRET")
+        .ok()
+        .filter(|secret| !secret.trim().is_empty())
+}
+
 /// Encode claims with `JWT_SECRET`. Caller must set cookie / Authorization.
 pub fn encode_session_token(claims: &Claims) -> Result<String, String> {
-    let jwt_secret = env::var("JWT_SECRET").map_err(|_| "JWT_SECRET not configured".to_string())?;
+    let jwt_secret = session_secret().ok_or_else(|| "JWT_SECRET not configured".to_string())?;
     jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         claims,
@@ -145,7 +162,7 @@ pub fn encode_session_token(claims: &Claims) -> Result<String, String> {
 /// `auth_token=…` Set-Cookie value for a newly issued session.
 pub fn auth_cookie_value(token: &str, is_production: bool) -> String {
     format!(
-        "auth_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={AUTH_COOKIE_MAX_AGE_SECS}{}",
+        "{AUTH_TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={AUTH_COOKIE_MAX_AGE_SECS}{}",
         if is_production { "; Secure" } else { "" }
     )
 }
@@ -155,7 +172,7 @@ pub fn auth_cookie_value(token: &str, is_production: bool) -> String {
 /// server; frontend JavaScript cannot delete it.
 pub fn clear_auth_cookie_value(is_production: bool) -> String {
     format!(
-        "auth_token=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{}",
+        "{AUTH_TOKEN_COOKIE}={COOKIE_TOMBSTONE}; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{}",
         if is_production { "; Secure" } else { "" }
     )
 }
@@ -196,7 +213,7 @@ struct AuthCache {
 static AUTH_CACHE: OnceLock<StdMutex<AuthCache>> = OnceLock::new();
 static AUTH_CACHE_INFLIGHT: OnceLock<StdMutex<HashMap<i32, Arc<watch::Sender<()>>>>> =
     OnceLock::new();
-static AUTH_CACHE_LISTENER_STARTED: OnceLock<AsyncMutex<bool>> = OnceLock::new();
+static AUTH_CACHE_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 
 struct AuthLoadOwner {
     user_id: i32,
@@ -231,10 +248,6 @@ fn auth_cache() -> &'static StdMutex<AuthCache> {
 
 fn auth_cache_inflight() -> &'static StdMutex<HashMap<i32, Arc<watch::Sender<()>>>> {
     AUTH_CACHE_INFLIGHT.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
-fn auth_cache_listener_started() -> &'static AsyncMutex<bool> {
-    AUTH_CACHE_LISTENER_STARTED.get_or_init(|| AsyncMutex::new(false))
 }
 
 /// Read a cache entry, returning `Some(None)` for a cached missing account and
@@ -332,6 +345,8 @@ fn claim_auth_load_slot(user_id: i32) -> AuthLoadSlot {
 /// from [`notify_auth_cache_invalidation`] so failed NOTIFY does not leave a
 /// stale local authorization decision behind.
 pub fn invalidate_auth_cache_local(user_id: i32) {
+    // Any role change can move the site owner's lowest-admin fallback.
+    crate::services::principal::invalidate_site_owner_cache();
     if user_id <= 0 {
         return;
     }
@@ -366,55 +381,60 @@ pub async fn notify_auth_cache_invalidation(
     .map(|_| ())
 }
 
-/// Start one process-wide LISTEN task lazily, using the app's existing pool.
-/// A missed notification is safe because every entry expires after
-/// [`AUTH_CACHE_TTL`].
-async fn ensure_auth_cache_listener(db: &DatabaseConnection) {
-    if !matches!(db.get_database_backend(), DatabaseBackend::Postgres) {
+/// Register one process-wide LISTEN job lazily (on the first cache miss), using
+/// the app's existing pool. It is a supervised job on the process runner, so it
+/// reconnects with backoff and stops with `services::jobs::shutdown`. A missed
+/// notification is safe because every entry expires after [`AUTH_CACHE_TTL`].
+/// The site-owner cache in `services::principal` rides on the same channel.
+pub(crate) fn ensure_auth_cache_listener(db: &DatabaseConnection) {
+    // Tests never start it: the listener detaches a pooled connection, which
+    // may be the single connection holding a test's TEMP fixtures.
+    if cfg!(test) || !matches!(db.get_database_backend(), DatabaseBackend::Postgres) {
         return;
     }
-
-    let mut started = auth_cache_listener_started().lock().await;
-    if *started {
+    if AUTH_CACHE_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    *started = true;
 
     let pool = db.get_postgres_connection_pool().clone();
-    tokio::spawn(async move {
-        loop {
-            match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
-                Ok(mut listener) => match listener.listen(AUTH_CACHE_INVALIDATION_CHANNEL).await {
-                    Err(error) => {
-                        tracing::warn!(error = %error, "auth cache LISTEN setup failed");
-                    }
-                    _ => {
-                        tracing::debug!(
-                            channel = AUTH_CACHE_INVALIDATION_CHANNEL,
-                            "auth cache invalidation listener started"
-                        );
-                        loop {
-                            match listener.recv().await {
-                                Ok(notification) => {
-                                    if let Ok(user_id) = notification.payload().parse::<i32>() {
-                                        invalidate_auth_cache_local(user_id);
-                                    }
-                                }
-                                Err(error) => {
-                                    tracing::warn!(error = %error, "auth cache LISTEN connection lost");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                },
-                Err(error) => {
-                    tracing::debug!(error = %error, "auth cache listener connection unavailable");
+    crate::services::jobs::jobs().supervised(
+        "auth cache invalidation listener",
+        crate::services::jobs::Backoff::new(Duration::from_secs(1), Duration::from_secs(30)),
+        move || listen_auth_cache_invalidations(pool.clone()),
+    );
+}
+
+/// One LISTEN session: returns when the connection is lost; the runner
+/// reconnects.
+async fn listen_auth_cache_invalidations(pool: sea_orm::sqlx::PgPool) {
+    let mut listener = match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::debug!(error = %error, "auth cache listener connection unavailable");
+            return;
+        }
+    };
+    if let Err(error) = listener.listen(AUTH_CACHE_INVALIDATION_CHANNEL).await {
+        tracing::warn!(error = %error, "auth cache LISTEN setup failed");
+        return;
+    }
+    tracing::debug!(
+        channel = AUTH_CACHE_INVALIDATION_CHANNEL,
+        "auth cache invalidation listener started"
+    );
+    loop {
+        match listener.recv().await {
+            Ok(notification) => {
+                if let Ok(user_id) = notification.payload().parse::<i32>() {
+                    invalidate_auth_cache_local(user_id);
                 }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            Err(error) => {
+                tracing::warn!(error = %error, "auth cache LISTEN connection lost");
+                return;
+            }
         }
-    });
+    }
 }
 
 /// Authentication middleware - verifies JWT token + session epoch
@@ -447,7 +467,7 @@ pub async fn optional_current_auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    let credential_source = auth_credential_source(req.headers());
+    let credential_source = credential_source(req.headers());
     match authenticate_optional_request(req.headers(), &db).await {
         Ok(claims) => {
             if let Some(claims) = claims.as_ref() {
@@ -505,7 +525,7 @@ async fn optional_admin_auth(
     next: Next,
     invalid: InvalidCredential,
 ) -> Response {
-    let credential_source = auth_credential_source(req.headers());
+    let credential_source = credential_source(req.headers());
     let claims = match authenticate_optional_request(req.headers(), &db).await {
         Ok(claims) => claims,
         Err(error_response)
@@ -751,7 +771,7 @@ async fn load_auth_snapshot(
         // Listener setup is only needed on a real cache miss. Keeping the hit
         // path database-free also makes the cache's authorization boundary
         // independently testable.
-        ensure_auth_cache_listener(db).await;
+        ensure_auth_cache_listener(db);
 
         // Only one request per user performs the miss query. Other concurrent
         // requests wait for that result, then take the now-populated cache hit.
@@ -776,17 +796,15 @@ async fn load_auth_snapshot(
                 [user_id.into()],
             ))
             .await
-            .map(|row| {
-                row.map(|row| AuthSnapshot {
-                    token_version: row
-                        .try_get::<i32>("", "token_version")
-                        .ok()
-                        .map(i64::from)
-                        .or_else(|| row.try_get::<i64>("", "token_version").ok())
-                        .unwrap_or(0),
-                    is_admin: row.try_get::<bool>("", "is_admin").unwrap_or(false),
-                    is_owner: row.try_get::<bool>("", "is_owner").unwrap_or(false),
+            .and_then(|row| {
+                row.map(|row| {
+                    Ok(AuthSnapshot {
+                        token_version: row_session_epoch(&row)?,
+                        is_admin: row.try_get::<bool>("", "is_admin")?,
+                        is_owner: row.try_get::<bool>("", "is_owner")?,
+                    })
                 })
+                .transpose()
             });
 
         if let Ok(snapshot) = &result {
@@ -798,6 +816,52 @@ async fn load_auth_snapshot(
         drop(owner);
         return result;
     }
+}
+
+/// A user's session epoch (`users.token_version`, `integer NOT NULL`) from a
+/// row that selected it. A value that does not decode is an error, never 0:
+/// epoch 0 is what never-revoked tokens carry, so defaulting to it would make
+/// revoked sessions valid again.
+pub(crate) fn row_session_epoch(row: &sea_orm::QueryResult) -> Result<i64, sea_orm::DbErr> {
+    row.try_get::<i32>("", "token_version").map(i64::from)
+}
+
+/// Current roles of `user_id` from the auth snapshot (same TTL and NOTIFY
+/// invalidation as request authorization). `None` for non-durable ids and
+/// deleted accounts. Callers go through `services::principal::current_roles`.
+pub(crate) async fn current_roles_snapshot(
+    db: &DatabaseConnection,
+    user_id: i32,
+) -> Result<Option<crate::services::principal::CurrentRoles>, sea_orm::DbErr> {
+    Ok(load_auth_snapshot(db, user_id).await?.map(|snapshot| {
+        crate::services::principal::CurrentRoles {
+            is_admin: snapshot.is_admin,
+            is_owner: snapshot.is_owner,
+        }
+    }))
+}
+
+/// Current roles of a session that is still live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveSessionRoles {
+    pub is_admin: bool,
+}
+
+/// Roles of `user_id`'s session at epoch `tv`, or `None` once that session
+/// was revoked (logout, password change) or the user is gone. For flows that
+/// act later on behalf of the session that started them, such as OAuth
+/// callbacks, which carry no session credential of their own.
+pub(crate) async fn live_session_roles(
+    db: &DatabaseConnection,
+    user_id: i32,
+    tv: i64,
+) -> Result<Option<LiveSessionRoles>, sea_orm::DbErr> {
+    Ok(load_auth_snapshot(db, user_id)
+        .await?
+        .filter(|snapshot| session_epoch_matches(tv, Some(snapshot.token_version)))
+        .map(|snapshot| LiveSessionRoles {
+            is_admin: snapshot.is_admin,
+        }))
 }
 
 /// Pure session-epoch check used by auth middleware and unit tests.
@@ -887,9 +951,6 @@ fn unauthorized_session_response() -> Box<Response> {
 
 /// Cryptographic JWT verify **plus** server-side session epoch check.
 ///
-/// Prefer this over [`verify_jwt_token`] for any path that must fail closed
-/// after logout / password change / account deletion.
-///
 /// Token verification, one strict `sub` parse recorded on the returned claims
 /// ([`Claims::subject`]), then session epoch / current roles checked against
 /// that same id.
@@ -897,7 +958,7 @@ pub async fn authenticate_request(
     headers: &HeaderMap,
     db: &DatabaseConnection,
 ) -> Result<Claims, Box<Response>> {
-    let mut claims = verify_jwt_token(headers)?;
+    let mut claims = verify_request_signature(headers)?;
     let subject = parse_subject(&mut claims)?;
     if let Some(snapshot) = validated_auth_snapshot(subject, claims.tv, db).await? {
         // This keeps ordinary authorization decisions bounded by the cache TTL
@@ -936,7 +997,7 @@ pub async fn authenticate_optional_request(
     headers: &HeaderMap,
     db: &DatabaseConnection,
 ) -> Result<Option<Claims>, Box<Response>> {
-    if extract_auth_token(headers).is_none() {
+    if SessionCredential::from_headers(headers).is_none() {
         return Ok(None);
     }
     authenticate_request(headers, db).await.map(Some)
@@ -962,12 +1023,7 @@ pub async fn bump_token_version(
             [user_id.into(), expected_version.into()],
         ))
         .await?;
-    let new_version = row.and_then(|r| {
-        r.try_get::<i32>("", "token_version")
-            .ok()
-            .map(i64::from)
-            .or_else(|| r.try_get::<i64>("", "token_version").ok())
-    });
+    let new_version = row.map(|r| row_session_epoch(&r)).transpose()?;
     if new_version.is_none() {
         return Ok(None);
     }
@@ -992,18 +1048,6 @@ pub(crate) fn admin_forbidden() -> (StatusCode, Json<serde_json::Value>) {
 
 const GUEST_SESSION_COOKIE: &str = "myriad_guest_session";
 const GUEST_SESSION_MAX_AGE: i64 = 30 * 24 * 60 * 60;
-
-fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let (cookie_name, value) = cookie.trim().split_once('=')?;
-                (cookie_name == name).then_some(value)
-            })
-        })
-}
 
 fn guest_signature(secret: &[u8], session_id: &str) -> Option<Vec<u8>> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).ok()?;
@@ -1080,7 +1124,7 @@ pub async fn optional_auth_middleware(
     next: Next,
 ) -> Response {
     let headers = req.headers();
-    let credential_source = auth_credential_source(headers);
+    let credential_source = credential_source(headers);
     let mut set_guest_cookie = None;
     // Missing credentials become a signed guest. Presented credentials must
     // pass the full current-state path and never downgrade to guest.
@@ -1090,8 +1134,8 @@ pub async fn optional_auth_middleware(
             claims
         }
         Ok(None) => {
-            let secret = match env::var("JWT_SECRET") {
-                Ok(secret) if !secret.is_empty() => secret,
+            let secret = match session_secret() {
+                Some(secret) => secret,
                 _ => {
                     return (
                         StatusCode::SERVICE_UNAVAILABLE,
@@ -1102,7 +1146,7 @@ pub async fn optional_auth_middleware(
                         .into_response();
                 }
             };
-            let session_id = cookie_value(headers, GUEST_SESSION_COOKIE)
+            let session_id = request_cookie(headers, GUEST_SESSION_COOKIE)
                 .and_then(|token| verify_guest_session(secret.as_bytes(), token))
                 .unwrap_or_else(|| {
                     let session_id = Uuid::new_v4().simple().to_string();
@@ -1144,16 +1188,29 @@ pub async fn optional_auth_middleware(
     response
 }
 
-/// Verify JWT token from Authorization header or Cookie
-/// Verify JWT for handlers that need claims outside the middleware pipeline.
-pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
-    let token = extract_auth_token(headers).ok_or_else(|| {
+/// Verify the selected session credential of a request, signature and expiry
+/// only.
+///
+/// No revocation check and no typed subject: the first half of
+/// [`authenticate_request`], visible to the CSRF layer's tests only so they
+/// can prove both layers pick the same credential. Handlers use the
+/// authenticated claims instead.
+pub(super) fn verify_request_signature(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
+    let credential = SessionCredential::from_headers(headers).ok_or_else(|| {
         tracing::debug!("Missing or invalid Authorization header/cookie");
         Box::new(missing_credential().into_response())
     })?;
+    verify_signed(credential.token)
+}
 
-    // Get JWT secret
-    let jwt_secret = env::var("JWT_SECRET").map_err(|_| {
+/// Verify a session JWT's signature and expiry; the one place a session token
+/// is decoded.
+///
+/// Signature-only: the returned claims carry no [`AuthSubject`] and say
+/// nothing about revocation. [`authenticate_request`] adds the subject parse
+/// and the session-epoch check on top of this.
+pub(crate) fn verify_signed(token: &str) -> Result<Claims, Box<Response>> {
+    let jwt_secret = session_secret().ok_or_else(|| {
         tracing::error!("JWT_SECRET not configured");
         Box::new(
             (
@@ -1167,7 +1224,6 @@ pub fn verify_jwt_token(headers: &HeaderMap) -> Result<Claims, Box<Response>> {
         )
     })?;
 
-    // Decode and verify token
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
@@ -1203,44 +1259,100 @@ pub(crate) fn missing_credential() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Browser session cookie holding the session JWT.
+pub const AUTH_TOKEN_COOKIE: &str = "auth_token";
+
+/// Value a clearing `Set-Cookie` writes; never a live credential.
+const COOKIE_TOMBSTONE: &str = "deleted";
+
+/// Where a request's session credential came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthCredentialSource {
+pub enum CredentialSource {
+    /// `Authorization: Bearer <jwt>`.
     Authorization,
+    /// The `auth_token` cookie.
     Cookie,
 }
 
-fn auth_cookie_token(headers: &HeaderMap) -> Option<&str> {
-    cookie_value(headers, "auth_token")
+/// The session credential a request presents, selected by the one priority
+/// rule every session consumer shares (authentication, CSRF, `/api/auth/me`).
+///
+/// **Priority: `Authorization: Bearer` first, then the `auth_token` cookie.**
+/// A header that starts with `Bearer ` selects the header even when its token
+/// is empty or invalid; it never falls back to the cookie, so one request is
+/// one identity. Other `Authorization` schemes are not session credentials.
+///
+/// Why Bearer wins: browsers attach cookies to cross-site requests, but a
+/// cross-site page cannot set `Authorization` (the CORS allowlist rejects the
+/// preflight). A request carrying a Bearer token was composed by a client that
+/// holds that token, and acting as that token never borrows the ambient
+/// cookie. CSRF therefore guards exactly the requests whose selected
+/// credential is the cookie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCredential<'a> {
+    pub source: CredentialSource,
+    pub token: &'a str,
 }
 
-fn auth_credential_source(headers: &HeaderMap) -> Option<AuthCredentialSource> {
-    if headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some()
-    {
-        Some(AuthCredentialSource::Authorization)
-    } else {
-        auth_cookie_token(headers).map(|_| AuthCredentialSource::Cookie)
-    }
-}
-
-fn extract_auth_token(headers: &HeaderMap) -> Option<&str> {
-    match auth_credential_source(headers)? {
-        AuthCredentialSource::Authorization => headers
+impl<'a> SessionCredential<'a> {
+    pub fn from_headers(headers: &'a HeaderMap) -> Option<Self> {
+        if let Some(token) = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer ")),
-        AuthCredentialSource::Cookie => auth_cookie_token(headers),
+            .and_then(|value| value.strip_prefix("Bearer "))
+        {
+            return Some(Self {
+                source: CredentialSource::Authorization,
+                token,
+            });
+        }
+        request_cookie(headers, AUTH_TOKEN_COOKIE).map(|token| Self {
+            source: CredentialSource::Cookie,
+            token,
+        })
     }
+}
+
+/// Value of cookie `name` across every `Cookie` header of a request (HTTP/2
+/// may split them). See [`cookie_from_header`] for the parsing rules.
+pub fn request_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookies| first_cookie_pair(cookies, name))
+        .and_then(live_cookie_value)
+}
+
+/// Value of cookie `name` in one raw `Cookie` header; the one cookie parser.
+///
+/// The first pair with that name decides (browsers send the most specific
+/// path first). Name and value are trimmed. An empty value or the clearing
+/// tombstone (`deleted`) is no cookie at all.
+pub fn cookie_from_header<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
+    first_cookie_pair(cookie_header, name).and_then(live_cookie_value)
+}
+
+fn first_cookie_pair<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
+    cookies.split(';').find_map(|cookie| {
+        let (cookie_name, value) = cookie.split_once('=')?;
+        (cookie_name.trim() == name).then_some(value.trim())
+    })
+}
+
+fn live_cookie_value(value: &str) -> Option<&str> {
+    (!value.is_empty() && value != COOKIE_TOMBSTONE).then_some(value)
+}
+
+fn credential_source(headers: &HeaderMap) -> Option<CredentialSource> {
+    SessionCredential::from_headers(headers).map(|credential| credential.source)
 }
 
 async fn clear_invalid_cookie_response(
     mut response: Response,
-    credential_source: Option<AuthCredentialSource>,
+    credential_source: Option<CredentialSource>,
 ) -> Response {
-    if credential_source != Some(AuthCredentialSource::Cookie)
+    if credential_source != Some(CredentialSource::Cookie)
         || response.status() != StatusCode::UNAUTHORIZED
     {
         return response;
@@ -1272,7 +1384,7 @@ mod tests {
         auth_cache_put_if_generation, authenticate_optional_request, claim_auth_load_slot,
         encode_session_token, guest_id, invalidate_auth_cache_local, mint_session_claims,
         optional_current_auth_middleware, revalidate_bound_claims, session_epoch_matches,
-        sign_guest_session, verify_guest_session, verify_jwt_token,
+        sign_guest_session, verify_guest_session, verify_request_signature,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
     use sea_orm::DatabaseConnection;
@@ -1307,6 +1419,228 @@ mod tests {
         }
     }
 
+    /// Signing and verifying read the secret only through `session_secret`,
+    /// which refuses a blank one. Startup config (`config.rs`, `main.rs`)
+    /// only validates it.
+    #[test]
+    fn session_epoch_is_decoded_in_one_place() {
+        fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, offenders);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+                    let reads = production.matches("(\"\", \"token_version\")").count();
+                    let allowed = usize::from(path.ends_with("middleware/auth.rs"));
+                    if reads > allowed {
+                        offenders.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        let mut offenders = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut offenders,
+        );
+        assert!(
+            offenders.is_empty(),
+            "decode token_version via row_session_epoch(): {offenders:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_epoch_decodes_strictly() {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let db = sea_orm::Database::connect(url).await.unwrap();
+        let row = |sql: &'static str| {
+            let db = db.clone();
+            async move {
+                db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let epoch = row("SELECT 7::integer AS token_version").await;
+        assert_eq!(
+            crate::middleware::auth::row_session_epoch(&epoch).unwrap(),
+            7
+        );
+        let garbage = row("SELECT 'x'::text AS token_version").await;
+        assert!(crate::middleware::auth::row_session_epoch(&garbage).is_err());
+    }
+
+    #[test]
+    fn session_secret_is_read_in_one_place() {
+        fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, offenders);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs")
+                    || path.ends_with("src/config.rs")
+                    || path.ends_with("src/main.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+                let reads = production.matches("env::var(\"JWT_SECRET\")").count();
+                let allowed = usize::from(path.ends_with("middleware/auth.rs"));
+                if reads > allowed {
+                    offenders.push(path.display().to_string());
+                }
+            }
+        }
+        let mut offenders = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut offenders,
+        );
+        assert!(
+            offenders.is_empty(),
+            "read JWT_SECRET via session_secret(): {offenders:?}"
+        );
+    }
+
+    /// Production source of every backend file except `middleware/auth.rs`,
+    /// with test modules cut off and all whitespace removed so a pattern
+    /// cannot hide behind a line break.
+    fn non_auth_production_sources() -> Vec<(String, String)> {
+        fn visit(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs")
+                    || path.ends_with("middleware/auth.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let compact: String = strip_test_modules(&source)
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                out.push((path.display().to_string(), compact));
+            }
+        }
+        let mut out = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut out,
+        );
+        out
+    }
+
+    /// Drop inline `#[cfg(test)] mod name { .. }` blocks (brace-matched, so a
+    /// test module at the top of a file does not hide the code after it).
+    fn strip_test_modules(source: &str) -> String {
+        const MARKER: &str = "#[cfg(test)]\nmod ";
+        let mut out = String::new();
+        let mut rest = source;
+        while let Some(start) = rest.find(MARKER) {
+            let body = &rest[start + MARKER.len()..];
+            let Some(open) = body.find(['{', ';']) else {
+                break;
+            };
+            if body.as_bytes()[open] == b';' {
+                // `mod name;`: the module lives in its own file.
+                let end = start + MARKER.len() + open + 1;
+                out.push_str(&rest[..end]);
+                rest = &rest[end..];
+                continue;
+            }
+            out.push_str(&rest[..start]);
+            let mut depth = 0usize;
+            let mut end = body.len();
+            for (index, ch) in body.char_indices().skip_while(|(index, _)| *index < open) {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = index + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &body[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Handlers read the subject the auth boundary parsed (`durable_user_id`,
+    /// `subject_id`, `DurableUserId`), never `claims.sub` again: one parse,
+    /// one semantics. Production handlers must use the authenticated identity.
+    #[test]
+    fn claims_sub_is_parsed_only_at_the_auth_boundary() {
+        let offenders: Vec<String> = non_auth_production_sources()
+            .into_iter()
+            .filter(|(path, _)| !path.ends_with("services/tapp_ownership.rs"))
+            .filter(|(_, source)| {
+                source.contains(".sub.parse")
+                    || ["positive_user_id(&", "parse_authenticated_subject_id(&"]
+                        .iter()
+                        .any(|call| {
+                            source.split(call).skip(1).any(|arg| {
+                                arg.split(')')
+                                    .next()
+                                    .is_some_and(|arg| arg.ends_with(".sub"))
+                            })
+                        })
+            })
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "read Claims::durable_user_id / subject_id instead of re-parsing claims.sub: \
+             {offenders:?}"
+        );
+    }
+
+    #[test]
+    fn strip_test_modules_keeps_code_around_inline_test_modules() {
+        let source = "#[cfg(test)]\nmod a;\nfn keep() {}\n#[cfg(test)]\nmod tests {\n    fn t() { if x { y } }\n}\nfn after() {}\n";
+        let stripped = strip_test_modules(source);
+        assert!(stripped.contains("mod a;"));
+        assert!(stripped.contains("fn keep()"));
+        assert!(stripped.contains("fn after()"));
+        assert!(!stripped.contains("fn t()"));
+    }
+
+    /// Session JWTs are decoded only by `verify_signed`; every other consumer
+    /// takes the claims the auth boundary produced.
+    #[test]
+    fn session_tokens_are_decoded_in_one_place() {
+        let offenders: Vec<String> = non_auth_production_sources()
+            .into_iter()
+            .filter(|(_, source)| {
+                source.contains("decode::<Claims>")
+                    || source.contains("decode::<crate::middleware::auth::Claims>")
+                    || source.contains("decode::<auth::Claims>")
+            })
+            .map(|(path, _)| path)
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "decode session JWTs via middleware::auth: {offenders:?}"
+        );
+    }
+
     #[test]
     fn ensure_jwt_secret_treats_empty_like_missing() {
         // Empty string must be handled like missing — never mint with a zero-length key.
@@ -1337,7 +1671,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).expect("header"),
         );
-        let verified = verify_jwt_token(&headers).expect("verify_jwt_token");
+        let verified = verify_request_signature(&headers).expect("verify_request_signature");
         assert_eq!(verified.sub, "42");
         assert_eq!(verified.username, "roundtrip-user");
         assert!(verified.is_admin);
@@ -1352,7 +1686,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_str(&format!("auth_token={token}")).expect("cookie"),
         );
-        let from_cookie = verify_jwt_token(&cookie_headers).expect("cookie verify");
+        let from_cookie = verify_request_signature(&cookie_headers).expect("cookie verify");
         assert_eq!(from_cookie.sub, verified.sub);
         assert_eq!(from_cookie.tv, verified.tv);
     }
@@ -1372,7 +1706,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {bad}")).expect("header"),
         );
-        assert!(verify_jwt_token(&headers).is_err());
+        assert!(verify_request_signature(&headers).is_err());
     }
 
     #[test]
@@ -1455,13 +1789,16 @@ mod tests {
         let db = Database::connect(options).await.unwrap();
         let claims = super::mint_session_claims(2, "subject", true, false, 0);
         for sql in [
-            "CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, is_owner BOOLEAN)",
-            "INSERT INTO users VALUES (1, true, true), (2, NULL, false)",
+            "CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, is_owner BOOLEAN, \
+             token_version INTEGER)",
+            "INSERT INTO users VALUES (1, true, true, 0), (2, NULL, false, 0)",
         ] {
             db.execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
                 .await
                 .unwrap();
         }
+        // Fixture writes bypass admin_users, so drop the snapshot like it does.
+        super::invalidate_auth_cache_local(2);
         // A NULL result cannot be decoded as bool; it is not a false role.
         assert_eq!(
             super::ensure_current_admin_on(&claims, &db)
@@ -1470,10 +1807,9 @@ mod tests {
                 .0,
             StatusCode::INTERNAL_SERVER_ERROR
         );
-        assert!(matches!(
-            subject_is_admin(&db, 2).await,
-            Err(TappAccessError::Database)
-        ));
+        // The shared snapshot reads the NOT NULL column through COALESCE.
+        assert!(!subject_is_admin(&db, 2).await.unwrap());
+        super::invalidate_auth_cache_local(2);
         db.execute_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             "ALTER TABLE users RENAME COLUMN is_admin TO unavailable",
@@ -1504,6 +1840,7 @@ mod tests {
             ))
             .await
             .unwrap();
+            super::invalidate_auth_cache_local(2);
             assert_eq!(
                 super::ensure_current_admin_on(&claims, &db).await.is_ok(),
                 allowed
@@ -1516,6 +1853,7 @@ mod tests {
         ))
         .await
         .unwrap();
+        super::invalidate_auth_cache_local(2);
         assert_eq!(
             super::ensure_current_admin_on(&claims, &db)
                 .await
@@ -2149,5 +2487,71 @@ mod tests {
             .expect("current_admin_status");
         assert!(status.contains("ensure_current_admin_on("));
         assert!(status.contains("Err((StatusCode::FORBIDDEN, _)) => Ok(false)"));
+    }
+
+    fn headers_with(pairs: &[(header::HeaderName, &'static str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(name.clone(), HeaderValue::from_static(value));
+        }
+        headers
+    }
+
+    /// One request, one identity: a `Bearer` header wins over the cookie and
+    /// never falls back to it, even when its token is empty.
+    #[test]
+    fn session_credential_prefers_bearer_and_never_falls_back() {
+        use super::{CredentialSource, SessionCredential};
+
+        let both = headers_with(&[
+            (header::AUTHORIZATION, "Bearer bearer.jwt.sig"),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&both).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Authorization);
+        assert_eq!(selected.token, "bearer.jwt.sig");
+
+        let empty_bearer = headers_with(&[
+            (header::AUTHORIZATION, "Bearer "),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&empty_bearer).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Authorization);
+        assert_eq!(selected.token, "");
+
+        // Other schemes are not session credentials.
+        let basic = headers_with(&[
+            (header::AUTHORIZATION, "Basic dXNlcjpwYXNz"),
+            (header::COOKIE, "auth_token=cookie.jwt.sig"),
+        ]);
+        let selected = SessionCredential::from_headers(&basic).expect("credential");
+        assert_eq!(selected.source, CredentialSource::Cookie);
+        assert_eq!(selected.token, "cookie.jwt.sig");
+
+        assert!(SessionCredential::from_headers(&HeaderMap::new()).is_none());
+        let tombstone = headers_with(&[(header::COOKIE, "auth_token=deleted")]);
+        assert!(SessionCredential::from_headers(&tombstone).is_none());
+    }
+
+    #[test]
+    fn cookie_parser_first_pair_decides_and_tombstone_is_absent() {
+        use super::{cookie_from_header, request_cookie};
+
+        assert_eq!(
+            cookie_from_header("a=1; auth_token = x.y.z ; b=2", "auth_token"),
+            Some("x.y.z")
+        );
+        // The first pair decides, even when it is a tombstone or empty.
+        assert_eq!(cookie_from_header("t=deleted; t=live", "t"), None);
+        assert_eq!(cookie_from_header("t=; t=live", "t"), None);
+        assert_eq!(cookie_from_header("t=first; t=second", "t"), Some("first"));
+        // Names match exactly, not by prefix.
+        assert_eq!(cookie_from_header("auth_token_x=1", "auth_token"), None);
+        assert_eq!(cookie_from_header("", "t"), None);
+
+        // HTTP/2 may split cookies over several headers.
+        let split = headers_with(&[(header::COOKIE, "a=1"), (header::COOKIE, "t=live")]);
+        assert_eq!(request_cookie(&split, "t"), Some("live"));
+        assert_eq!(request_cookie(&split, "a"), Some("1"));
     }
 }

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use tokio::fs;
 
 fn require_speech_user_id(claims: &Claims) -> Option<i32> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub)
+    claims.durable_user_id()
 }
 
 use crate::services::tencent_speech_service::{
@@ -1860,7 +1860,6 @@ pub async fn clear_article_voice_cache(
     _admin: crate::extract::AdminClaims,
     Query(query): Query<ClearArticleVoiceCacheQuery>,
 ) -> impl IntoResponse {
-
     let voice_dir =
         get_article_tts_dir(query.source_id, query.article_id).join(query.voice_id.to_string());
 

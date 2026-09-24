@@ -705,11 +705,7 @@ async fn prepare_images(
     // did not acknowledge it: the on-disk compose differs from what the updater last
     // wrote (or there is no baseline yet).
     if compose_changed && !risk.allow_compose_override {
-        return Err(UpdaterError::Precondition(
-            "the deployment compose will be overwritten; re-submit with \
-             allow_compose_override=true (or allow_risk=true)"
-                .into(),
-        ));
+        return Err(UpdaterError::ComposeOverrideRequired);
     }
     check_compose_networks(worker, images[0], &candidate).await?;
     Ok((

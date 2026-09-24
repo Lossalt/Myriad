@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { before, describe, it } from 'node:test'
+import errorCodeSpec from '../../../shared/error_codes.json' with { type: 'json' }
 import { loadShellNamespace } from '../i18n/loadLocale.ts'
 import { currentCopy, formatCurrent } from '../i18n/localeCopy.ts'
 import { ApiError } from '../services/api.ts'
@@ -7,7 +9,19 @@ import {
   httpStatusMessage,
   isUselessErrorText,
   userFacingError,
+  withoutForeignProse,
 } from './userFacingError.ts'
+
+/** What `AppError` sends for a public label: the label plus its inferred code. */
+function backendError(label: string, status = 500): ApiError {
+  const labels: Record<string, string> = errorCodeSpec.labels
+  return new ApiError(label, status, labels[label] ?? 'unmapped')
+}
+
+/** A client-side error that carries its own code. */
+function codedError(message: string, code: string): Error {
+  return Object.assign(new Error(message), { code })
+}
 
 function fill(
   template: string,
@@ -325,21 +339,20 @@ describe('userFacingError', () => {
     )
     assert.match(text, /502/)
     assert.notEqual(text, 'Could not load site face (HTTP 502)')
-    assert.match(text, /site face|形象|顔/)
   })
 
-  it('maps leftover speech Chinese and dumps', () => {
+  it('maps speech labels sent without a code', () => {
     assert.equal(
-      /无效的音频数据|Invalid Audio/i.test(
-        userFacingError('无效的音频数据: Invalid byte 64'),
-      ),
-      false,
+      userFacingError('Please upload audio data'),
+      currentCopy().errors.asrInvalidAudio,
     )
     assert.equal(
-      /语音服务未配置/.test(
-        userFacingError('语音服务未配置，请在设置中配置腾讯云密钥'),
-      ),
-      false,
+      userFacingError('Speech text is too long'),
+      currentCopy().errors.speechTextTooLong,
+    )
+    assert.equal(
+      userFacingError('Dialogue list is empty'),
+      currentCopy().errors.speechBatchEmpty,
     )
     const notConfigured = userFacingError(
       new ApiError('Speech service is not configured', 503),
@@ -379,16 +392,14 @@ describe('userFacingError', () => {
 
   it('maps webfinger dumps away from URL and reqwest text', () => {
     const text = userFacingError(
-      'WebFinger lookup failed for https://x.example/.well-known/webfinger: error sending request for url',
+      new ApiError(
+        'WebFinger lookup failed for https://x.example/.well-known/webfinger: error sending request for url',
+        502,
+        'webfinger_failed',
+      ),
     )
     assert.equal(/error sending request/i.test(text), false)
     assert.equal(/well-known/i.test(text), false)
-  })
-
-  it('maps leftover Steam Chinese without leaking internals', () => {
-    const text = userFacingError('获取 Steam 在线状态失败: error sending request for url (http://x)')
-    assert.equal(/error sending request/i.test(text), false)
-    assert.equal(/获取 Steam/.test(text), false)
   })
 
   it('maps leftover agent processing Chinese without dumping internals', () => {
@@ -421,13 +432,6 @@ describe('userFacingError', () => {
       new ApiError('Invalid Notion URL: Unknown resource type: workspace', 400, 'notion_url_invalid'),
     )
     assert.equal(/Unknown resource/i.test(text), false)
-  })
-
-  it('maps leftover channel status dumps', () => {
-    const text = userFacingError(
-      'Channel is pending, cannot send messages (must be accepted first)',
-    )
-    assert.equal(/pending/.test(text), false)
   })
 
   it('maps leftover feed name Chinese', () => {
@@ -567,11 +571,6 @@ describe('userFacingError', () => {
     assert.equal(/zip local header/.test(text), false)
   })
 
-  it('maps leftover database-not-connected Chinese', () => {
-    const text = userFacingError('数据库未连接')
-    assert.equal(text.includes('数据库未连接'), false)
-  })
-
   it('maps game config dumps away from protocol internals', () => {
     const text = userFacingError(
       new ApiError(
@@ -708,17 +707,10 @@ describe('userFacingError', () => {
     assert.notEqual(invalid, parse)
   })
 
-  it('maps leftover scheduler store steps without SQL and keeps the step', () => {
-    const register = userFacingError(
-      'Failed to register scheduled task: relation "tapp_scheduled_tasks" does not exist',
-    )
+  it('maps scheduler store steps and keeps the step', () => {
+    const register = userFacingError('Failed to create scheduled task')
     const list = userFacingError('Failed to list scheduled tasks')
-    const leftover = userFacingError(
-      'Query failed: relation "tapp_scheduled_tasks" does not exist',
-    )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(register), false)
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(leftover), false)
-    assert.match(register, /register/)
+    assert.match(register, /create scheduled task/)
     assert.match(list, /list/)
     assert.notEqual(register, list)
     assert.notEqual(register, currentCopy().errors.operationFailed)
@@ -766,15 +758,12 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover persona load save delete and addressee without unifying them', () => {
-    const load = userFacingError(
-      'Failed to load persona: relation "merope_persona" does not exist',
-    )
+    const load = userFacingError(backendError('Failed to load persona'))
     const save = userFacingError('Failed to save persona')
     const remove = userFacingError('Failed to delete persona')
     const addresseeLoad = userFacingError('Failed to load addressee')
     const quiet = userFacingError('Failed to save quiet-hours')
     const face = userFacingError('Failed to load avatar')
-    assert.equal(/merope_persona|does not exist/.test(load), false)
     assert.match(load, /人设|persona|ペルソナ/)
     assert.match(save, /保存|save/)
     assert.match(remove, /删除|delete|削除/)
@@ -797,9 +786,11 @@ describe('userFacingError', () => {
     assert.equal(/GAME_MESSAGE_INVALID/.test(leftover), false)
   })
 
-  it('maps leftover e2e serialize dumps', () => {
-    const text = userFacingError('payload serialize: EOF while parsing a value at line 1')
-    assert.equal(/EOF|line 1/.test(text), false)
+  it('maps e2e encrypt failures without the serde dump', () => {
+    const text = userFacingError(
+      new ApiError('payload serialize failed', 400, 'e2e_required'),
+    )
+    assert.equal(/payload serialize/.test(text), false)
     assert.notEqual(text, currentCopy().errors.operationFailed)
     assert.match(text, /端到端|end-to-end|エンドツーエンド/)
   })
@@ -818,9 +809,8 @@ describe('userFacingError', () => {
     assert.equal(/AI_TASK_REGISTRY/.test(registry), false)
   })
 
-  it('maps leftover report persist dumps', () => {
-    const text = userFacingError('insert report for steam: relation "platform_reports" does not exist')
-    assert.equal(/platform_reports|does not exist/.test(text), false)
+  it('maps agent report save failures', () => {
+    assert.equal(userFacingError('Failed to save report'), currentCopy().errors.reportSaveFailed)
   })
 
   it('maps leftover platform fetches without reqwest and keeps name and status', () => {
@@ -858,45 +848,42 @@ describe('userFacingError', () => {
     assert.notEqual(reminder, currentCopy().errors.operationFailed)
   })
 
-  it('maps leftover OAuth and Discord token dumps', () => {
-    const github = userFacingError('GitHub token exchange failed: RequestTokenError { .. }')
-    assert.equal(/RequestTokenError/.test(github), false)
-    const oidc = userFacingError('OIDC token endpoint returned 400: {"error":"invalid_grant"}')
-    assert.equal(/invalid_grant/.test(oidc), false)
-    const discord = userFacingError('token endpoint 401 — {"error":"invalid_client"}')
-    assert.equal(/invalid_client/.test(discord), false)
+  it('maps OAuth start failures sent with or without their code', () => {
+    const coded = userFacingError(
+      new ApiError('Failed to start Discord authorization', 500, 'oauth_authorize_failed'),
+    )
+    assert.equal(coded, currentCopy().errors.oauthStartFailed)
+    assert.equal(
+      userFacingError('Failed to start authorization'),
+      currentCopy().errors.oauthStartFailed,
+    )
   })
 
-  it('maps leftover game-presence upstream dumps', () => {
-    const text = userFacingError('Upstream HTTP 502: <html>bad gateway</html>')
-    assert.equal(/bad gateway|<html>/.test(text), false)
+  it('maps game-presence upstream failures', () => {
+    const text = userFacingError('Upstream request failed')
+    assert.match(text, /502/)
+    assert.equal(/Upstream request failed/.test(text), false)
   })
 
   it('maps leftover feed URL and Gemini JSON dumps', () => {
-    const url = userFacingError('Unsafe or invalid URL: Invalid URL')
-    assert.equal(/Invalid URL/.test(url) && url === 'Unsafe or invalid URL: Invalid URL', false)
+    const url = userFacingError('Invalid feed URL: Unsafe or invalid URL')
+    assert.equal(url === 'Invalid feed URL: Unsafe or invalid URL', false)
     const gemini = userFacingError('invalid Gemini JSON: expected value at line 1')
     assert.equal(/expected value|line 1/.test(gemini), false)
-    const key = userFacingError('Invalid remote E2E public key: invalid length')
-    assert.equal(/invalid length/.test(key), false)
   })
 
   it('maps leftover Tripo and scheduler-connection dumps', () => {
     const tripo = userFacingError(
-      'Tripo API returned HTTP 502: {"error":"upstream exploded"}',
+      new ApiError('Tripo API request failed', 502, 'TRIPO_ERROR'),
     )
-    assert.equal(/upstream exploded/.test(tripo), false)
-    const glb = userFacingError('Invalid GLB JSON: expected value at line 1')
-    assert.equal(/expected value|line 1/.test(glb), false)
-    const sched = userFacingError(
-      'Failed to register scheduler connection: db closed',
-    )
-    assert.match(sched, /db closed/)
+    assert.equal(tripo, currentCopy().errors.model3dFailed)
+    const model = userFacingError('Invalid 3D model')
+    assert.equal(model, currentCopy().errors.model3dFailed)
+    const sched = userFacingError('Failed to register scheduler connection')
+    assert.match(sched, /register scheduler connection/)
     assert.equal(/Failed to register scheduler/.test(sched), false)
-    const enqueue = userFacingError(
-      'Failed to enqueue scheduler task: relation "tapp_registry" does not exist',
-    )
-    assert.equal(/tapp_registry/.test(enqueue), false)
+    const enqueue = userFacingError('Failed to enqueue task')
+    assert.match(enqueue, /enqueue task/)
     const schema = userFacingError(
       'Model response failed output schema validation: missing field `title`',
     )
@@ -904,33 +891,30 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover avatar, scheduler, and updater dumps', () => {
-    const avatar = userFacingError('Failed to load avatar row: db closed')
-    assert.match(avatar, /db closed/)
-    assert.equal(/Failed to load avatar/.test(avatar), false)
+    const avatar = userFacingError('Failed to load avatar sources')
+    assert.equal(avatar, currentCopy().errors.avatarSourceLoadFailed)
     const scheduled = userFacingError(
       'Scheduled Tapp is no longer accessible: Record not found',
     )
     assert.match(scheduled, /Record not found/)
     assert.equal(/Scheduled Tapp is no longer/.test(scheduled), false)
-    const retries = userFacingError(
-      'All 3 retries failed. Last error: relation "tapp_scheduled_tasks" does not exist',
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
     )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(retries), false)
-    const updater = userFacingError('decode json failed: expected value at line 1')
-    assert.equal(/expected value|line 1/.test(updater), false)
+    assert.equal(updater, currentCopy().errors.noticeUpdaterFailed)
   })
 
   it('maps leftover preset fetch save delete away from updater and SQL', () => {
-    const favorites = userFacingError(
-      'Failed to fetch favorites: relation "agent_task_presets" does not exist',
-    )
+    const favorites = userFacingError(backendError('Failed to fetch favorites'))
     const history = userFacingError('Failed to fetch history')
     const save = userFacingError('Failed to create preset')
     const remove = userFacingError('Failed to delete preset')
     const leftoverCode = userFacingError(
       new ApiError('Failed to update preset', 500, 'preset_update_failed'),
     )
-    const updater = userFacingError('decode json failed: expected value at line 1')
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
+    )
     assert.equal(/agent_task_presets|does not exist/.test(favorites), false)
     assert.match(favorites, /预设|preset|プリセット/)
     assert.match(favorites, /fetch favorites/)
@@ -946,19 +930,18 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover account lookup password and local login without unifying them', () => {
-    const lookup = userFacingError(
-      'Failed to look up account: relation "users" does not exist',
-    )
+    const lookup = userFacingError(backendError('Failed to look up account'))
     const current = userFacingError('Failed to load current user')
     const username = userFacingError('Failed to check username')
     const change = userFacingError('Failed to change password')
     const set = userFacingError('Failed to set password')
     const local = userFacingError('Failed to update local login')
-    const updater = userFacingError('decode json failed: expected value at line 1')
+    const updater = userFacingError(
+      new ApiError('updater upstream 502 Bad Gateway', 502, 'updater_upstream_failed'),
+    )
     const register = userFacingError(
       new ApiError('Failed to create account', 500, 'account_create_failed'),
     )
-    assert.equal(/users"|does not exist/.test(lookup), false)
     assert.match(lookup, /账号|account|アカウント/)
     assert.match(lookup, /look up account/)
     assert.match(current, /load current user/)
@@ -975,15 +958,12 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover admin user store failures without unifying them', () => {
-    const list = userFacingError(
-      'Failed to list users: relation "users" does not exist',
-    )
+    const list = userFacingError(backendError('Failed to list users'))
     const identities = userFacingError('Failed to list user identities')
     const update = userFacingError('Failed to update user')
     const unlink = userFacingError('Failed to unlink identity')
     const remove = userFacingError('Failed to delete user')
     const commit = userFacingError('Failed to commit user delete')
-    assert.equal(/users"|does not exist/.test(list), false)
     assert.match(list, /用户|user|ユーザー/)
     assert.match(list, /list users/)
     assert.match(identities, /list user identities/)
@@ -1013,11 +993,11 @@ describe('userFacingError', () => {
     assert.equal(/https:\/\/a\.example|attributedTo/.test(ownership), false)
     const header = userFacingError('Invalid `Date` header encoding')
     assert.equal(/`Date`|header encoding/.test(header), false)
-    const confirm = userFacingError(
-      'Failed to persist confirmation: db connection closed',
+    const confirm = userFacingError('Failed to persist confirmation')
+    assert.equal(
+      confirm,
+      currentCopy().errors.byCode.agent_confirmation_store_failed,
     )
-    assert.match(confirm, /db connection closed/)
-    assert.equal(/Failed to persist confirmation/.test(confirm), false)
   })
 
   it('maps leftover federation list and key rotate without unifying them', () => {
@@ -1059,15 +1039,12 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover agent session list save archive without unifying them', () => {
-    const list = userFacingError(
-      'Failed to list sessions: relation "agent_sessions" does not exist',
-    )
+    const list = userFacingError(backendError('Failed to list sessions'))
     const create = userFacingError('Failed to create session')
     const archive = userFacingError('Failed to archive session')
     const userMsg = userFacingError('Failed to save user message')
     const assistantMsg = userFacingError('Failed to save assistant message')
     const signIn = userFacingError(new ApiError('session failed', 500, 'session_failed'))
-    assert.equal(/agent_sessions|does not exist/.test(list), false)
     assert.match(list, /对话|conversation|会話/)
     assert.match(list, /list sessions/)
     assert.match(create, /保存|save/)
@@ -1097,22 +1074,21 @@ describe('userFacingError', () => {
     assert.notEqual(save, currentCopy().errors.operationFailed)
   })
 
-  it('maps leftover skill file and cooldown errors without OS dumps', () => {
-    const write = userFacingError(
-      'Failed to write skill file: Permission denied (os error 13)',
+  it('maps skill file delete failures and keeps the cause', () => {
+    const trash = userFacingError(
+      new ApiError(
+        'Failed to create skill trash directory: storage is not writable',
+        400,
+        'skill_file_failed',
+      ),
     )
-    const missing = userFacingError('Skill file missing: /data/skills/_auto_demo.md')
-    const wait = userFacingError(
-      'Skill improvement on cooldown (3600 seconds remaining)',
+    const missing = userFacingError(
+      new ApiError('Skill file missing: /data/skills/_auto_demo.md', 400, 'skill_file_failed'),
     )
-    const invalid = userFacingError('Invalid skill file format')
-    assert.equal(/os error 13|Permission denied \(os/.test(write), false)
-    assert.match(write, /技能|skill|スキル/i)
+    assert.match(trash, /技能|skill|スキル/i)
+    assert.match(trash, /storage is not writable/)
     assert.match(missing, /_auto_demo\.md/)
-    assert.match(wait, /3600/)
-    assert.notEqual(write, wait)
-    assert.notEqual(invalid, write)
-    assert.notEqual(write, currentCopy().errors.operationFailed)
+    assert.notEqual(trash, currentCopy().errors.operationFailed)
   })
 
   it('maps leftover skill planning and UI analysis without dumps', () => {
@@ -1147,7 +1123,7 @@ describe('userFacingError', () => {
 
   it('maps leftover MCP runtime errors without dumps and keeps method or tool phrase', () => {
     const timeout = userFacingError(
-      "MCP server timeout (30s) for method 'tools/call'",
+      "MCP request timed out for method 'tools/call'",
     )
     const write = userFacingError(
       'Failed to write to MCP server: Permission denied (os error 13)',
@@ -1171,21 +1147,14 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover MCP and Tapp persist dumps', () => {
-    const mcp = userFacingError(
-      'serialize mcp config: key must be a string at line 1 column 2',
-    )
-    assert.equal(/key must be a string|column 2/.test(mcp), false)
     const save = userFacingError(
       new ApiError('Failed to save MCP config', 503, 'mcp_config_save_failed'),
     )
     assert.equal(/mcp_config_save_failed/.test(save), false)
-    const wait = userFacingError(
-      'persist Tapp interaction wait state failed: relation "tapp_registry" does not exist',
-    )
-    assert.equal(/tapp_registry|does not exist/.test(wait), false)
-    const gen = userFacingError('Tapp generation failed: Gemini API error 400: boom')
-    assert.equal(/Tapp generation failed/.test(gen), false)
-    assert.match(gen, /Gemini API error 400/)
+    const wait = userFacingError('Failed to persist Tapp interaction wait state')
+    assert.equal(wait, currentCopy().errors.tappSaveFailed)
+    const gen = userFacingError('Tapp generation failed')
+    assert.equal(gen, currentCopy().errors.byCode.tapp_generate_failed)
     const fetch = userFacingError(
       'Fetch failed: error sending request for url (https://x)',
     )
@@ -1203,9 +1172,6 @@ describe('userFacingError', () => {
     assert.notEqual(wait, currentCopy().errors.operationFailed)
     assert.notEqual(gen, currentCopy().errors.operationFailed)
     assert.notEqual(fetch, currentCopy().errors.operationFailed)
-    const disk = userFacingError('Failed to persist confirmation: disk is full')
-    assert.match(disk, /disk is full/)
-    assert.equal(/Failed to persist confirmation/.test(disk), false)
   })
 
   it('maps profile text leftovers without SQL and keeps load vs save', () => {
@@ -1224,7 +1190,7 @@ describe('userFacingError', () => {
     assert.notEqual(save, currentCopy().errors.operationFailed)
     const identity = userFacingError('Identity not found for this user')
     assert.equal(/Identity not found/.test(identity), false)
-    assert.match(identity, /找不到|not found|見つかり/)
+    assert.equal(identity, currentCopy().errors.byCode.identity_not_found)
   })
 
   it('maps avatar source leftovers away from the site-face copy', () => {
@@ -1235,12 +1201,11 @@ describe('userFacingError', () => {
     assert.notEqual(save, currentCopy().errors.operationFailed)
   })
 
-  it('maps platform auto-refresh leftovers and keeps the platform', () => {
-    const steam = userFacingError(
-      'Failed to update steam core task: relation "tapp_scheduled_tasks" does not exist',
+  it('maps platform auto-refresh reconcile failures', () => {
+    const restore = userFacingError(
+      'Settings restored, but platform auto-refresh could not be updated',
     )
-    assert.equal(/tapp_scheduled_tasks|does not exist/.test(steam), false)
-    assert.match(steam, /Steam|自动刷新/)
+    assert.match(restore, /自动刷新|auto-refresh/i)
     const generic = userFacingError(
       new ApiError(
         'Failed to update platform auto-refresh',
@@ -1249,7 +1214,7 @@ describe('userFacingError', () => {
       ),
     )
     assert.notEqual(generic, currentCopy().errors.operationFailed)
-    assert.notEqual(steam, currentCopy().errors.operationFailed)
+    assert.notEqual(restore, currentCopy().errors.operationFailed)
   })
 
   it('maps storage preflight leftovers and keeps the path', () => {
@@ -1288,12 +1253,16 @@ describe('userFacingError', () => {
 
   it('maps Tapp storage leftovers and keeps the cause', () => {
     const perm = userFacingError(
-      'Failed to create Tapp staging directory: storage is not writable. Check data volume ownership/permissions.',
+      new ApiError(
+        'Failed to create Tapp staging directory: storage is not writable. Check data volume ownership/permissions.',
+        503,
+        'tapp_save_failed',
+      ),
     )
     assert.equal(/os error|Permission denied \(os/.test(perm), false)
     assert.match(perm, /writable|权限|書き込め/)
     const full = userFacingError(
-      'Failed to activate staged Tapp: not enough disk space.',
+      new ApiError('Failed to activate staged Tapp: not enough disk space.', 503, 'tapp_save_failed'),
     )
     assert.match(full, /disk|空间|空き/)
     assert.notEqual(perm, currentCopy().errors.operationFailed)
@@ -1306,8 +1275,10 @@ describe('userFacingError', () => {
     const save = userFacingError(
       new ApiError('Failed to save storage', 500, 'storage_save_failed'),
     )
-    const reportLoad = userFacingError('Failed to load report')
-    const reportSave = userFacingError('Failed to create report')
+    const reportLoad = userFacingError('Failed to list agent reports')
+    const reportSave = userFacingError(
+      new ApiError('Failed to create report', 500, 'REPORT_CREATE_FAILED'),
+    )
     const access = userFacingError(
       new ApiError(
         'Failed to verify Tapp access',
@@ -1316,7 +1287,9 @@ describe('userFacingError', () => {
       ),
     )
     const missing = userFacingError('Failed to find Tapp')
-    const shortcuts = userFacingError('Failed to load shortcuts')
+    const shortcuts = userFacingError(
+      new ApiError('Failed to load shortcuts', 500, 'SHORTCUT_DATABASE_ERROR'),
+    )
     const credentials = userFacingError(
       new ApiError(
         'Failed to load Tapp credentials',
@@ -1337,7 +1310,7 @@ describe('userFacingError', () => {
     assert.match(missing, /找到|found|見つかり/)
     assert.notEqual(access, missing)
     assert.notEqual(access, currentCopy().errors.database)
-    assert.match(shortcuts, /shortcuts|资源|リソース/)
+    assert.equal(shortcuts, currentCopy().errors.database)
     assert.match(credentials, /credentials|资源|リソース/)
     assert.notEqual(shortcuts, credentials)
     assert.notEqual(reportLoad, currentCopy().errors.database)
@@ -1499,135 +1472,56 @@ describe('userFacingError', () => {
     assert.notEqual(missing, currentCopy().merope.visualFailed)
   })
 
-  it('maps leftover merope load see-through tripo and playback without unifying them', () => {
-    const face = userFacingError(new Error('Could not load site face (HTTP 502)'))
-    const seeThrough = userFacingError('Could not load See-through status')
-    const tokenSave = userFacingError('Could not save Hugging Face token')
-    const decompose = userFacingError('See-through decomposition failed')
-    const generate = userFacingError('Could not generate site portrait')
+  it('maps leftover merope portrait upload and tripo without unifying them', () => {
     const upload = userFacingError('Could not upload portrait')
-    const preview = userFacingError('Could not preview persona rig')
-    const commit = userFacingError('Could not commit persona rig')
-    const tripo = userFacingError('Could not load Tripo status')
-    const webgl = userFacingError('WebGL2 is required for Anime2.5DRig playback')
-    const missing = userFacingError('Anime2.5DRig playback missing mouth-open')
-    const shader = userFacingError('Anime2.5DRig shader compile failed')
-    assert.match(face, /502/)
-    assert.notEqual(face, 'Could not load site face (HTTP 502)')
-    assert.notEqual(face, seeThrough)
-    assert.notEqual(tokenSave, seeThrough)
-    assert.notEqual(decompose, generate)
-    assert.notEqual(upload, generate)
-    assert.notEqual(preview, commit)
+    const tripo = userFacingError('Tripo request failed')
+    assert.equal(upload, currentCopy().merope.portraitUploadFailed)
     assert.match(tripo, /三维|3D|モデル/i)
-    assert.equal(/Could not load Tripo/i.test(tripo), false)
-    assert.match(webgl, /WebGL2/)
-    assert.match(missing, /mouth-open/)
-    assert.equal(/shader compile/.test(shader), false)
-    assert.notEqual(webgl, shader)
-    assert.notEqual(generate, currentCopy().merope.loadFailed)
+    assert.equal(/Tripo request failed/i.test(tripo), false)
+    assert.notEqual(upload, tripo)
   })
 
   it('maps leftover store download config phantasi leftovers without unifying them', () => {
-    const download = userFacingError(
-      'Failed to download manifest (apps/foo/manifest.json): HTTP 502',
-    )
-    const asset = userFacingError('Failed to fetch asset assets/icon.png: HTTP 404')
-    const mismatch = userFacingError(
-      'Store package version mismatch: catalog lists 1.0.0 but manifest.json is 1.0.1. Refresh the store and retry.',
+    const asset = userFacingError(
+      new ApiError(
+        'Failed to fetch asset assets/icon.png: remote returned 404 Not Found',
+        502,
+        'store_asset_fetch_failed',
+      ),
     )
     const config = userFacingError('Failed to save configuration')
-    const reload = userFacingError('Failed to reload configuration')
-    assert.match(download, /manifest/)
-    assert.match(download, /502/)
-    assert.equal(/Failed to download/i.test(download), false)
     assert.match(asset, /assets\/icon\.png/)
-    assert.match(asset, /404/)
-    assert.match(mismatch, /1\.0\.0/)
-    assert.match(mismatch, /1\.0\.1/)
-    assert.equal(/manifest\.json is/i.test(mismatch), false)
-    assert.notEqual(config, reload)
+    assert.equal(/Failed to fetch asset/i.test(asset), false)
     assert.equal(/Failed to save configuration/i.test(config), false)
-    assert.equal(/Failed to reload/i.test(reload), false)
   })
 
-  it('maps leftover library analytics visitor and invite leftovers without calling them empty', () => {
+  it('maps leftover library and visitor leftovers without calling them empty', () => {
     const library = userFacingError('No library data available')
-    const analytics = userFacingError('Unable to load analytics')
     const visitor = userFacingError('visitor card unavailable')
-    const invite = userFacingError('Missing room_id')
-    const stream = userFacingError('Runtime event stream failed (502)')
     assert.notEqual(library, currentCopy().library.emptyLibrary)
     assert.match(library, /资料库|library|ライブラリ/i)
-    assert.match(analytics, /统计|analytics|統計/i)
-    assert.equal(/Unable to load analytics/i.test(analytics), false)
     assert.equal(/visitor card unavailable/i.test(visitor), false)
-    assert.equal(/room_id/.test(invite), false)
-    assert.match(stream, /502|流|stream|ストリーム/i)
-    assert.equal(/Runtime event stream failed/i.test(stream), false)
   })
 
-  it('maps leftover dashboard scheme and tapp runtime leftovers without unifying them', () => {
-    const layout = userFacingError('Failed to save dashboard layout: HTTP 502')
-    const title = userFacingError('Failed to save dashboard title: HTTP 403')
-    const platforms = userFacingError(
-      'Failed to save custom platforms: HTTP 500',
+  it('maps tapp runtime refusals by their code', () => {
+    const missing = userFacingError(
+      codedError('Tapp weather-clock is not installed', 'tapp_not_installed'),
     )
-    const scheme = userFacingError('Failed to save window schemes: HTTP 502')
-    const missing = userFacingError('Tapp weather-clock is not installed')
-    const already = userFacingError('Tapp weather-clock is already installed')
+    const already = userFacingError(
+      codedError('Tapp weather-clock is already installed', 'tapp_already_installed'),
+    )
     const reauth = userFacingError(
-      'Tapp weather-clock requires permission reauthorization',
+      codedError(
+        'Tapp weather-clock requires permission reauthorization',
+        'tapp_reauthorization_required',
+      ),
     )
-    const list = userFacingError('Failed to load site Tapp catalog')
-    assert.match(layout, /布局|layout|レイアウト/i)
-    assert.match(layout, /502/)
-    assert.equal(/Failed to save dashboard layout/i.test(layout), false)
-    assert.notEqual(layout, title)
-    assert.notEqual(title, platforms)
-    assert.match(scheme, /方案|scheme|スキーム/i)
-    assert.match(scheme, /502/)
-    assert.equal(/Failed to save window schemes/i.test(scheme), false)
     assert.equal(/is not installed/i.test(missing), false)
     assert.equal(/Tapp weather-clock is already installed/i.test(already), false)
     assert.notEqual(already, missing)
     assert.notEqual(already, currentCopy().tapp.installFailed)
     assert.equal(/reauthorization/i.test(reauth), false)
     assert.notEqual(missing, reauth)
-    assert.match(list, /列表|list|一覧/i)
-    assert.equal(/site Tapp catalog/i.test(list), false)
-    assert.notEqual(layout, currentCopy().errors.operationFailed)
-    assert.notEqual(scheme, currentCopy().errors.operationFailed)
-  })
-
-  it('maps leftover control panel title style and widget theme leftovers without unifying them', () => {
-    const panel = userFacingError('Failed to save control panel: HTTP 502')
-    const style = userFacingError('Failed to save title style: HTTP 403')
-    const theme = userFacingError('Failed to save widget theme: HTTP 500')
-    assert.match(panel, /控制面板|control panel|コントロールパネル/i)
-    assert.match(panel, /502/)
-    assert.equal(/Failed to save control panel/i.test(panel), false)
-    assert.notEqual(panel, style)
-    assert.notEqual(style, theme)
-    assert.match(style, /标题|title style|タイトル/i)
-    assert.match(theme, /外观|appearance|見た目|卡片|card/i)
-    assert.notEqual(panel, currentCopy().errors.operationFailed)
-  })
-
-  it('maps leftover AI usage platform preview and password leftovers without unifying them', () => {
-    const usage = userFacingError('Unable to load AI usage (502)')
-    const preview = userFacingError('Unable to load platform data preview (403)')
-    const status = userFacingError('Unable to load platform data status (500)')
-    const cloud = userFacingError('Failed to save to cloud: HTTP 502')
-    assert.match(usage, /AI|使用/i)
-    assert.match(usage, /502/)
-    assert.equal(/Unable to load AI usage/i.test(usage), false)
-    assert.notEqual(preview, status)
-    assert.equal(/Unable to load platform data preview/i.test(preview), false)
-    assert.match(cloud, /方案|scheme|スキーム/i)
-    assert.match(cloud, /502/)
-    assert.equal(/Failed to save to cloud/i.test(cloud), false)
-    assert.notEqual(usage, currentCopy().errors.operationFailed)
   })
 
   it('maps setup window closed and secret mismatch without English labels', () => {
@@ -1719,10 +1613,6 @@ describe('userFacingError', () => {
     assert.equal(
       userFacingError('即将添加新的 RSS/Atom 订阅源'),
       currentCopy().errors.confirmAddFeed,
-    )
-    assert.equal(
-      userFacingError('正在加载网易云歌单...'),
-      fill(currentCopy().errors.loadingNamedPlaylist, { name: 'NetEase' }),
     )
     assert.equal(userFacingError('组件列表'), currentCopy().errors.tappWidgets)
     assert.equal(
@@ -1888,14 +1778,97 @@ describe('userFacingError', () => {
   })
 
   it('maps leftover public config and comment reply leftovers without unifying them', () => {
-    const pub = userFacingError('Failed to fetch public config: HTTP 502')
+    const pub = userFacingError(new TypeError('Public config does not contain platforms'))
     const replies = userFacingError('Failed to load comment replies')
     const comments = userFacingError('Failed to load comments')
     assert.match(pub, /配置|config|設定/i)
-    assert.match(pub, /502/)
-    assert.equal(/Failed to fetch public config/i.test(pub), false)
+    assert.equal(/Public config does not contain/i.test(pub), false)
     assert.notEqual(replies, comments)
     assert.equal(/Failed to load comment replies/i.test(replies), false)
     assert.notEqual(pub, currentCopy().errors.operationFailed)
+  })
+})
+
+const RULE_BUDGET = 61
+
+describe('userFacingError is driven by codes', () => {
+  before(async () => {
+    await Promise.all([
+      loadShellNamespace('tapp', 'en-US'),
+      loadShellNamespace('phantasi', 'en-US'),
+      loadShellNamespace('merope', 'en-US'),
+    ])
+  })
+
+  // Answers to remote federation servers, never shown in this UI.
+  const SERVER_TO_SERVER = new Set([
+    'gone',
+    'activity_not_ready',
+    'inbox_failed',
+    // Inbox: HTTP signature / Digest / Date gate before parsing.
+    'http_signature_missing',
+    'http_signature_invalid',
+    // Inbox: body buffering and activity shape.
+    'inbox_body_unreadable',
+    'inbox_busy',
+    'activity_invalid',
+    'inbox_preflight_incomplete',
+    'inbox_ownership_mismatch',
+    'inbox_trust_rejected',
+    // Inbound FileChunk from a peer.
+    'transfer_chunk_invalid',
+    'transfer_chunk_gone',
+    // Public actor document and /.well-known/webfinger served to peers.
+    'actor_unavailable',
+    'webfinger_resource_invalid',
+    'webfinger_user_not_found',
+  ])
+
+  it('gives every code the backend infers its own copy, whatever the text says', () => {
+    const codes = new Set(Object.values(errorCodeSpec.labels))
+    const unrelated = 'text that matches no rule'
+    const bare = [...codes].filter((code) => {
+      if (SERVER_TO_SERVER.has(code)) return false
+      const copy = userFacingError(new ApiError(unrelated, 400, code), 'FALLBACK')
+      return copy === 'FALLBACK' || copy === unrelated
+    })
+    assert.deepEqual(bare, [])
+  })
+
+  it('keeps only short English detail next to translated table copy', () => {
+    const prose = 'Local login needs OAuth: user has no linked OAuth identity'
+    assert.equal(withoutForeignProse('请先绑定第三方登录', prose), 'Local login needs OAuth')
+    assert.equal(withoutForeignProse('Link a sign-in method first', prose), prose)
+    const token = 'Unsupported attachment MIME: image/avif'
+    assert.equal(withoutForeignProse('不支持的附件类型', token), token)
+    assert.equal(withoutForeignProse('不支持的附件类型', 'No detail here'), 'No detail here')
+  })
+
+  it('maps codes through the byCode table', () => {
+    const copy = currentCopy().errors.byCode.source_refresh_in_progress
+    assert.equal(
+      userFacingError(new ApiError('Source is already being refreshed', 409, 'source_refresh_in_progress')),
+      copy,
+    )
+  })
+
+  it('only lists codes the backend or the leftover table can produce', () => {
+    const known = new Set<string>([
+      ...Object.values(errorCodeSpec.labels),
+      ...Object.values(errorCodeSpec.leftovers),
+      ...Object.values(errorCodeSpec.prefixes),
+      ...Object.values(errorCodeSpec.aliases),
+      ...errorCodeSpec.explicit,
+    ])
+    const unknown = Object.keys(currentCopy().errors.byCode).filter(code => !known.has(code))
+    assert.deepEqual(unknown, [])
+  })
+
+  it('does not grow the text-matching compatibility layer', () => {
+    // Regexes over backend prose are a shrinking fallback: new faults get a
+    // code and a copy entry instead. Lower this bound as rules are removed.
+    const source = readFileSync(new URL('./userFacingError.ts', import.meta.url), 'utf8')
+    const rules = source.match(/\/[gimsuy]*\.test\(/g)?.length ?? 0
+    assert.ok(rules <= RULE_BUDGET, `${rules} text rules; budget ${RULE_BUDGET}`)
   })
 })

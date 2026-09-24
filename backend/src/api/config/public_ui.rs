@@ -2,11 +2,9 @@
 use axum::{Json, http::StatusCode};
 use serde_json::{Value, json};
 
-use super::flags::{
-    db_or_env_clearable, nonempty_db, nonempty_env, resolve_platform_enabled,
-    sort_platforms_by_order,
-};
+use super::flags::{db_or_env_clearable, sort_platforms_by_order};
 use super::types::{ConfigField, PlatformConfig};
+use crate::services::platform_id::PlatformId;
 
 pub async fn get_site_metadata(
     crate::extract::Db(db): crate::extract::Db,
@@ -104,103 +102,24 @@ pub async fn get_site_metadata(
     (StatusCode::OK, Json(metadata))
 }
 
-/// Public platforms (no secrets) plus meropeEnabled / persona name / sticker avatar.
-/// 公开端点 - 不需要认证
-pub async fn get_public_config(
-    crate::extract::Db(db): crate::extract::Db,
-) -> (StatusCode, Json<Value>) {
-    // 优先从数据库读取配置
-    let config_service = crate::services::config_service::ConfigService::new(db.clone());
-    let db_config = config_service.load_config().await.ok();
-
+/// 公开平台卡片（不含密钥）。`enabled` 与报告、Agent、刷新同源：[`PlatformId::enabled`]
+/// ——抓取拿不到数据的平台不在公开页上占位。env 只对 Xbox / PSN 生效，
+/// 因为只有这两个平台的抓取会回落到 env（见 `platform_id` 的解析函数）。
+pub(crate) fn public_platform_cards(
+    db_config: Option<&crate::config::DynamicConfig>,
+) -> Vec<PlatformConfig> {
+    let stored = db_config.cloned().unwrap_or_default();
+    let enabled = |id: PlatformId| id.enabled(&stored);
     // Prefer DB when present (including intentional empty clear); else process env.
     let get_value = |db_val: Option<String>, env_key: &str| -> String {
         db_or_env_clearable(db_val, env_key, "")
     };
 
-    // Match build_config: empty compose `${VAR:-}` still sets the key — gate on nonempty.
-    let github_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.github_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.github_username.as_ref()))
-            || nonempty_env("GITHUB_USERNAME"),
-    );
-    let bilibili_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.bilibili_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.bilibili_uid.as_ref()))
-            || nonempty_env("BILIBILI_UID"),
-    );
-    let steam_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.steam_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.steam_id.as_ref()))
-            || nonempty_env("STEAM_ID"),
-    );
-    let youtube_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.youtube_enabled),
-        (nonempty_db(
-            db_config
-                .as_ref()
-                .and_then(|c| c.youtube_channel_id.as_ref()),
-        ) || nonempty_env("YOUTUBE_CHANNEL_ID"))
-            && (nonempty_db(db_config.as_ref().and_then(|c| c.youtube_api_key.as_ref()))
-                || nonempty_env("YOUTUBE_API_KEY")),
-    );
-    let netease_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.netease_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.netease_user_id.as_ref()))
-            || nonempty_env("NETEASE_USER_ID"),
-    );
-    let bangumi_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.bangumi_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.bangumi_username.as_ref()))
-            || nonempty_db(
-                db_config
-                    .as_ref()
-                    .and_then(|c| c.bangumi_access_token.as_ref()),
-            )
-            || nonempty_env("BANGUMI_USERNAME")
-            || nonempty_env("BANGUMI_ACCESS_TOKEN"),
-    );
-    let x_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.x_enabled),
-        (nonempty_db(db_config.as_ref().and_then(|c| c.x_username.as_ref()))
-            || nonempty_env("X_USERNAME"))
-            && (nonempty_db(db_config.as_ref().and_then(|c| c.x_bearer_token.as_ref()))
-                || nonempty_env("X_BEARER_TOKEN")),
-    );
-    let discord_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.discord_enabled),
-        nonempty_db(
-            db_config
-                .as_ref()
-                .and_then(|c| c.discord_access_token.as_ref()),
-        ) || nonempty_env("DISCORD_ACCESS_TOKEN"),
-    );
-    let mal_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.mal_enabled),
-        nonempty_db(db_config.as_ref().and_then(|c| c.mal_username.as_ref()))
-            || nonempty_env("MAL_USERNAME"),
-    );
-    let xbox_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.xbox_enabled),
-        (nonempty_db(db_config.as_ref().and_then(|c| c.xbox_gamertag.as_ref()))
-            || nonempty_env("XBOX_GAMERTAG"))
-            && (nonempty_db(db_config.as_ref().and_then(|c| c.openxbl_api_key.as_ref()))
-                || nonempty_env("OPENXBL_API_KEY")
-                || nonempty_env("XBL_API_KEY")),
-    );
-    let psn_enabled = resolve_platform_enabled(
-        db_config.as_ref().and_then(|c| c.psn_enabled),
-        (nonempty_db(db_config.as_ref().and_then(|c| c.psn_online_id.as_ref()))
-            || nonempty_env("PSN_ONLINE_ID"))
-            && (nonempty_db(db_config.as_ref().and_then(|c| c.psn_npsso.as_ref()))
-                || nonempty_env("PSN_NPSSO")),
-    );
-
     // 只返回公开可见的平台配置字段（不包含 API 密钥等敏感信息）
-    let public_platforms = vec![
+    vec![
         PlatformConfig {
             name: "GitHub".to_string(),
-            enabled: github_enabled,
+            enabled: enabled(PlatformId::Github),
             has_token: false, // 不暴露是否有 token
             icon: "".to_string(),
             description: "".to_string(),
@@ -218,7 +137,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Bilibili".to_string(),
-            enabled: bilibili_enabled,
+            enabled: enabled(PlatformId::Bilibili),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -236,7 +155,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Steam".to_string(),
-            enabled: steam_enabled,
+            enabled: enabled(PlatformId::Steam),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -254,7 +173,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "YouTube".to_string(),
-            enabled: youtube_enabled,
+            enabled: enabled(PlatformId::Youtube),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -274,7 +193,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Netease Music".to_string(),
-            enabled: netease_enabled,
+            enabled: enabled(PlatformId::Netease),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -292,7 +211,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Bangumi".to_string(),
-            enabled: bangumi_enabled,
+            enabled: enabled(PlatformId::Bangumi),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -310,7 +229,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "X".to_string(),
-            enabled: x_enabled,
+            enabled: enabled(PlatformId::X),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -328,7 +247,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Discord".to_string(),
-            enabled: discord_enabled,
+            enabled: enabled(PlatformId::Discord),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -347,7 +266,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "MyAnimeList".to_string(),
-            enabled: mal_enabled,
+            enabled: enabled(PlatformId::Mal),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -365,7 +284,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "Xbox".to_string(),
-            enabled: xbox_enabled,
+            enabled: enabled(PlatformId::Xbox),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -383,7 +302,7 @@ pub async fn get_public_config(
         },
         PlatformConfig {
             name: "PlayStation".to_string(),
-            enabled: psn_enabled,
+            enabled: enabled(PlatformId::Psn),
             has_token: false,
             icon: "".to_string(),
             description: "".to_string(),
@@ -399,7 +318,19 @@ pub async fn get_public_config(
                 required: false,
             }],
         },
-    ];
+    ]
+}
+
+/// Public platforms (no secrets) plus meropeEnabled / persona name / sticker avatar.
+/// 公开端点 - 不需要认证
+pub async fn get_public_config(
+    crate::extract::Db(db): crate::extract::Db,
+) -> (StatusCode, Json<Value>) {
+    // 优先从数据库读取配置
+    let config_service = crate::services::config_service::ConfigService::new(db.clone());
+    let db_config = config_service.load_config().await.ok();
+
+    let public_platforms = public_platform_cards(db_config.as_ref());
 
     let mut public_platforms = public_platforms;
     sort_platforms_by_order(

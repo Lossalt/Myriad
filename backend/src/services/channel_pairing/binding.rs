@@ -1,5 +1,6 @@
 //! A binding is a revocable authorization premise, not merely a chat address.
 use super::*;
+use crate::services::channel_platform::ChannelPlatform;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ChannelBinding {
@@ -9,29 +10,12 @@ pub(crate) struct ChannelBinding {
     pub scope: String,
 }
 
-pub(crate) fn provider_for_platform(platform: &str) -> &str {
-    if platform == "discord" {
-        "discord_dm"
-    } else {
-        platform
-    }
-}
-
 pub(crate) async fn credential_scope(provider: &str) -> String {
-    let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await;
-    let (app_id, secret) = match provider {
-        "qq" => (
-            config.qq_bot_app_id.as_str(),
-            config.qq_bot_app_secret.as_deref(),
-        ),
-        "telegram" => ("", config.telegram_bot_token.as_deref()),
-        "discord_dm" => ("", config.discord_bot_token.as_deref()),
-        "feishu" => (
-            config.feishu_bot_app_id.as_str(),
-            config.feishu_bot_app_secret.as_deref(),
-        ),
-        _ => return String::new(),
+    let Some(platform) = ChannelPlatform::from_provider(provider) else {
+        return String::new();
     };
+    let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await;
+    let (app_id, secret) = platform.credentials(&config);
     // Only the digest is persisted; credentials never enter a run or its context.
     hex::encode(Sha256::digest(
         serde_json::to_vec(&(provider, app_id.trim(), secret.unwrap_or("").trim())).unwrap(),
@@ -39,30 +23,19 @@ pub(crate) async fn credential_scope(provider: &str) -> String {
 }
 
 pub(crate) async fn channel_enabled(provider: &str) -> bool {
-    let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await;
-    match provider {
-        "qq" => config.qq_bot_enabled,
-        "telegram" => config.telegram_bot_enabled,
-        "discord_dm" => config.discord_bot_enabled,
-        "feishu" => config.feishu_bot_enabled,
-        _ => false,
-    }
+    let Some(platform) = ChannelPlatform::from_provider(provider) else {
+        return false;
+    };
+    platform.enabled(&*crate::GLOBAL_DYNAMIC_CONFIG.read().await)
 }
 
 /// Authorization reads committed bot configuration independently of the
 /// connection supervisor's periodic refresh. Only its digest leaves this helper.
 async fn committed_scope(db: &DatabaseConnection, provider: &str) -> Result<Option<String>, DbErr> {
-    let (enabled_key, app_key, secret_key) = match provider {
-        "qq" => ("qq_bot_enabled", "qq_bot_app_id", "qq_bot_app_secret"),
-        "telegram" => ("telegram_bot_enabled", "", "telegram_bot_token"),
-        "discord_dm" => ("discord_bot_enabled", "", "discord_bot_token"),
-        "feishu" => (
-            "feishu_bot_enabled",
-            "feishu_bot_app_id",
-            "feishu_bot_app_secret",
-        ),
-        _ => return Ok(None),
+    let Some(platform) = ChannelPlatform::from_provider(provider) else {
+        return Ok(None);
     };
+    let (enabled_key, app_key, secret_key) = platform.config_keys();
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
@@ -97,11 +70,11 @@ async fn committed_scope(db: &DatabaseConnection, provider: &str) -> Result<Opti
 impl ChannelBinding {
     pub async fn resolve(
         db: &DatabaseConnection,
-        platform: &str,
+        platform: ChannelPlatform,
         user_id: i32,
         sender_id: &str,
     ) -> Result<Option<Self>, DbErr> {
-        let provider = provider_for_platform(platform);
+        let provider = platform.provider();
         let scope = credential_scope(provider).await;
         if !channel_enabled(provider).await
             || committed_scope(db, provider).await?.as_deref() != Some(scope.as_str())
@@ -210,18 +183,18 @@ mod postgres_tests {
                 .unwrap(),
             PairingBindResult::Bound { user_id: 101 }
         );
-        let first = ChannelBinding::resolve(&db, "feishu", 101, "open-user")
+        let first = ChannelBinding::resolve(&db, ChannelPlatform::Feishu, 101, "open-user")
             .await
             .unwrap()
             .unwrap();
-        let alias = ChannelBinding::resolve(&db, "feishu", 101, "user-alias")
+        let alias = ChannelBinding::resolve(&db, ChannelPlatform::Feishu, 101, "user-alias")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(first.identity_id, alias.identity_id);
         assert!(first.is_current(&db).await);
         assert!(
-            ChannelBinding::resolve(&db, "feishu", 102, "open-user")
+            ChannelBinding::resolve(&db, ChannelPlatform::Feishu, 102, "open-user")
                 .await
                 .unwrap()
                 .is_none()
@@ -283,7 +256,7 @@ mod postgres_tests {
                 .unwrap(),
             PairingBindResult::Bound { user_id: 102 }
         );
-        let second = ChannelBinding::resolve(&db, "feishu", 102, "open-user")
+        let second = ChannelBinding::resolve(&db, ChannelPlatform::Feishu, 102, "open-user")
             .await
             .unwrap()
             .unwrap();
@@ -296,7 +269,7 @@ mod postgres_tests {
         .unwrap();
         assert!(!second.is_current(&db).await);
         assert!(
-            ChannelBinding::resolve(&db, "feishu", 102, "open-user")
+            ChannelBinding::resolve(&db, ChannelPlatform::Feishu, 102, "open-user")
                 .await
                 .unwrap()
                 .is_none()

@@ -1154,18 +1154,16 @@ async fn mark_delivery_dead(user_id: i32, activity_type: &str, target_domain: &s
     );
 }
 
-/// 启动投递队列后台循环
-pub fn spawn_delivery_worker(db: DatabaseConnection) {
-    tokio::spawn(run_delivery_worker(db));
+/// 启动投递队列后台循环：挂在进程 job runner 上，停机时随其他后台任务一起停。
+///
+/// 只改生命周期，不改投递本身：每轮仍是一次 `process_delivery_queue_detailed`，
+/// 认领、租约心跳与回收协议都在那里面。停机时在途的一轮可以在排空期限内跑完；
+/// 超时被中止的那一轮，行留在原租约下，到期后按既有协议被回收。
+pub fn spawn_delivery_worker(db: DatabaseConnection) -> crate::services::jobs::JobHandle {
+    start_delivery_job(crate::services::jobs::jobs(), db, delivery_interval())
 }
 
-pub async fn run_delivery_worker(db: DatabaseConnection) {
-    // 先 `wait_until_resolved(30s)`；超时 fail-open。关闸则停，队列行不动。
-    if !crate::services::federation_gate::wait_until_resolved(Duration::from_secs(30)).await {
-        tracing::warn!("📪 Federation delivery worker not started: egress-location gate is closed");
-        return;
-    }
-
+fn delivery_interval() -> Duration {
     // Lab dual-instance: `MYRIAD_FEDERATION_DELIVERY_INTERVAL_SECS` (e.g. 2)
     // speeds full-chain harness without changing production default (15s).
     let secs = std::env::var("MYRIAD_FEDERATION_DELIVERY_INTERVAL_SECS")
@@ -1173,48 +1171,83 @@ pub async fn run_delivery_worker(db: DatabaseConnection) {
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|n| *n >= 1 && *n <= 3600)
         .unwrap_or(15);
-    let mut interval = tokio::time::interval(Duration::from_secs(secs));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
+    Duration::from_secs(secs)
+}
 
-        // The wait above returns the pending value on timeout, so a probe
-        // that lands late — and closes the gate — would otherwise find the
-        // worker already running and never be consulted again. Re-read it
-        // every tick. The gate only ever settles once, so a closed reading
-        // is final and the worker can stop for good.
-        if !crate::services::federation_gate::federation_enabled() {
-            tracing::warn!(
-                "📪 Federation delivery worker stopping: egress-location gate is closed"
-            );
-            return;
-        }
-        match process_delivery_queue_detailed(&db, 20).await {
-            Ok(s)
-                if s.delivered > 0
-                    || s.dead > 0
-                    || s.retried > 0
-                    || s.reclaimed > 0
-                    || s.lease_lost > 0
-                    || s.relationships_revoked > 0 =>
+/// 投递循环相对出口闸门的状态。闸门只会落定一次，关闸是终态。
+const GATE_UNCHECKED: u8 = 0;
+const GATE_OPEN: u8 = 1;
+const GATE_CLOSED: u8 = 2;
+
+pub(crate) fn start_delivery_job(
+    runner: &crate::services::jobs::JobRunner,
+    db: DatabaseConnection,
+    interval: Duration,
+) -> crate::services::jobs::JobHandle {
+    let gate = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(GATE_UNCHECKED));
+    let every = crate::services::jobs::Every::new(interval);
+    runner.periodic("federation delivery", every, move || {
+        let (db, gate) = (db.clone(), gate.clone());
+        async move { delivery_tick(&db, &gate).await }
+    })
+}
+
+async fn delivery_tick(db: &DatabaseConnection, gate: &std::sync::atomic::AtomicU8) {
+    use std::sync::atomic::Ordering;
+    match gate.load(Ordering::Acquire) {
+        GATE_CLOSED => return,
+        GATE_UNCHECKED => {
+            // 先 `wait_until_resolved(30s)`；超时 fail-open。关闸则停，队列行不动。
+            if !crate::services::federation_gate::wait_until_resolved(Duration::from_secs(30)).await
             {
-                tracing::info!(
-                    "📤 Delivery worker: claimed={} reclaimed={} delivered={} dead={} retried={} lease_lost={} relationships_revoked={} deliveries_cancelled={}",
-                    s.claimed,
-                    s.reclaimed,
-                    s.delivered,
-                    s.dead,
-                    s.retried,
-                    s.lease_lost,
-                    s.relationships_revoked,
-                    s.deliveries_cancelled
+                tracing::warn!(
+                    "📪 Federation delivery worker not started: egress-location gate is closed"
                 );
+                gate.store(GATE_CLOSED, Ordering::Release);
+                return;
             }
-            Err(e) => {
-                tracing::error!("Delivery worker error: {}", e);
-            }
-            _ => {} // 无待投递项，静默
+            gate.store(GATE_OPEN, Ordering::Release);
         }
+        _ => {
+            // The wait above returns the pending value on timeout, so a probe
+            // that lands late — and closes the gate — would otherwise find the
+            // worker already running and never be consulted again. Re-read it
+            // every tick. The gate only ever settles once, so a closed reading
+            // is final and the worker can stop for good.
+            if !crate::services::federation_gate::federation_enabled() {
+                tracing::warn!(
+                    "📪 Federation delivery worker stopping: egress-location gate is closed"
+                );
+                gate.store(GATE_CLOSED, Ordering::Release);
+                return;
+            }
+        }
+    }
+    match process_delivery_queue_detailed(db, 20).await {
+        Ok(s)
+            if s.delivered > 0
+                || s.dead > 0
+                || s.retried > 0
+                || s.reclaimed > 0
+                || s.lease_lost > 0
+                || s.relationships_revoked > 0 =>
+        {
+            tracing::info!(
+                "📤 Delivery worker: claimed={} reclaimed={} delivered={} dead={} retried={} lease_lost={} relationships_revoked={} deliveries_cancelled={}",
+                s.claimed,
+                s.reclaimed,
+                s.delivered,
+                s.dead,
+                s.retried,
+                s.lease_lost,
+                s.relationships_revoked,
+                s.deliveries_cancelled
+            );
+        }
+        Err(e) => {
+            tracing::error!("Delivery worker error: {}", e);
+        }
+        _ => {} // 无待投递项，静默
     }
 }
 
@@ -1236,4 +1269,43 @@ pub(crate) fn retry_backoff_secs(attempts: i32) -> i64 {
     let spread = base / 4;
     let jitter = (rand::random::<u64>() % (2 * spread as u64 + 1)) as i64 - spread;
     (base + jitter).clamp(1, 86_400)
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    #[tokio::test]
+    async fn delivery_is_registered_on_the_runner_and_stops_with_it() {
+        let runner = crate::services::jobs::JobRunner::new();
+        let handle = start_delivery_job(
+            &runner,
+            DatabaseConnection::default(),
+            Duration::from_secs(3600),
+        );
+        assert!(!handle.is_cancelled());
+        // The first round may be waiting on the process-wide gate probe; the
+        // drain deadline bounds it like any in-flight round.
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runner.shutdown(Duration::from_millis(100)),
+        )
+        .await
+        .expect("delivery job must stop with the runner");
+        assert!(handle.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn closed_gate_is_final_and_claims_nothing() {
+        let gate = AtomicU8::new(GATE_CLOSED);
+        // A disconnected database would error if the round tried to claim.
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            delivery_tick(&DatabaseConnection::default(), &gate),
+        )
+        .await
+        .expect("closed gate must return at once");
+        assert_eq!(gate.load(Ordering::Acquire), GATE_CLOSED);
+    }
 }

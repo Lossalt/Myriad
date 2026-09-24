@@ -218,13 +218,12 @@ async fn require_merope_enabled() -> ApiResult<()> {
 
 async fn require_owner(claims: &Claims, db: &DatabaseConnection) -> ApiResult<i32> {
     let owner = site_owner_user_id(db).await.map_err(internal_error)?;
-    let user_id =
-        crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(AppError::public_json("Invalid user")),
-            )
-        })?;
+    let user_id = claims.durable_user_id().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AppError::public_json("Invalid user")),
+        )
+    })?;
     if user_id != owner {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1384,14 +1383,19 @@ pub async fn upload_portrait(
     // 一个事务。读路径的 manifest_matches_master 也拦得住，但那是每次请求重读
     // 一遍旧包再丢掉，而 `/active` 是公开路由，首页挂件每次加载都会走到。
     let transaction = db.begin().await.map_err(internal_error)?;
-    let public_url =
-        match crate::services::media::publish_local_url(&transaction, &stored.url, &[]).await {
-            Ok(url) => url,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(internal_error(error.to_string()));
-            }
-        };
+    let public_url = match crate::services::media::normalize_local_url(
+        &transaction,
+        &stored.url,
+        &crate::services::media::upgrade::configured_origins().await,
+    )
+    .await
+    {
+        Ok(url) => url,
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(internal_error(error.to_string()));
+        }
+    };
     let visual_profile = merope::get_persona_on(&transaction)
         .await
         .map_err(internal_error)?
@@ -1436,7 +1440,7 @@ pub async fn upload_portrait(
         saved_persona
             .as_ref()
             .and_then(|p| p.visual_profile.as_ref()),
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     .map_err(|error| internal_error(error.to_string()))?;
@@ -1690,6 +1694,7 @@ pub async fn generate_portrait(
         .with_producer_key(generation_token.clone()),
         generated,
         "portrait",
+        crate::services::media::MediaExposure::Private,
     )
     .await
     {
@@ -1715,7 +1720,12 @@ pub async fn generate_portrait(
             return Err(internal_error(error));
         }
     };
-    let public_url = match crate::services::media::publish_local_url(&transaction, &url, &[]).await
+    let public_url = match crate::services::media::normalize_local_url(
+        &transaction,
+        &url,
+        &crate::services::media::upgrade::configured_origins().await,
+    )
+    .await
     {
         Ok(url) => url,
         Err(error) => {
@@ -1778,7 +1788,7 @@ pub async fn generate_portrait(
         Some(&public_url),
         None,
         Some(&visual_profile),
-        &[],
+        &crate::services::media::upgrade::configured_origins().await,
     )
     .await
     {
@@ -1970,6 +1980,7 @@ pub async fn generate_sticker_avatar(
         .with_producer_key(generation_token.clone()),
         generated,
         "avatar",
+        crate::services::media::MediaExposure::Private,
     )
     .await
     {
@@ -1989,9 +2000,13 @@ pub async fn generate_sticker_avatar(
     });
     let commit = async {
         let transaction = db.begin().await.map_err(internal_error)?;
-        let public_url = crate::services::media::publish_local_url(&transaction, &url, &[])
-            .await
-            .map_err(|error| internal_error(error.to_string()))?;
+        let public_url = crate::services::media::normalize_local_url(
+            &transaction,
+            &url,
+            &crate::services::media::upgrade::configured_origins().await,
+        )
+        .await
+        .map_err(|error| internal_error(error.to_string()))?;
         let completed = merope::complete_avatar_generation(
             &transaction,
             &persona.name,
@@ -2018,7 +2033,7 @@ pub async fn generate_sticker_avatar(
             Some(&portrait_asset_id),
             Some(&public_url),
             Some(&stored_visual_profile),
-            &[],
+            &crate::services::media::upgrade::configured_origins().await,
         )
         .await
         .map_err(|error| internal_error(error.to_string()))?;

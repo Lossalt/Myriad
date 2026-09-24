@@ -13,17 +13,15 @@ import { API_URL } from '../config'
 import { isLocale } from '../i18n'
 import { isAuthMeHttpOk, parseAuthMeResponse } from '../utils/authMe'
 import { setKnownAuthState } from '../utils/authState'
-import { authSubject, authSubjectKey } from '../utils/authSubject'
+import { authSubjectKey } from '../utils/authSubject'
 import { clearCSRFToken } from '../utils/csrf'
 import { HOST_SESSION_RECHECK_EVENT } from '../utils/hostSessionFailure'
-import { phantasiSubject, phantasiSubjectKey } from '../utils/phantasiSubject'
+import { beginIdentityChange, finishIdentityChange, settleIdentity } from '../utils/identity'
 import {
   clearSessionHint,
   hasSessionHint,
   setSessionHint,
 } from '../utils/sessionDetection'
-import { beginTappSubjectChange, finishTappSubjectChange } from '../utils/tappSubject'
-import TokenManager from '../utils/tokenManager'
 
 export interface AuthIdentity {
   id: number
@@ -131,9 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const cleanupQueue = useRef<Promise<void>>(Promise.resolve())
   const pendingSubject = useRef<{ epoch: number; cleanup: Promise<void> } | null>(null)
   const beginSubjectChange = useCallback(() => {
-    authSubject.change('changing', true)
-    phantasiSubject.change('changing', false, true)
-    const epoch = beginTappSubjectChange()
+    const epoch = beginIdentityChange()
     const cleanup = cleanupQueue.current.catch(() => {}).then(resetTappSubjectState)
     cleanupQueue.current = cleanup
     pendingSubject.current = { epoch, cleanup }
@@ -149,14 +145,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [beginSubjectChange])
 
   const finishSubject = useCallback((key: string, authenticated: boolean) => {
-    if (!authenticated) {
-      TokenManager.removeToken()
-      clearCSRFToken()
-    }
+    if (!authenticated) clearCSRFToken()
     confirmedSubject.current = key
     const transition = pendingSubject.current
     pendingSubject.current = null
-    if (transition) finishTappSubjectChange(transition.epoch, authenticated)
+    if (transition) finishIdentityChange(transition.epoch, authenticated)
   }, [])
 
   const checkAuth = useCallback(async (): Promise<boolean> => {
@@ -192,8 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const u = parsed.user
             const key = authSubjectKey(u)
             if (!await prepareSubject(key, generation) || generation !== checkAuthGeneration.current) return false
-            authSubject.change(authSubjectKey(u))
-            phantasiSubject.change(phantasiSubjectKey(u))
+            settleIdentity(u)
             setSessionHint()
             const rawIdentities = (u as { identities?: unknown }).identities
             const identities = Array.isArray(rawIdentities)
@@ -242,8 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!await prepareSubject('guest', generation) || generation !== checkAuthGeneration.current) return false
           // Drop the session hint only on a definitive guest body.
           clearSessionHint()
-          authSubject.change('guest')
-          phantasiSubject.change('guest')
+          settleIdentity(null)
           setUser(null)
           setIsAuthenticated(false)
           setIsAdmin(false)
@@ -255,8 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (response.status === 401 || response.status === 403) {
           if (!await prepareSubject('guest', generation) || generation !== checkAuthGeneration.current) return false
-          authSubject.change('guest')
-          phantasiSubject.change('guest')
+          settleIdentity(null)
           clearSessionHint()
           setUser(null)
           setIsAuthenticated(false)
@@ -299,8 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false)
     void transition.cleanup.then(() => {
       if (!mounted.current || pendingSubject.current !== transition) return
-      authSubject.change('guest')
-      phantasiSubject.change('guest', true, true)
+      settleIdentity(null)
       finishSubject('guest', false)
     }).catch(error => console.warn('[AuthContext] tapp runtime reset failed:', error))
     setUser(null)

@@ -35,13 +35,9 @@ use crate::services::tapp_scheduler::{
 use uuid::Uuid;
 
 /// Initialize the process-wide scheduler engine (owned by services).
-pub async fn init_scheduler(db: DatabaseConnection) {
-    crate::services::tapp_scheduler::init_scheduler(db).await;
-}
-
-/// Shut down the process-wide scheduler engine.
-pub async fn shutdown_scheduler() {
-    crate::services::tapp_scheduler::shutdown_scheduler().await;
+/// Its loop stops with the process job runner (`services::jobs::shutdown`).
+pub fn init_scheduler(db: DatabaseConnection) {
+    crate::services::tapp_scheduler::init_scheduler(db);
 }
 
 /// HTTP-facing handle: 503 when the engine has not been started.
@@ -282,7 +278,7 @@ fn task_scope_name(value: &TaskScope) -> &'static str {
 }
 
 fn parse_user_id(claims: &Claims) -> Result<i32, HttpError> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
+    claims.durable_user_id().ok_or_else(|| {
         HttpError::from((
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid user ID")),
@@ -786,7 +782,7 @@ mod tests {
     fn scheduler_ws_does_not_register_subject_minus_one() {
         let src = include_str!("tapp_scheduler.rs");
         let production = src.split("#[cfg(test)]").next().expect("production");
-        assert!(production.contains("positive_user_id"));
+        assert!(production.contains("durable_user_id()"));
         assert!(!production.contains("unwrap_or(-1)"));
         assert!(production.contains("parse_user_id(&claims)"));
     }
@@ -811,9 +807,11 @@ mod tests {
         let plain = serde_json::to_value(TaskListEnvelope::new(None, Vec::new())).unwrap();
         assert_eq!(plain, json!({"success": true, "tasks": [], "total": 0}));
 
-        let scoped =
-            serde_json::to_value(TaskListEnvelope::new(Some("com.example".into()), Vec::new()))
-                .unwrap();
+        let scoped = serde_json::to_value(TaskListEnvelope::new(
+            Some("com.example".into()),
+            Vec::new(),
+        ))
+        .unwrap();
         assert_eq!(
             scoped,
             json!({"success": true, "tapp_id": "com.example", "tasks": [], "total": 0})

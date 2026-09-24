@@ -235,6 +235,44 @@ pub struct Recipe {
     pub lane_key: Option<String>,
     #[serde(default)]
     pub autonomy_permission_cap: Option<Vec<String>>,
+    /// Which engine owns this run, and so which one resumes it.
+    #[serde(default)]
+    pub engine: AgentEngine,
+}
+
+/// The engine a run belongs to. Persisted inside `agent_tasks.recipe`;
+/// SQL filters on it through [`AgentEngine::WORK_LOOP_SQL`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentEngine {
+    /// A planned Recipe run by the Executor.
+    #[default]
+    Executor,
+    /// A model-driven Work loop with its own checkpoint.
+    WorkLoop,
+}
+
+impl AgentEngine {
+    /// `agent_tasks` predicate for rows owned by the Work loop.
+    pub const WORK_LOOP_SQL: &'static str = "recipe->>'engine' = 'work_loop'";
+}
+
+#[cfg(test)]
+mod agent_engine_tests {
+    use super::AgentEngine;
+
+    #[test]
+    fn sql_predicate_matches_the_serialized_engine() {
+        let tag = serde_json::to_value(AgentEngine::WorkLoop).unwrap();
+        assert_eq!(
+            AgentEngine::WORK_LOOP_SQL,
+            format!("recipe->>'engine' = '{}'", tag.as_str().unwrap())
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentEngine>(serde_json::json!("executor")).unwrap(),
+            AgentEngine::Executor
+        );
+    }
 }
 
 /// 执行类型
@@ -283,120 +321,6 @@ pub struct RecipeStep {
 }
 
 pub use myriad_agent_rules::{FailureStrategy, RetryConfig};
-
-// AI Recipe 生成相关类型
-
-/// LLM 生成的单个 recipe 步骤
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiRecipeStep {
-    /// 步骤 ID（如 "step_1"）
-    pub id: String,
-    /// 能力 ID（如 "ai.summarize"）
-    pub capability_id: String,
-    /// 动作（如 "summarize"）
-    pub action: String,
-    /// 参数（AI 根据 schema 生成）
-    #[serde(default)]
-    pub params: HashMap<String, Value>,
-    /// 依赖的步骤 ID 列表
-    #[serde(default)]
-    pub depends_on: Vec<String>,
-    /// 失败策略：`"skip"` → Skip，其余（含 `"abort"`）→ Abort
-    #[serde(default = "default_on_failure")]
-    pub on_failure: String,
-    /// 重试配置
-    #[serde(default)]
-    pub retry: Option<RetryConfig>,
-    /// 超时时间（毫秒）
-    #[serde(default)]
-    pub timeout_ms: Option<u64>,
-}
-
-fn default_on_failure() -> String {
-    "abort".to_string()
-}
-
-impl AiRecipeStep {
-    /// 转为 `RecipeStep`：写入 `order` / `model_tier`；`on_failure` 仅 `"skip"`→Skip，其余 Abort；`timeout_ms` 缺省 30000。
-    #[cfg(test)]
-    pub fn into_recipe_step(self, order: u32, tier: Option<ModelTier>) -> RecipeStep {
-        let failure_strategy = match self.on_failure.as_str() {
-            "skip" => FailureStrategy::Skip,
-            _ => FailureStrategy::Abort,
-        };
-
-        RecipeStep {
-            id: self.id,
-            order,
-            capability_id: self.capability_id,
-            action: self.action,
-            params: self.params,
-            depends_on: self.depends_on,
-            on_failure: failure_strategy,
-            retry: self.retry,
-            timeout_ms: self.timeout_ms.or(Some(30000)),
-            model_tier: tier,
-            generator: None,
-        }
-    }
-}
-
-// Planner 输出类型
-
-/// Planner 输出（合并意图分析 + Recipe 生成为单次 Pro AI 调用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlannerOutput {
-    /// 输出状态
-    pub status: PlannerStatus,
-    /// 置信度（缺省 0.8）
-    #[serde(default = "default_confidence")]
-    pub confidence: f32,
-    /// AI 推理说明
-    #[serde(default)]
-    pub reasoning: Option<String>,
-    /// 执行步骤（status=plan 时使用）
-    #[serde(default)]
-    pub steps: Vec<AiRecipeStep>,
-    /// 澄清信息（status=clarify 时使用）
-    #[serde(default)]
-    pub clarification: Option<PlannerClarification>,
-    /// 不支持原因（status=unsupported 时使用）
-    #[serde(default)]
-    pub unsupported_reason: Option<String>,
-    /// 直接回复（status=chat 时使用）
-    #[serde(default)]
-    pub chat_reply: Option<String>,
-}
-
-fn default_confidence() -> f32 {
-    0.8
-}
-
-/// Planner 状态
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum PlannerStatus {
-    /// 生成执行计划
-    Plan,
-    /// 需要用户澄清
-    Clarify,
-    /// 不支持的请求
-    Unsupported,
-    /// 直接对话回复（无需调用能力）
-    Chat,
-}
-
-/// Planner 澄清信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlannerClarification {
-    /// 澄清消息
-    pub message: String,
-    /// 可选的选项
-    #[serde(default)]
-    pub options: Vec<String>,
-}
-
-// 执行状态相关类型
 
 /// 任务执行状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -624,9 +548,6 @@ pub struct AgentResponse {
     pub suggestions: Vec<String>,
     /// 任务状态
     pub task: Option<TaskState>,
-    /// 确认请求信息（当 response_type 为 ConfirmationRequired 时）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confirmation: Option<ConfirmationRequest>,
     /// 前端操作指令（路由导航、页面元素交互等）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend_action: Option<Value>,
@@ -739,8 +660,6 @@ pub enum AgentResponseType {
     Answer,
     /// 需要澄清
     Clarification,
-    /// 需要确认（敏感操作）
-    ConfirmationRequired,
     /// 任务已创建
     TaskCreated,
     /// 任务进度更新
@@ -749,51 +668,6 @@ pub enum AgentResponseType {
     TaskCompleted,
     /// 错误
     Error,
-}
-
-/// 确认请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfirmationRequest {
-    /// 确认 ID（用于后续确认/取消）
-    pub confirmation_id: String,
-    /// 待确认的配方 ID
-    pub recipe_id: String,
-    /// 需要确认的步骤
-    pub pending_steps: Vec<PendingConfirmation>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// 待确认的步骤
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingConfirmation {
-    /// 步骤 ID
-    pub step_id: String,
-    /// 能力 ID
-    pub capability_id: String,
-    /// 能力名称
-    pub capability_name: String,
-    /// 操作描述
-    pub description: String,
-    /// 风险等级
-    pub risk_level: RiskLevel,
-    /// 确认提示
-    pub confirmation_message: String,
-    /// 操作影响说明
-    pub impact: Vec<String>,
-}
-
-/// 用户确认响应
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserConfirmation {
-    /// 确认 ID
-    pub confirmation_id: String,
-    /// 是否确认执行
-    pub confirmed: bool,
-    /// 用户备注（可选）
-    pub user_note: Option<String>,
-    /// 操作发起者的用户 ID（用于归属校验）
-    #[serde(default)]
-    pub user_id: i32,
 }
 
 impl Default for Capability {
@@ -833,6 +707,7 @@ impl Recipe {
             conversation_context: None,
             lane_key: None,
             autonomy_permission_cap: None,
+            engine: AgentEngine::Executor,
         }
     }
 }
@@ -864,18 +739,6 @@ impl TaskState {
         question.ensure_expires_at();
         self.pending_question = Some(question);
         self.status = TaskStatus::WaitingForInput;
-    }
-
-    /// 清除待回答问题，恢复执行状态
-    pub fn clear_pending_question(&mut self) {
-        self.pending_question = None;
-        self.status = TaskStatus::Running;
-    }
-
-    pub fn update_progress(&mut self, total_steps: usize) {
-        if total_steps > 0 {
-            self.progress = ((self.current_step as f32 / total_steps as f32) * 100.0) as u8;
-        }
     }
 }
 
@@ -1066,112 +929,6 @@ impl ExecutionContext {
     pub fn add_output(&mut self, step_id: &str, output: Value) {
         self.step_outputs.insert(step_id.to_string(), output);
     }
-
-    /// 获取所有步骤输出（用于向后续步骤共享已有结果）
-    pub fn get_all_outputs(&self) -> &HashMap<String, Value> {
-        &self.step_outputs
-    }
-
-    /// 设置变量
-    pub fn set_var(&mut self, key: &str, value: Value) {
-        self.variables.insert(key.to_string(), value);
-    }
-
-    /// 添加待执行的动态步骤（`MAX_DYNAMIC_QUEUE`=15 累计 `dynamic_steps_generated`，ID 去重，自依赖整步拒绝）
-    pub fn queue_dynamic_steps(&mut self, steps: Vec<RecipeStep>) {
-        const MAX_DYNAMIC_QUEUE: usize = 15;
-        let remaining = MAX_DYNAMIC_QUEUE.saturating_sub(self.dynamic_steps_generated);
-        if remaining == 0 {
-            tracing::warn!(
-                "[ExecutionContext] Dynamic steps queue full ({}/{}), rejecting {} new steps",
-                self.dynamic_steps_generated,
-                MAX_DYNAMIC_QUEUE,
-                steps.len()
-            );
-            return;
-        }
-
-        // 收集已有的 step_id（已完成 + 待执行队列）
-        let existing_ids: std::collections::HashSet<&str> = self
-            .step_outputs
-            .keys()
-            .map(|s| s.as_str())
-            .chain(self.pending_dynamic_steps.iter().map(|s| s.id.as_str()))
-            .collect();
-
-        let accepted: Vec<RecipeStep> = steps
-            .into_iter()
-            .take(remaining)
-            .filter(|step| {
-                // 去重：跳过 ID 已存在的步骤
-                if existing_ids.contains(step.id.as_str()) {
-                    tracing::warn!(
-                        step_id = %step.id,
-                        "[ExecutionContext] Rejecting dynamic step with duplicate ID"
-                    );
-                    return false;
-                }
-                // 自依赖：depends_on 含自身则整步拒绝
-                if step.depends_on.iter().any(|d| d == &step.id) {
-                    tracing::warn!(
-                        step_id = %step.id,
-                        "[ExecutionContext] Dynamic step has self-dependency, rejecting"
-                    );
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        let accepted_count = accepted.len();
-        self.dynamic_steps_generated += accepted_count;
-        for step in &accepted {
-            self.dynamic_step_ids.insert(step.id.clone());
-        }
-        self.pending_dynamic_steps.extend(accepted);
-    }
-
-    /// 是否在 `dynamic_step_ids`（技能展开 / 动态分析 / 重试前置）
-    pub fn is_dynamic_step(&self, step_id: &str) -> bool {
-        self.dynamic_step_ids.contains(step_id)
-    }
-
-    /// 取出下一个待执行的动态步骤
-    pub fn pop_dynamic_step(&mut self) -> Option<RecipeStep> {
-        if !self.pending_dynamic_steps.is_empty() {
-            Some(self.pending_dynamic_steps.remove(0))
-        } else {
-            None
-        }
-    }
-
-    /// 检查是否有待执行的动态步骤
-    pub fn has_pending_steps(&self) -> bool {
-        !self.pending_dynamic_steps.is_empty()
-    }
-
-    /// 记录用户回答
-    pub fn record_answer(&mut self, question_id: &str, answer: &str) {
-        self.answered_questions
-            .insert(question_id.to_string(), answer.to_string());
-    }
-
-    /// 记录执行决策
-    pub fn record_decision(
-        &mut self,
-        decision_type: DecisionType,
-        description: &str,
-        reasoning: &str,
-        step_id: Option<&str>,
-    ) {
-        self.decision_history.push(ExecutionDecision {
-            timestamp: chrono::Utc::now(),
-            decision_type,
-            description: description.to_string(),
-            reasoning: reasoning.to_string(),
-            related_step: step_id.map(|s| s.to_string()),
-        });
-    }
 }
 
 impl UserQuestion {
@@ -1183,28 +940,6 @@ impl UserQuestion {
             question: question.to_string(),
             context: context.to_string(),
             options: None,
-            required,
-            default_value: None,
-            created_at: chrono::Utc::now(),
-            expires_at: Some(
-                chrono::Utc::now() + chrono::Duration::minutes(DEFAULT_QUESTION_TTL_MINUTES),
-            ),
-        }
-    }
-
-    /// 创建单选问题
-    pub fn single_choice(
-        question: &str,
-        context: &str,
-        options: Vec<QuestionOption>,
-        required: bool,
-    ) -> Self {
-        Self {
-            question_id: uuid::Uuid::new_v4().to_string(),
-            question_type: QuestionType::SingleChoice,
-            question: question.to_string(),
-            context: context.to_string(),
-            options: Some(options),
             required,
             default_value: None,
             created_at: chrono::Utc::now(),
@@ -1286,21 +1021,6 @@ mod question_ttl_tests {
             expires_at: None,
         };
         assert!(q.is_expired(chrono::Utc::now()));
-    }
-}
-
-impl QuestionOption {
-    pub fn new(value: &str, label: &str) -> Self {
-        Self {
-            value: value.to_string(),
-            label: label.to_string(),
-            description: None,
-        }
-    }
-
-    pub fn with_description(mut self, description: &str) -> Self {
-        self.description = Some(description.to_string());
-        self
     }
 }
 

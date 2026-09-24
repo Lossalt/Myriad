@@ -496,6 +496,7 @@ mod tests {
             updated_at: now,
             url_key: Some(url_match_key(url)),
             site_url_key: site_url.map(url_match_key),
+            fetch_lease_until: None,
         }
     }
 
@@ -694,7 +695,15 @@ mod tests {
             .map(|index| index + 1)
             .unwrap_or(body.len());
         let subscribe = &body[..end];
-        assert!(subscribe.contains("Url.eq"));
+        assert!(subscribe.contains("find_subscribed("));
+        assert!(
+            subscribe.contains("create_or_find_source("),
+            "Agent subscribe creates through the shared locked create path"
+        );
+        assert!(
+            subscribe.contains("store_feed_items("),
+            "Agent subscribe stores its first items through the scheduler path"
+        );
         assert!(
             !subscribe.contains("UserId.eq(user_id)"),
             "Agent subscribe must dedup by URL across the shared catalog"
@@ -730,7 +739,11 @@ mod tests {
     #[test]
     fn import_opml_does_not_swallow_existing_url_lookup() {
         let body = impl_fn(include_str!("feeds_opml.rs"), "import_opml");
-        assert!(body.contains("phantasi_store_http(\"find existing sources\""));
+        assert!(body.contains("phantasi_store_http(\"import sources\""));
+        assert!(
+            body.contains("create_or_find_source("),
+            "import dedupes through the shared locked create path"
+        );
         assert!(!body.contains("unwrap_or_default"));
     }
 

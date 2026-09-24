@@ -49,9 +49,8 @@ pub(super) async fn uninstall_tapp(
     Query(query): Query<UninstallTappQuery>,
 ) -> Result<Json<ApiResponse<()>>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
     validate_tapp_id(&tapp_id).map_err(|_| HttpError(AppError::bad_request("Bad request")))?;
     let keep_data = query.keep_data;
 
@@ -542,9 +541,8 @@ pub(super) async fn cleanup_temporary_tapps(
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<ApiResponse<i32>>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| HttpError(AppError::unauthorized("Unauthorized")))?;
+        .subject_id()
+        .ok_or_else(|| HttpError(AppError::unauthorized("Unauthorized")))?;
 
     let mode = {
         let cfg = dynamic_config.read().await;
@@ -554,7 +552,7 @@ pub(super) async fn cleanup_temporary_tapps(
     if mode == "logout" {
         // Wipe this subject's private installs now.
         // Admins operate the public namespace and never have private temps here.
-        if current_is_admin(&claims, &db).await {
+        if current_is_admin(&claims, &db).await? {
             return Ok(Json(ApiResponse::success(0)));
         }
         let user_tapps = tapps::Entity::find()

@@ -134,7 +134,7 @@ impl HttpTransport {
         }
         result.map_err(|error| {
             if method == "tools/call" {
-                format!("Execution outcome is unknown: {error}")
+                crate::outcome_unknown(error)
             } else {
                 error
             }

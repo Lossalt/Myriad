@@ -68,6 +68,46 @@ function attributionOptions(
     : undefined
 }
 
+/**
+ * One key per user action. Every retry of that action sends the same key, so a
+ * response lost after the server committed replays the original publish
+ * instead of creating a second Note.
+ */
+export function newPublishIdempotencyKey(): string {
+  return `publish-${crypto.randomUUID()}`
+}
+
+/** Attempts per publish when the response may have been lost after commit. */
+export const PUBLISH_ATTEMPTS = 3
+
+/** No answer from the server (dropped connection, timeout, gateway): the publish may or may not have committed. */
+function responseMayBeLost(error: unknown): boolean {
+  return error instanceof ApiError && [0, 408, 502, 503, 504].includes(error.status)
+}
+
+async function postPublish<T>(
+  path: string,
+  body: unknown,
+  runtimeGrant: string | undefined,
+  idempotencyKey: string,
+): Promise<T> {
+  const options: ApiRequestOptions = {
+    headers: {
+      ...(runtimeGrant ? { 'X-Tapp-Runtime-Grant': runtimeGrant } : {}),
+      'Idempotency-Key': idempotencyKey,
+    },
+  }
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await apiService.post<T>(path, body, options)
+    }
+    catch (error) {
+      if (attempt >= PUBLISH_ATTEMPTS || !responseMayBeLost(error)) throw error
+      await new Promise(resolve => setTimeout(resolve, 300 * attempt))
+    }
+  }
+}
+
 export const federationApi = {
   getPublicLimits(): Promise<{
     profile: string
@@ -137,25 +177,31 @@ export const federationApi = {
     )
   },
 
+  /** Pass the key of the user action being retried; omitted, this call is its own action. */
   publish(
     req: PublishRequest,
     runtimeGrant?: string,
+    idempotencyKey: string = newPublishIdempotencyKey(),
   ): Promise<PublishResponse> {
-    return apiService.post<PublishResponse>(
+    return postPublish<PublishResponse>(
       `${PREFIX}/publish`,
       req,
-      attributionOptions(runtimeGrant),
+      runtimeGrant,
+      idempotencyKey,
     )
   },
 
+  /** Pass the key of the user action being retried; omitted, this call is its own action. */
   createNote(
     req: CreateNoteRequest,
     runtimeGrant?: string,
+    idempotencyKey: string = newPublishIdempotencyKey(),
   ): Promise<PublishResponse> {
-    return apiService.post<PublishResponse>(
+    return postPublish<PublishResponse>(
       `${PREFIX}/notes`,
       req,
-      attributionOptions(runtimeGrant),
+      runtimeGrant,
+      idempotencyKey,
     )
   },
 

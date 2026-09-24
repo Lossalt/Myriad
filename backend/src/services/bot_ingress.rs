@@ -122,8 +122,28 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
     inline.saturating_add(heap)
 }
 
+/// Gateway reconnect delay after `attempt` consecutive transient failures:
+/// 2, 4, 8, 16 s, then 30 s. Shared by every bot worker so their
+/// reconnect behaviour cannot drift apart.
+pub fn reconnect_backoff(attempt: u32) -> std::time::Duration {
+    let secs = if attempt >= 6 {
+        30
+    } else {
+        1u64 << attempt.min(5)
+    };
+    std::time::Duration::from_secs(secs.min(30))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reconnect_backoff_grows_then_caps() {
+        let secs: Vec<u64> = (1..=7)
+            .map(|n| super::reconnect_backoff(n).as_secs())
+            .collect();
+        assert_eq!(secs, vec![2, 4, 8, 16, 30, 30, 30]);
+    }
+
     use super::*;
 
     #[tokio::test]

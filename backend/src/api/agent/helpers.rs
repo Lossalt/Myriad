@@ -93,7 +93,7 @@ pub(crate) fn convert_data_display_hint(
 
 /// 解析 user_id，返回标准化错误
 pub(crate) fn parse_user_id(claims: &Claims) -> Result<i32, HttpError> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
+    claims.durable_user_id().ok_or_else(|| {
         HttpError::from((
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Invalid user")),
@@ -103,7 +103,7 @@ pub(crate) fn parse_user_id(claims: &Claims) -> Result<i32, HttpError> {
 
 /// Existing pairings must remain revocable after Agent access is withdrawn.
 pub(crate) fn parse_pairing_user_id(claims: &Claims) -> Result<i32, HttpError> {
-    crate::services::tapp_ownership::positive_user_id(&claims.sub).ok_or_else(|| {
+    claims.durable_user_id().ok_or_else(|| {
         HttpError::from((
             StatusCode::UNAUTHORIZED,
             Json(AppError::public_json("Login required")),
@@ -132,7 +132,10 @@ pub(crate) async fn require_current_admin(
     db: &DatabaseConnection,
 ) -> Result<i32, HttpError> {
     let user_id = parse_user_id(claims)?;
-    if !crate::services::agent::user_is_current_admin(db, user_id).await {
+    let is_admin = crate::services::agent::user_is_current_admin(db, user_id)
+        .await
+        .map_err(|error| HttpError(myriad_error::AppError::internal(error)))?;
+    if !is_admin {
         return Err(HttpError::from((
             StatusCode::FORBIDDEN,
             Json(json!({ "error": "Administrator access required", "code": "admin_required" })),
@@ -171,12 +174,12 @@ mod agent_entry_gate_tests {
             .split("pub(crate) fn parse_user_id(")
             .nth(1)
             .expect("parse_user_id");
-        assert!(parse.contains("positive_user_id"));
+        assert!(parse.contains("durable_user_id()"));
         let pairing = src
             .split("pub(crate) fn parse_pairing_user_id(")
             .nth(1)
             .expect("parse_pairing_user_id");
-        assert!(pairing.contains("positive_user_id"));
+        assert!(pairing.contains("durable_user_id()"));
     }
 
     /// 取 `fn <name>(` 之后的一段源码，够覆盖签名和开头几行。

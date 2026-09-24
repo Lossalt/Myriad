@@ -1,5 +1,6 @@
 // Work result assembly: final result and frontend actions.
 
+use crate::services::agent::capability::CapabilityRef;
 use serde_json::{Value, json};
 
 use super::super::agent_header::*;
@@ -7,181 +8,10 @@ use super::super::response_agent;
 use super::super::types::*;
 
 impl Agent {
-    /// Successful step outputs: one success → that output; else last success (+ optional frontendActions).
-    pub(crate) fn extract_final_result(&self, task_state: &TaskState) -> serde_json::Value {
-        // 找到所有成功的步骤结果
-        let mut results: Vec<_> = task_state
-            .step_results
-            .values()
-            .filter(|r| r.success)
-            .map(|result| {
-                let mut result = result.clone();
-                let remote = task_state.recipe.as_ref().is_some_and(|recipe| {
-                    recipe.steps.iter().any(|step| {
-                        step.id == result.step_id && step.capability_id.starts_with("mcp.")
-                    })
-                });
-                if remote {
-                    // Keep remote JSON intact while separating it from response
-                    // fields interpreted as browser commands by API clients.
-                    result.output = result.output.map(|output| json!({"result":output}));
-                }
-                result
-            })
-            .collect();
-
-        results.sort_by(|a, b| a.step_id.cmp(&b.step_id));
-
-        // 如果没有成功的步骤，返回失败信息
-        if results.is_empty() {
-            let errors: Vec<String> = task_state
-                .step_results
-                .values()
-                .filter_map(|r| r.error.clone())
-                .collect();
-            let error_msg = if errors.is_empty() {
-                response_agent::not_executed()
-            } else {
-                errors.join("; ")
-            };
-            return json!({
-                "status": format!("{:?}", task_state.status),
-                "error": error_msg
-            });
-        }
-
-        // 如果只有一个结果，直接返回
-        if results.len() <= 1 {
-            return results
-                .last()
-                .and_then(|r| r.output.clone())
-                .unwrap_or(json!({
-                    "status": format!("{:?}", task_state.status),
-                    "progress": task_state.progress
-                }));
-        }
-
-        // 收集各步真正可执行的前端动作。music.control / page.interact 顶层
-        // 也有字符串 `action`（"play" / "click"），不能当 frontendAction 发出去。
-        let mut all_frontend_actions: Vec<Value> = Vec::new();
-        for result in &results {
-            if let Some(output) = &result.output {
-                for action in collect_step_frontend_actions(std::iter::once(output)) {
-                    tracing::info!(
-                        step_id = %result.step_id,
-                        action_type = ?action.get("type"),
-                        "[Agent] Collected frontendAction from step"
-                    );
-                    all_frontend_actions.push(action);
-                }
-            }
-        }
-
-        // 多步骤结果：检查是否有分析/总结类型的最终结果
-        let last_result = results.last().and_then(|r| r.output.as_ref());
-
-        // 如果最后一步是分析/总结，检查是否有实际内容
-        if let Some(last) = last_result {
-            // 检查是否是 AI 分析结果
-            if let Some((analysis, analysis_type)) = analysis_from_step_output(last) {
-                // Seed `{analysis,type}`; attach search `sources` `{query,source}` (not `results`).
-                let mut combined = json!({
-                    "analysis": analysis,
-                    "type": analysis_type
-                });
-
-                // 收集所有搜索步骤的来源信息
-                let mut sources = Vec::new();
-                for result in &results {
-                    if let Some(output) = &result.output {
-                        // 检查是否是联网搜索结果
-                        if crate::services::agent::search_output::is_web_search_output(output) {
-                            if let Some(query) = output.get("query").and_then(|q| q.as_str()) {
-                                sources.push(json!({
-                                    "query": query,
-                                    "source": crate::services::agent::search_output::web_search_source_label(output)
-                                }));
-                            }
-                        }
-                        // 检查是否有 aiSummary
-                        if let Some(summary) = output.get("aiSummary").and_then(|s| s.as_str()) {
-                            if !summary.is_empty() && combined.get("searchSummary").is_none() {
-                                combined["searchSummary"] = json!(summary);
-                            }
-                        }
-                    }
-                }
-
-                if !sources.is_empty() {
-                    combined["sources"] = json!(sources);
-                }
-
-                // 添加所有收集到的 frontendActions
-                if !all_frontend_actions.is_empty() {
-                    combined["frontendActions"] = json!(all_frontend_actions);
-                }
-
-                return combined;
-            }
-
-            // 检查是否是 AI 总结结果
-            let inner = crate::services::agent::ai_process_pure::task_inner_value(last);
-            if let Some(summary) = inner.get("summary").and_then(|s| s.as_str()) {
-                if !summary.is_empty() {
-                    let mut result = last.clone();
-                    // 添加所有收集到的 frontendActions
-                    if !all_frontend_actions.is_empty() {
-                        result["frontendActions"] = json!(all_frontend_actions);
-                        tracing::info!(
-                            count = all_frontend_actions.len(),
-                            "[Agent] Merged {} frontendActions into summary result",
-                            all_frontend_actions.len()
-                        );
-                    }
-                    return result;
-                }
-            }
-        }
-
-        // 默认返回最后一个结果
-        let mut final_result = results
-            .last()
-            .and_then(|r| r.output.clone())
-            .unwrap_or(json!({
-                "status": format!("{:?}", task_state.status),
-                "progress": task_state.progress
-            }));
-
-        // 添加所有收集到的 frontendActions
-        if !all_frontend_actions.is_empty() {
-            final_result["frontendActions"] = json!(all_frontend_actions);
-            tracing::info!(
-                count = all_frontend_actions.len(),
-                "[Agent] Merged {} frontendActions into default final result",
-                all_frontend_actions.len()
-            );
-        }
-
-        final_result
-    }
-
     /// 从执行结果中提取前端动作
     pub(crate) fn extract_frontend_action(&self, result: &Value) -> Option<Value> {
         extract_frontend_action_from_result(result)
     }
-}
-
-fn analysis_from_step_output(last: &Value) -> Option<(&str, &str)> {
-    let inner = crate::services::agent::ai_process_pure::task_inner_value(last);
-    let analysis = inner
-        .get("analysis")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())?;
-    let ty = inner
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("general");
-    Some((analysis, ty))
 }
 
 fn typed_frontend_action(value: &Value) -> Option<Value> {
@@ -262,10 +92,7 @@ pub(crate) fn extract_frontend_action_from_result(result: &Value) -> Option<Valu
 
 #[cfg(test)]
 mod extract_frontend_action_tests {
-    use super::{
-        analysis_from_step_output, collect_step_frontend_actions,
-        extract_frontend_action_from_result,
-    };
+    use super::{collect_step_frontend_actions, extract_frontend_action_from_result};
     use serde_json::json;
 
     #[test]
@@ -332,33 +159,5 @@ mod extract_frontend_action_tests {
         let collected = collect_step_frontend_actions([&plan]);
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[1]["type"], "navigate");
-    }
-
-    #[test]
-    fn analysis_from_step_output_unwraps_envelope() {
-        let envelope = json!({
-            "format": "json",
-            "value": { "analysis": "分析正文", "type": "custom" },
-            "contextProvenance": []
-        });
-        assert_eq!(
-            analysis_from_step_output(&envelope),
-            Some(("分析正文", "custom"))
-        );
-        assert_eq!(
-            analysis_from_step_output(&json!({
-                "analysis": "旧格式",
-                "type": "general"
-            })),
-            Some(("旧格式", "general"))
-        );
-        assert_eq!(
-            analysis_from_step_output(&json!({
-                "format": "json",
-                "value": { "summary": "摘要正文", "style": "brief" },
-                "contextProvenance": []
-            })),
-            None
-        );
     }
 }

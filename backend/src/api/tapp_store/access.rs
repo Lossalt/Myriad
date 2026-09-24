@@ -5,7 +5,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, State
 use crate::api::tapp_runtime::RuntimeGrantContext;
 use crate::api::tapp_runtime::common as tapp_common;
 use crate::error::HttpError;
-use crate::middleware::auth::{Claims, ensure_current_admin_on};
+use crate::middleware::auth::{Claims, current_admin_status, ensure_current_admin_on};
 use crate::services::permission_service::{TappPermission, TappPermissionService, UserRole};
 use crate::services::tapp_ownership::{self, TappAccessError};
 use myriad_error::AppError;
@@ -77,13 +77,19 @@ pub(super) async fn lock_tapp_lifecycle(
     tapp_ownership::lock_tapp_lifecycle(db, tapp_id).await
 }
 
-pub(super) async fn current_is_admin(claims: &Claims, db: &DatabaseConnection) -> bool {
-    ensure_current_admin_on(claims, db).await.is_ok()
+/// Live admin probe; "not an admin" is `Ok(false)`, a failed read is an error.
+pub(super) async fn current_is_admin(
+    claims: &Claims,
+    db: &DatabaseConnection,
+) -> Result<bool, HttpError> {
+    current_admin_status(claims, db)
+        .await
+        .map_err(HttpError::from)
 }
 
 /// HTTP adapter: parse Claims.sub via domain subject rules.
 pub(super) fn optional_authenticated_user_id(claims: Option<&Claims>) -> Option<i32> {
-    claims.and_then(|claims| tapp_ownership::parse_authenticated_subject_id(&claims.sub))
+    claims.and_then(|claims| claims.subject_id().filter(|id| *id >= 0))
 }
 
 fn require_runtime_storage_grant(
@@ -105,7 +111,7 @@ pub(crate) use crate::services::tapp_storage::{
 /// (negative `sub`). Differs from [`optional_authenticated_user_id`], which
 /// drops guests for install-namespace lookups that only apply to durable users.
 fn actor_subject_id(claims: &Claims) -> Option<i32> {
-    claims.sub.parse::<i32>().ok().filter(|id| *id != 0)
+    claims.subject_id().filter(|id| *id != 0)
 }
 
 /// HTTP adapter: resolve [`TappStorageAccess`] from a Runtime Grant + Claims.
@@ -171,12 +177,15 @@ pub(crate) fn installation_write_forbidden_error() -> HttpError {
     ))
 }
 
-pub(super) async fn current_user_role(claims: &Claims, db: &DatabaseConnection) -> UserRole {
-    if current_is_admin(claims, db).await {
+pub(super) async fn current_user_role(
+    claims: &Claims,
+    db: &DatabaseConnection,
+) -> Result<UserRole, HttpError> {
+    Ok(if current_is_admin(claims, db).await? {
         UserRole::Admin
     } else {
         UserRole::User
-    }
+    })
 }
 
 // Domain install-namespace helpers: services::tapp_ownership (path-stable re-export).

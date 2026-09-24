@@ -1,4 +1,4 @@
-//! Work is an observation-driven tool loop. Fixed Recipes retain their executor.
+//! Work is an observation-driven tool loop. Saved recipes run as frames inside it.
 //! Model messages are server-only; public task state is a projection, not the
 //! continuation. Waiting, effects and model boundaries are durable checkpoints.
 #[cfg(test)]
@@ -18,8 +18,10 @@ mod tool_schema;
 mod tools;
 
 use super::{Agent, capability, executor, types::*};
+use crate::services::agent::capability::CapabilityRef;
 use crate::services::analyzer::tool_calling::{ToolCall, ToolDefinition, ToolMessage};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 pub(crate) use state::is_work_recipe;
 use state::*;
 pub(crate) use store::{expire_question, recover};
@@ -43,17 +45,116 @@ impl Agent {
         Ok(())
     }
 
+    /// Work task record for a request. Work steps are appended as tools run.
+    pub(crate) fn build_recipe_from_steps(
+        steps: Vec<RecipeStep>,
+        name: String,
+        request: &UserRequest,
+    ) -> Recipe {
+        let estimated_duration_ms: u64 = steps.iter().map(|s| s.timeout_ms.unwrap_or(15000)).sum();
+
+        let page_context = request
+            .context
+            .as_ref()
+            .and_then(|c| c.custom_data.as_ref())
+            .and_then(|d| d.get("pageContent").cloned());
+
+        let conversation_context = request
+            .context
+            .as_ref()
+            .and_then(|c| c.conversation_history.clone());
+
+        let lane_key = request.context.as_ref().and_then(|c| c.lane_key.clone());
+        let autonomy_permission_cap = request
+            .context
+            .as_ref()
+            .and_then(|c| c.autonomy_permission_cap.clone());
+
+        let mut metadata = HashMap::new();
+        if let Some(route) = request
+            .context
+            .as_ref()
+            .and_then(|c| c.current_route.clone())
+            .filter(|route| !route.is_empty())
+        {
+            metadata.insert("current_route".to_string(), json!(route));
+        }
+        if let Some(custom) = request
+            .context
+            .as_ref()
+            .and_then(|c| c.custom_data.as_ref())
+        {
+            if let Some(music) = custom.get("musicStatus").cloned() {
+                metadata.insert("music_status".to_string(), music);
+            }
+            if let Some(windows) = custom.get("windowState").cloned() {
+                metadata.insert("window_state".to_string(), windows);
+            }
+        }
+
+        Recipe {
+            id: format!("recipe_{}", uuid::Uuid::new_v4()),
+            name,
+            original_request: request.raw_input.clone(),
+            execution_type: ExecutionType::Instant,
+            steps,
+            expected_output: OutputFormat::Json,
+            estimated_duration_ms,
+            created_at: chrono::Utc::now(),
+            metadata,
+            page_context,
+            conversation_context,
+            lane_key,
+            autonomy_permission_cap,
+            engine: AgentEngine::WorkLoop,
+        }
+    }
+
     pub(crate) async fn start_work_loop(
         &self,
         request: UserRequest,
         tx: Option<Sender<AgentProgressEvent>>,
     ) -> Result<AgentResponse, String> {
-        let mut recipe = Self::build_recipe_from_steps(
+        let state = self.new_work_checkpoint(&request).await;
+        self.launch_work_loop(state, tx).await
+    }
+
+    /// Run a saved preset as a Work task. Its steps run first, each through
+    /// `work_tool` (grants, confirmation, checkpoints); the model then answers
+    /// from the aggregate folded into the user turn.
+    pub(crate) async fn start_preset_work_loop(
+        &self,
+        request: UserRequest,
+        preset_id: i32,
+        tx: Option<Sender<AgentProgressEvent>>,
+    ) -> Result<AgentResponse, String> {
+        // A saved preset is an execution shortcut, not a way around her mood.
+        let refusal = super::merope::maybe_refuse_new_task(&self.db, request.user_id).await;
+        if let Some(response) = self
+            .mood_refuse_response(request.user_id, refusal, tx.as_ref())
+            .await
+        {
+            return Ok(response);
+        }
+        let mut state = self.new_work_checkpoint(&request).await;
+        let call = ToolCall {
+            id: format!("preset_{}", uuid::Uuid::new_v4().simple()),
+            name: "run_recipe".into(),
+            arguments: json!({"preset_id": preset_id}).to_string(),
+        };
+        recipes::start(&self.db, &mut state, call, preset_id).await?;
+        if let Some(frame) = state.recipe_run.as_mut() {
+            frame.direct = true;
+        }
+        self.launch_work_loop(state, tx).await
+    }
+
+    async fn new_work_checkpoint(&self, request: &UserRequest) -> Checkpoint {
+        let recipe = Self::build_recipe_from_steps(
             vec![],
             request.raw_input.chars().take(120).collect(),
-            &request,
+            request,
         );
-        recipe.metadata.insert("work_loop_version".into(), json!(1));
         let mut task = TaskState::new(&recipe);
         task.status = TaskStatus::Running;
         task.lane_id = recipe.lane_key.clone();
@@ -64,12 +165,17 @@ impl Agent {
             recipe.conversation_context.clone(),
         );
         context.autonomy_permission_cap = recipe.autonomy_permission_cap.clone();
+        for (key, value) in &recipe.metadata {
+            // Recipe metadata is data; it must not be able to name the task.
+            if key != "task_id" {
+                context.variables.insert(format!("_{key}"), value.clone());
+            }
+        }
+        // Written last: the executor's identity for this task, which handler
+        // contexts (and retries) read back from `_task_id`.
         context
             .variables
             .insert("_task_id".into(), json!(task.task_id));
-        for (key, value) in &recipe.metadata {
-            context.variables.insert(format!("_{key}"), value.clone());
-        }
         if let Some(memory) = super::memory::get_memory() {
             let memories = memory
                 .recall_with_params(super::memory::RecallQuery {
@@ -92,8 +198,8 @@ impl Agent {
             );
         }
         task.execution_context = Some(context);
-        let evidence = request_evidence(&request, &recipe, &task);
-        let mut state = Checkpoint {
+        let evidence = request_evidence(request, &recipe, &task);
+        Checkpoint {
             budget: Some(budget::Budget::default()),
             recipe_run: None,
             version: 1,
@@ -122,7 +228,14 @@ impl Agent {
             active_ms: 0,
             plan: json!([]),
             final_text: String::new(),
-        };
+        }
+    }
+
+    async fn launch_work_loop(
+        &self,
+        mut state: Checkpoint,
+        tx: Option<Sender<AgentProgressEvent>>,
+    ) -> Result<AgentResponse, String> {
         store::save(&self.db, &mut state).await?;
         if let Some(tx) = &tx {
             let _ = tx
@@ -314,7 +427,7 @@ impl Agent {
                 }
                 store::save(&self.db, state).await?;
             }
-            if recipes::advance(state, &self.executor)? {
+            if recipes::advance(state)? {
                 store::save(&self.db, state).await?;
                 continue;
             }
@@ -559,36 +672,36 @@ impl Agent {
             finish_call(state, &pending, Err(error), 0);
             return Ok(false);
         }
-        let mcp_output_schema = if id.starts_with("mcp.") && capability.output_schema != json!({}) {
-            match tool_schema::prepare(&capability.output_schema) {
-                Ok(schema) => Some(schema),
-                Err(error) => {
-                    finish_call(state, &pending, Err(error), 0);
-                    return Ok(false);
+        let mcp_output_schema =
+            if CapabilityRef::parse(&id).is_mcp() && capability.output_schema != json!({}) {
+                match tool_schema::prepare(&capability.output_schema) {
+                    Ok(schema) => Some(schema),
+                    Err(error) => {
+                        finish_call(state, &pending, Err(error), 0);
+                        return Ok(false);
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let mut context = state.context();
         if context.autonomy_permission_cap.is_some() {
-            let grant = super::consciousness::AutonomyGrantStore::new(self.db.clone())
-                .find(state.user_id)
-                .await
-                .map_err(|_| "Unable to verify autonomy grant")?;
-            if let Some(error) = super::consciousness::autonomy_execute_permission_error(
+            // Re-read right before the effect: a revocation since the tool
+            // list was built must stop this call.
+            if let Err(error) = super::consciousness::authorize_capability(
+                &self.db,
                 state.user_id,
-                grant.as_ref(),
-                &granted.iter().cloned().collect::<Vec<_>>(),
                 context.autonomy_permission_cap.as_deref(),
                 id,
                 &capability.required_permissions,
-            ) {
+            )
+            .await
+            {
                 finish_call(state, &pending, Err(error), 0);
                 return Ok(false);
             }
         }
-        executor::execute_step::inject_request_context_params(
+        executor::params::inject_request_context_params(
             id,
             &mut params_map,
             context.variables.get("_current_route"),
@@ -604,17 +717,11 @@ impl Agent {
         }
         if let Some((message, risk)) = capability::capability_requires_confirmation_async(id).await
         {
-            if state.user_id == super::SYSTEM_USER_ID {
-                if matches!(risk, RiskLevel::High | RiskLevel::Critical) {
-                    finish_call(
-                        state,
-                        &pending,
-                        Err("Unattended execution cannot authorize this operation".into()),
-                        0,
-                    );
-                    return Ok(false);
-                }
-            } else if pending.approval.as_deref() != Some(&fingerprint) {
+            if reject_unattended_confirmation(state, &pending, id, risk) {
+                return Ok(false);
+            } else if state.user_id != super::SYSTEM_USER_ID
+                && pending.approval.as_deref() != Some(&fingerprint)
+            {
                 let mut question = UserQuestion::confirmation(
                     &message,
                     &format!("{}\n{}", capability.name, preview(&json!(params_map), 6000)),
@@ -686,13 +793,14 @@ impl Agent {
             )
             .await;
         let started = std::time::Instant::now();
-        let tier = executor::Executor::resolve_tier_with_breaker(id, step.model_tier);
+        let tier = super::tier_router::resolve_tier_with_breaker(id, step.model_tier);
         let analyzer = crate::services::ai::create_ai_analyzer_for_tier(tier).await;
         let handler = executor::handlers::HandlerContext {
             db: &self.db,
             ai_analyzer: analyzer.as_ref(),
             user_id: state.user_id,
             task_id: Some(state.task.task_id.clone()),
+            step_id: Some(call.id.clone()),
             execution_context: Some(context.clone()),
             autonomy_permission_cap: context.autonomy_permission_cap.clone(),
         };
@@ -737,10 +845,12 @@ impl Agent {
                 )
                 .await
             }
-            Err(error) => Err(error),
+            // Any failed effectful call goes to recovery below, whatever its
+            // outcome, so the Work loop needs only the message.
+            Err(error) => Err(error.message),
         };
         state.task.execution_context = Some(context);
-        executor::Executor::record_step_to_breaker(tier, output.is_ok());
+        super::tier_router::record_step_to_breaker(tier, output.is_ok());
         if let Ok(output) = &output {
             state
                 .task
@@ -796,6 +906,32 @@ fn request_evidence(request: &UserRequest, recipe: &Recipe, task: &TaskState) ->
         "platforms":context.map(|c| &c.active_platforms),
         "preferences":context.and_then(|c|c.preferences.as_ref()),
         "music":recipe.metadata.get("music_status"),"windows":recipe.metadata.get("window_state")})
+}
+
+/// Heartbeat cannot authorize High and above, nor capabilities that create or
+/// trigger further automatic runs (`unattended_may_auto_run`). The call is
+/// recorded as a tool error and the handler is not entered, so there is no
+/// effect. Other Low / Medium calls return false and auto-run. Interactive
+/// users are unchanged.
+pub(super) fn reject_unattended_confirmation(
+    state: &mut Checkpoint,
+    pending: &PendingCall,
+    capability_id: &str,
+    risk: RiskLevel,
+) -> bool {
+    if state.user_id != super::SYSTEM_USER_ID {
+        return false;
+    }
+    if super::executor_resolve_pure::unattended_may_auto_run(capability_id, risk) {
+        return false;
+    }
+    finish_call(
+        state,
+        pending,
+        Err("Unattended execution cannot authorize this operation".into()),
+        0,
+    );
+    true
 }
 
 fn finish_call(
@@ -929,7 +1065,7 @@ fn checkpoint_response(state: Checkpoint) -> AgentResponse {
     let mut data = outputs
         .last()
         .map(|(step, output)| {
-            if step.capability_id.starts_with("mcp.") {
+            if CapabilityRef::parse(&step.capability_id).is_mcp() {
                 json!({"result":output})
             } else {
                 (*output).clone()
@@ -960,7 +1096,6 @@ fn checkpoint_response(state: Checkpoint) -> AgentResponse {
         data_display: None,
         suggestions: vec![],
         task: Some(state.task),
-        confirmation: None,
         frontend_action: None,
         performance: None,
     }

@@ -143,7 +143,6 @@ export default function PhantasiSourceGrid({
   const {
     stories,
     onStar,
-    expand,
     jump,
     holdStories,
     releaseStories,
@@ -338,7 +337,6 @@ export default function PhantasiSourceGrid({
       stories={
         board === 'feeds' ? stories : board === 'sites' ? friendStories : undefined
       }
-      onExpandStories={board === 'feeds' ? expand : undefined}
       onJumpSource={board === 'feeds' ? jump : undefined}
       onRailFocus={board === 'feeds' ? onRailFocus : undefined}
       onHoldStories={board === 'feeds' ? holdStories : undefined}

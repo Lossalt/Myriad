@@ -10,23 +10,26 @@ use serde_json::{Value, json};
 
 use std::collections::HashMap;
 
-/// Whether an unconfirmed dynamically-generated step must be blocked.
+/// 心跳（`SYSTEM_USER_ID`）无人值守时始终不能执行的能力：它们会创建、修改或
+/// 触发新的自动执行，一次注入就能借心跳自我扩散。
+pub const UNATTENDED_DENIED_CAPABILITIES: &[&str] = &[
+    "heartbeat.create",
+    "heartbeat.update",
+    "heartbeat.delete",
+    "heartbeat.toggle",
+    "scheduler.create",
+    "scheduler.trigger",
+    "task.submit",
+    "tapp.install",
+];
+
+/// 心跳能否不经人工确认执行一个需要确认的能力。
 ///
-/// Aligns with [`Agent::system_sensitive_gate`]:
-/// - **System / heartbeat** (`SYSTEM_USER_ID`): Medium auto-runs (same as plan-time
-/// gate); High / Critical hard-block with a clear error (not silent skip).
-/// - **Interactive users**: Medium and above block until confirmed.
-///
-/// Only Low may auto-run for normal users without an extra confirmation gate.
-pub fn should_block_unconfirmed_dynamic_step(user_id: i32, risk: RiskLevel) -> bool {
-    if user_id == SYSTEM_USER_ID {
-        matches!(risk, RiskLevel::High | RiskLevel::Critical)
-    } else {
-        matches!(
-            risk,
-            RiskLevel::Medium | RiskLevel::High | RiskLevel::Critical
-        )
-    }
+/// High / Critical 与 [`UNATTENDED_DENIED_CAPABILITIES`] 一律不行；其余 Low、Medium
+/// 照常自动执行（例如 `http.fetch`）。
+pub fn unattended_may_auto_run(capability_id: &str, risk: RiskLevel) -> bool {
+    !matches!(risk, RiskLevel::High | RiskLevel::Critical)
+        && !UNATTENDED_DENIED_CAPABILITIES.contains(&capability_id)
 }
 
 #[cfg(test)]
@@ -35,27 +38,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn dynamic_risk_gate_aligns_with_system_sensitive_gate() {
-        // System/heartbeat: Medium auto-run; High+ blocked (matches system_sensitive_gate).
-        assert!(should_block_unconfirmed_dynamic_step(
-            SYSTEM_USER_ID,
+    fn heartbeat_auto_runs_low_and_medium_but_never_self_spreading_work() {
+        assert!(!unattended_may_auto_run("cache.clear", RiskLevel::High));
+        assert!(!unattended_may_auto_run(
+            "system.shutdown",
             RiskLevel::Critical
         ));
-        assert!(should_block_unconfirmed_dynamic_step(
-            SYSTEM_USER_ID,
-            RiskLevel::High
-        ));
-        assert!(!should_block_unconfirmed_dynamic_step(
-            SYSTEM_USER_ID,
-            RiskLevel::Medium
-        ));
-        assert!(!should_block_unconfirmed_dynamic_step(
-            SYSTEM_USER_ID,
-            RiskLevel::Low
-        ));
-        // Interactive: Medium+ blocked until confirmed.
-        assert!(should_block_unconfirmed_dynamic_step(7, RiskLevel::High));
-        assert!(should_block_unconfirmed_dynamic_step(7, RiskLevel::Medium));
-        assert!(!should_block_unconfirmed_dynamic_step(7, RiskLevel::Low));
+        assert!(unattended_may_auto_run("http.fetch", RiskLevel::Medium));
+        assert!(unattended_may_auto_run("storage.set", RiskLevel::Low));
+        for id in UNATTENDED_DENIED_CAPABILITIES {
+            assert!(!unattended_may_auto_run(id, RiskLevel::Medium), "{id}");
+            assert!(!unattended_may_auto_run(id, RiskLevel::Low), "{id}");
+        }
     }
 }

@@ -63,9 +63,7 @@ impl ChatSession {
         claims: Claims,
         session_id: String,
     ) -> Result<(Arc<Self>, String), String> {
-        if crate::services::tapp_ownership::positive_user_id(&claims.sub).is_none()
-            || session_id.is_empty()
-        {
+        if claims.durable_user_id().is_none() || session_id.is_empty() {
             return Err("Realtime session is unavailable".into());
         }
         let key = format!(
@@ -178,9 +176,7 @@ impl ChatSession {
         let mut state = self.state.lock().await;
         if state.closed || Instant::now() >= self.expires_at {
             drop(state);
-            if let Some(user_id) =
-                crate::services::tapp_ownership::positive_user_id(&self.claims.sub)
-            {
+            if let Some(user_id) = self.claims.durable_user_id() {
                 super::agent::turn::cancel_chat_run(
                     user_id,
                     run.session_id().unwrap_or(&self.session_id),
@@ -219,9 +215,7 @@ impl ChatSession {
             .back()
             .map(|turn| (turn.notice.session_id.clone(), turn.run.run_id().to_owned()));
         if let Some((session_id, run_id)) = latest {
-            if let Some(user_id) =
-                crate::services::tapp_ownership::positive_user_id(&self.claims.sub)
-            {
+            if let Some(user_id) = self.claims.durable_user_id() {
                 super::agent::turn::cancel_chat_run(user_id, &session_id, &run_id).await;
             }
         }
@@ -247,9 +241,7 @@ impl ChatSession {
             latest
         };
         if let Some((session_id, run_id)) = latest {
-            if let Some(user_id) =
-                crate::services::tapp_ownership::positive_user_id(&self.claims.sub)
-            {
+            if let Some(user_id) = self.claims.durable_user_id() {
                 super::agent::turn::cancel_chat_run(user_id, &session_id, &run_id).await;
             }
         }

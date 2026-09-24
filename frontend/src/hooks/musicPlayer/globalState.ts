@@ -1,4 +1,5 @@
 import type { MusicPlayerSnapshotInput } from '../../utils/musicPlayerState'
+import { emitAppEvent } from '../../utils/appEvents'
 import { buildMusicPlayerSnapshot } from '../../utils/musicPlayerState'
 
 /** 宿主对 window.__musicPlayerState 的唯一写入入口。Context / Tapp 只读。 */
@@ -37,16 +38,12 @@ export function patchPlaybackFlags(flags: {
   const prev = w.__musicPlayerState || {}
   const next = { ...prev, ...flags }
   w.__musicPlayerState = next
-  w.dispatchEvent(
-    new CustomEvent('music-player-state-change', {
-      detail: {
-        ...next,
-        isAudioLoading: next.isAudioLoading,
-        lastPlaybackError: next.lastPlaybackError ?? null,
-        generation: next.generation ?? 0,
-      },
-    }),
-  )
+  emitAppEvent('music-player-state-change', {
+    ...next,
+    isAudioLoading: next.isAudioLoading,
+    lastPlaybackError: next.lastPlaybackError ?? null,
+    generation: next.generation ?? 0,
+  })
 }
 
 /** 进度 / 歌词 / isPlaying 热路径：就地补丁，避免每 tick 换新对象。 */
@@ -62,9 +59,6 @@ export function publishMusicPlayerSnapshot(
 ): Record<string, unknown> {
   const detail = buildMusicPlayerSnapshot(input)
   setGlobalState(detail)
-  const w = getMusicWindow()
-  if (w) {
-    w.dispatchEvent(new CustomEvent('music-player-state-change', { detail }))
-  }
+  emitAppEvent('music-player-state-change', detail as MusicPlayerWindowState)
   return detail
 }
