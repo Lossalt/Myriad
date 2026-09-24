@@ -124,7 +124,8 @@
     "Invalid mode": "media_mode_invalid",
     "Schema ensure failed": "schema_ensure_failed",
     "db_error": "database_error",
-    "rate_limited": "rate_limited"
+    "rate_limited": "rate_limited",
+    "Source is already being refreshed": "source_refresh_in_progress"
   },
   "leftovers": {
     "Federation is disabled on this instance": "federation_disabled_region",
