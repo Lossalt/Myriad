@@ -49,8 +49,8 @@ pub use plan_contract::{
     plan_step_cap_rule,
 };
 pub use prompt::{
-    append_memory_to_system_prompt, merge_system_prompt, sanitize_prompt_input,
-    take_recent_conversation_messages, untrusted_block,
+    append_memory_to_system_prompt, merge_system_prompt, neutralize_untrusted_markers,
+    sanitize_prompt_input, take_recent_conversation_messages, untrusted_block,
 };
 pub use retry::{
     FailureStrategy, RETRY_BASE_DELAY_FLOOR_MS, RETRY_DEFAULT_BASE_DELAY_MS, RETRY_DELAY_CAP_MS,
