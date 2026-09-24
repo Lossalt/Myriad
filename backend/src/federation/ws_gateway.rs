@@ -148,7 +148,9 @@ pub(crate) fn signal_membership_changed(room_id: &str) {
 
 /// One process-wide LISTEN on the membership trigger's channel. Every write
 /// path that removes, demotes or re-states a member fires the trigger, so no
-/// handler has to remember to evict sockets itself.
+/// handler has to remember to evict sockets itself. Registered lazily on the
+/// first room socket as a supervised job: the runner reconnects it with backoff
+/// and stops it at shutdown; [`MEMBERSHIP_RECHECK`] covers the gap.
 fn ensure_membership_listener(db: &DatabaseConnection) {
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !matches!(
@@ -159,31 +161,38 @@ fn ensure_membership_listener(db: &DatabaseConnection) {
         return;
     }
     let pool = db.get_postgres_connection_pool().clone();
-    tokio::spawn(async move {
-        loop {
-            match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
-                Ok(mut listener) => {
-                    if let Err(error) = listener.listen(migration::ROOM_MEMBERSHIP_CHANNEL).await {
-                        tracing::warn!(%error, "room membership LISTEN setup failed");
-                    } else {
-                        loop {
-                            match listener.recv().await {
-                                Ok(notification) => {
-                                    signal_membership_changed(notification.payload());
-                                }
-                                Err(error) => {
-                                    tracing::warn!(%error, "room membership LISTEN lost");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "room membership LISTEN connect failed"),
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    crate::services::jobs::jobs().supervised(
+        "room membership listener",
+        crate::services::jobs::Backoff::new(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(60),
+        ),
+        move || listen_membership_changes(pool.clone()),
+    );
+}
+
+/// One LISTEN session: returns when the connection is lost.
+async fn listen_membership_changes(pool: sea_orm::sqlx::PgPool) {
+    let mut listener = match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::warn!(%error, "room membership LISTEN connect failed");
+            return;
         }
-    });
+    };
+    if let Err(error) = listener.listen(migration::ROOM_MEMBERSHIP_CHANNEL).await {
+        tracing::warn!(%error, "room membership LISTEN setup failed");
+        return;
+    }
+    loop {
+        match listener.recv().await {
+            Ok(notification) => signal_membership_changed(notification.payload()),
+            Err(error) => {
+                tracing::warn!(%error, "room membership LISTEN lost");
+                return;
+            }
+        }
+    }
 }
 
 /// Whether `actor` is currently an active member of the room. A lookup error

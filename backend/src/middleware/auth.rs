@@ -15,10 +15,11 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 /// Browser / API session lifetime (days). Keep long-lived; revoke via `token_version`.
@@ -212,7 +213,7 @@ struct AuthCache {
 static AUTH_CACHE: OnceLock<StdMutex<AuthCache>> = OnceLock::new();
 static AUTH_CACHE_INFLIGHT: OnceLock<StdMutex<HashMap<i32, Arc<watch::Sender<()>>>>> =
     OnceLock::new();
-static AUTH_CACHE_LISTENER_STARTED: OnceLock<AsyncMutex<bool>> = OnceLock::new();
+static AUTH_CACHE_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 
 struct AuthLoadOwner {
     user_id: i32,
@@ -247,10 +248,6 @@ fn auth_cache() -> &'static StdMutex<AuthCache> {
 
 fn auth_cache_inflight() -> &'static StdMutex<HashMap<i32, Arc<watch::Sender<()>>>> {
     AUTH_CACHE_INFLIGHT.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
-fn auth_cache_listener_started() -> &'static AsyncMutex<bool> {
-    AUTH_CACHE_LISTENER_STARTED.get_or_init(|| AsyncMutex::new(false))
 }
 
 /// Read a cache entry, returning `Some(None)` for a cached missing account and
@@ -384,58 +381,60 @@ pub async fn notify_auth_cache_invalidation(
     .map(|_| ())
 }
 
-/// Start one process-wide LISTEN task lazily, using the app's existing pool.
-/// A missed notification is safe because every entry expires after
-/// [`AUTH_CACHE_TTL`]. The site-owner cache in `services::principal` rides on
-/// the same channel.
-pub(crate) async fn ensure_auth_cache_listener(db: &DatabaseConnection) {
+/// Register one process-wide LISTEN job lazily (on the first cache miss), using
+/// the app's existing pool. It is a supervised job on the process runner, so it
+/// reconnects with backoff and stops with `services::jobs::shutdown`. A missed
+/// notification is safe because every entry expires after [`AUTH_CACHE_TTL`].
+/// The site-owner cache in `services::principal` rides on the same channel.
+pub(crate) fn ensure_auth_cache_listener(db: &DatabaseConnection) {
     // Tests never start it: the listener detaches a pooled connection, which
     // may be the single connection holding a test's TEMP fixtures.
     if cfg!(test) || !matches!(db.get_database_backend(), DatabaseBackend::Postgres) {
         return;
     }
-
-    let mut started = auth_cache_listener_started().lock().await;
-    if *started {
+    if AUTH_CACHE_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    *started = true;
 
     let pool = db.get_postgres_connection_pool().clone();
-    tokio::spawn(async move {
-        loop {
-            match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
-                Ok(mut listener) => match listener.listen(AUTH_CACHE_INVALIDATION_CHANNEL).await {
-                    Err(error) => {
-                        tracing::warn!(error = %error, "auth cache LISTEN setup failed");
-                    }
-                    _ => {
-                        tracing::debug!(
-                            channel = AUTH_CACHE_INVALIDATION_CHANNEL,
-                            "auth cache invalidation listener started"
-                        );
-                        loop {
-                            match listener.recv().await {
-                                Ok(notification) => {
-                                    if let Ok(user_id) = notification.payload().parse::<i32>() {
-                                        invalidate_auth_cache_local(user_id);
-                                    }
-                                }
-                                Err(error) => {
-                                    tracing::warn!(error = %error, "auth cache LISTEN connection lost");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                },
-                Err(error) => {
-                    tracing::debug!(error = %error, "auth cache listener connection unavailable");
+    crate::services::jobs::jobs().supervised(
+        "auth cache invalidation listener",
+        crate::services::jobs::Backoff::new(Duration::from_secs(1), Duration::from_secs(30)),
+        move || listen_auth_cache_invalidations(pool.clone()),
+    );
+}
+
+/// One LISTEN session: returns when the connection is lost; the runner
+/// reconnects.
+async fn listen_auth_cache_invalidations(pool: sea_orm::sqlx::PgPool) {
+    let mut listener = match sea_orm::sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::debug!(error = %error, "auth cache listener connection unavailable");
+            return;
+        }
+    };
+    if let Err(error) = listener.listen(AUTH_CACHE_INVALIDATION_CHANNEL).await {
+        tracing::warn!(error = %error, "auth cache LISTEN setup failed");
+        return;
+    }
+    tracing::debug!(
+        channel = AUTH_CACHE_INVALIDATION_CHANNEL,
+        "auth cache invalidation listener started"
+    );
+    loop {
+        match listener.recv().await {
+            Ok(notification) => {
+                if let Ok(user_id) = notification.payload().parse::<i32>() {
+                    invalidate_auth_cache_local(user_id);
                 }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            Err(error) => {
+                tracing::warn!(error = %error, "auth cache LISTEN connection lost");
+                return;
+            }
         }
-    });
+    }
 }
 
 /// Authentication middleware - verifies JWT token + session epoch
@@ -772,7 +771,7 @@ async fn load_auth_snapshot(
         // Listener setup is only needed on a real cache miss. Keeping the hit
         // path database-free also makes the cache's authorization boundary
         // independently testable.
-        ensure_auth_cache_listener(db).await;
+        ensure_auth_cache_listener(db);
 
         // Only one request per user performs the miss query. Other concurrent
         // requests wait for that result, then take the now-populated cache hit.

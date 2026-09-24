@@ -924,7 +924,7 @@ pub async fn init_notification_publisher(db: DatabaseConnection) {
 pub async fn init_notifications(db: DatabaseConnection) {
     let manager = Arc::new(NotificationManager::new_with_db(200, db).await);
     let _ = NOTIFICATION_MANAGER.set(manager.clone());
-    bridge::spawn(manager.clone());
+    bridge::start(manager.clone());
 
     start_cleanup(
         crate::services::jobs::jobs(),

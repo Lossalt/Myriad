@@ -94,7 +94,7 @@ pub async fn site_owner_id(db: &DatabaseConnection) -> Result<Option<i32>, DbErr
     if cached.is_some() {
         return Ok(cached);
     }
-    crate::middleware::auth::ensure_auth_cache_listener(db).await;
+    crate::middleware::auth::ensure_auth_cache_listener(db);
     let id = query_site_owner_id(db).await?;
     if let Some(id) = id {
         store_site_owner_id(id, generation);

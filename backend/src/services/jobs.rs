@@ -1,17 +1,27 @@
-//! Process-owned periodic background jobs.
+//! Process-owned background jobs.
 //!
 //! One cancellation root and one join set for every loop the web process runs
-//! outside a request. Each job is a serial tick: slow work delays its own next
-//! tick (missed ticks are skipped) and never overlaps itself or holds another job.
+//! outside a request. Two kinds:
 //!
-//! Panic policy: a panicking tick is caught, logged with the job name, and the
-//! job resumes at its next tick. Every tick is a fresh future from the job's
-//! factory, so a panic loses only that tick's work; stopping the loop instead
-//! would silently end a scheduler for the rest of the process lifetime.
+//! - [`JobRunner::periodic`]: a serial tick. Slow work delays its own next
+//!   tick (missed ticks are skipped) and never overlaps itself or holds
+//!   another job.
+//! - [`JobRunner::supervised`]: one long-running future (a Postgres LISTEN
+//!   session, say) that lives until cancelled. When it returns or panics it
+//!   is started again after an exponential [`Backoff`]; a run that stayed up
+//!   for at least the backoff ceiling resets the delay.
+//!
+//! Panic policy: a panicking tick (or supervised run) is caught, logged with the
+//! job name, and the job resumes at its next tick (or restart). Every tick is a
+//! fresh future from the job's factory, so a panic loses only that tick's work;
+//! stopping the loop instead would silently end a scheduler for the rest of the
+//! process lifetime.
 //!
 //! Shutdown cancels admission first, then waits for in-flight ticks up to a
 //! deadline and aborts what is left. A tick is never interrupted before the
 //! deadline, so work with a durable lease finishes or leaves the lease to expire.
+//! A supervised run is dropped as soon as cancellation is observed, so supervised
+//! work must be safe to drop at any await (a LISTEN `recv` is).
 //!
 //! The persona runtime keeps its own supervisor (`persona::drivers`): there a
 //! stopped driver is a worker failure that restarts the process, which is a
@@ -19,8 +29,8 @@
 //!
 //! New long-lived loops register here instead of spawning their own `loop`;
 //! `long_lived_loops_are_not_spawned_outside_the_runner` scans the source and
-//! lists the exceptions (supervisors, LISTEN connections, per-connection and
-//! per-lease tasks) with their reasons.
+//! lists the exceptions (supervisors, per-connection and per-lease tasks) with
+//! their reasons.
 
 use futures::FutureExt;
 use std::future::Future;
@@ -73,6 +83,29 @@ impl Every {
     }
 }
 
+/// How long a [`JobRunner::supervised`] job waits before starting again after
+/// its run ended: `initial`, doubling per consecutive short run, capped at
+/// `max`. A run that lasted at least `max` counts as healthy and resets the
+/// next delay to `initial`.
+#[derive(Clone, Copy, Debug)]
+pub struct Backoff {
+    initial: Duration,
+    max: Duration,
+}
+
+impl Backoff {
+    pub const fn new(initial: Duration, max: Duration) -> Self {
+        Self { initial, max }
+    }
+
+    fn next(&self, previous: Option<Duration>, ran_for: Duration) -> Duration {
+        match previous {
+            Some(previous) if ran_for < self.max => previous.saturating_mul(2).min(self.max),
+            _ => self.initial.min(self.max),
+        }
+    }
+}
+
 /// Stops one job without touching the others. Dropping it does not stop the job.
 #[derive(Debug)]
 pub struct JobHandle(CancellationToken);
@@ -114,6 +147,27 @@ impl JobRunner {
         F: FnMut() -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
+        self.register(name, move |cancel| run_periodic(name, cancel, every, work))
+    }
+
+    /// Register a supervised job: `run()` starts now and starts again, after
+    /// `backoff`, whenever its future returns or panics, until the job or the
+    /// runner is cancelled. After [`JobRunner::shutdown`] started, the job is
+    /// refused and the returned handle is already cancelled.
+    pub fn supervised<F, Fut>(&self, name: &'static str, backoff: Backoff, run: F) -> JobHandle
+    where
+        F: FnMut() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.register(name, move |cancel| {
+            run_supervised(name, cancel, backoff, run)
+        })
+    }
+
+    fn register<J>(&self, name: &'static str, job: impl FnOnce(CancellationToken) -> J) -> JobHandle
+    where
+        J: Future<Output = ()> + Send + 'static,
+    {
         let cancel = self.root.child_token();
         let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
         // Checked under the lock: shutdown cancels before it takes the set, so
@@ -130,9 +184,9 @@ impl JobRunner {
         while let Some(finished) = tasks.try_join_next() {
             log_join_result(finished);
         }
-        let token = cancel.clone();
+        let job = job(cancel.clone());
         tasks.spawn(async move {
-            run_periodic(name, token, every, work).await;
+            job.await;
             name
         });
         JobHandle(cancel)
@@ -245,6 +299,45 @@ async fn run_periodic<F, Fut>(
         }
         if every.spaced {
             interval.reset();
+        }
+    }
+}
+
+async fn run_supervised<F, Fut>(
+    name: &'static str,
+    cancel: CancellationToken,
+    backoff: Backoff,
+    mut run: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut delay = None;
+    while !cancel.is_cancelled() {
+        let started = tokio::time::Instant::now();
+        // The factory call happens inside the first poll, so it is covered too.
+        let session = AssertUnwindSafe(async { run().await }).catch_unwind();
+        let outcome = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            outcome = session => outcome,
+        };
+        let next = backoff.next(delay, started.elapsed());
+        delay = Some(next);
+        let delay_ms = u64::try_from(next.as_millis()).unwrap_or(u64::MAX);
+        match outcome {
+            Ok(()) => tracing::debug!(job = name, delay_ms, "supervised job ended; restarting"),
+            Err(panic) => tracing::error!(
+                job = name,
+                panic = panic_message(panic.as_ref()),
+                delay_ms,
+                "supervised job panicked; restarting"
+            ),
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            _ = tokio::time::sleep(next) => {}
         }
     }
 }
@@ -442,6 +535,142 @@ mod tests {
         assert_eq!(jitter_delay(Duration::ZERO), Duration::ZERO);
     }
 
+    struct DropFlag(Arc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn supervised_run_is_dropped_on_cancel_and_awaited_by_shutdown() {
+        let runner = JobRunner::new();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (dropped_a, dropped_b) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let (r, d) = (runs.clone(), dropped_a.clone());
+        let handle = runner.supervised("a", Backoff::new(FAST, FAST), move || {
+            r.fetch_add(1, Ordering::SeqCst);
+            let guard = DropFlag(d.clone());
+            async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            }
+        });
+        let d = dropped_b.clone();
+        runner.supervised("b", Backoff::new(FAST, FAST), move || {
+            let guard = DropFlag(d.clone());
+            async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            }
+        });
+        wait_until(|| runs.load(Ordering::SeqCst) == 1).await;
+        handle.cancel();
+        wait_until(|| dropped_a.load(Ordering::SeqCst)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "cancelled job restarted");
+        assert!(
+            !dropped_b.load(Ordering::SeqCst),
+            "cancel leaked to sibling"
+        );
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runner.shutdown(Duration::from_secs(5)),
+        )
+        .await
+        .expect("a pending supervised run must not hold shutdown to its deadline");
+        assert!(dropped_b.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn supervised_restarts_after_ending_with_growing_backoff() {
+        let runner = JobRunner::new();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let s = starts.clone();
+        runner.supervised(
+            "flaky",
+            Backoff::new(Duration::from_millis(20), Duration::from_millis(80)),
+            move || {
+                s.lock().unwrap().push(tokio::time::Instant::now());
+                std::future::ready(())
+            },
+        );
+        wait_until(|| starts.lock().unwrap().len() >= 5).await;
+        runner.shutdown(Duration::from_secs(1)).await;
+        let starts = starts.lock().unwrap();
+        let expected = [20, 40, 80, 80];
+        for (pair, floor) in starts.windows(2).zip(expected) {
+            assert!(
+                pair[1] - pair[0] >= Duration::from_millis(floor),
+                "restart came before its {floor}ms backoff"
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_doubles_to_ceiling_and_resets_after_a_healthy_run() {
+        let backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+        let short = Duration::from_millis(10);
+        assert_eq!(backoff.next(None, short), Duration::from_secs(1));
+        assert_eq!(
+            backoff.next(Some(Duration::from_secs(1)), short),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            backoff.next(Some(Duration::from_secs(20)), short),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            backoff.next(Some(Duration::from_secs(30)), Duration::from_secs(30)),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn supervised_panic_is_contained_and_restarted() {
+        let runner = JobRunner::new();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let healthy = Arc::new(AtomicUsize::new(0));
+        let r = runs.clone();
+        runner.supervised("panics", Backoff::new(FAST, FAST), move || {
+            let attempt = r.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt < 2 {
+                    panic!("injected supervised failure");
+                }
+                std::future::pending::<()>().await;
+            }
+        });
+        let h = healthy.clone();
+        runner.periodic("healthy", Every::new(FAST), move || {
+            h.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(())
+        });
+        wait_until(|| runs.load(Ordering::SeqCst) >= 3 && healthy.load(Ordering::SeqCst) >= 3)
+            .await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 3, "a live run was restarted");
+        runner.shutdown(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn supervised_registration_after_shutdown_is_refused() {
+        let runner = JobRunner::new();
+        runner.shutdown(Duration::from_secs(1)).await;
+        let runs = Arc::new(AtomicUsize::new(0));
+        let r = runs.clone();
+        let handle = runner.supervised("late", Backoff::new(FAST, FAST), move || {
+            r.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<()>()
+        });
+        assert!(handle.is_cancelled());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+    }
+
     /// Spawns that are allowed to hold a long-lived `loop` / interval outside
     /// the runner, per file, with why. Counts are exact: migrating one onto the
     /// runner means removing it here too.
@@ -455,21 +684,6 @@ mod tests {
             "src/persona/worker.rs",
             1,
             "config refresh deliberately fails the worker: stale policy must stop ticks",
-        ),
-        (
-            "src/middleware/auth.rs",
-            1,
-            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
-        ),
-        (
-            "src/federation/ws_gateway.rs",
-            1,
-            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
-        ),
-        (
-            "src/services/agent/notifications/bridge.rs",
-            1,
-            "Postgres LISTEN with its own reconnect; event-driven, not a periodic tick",
         ),
         (
             "src/api/agent/notifications.rs",
@@ -553,7 +767,8 @@ mod tests {
 
     /// Long-lived background loops belong on the runner, which owns their
     /// shutdown and contains their panics. A new bare `spawn` + `loop` must
-    /// either move onto [`JobRunner::periodic`] or be listed above with a reason.
+    /// either move onto [`JobRunner::periodic`] / [`JobRunner::supervised`] or be
+    /// listed above with a reason.
     #[test]
     fn long_lived_loops_are_not_spawned_outside_the_runner() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
