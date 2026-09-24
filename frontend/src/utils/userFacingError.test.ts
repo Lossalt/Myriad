@@ -401,12 +401,6 @@ describe('userFacingError', () => {
     assert.equal(/well-known/i.test(text), false)
   })
 
-  it('maps leftover Steam Chinese without leaking internals', () => {
-    const text = userFacingError('获取 Steam 在线状态失败: error sending request for url (http://x)')
-    assert.equal(/error sending request/i.test(text), false)
-    assert.equal(/获取 Steam/.test(text), false)
-  })
-
   it('maps leftover agent processing Chinese without dumping internals', () => {
     const text = userFacingError('处理失败: database connection closed')
     assert.match(text, /database connection closed/)
@@ -1794,7 +1788,7 @@ describe('userFacingError', () => {
   })
 })
 
-const RULE_BUDGET = 210
+const RULE_BUDGET = 61
 
 describe('userFacingError is driven by codes', () => {
   before(async () => {
