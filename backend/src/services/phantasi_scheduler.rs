@@ -197,6 +197,15 @@ pub struct PhantasiSchedulerEngine {
     running: Arc<RwLock<bool>>,
 }
 
+/// Result of one fetch attempt, after the source row was updated.
+enum FetchOutcome {
+    Fetched {
+        new_count: i32,
+        source: phantasi_sources::Model,
+    },
+    Failed(String),
+}
+
 impl PhantasiSchedulerEngine {
     /// 创建调度引擎
     pub fn new(db: DatabaseConnection) -> Self {
@@ -368,22 +377,46 @@ impl PhantasiSchedulerEngine {
             source.feed_type
         );
 
+        let parser = FeedParser::new();
+        let notion_service = NotionService::new();
+        let rsshub_service = RsshubService::new(db.clone());
+        match Self::fetch_and_apply(
+            db,
+            notification_tx,
+            (&parser, &notion_service, &rsshub_service),
+            source,
+            now,
+        )
+        .await?
+        {
+            FetchOutcome::Fetched { new_count, .. } => Ok(new_count),
+            FetchOutcome::Failed(_) => Ok(0),
+        }
+    }
+
+    /// Fetch one source and apply the result to its row: metadata backfill on
+    /// success, failure bookkeeping and the one-time error notification on
+    /// failure. Scheduled ticks and manual refresh share it so they cannot
+    /// drift. `Err` is a storage failure; a fetch failure is an outcome.
+    async fn fetch_and_apply(
+        db: &DatabaseConnection,
+        notification_tx: &broadcast::Sender<NewItemsNotification>,
+        (parser, notion_service, rsshub_service): (&FeedParser, &NotionService, &RsshubService),
+        source: phantasi_sources::Model,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<FetchOutcome, String> {
         let mut active: phantasi_sources::ActiveModel = source.clone().into();
         // 提前更新 last_fetched_at，即使失败也记录，避免频繁重试失败源
         active.last_fetched_at = Set(Some(now.into()));
 
-        let parser = FeedParser::new();
-        let notion_service = NotionService::new();
-        let rsshub_service = RsshubService::new(db.clone());
-
         let fetch_result: Result<(ParsedFeed, Option<String>), String> = match source.feed_type {
             phantasi_sources::FeedType::Notion => {
-                Self::fetch_notion_source(&notion_service, &source)
+                Self::fetch_notion_source(notion_service, &source)
                     .await
                     .map(|feed| (feed, None))
             }
             phantasi_sources::FeedType::RssHub => {
-                Self::fetch_rsshub_source(&rsshub_service, &source)
+                Self::fetch_rsshub_source(rsshub_service, &source)
                     .await
                     .map(|feed| (feed, None))
             }
@@ -446,7 +479,10 @@ impl PhantasiSchedulerEngine {
                         updated_source.name
                     );
                 }
-                Ok(new_count)
+                Ok(FetchOutcome::Fetched {
+                    new_count,
+                    source: updated_source,
+                })
             }
             Err(e) => {
                 tracing::warn!(
@@ -491,7 +527,7 @@ impl PhantasiSchedulerEngine {
                     .update(db)
                     .await
                     .map_err(|error| phantasi_store_failed("update source", error))?;
-                Ok(0)
+                Ok(FetchOutcome::Failed(e))
             }
         }
     }
@@ -765,73 +801,19 @@ impl PhantasiSchedulerEngine {
             return Ok(0);
         }
 
-        let now = Utc::now();
-
-        let mut active: phantasi_sources::ActiveModel = source.clone().into();
-        active.last_fetched_at = Set(Some(now.into()));
-
-        let fetch_result: Result<(ParsedFeed, Option<String>), String> = match source.feed_type {
-            phantasi_sources::FeedType::Notion => {
-                Self::fetch_notion_source(&self.notion_service, &source)
-                    .await
-                    .map(|feed| (feed, None))
-            }
-            phantasi_sources::FeedType::RssHub => {
-                Self::fetch_rsshub_source(&self.rsshub_service, &source)
-                    .await
-                    .map(|feed| (feed, None))
-            }
-            _ => self
-                .parser
-                .fetch_feed(&source.url)
-                .await
-                .map(|fetched| (fetched.feed, fetched.permanent_url))
-                .map_err(|error| {
-                    tracing::warn!(%error, "phantasi fetch failed");
-                    error.user_message()
-                }),
-        };
-
-        match fetch_result {
-            Ok((feed, permanent_url)) => {
-                active.last_success_at = Set(Some(now.into()));
-                active.last_error = Set(None);
-                active.error_count = Set(0);
-
-                if let Some(new_url) = permanent_url {
-                    if new_url != source.url {
-                        tracing::info!(
-                            old = %source.url,
-                            new = %new_url,
-                            source = %source.name,
-                            "[PhantasiScheduler] Feed permanently moved; updating URL"
-                        );
-                        active.url = Set(new_url);
-                    }
-                }
-
-                if source.description.is_none() {
-                    active.description = Set(feed.description.clone());
-                }
-                if source.site_url.is_none() {
-                    active.site_url = Set(feed.site_url.clone());
-                }
-                if source.icon.is_none() {
-                    if let Some(icon_url) = &feed.icon {
-                        Self::try_download_icon(&mut active, source.id, &source.name, icon_url)
-                            .await;
-                    }
-                }
-
-                let updated_source = active
-                    .update(&self.db)
-                    .await
-                    .map_err(|error| phantasi_store_failed("update source", error))?;
-
-                let new_count =
-                    Self::save_items(&self.db, &updated_source, &feed, &self.notification_tx)
-                        .await?;
-
+        match Self::fetch_and_apply(
+            &self.db,
+            &self.notification_tx,
+            (&self.parser, &self.notion_service, &self.rsshub_service),
+            source,
+            Utc::now(),
+        )
+        .await?
+        {
+            FetchOutcome::Fetched {
+                new_count,
+                source: updated_source,
+            } => {
                 // Best-effort: push categorized phantasi into phantasi-recommend rings
                 if new_count > 0
                     && updated_source
@@ -846,19 +828,9 @@ impl PhantasiSchedulerEngine {
                     )
                     .await;
                 }
-
                 Ok(new_count)
             }
-            Err(e) => {
-                active.last_error = Set(Some(e.clone()));
-                active.error_count = Set(source.error_count + 1);
-                active
-                    .update(&self.db)
-                    .await
-                    .map_err(|error| phantasi_store_failed("update source", error))?;
-
-                Err(e)
-            }
+            FetchOutcome::Failed(error) => Err(error),
         }
     }
 
@@ -931,6 +903,27 @@ pub async fn shutdown_phantasi_scheduler() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scheduled_and_manual_fetches_share_one_apply_path() {
+        let src = include_str!("phantasi_scheduler.rs");
+        // Match the definitions (indented method lines), not string literals.
+        for entry in [
+            "\n    async fn process_source(",
+            "\n    pub async fn refresh_source(",
+        ] {
+            let body = src
+                .split(entry)
+                .nth(1)
+                .and_then(|rest| rest.split("\n    }\n").next())
+                .expect(entry);
+            assert!(body.contains("fetch_and_apply("), "{entry}");
+            assert!(
+                !body.contains("fetch_feed("),
+                "{entry} must not fetch on its own"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
