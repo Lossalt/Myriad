@@ -71,6 +71,29 @@ fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// The call may have reached the other side and taken effect even though no
+/// success came back: an explicit unknown outcome, or the response was lost
+/// (timeout, dropped connection). Retrying such a call can repeat the effect.
+pub fn outcome_may_have_applied(error: &str) -> bool {
+    if error.starts_with("Execution outcome is unknown:") {
+        return true;
+    }
+    let lower = error.to_lowercase();
+    lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("connection closed")
+}
+
+/// Whether a failed step may run again. Read-only steps retry whenever the
+/// analysis allows; a step with side effects never retries after an outcome
+/// that may already have applied — the same rule the work loop follows by
+/// sending such failures to recovery instead of repeating them.
+pub fn may_retry_step(analysis_retryable: bool, effectful: bool, error: &str) -> bool {
+    analysis_retryable && !(effectful && outcome_may_have_applied(error))
+}
+
 /// 分析执行错误，返回分类和修复建议。
 pub fn analyze_error(
     error: &str,
@@ -536,6 +559,23 @@ pub fn apply_param_fixes(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn side_effects_are_not_repeated_after_an_unknown_outcome() {
+        use super::may_retry_step;
+        // A read may always retry what the analysis allows.
+        assert!(may_retry_step(true, false, "The step timed out"));
+        // A write whose response was lost may already have happened.
+        assert!(!may_retry_step(true, true, "The step timed out"));
+        assert!(!may_retry_step(
+            true,
+            true,
+            "Execution outcome is unknown: lost"
+        ));
+        // A write that was refused outright can be tried again.
+        assert!(may_retry_step(true, true, "HTTP 503 service unavailable"));
+        assert!(!may_retry_step(false, false, "anything"));
+    }
+
     use super::*;
 
     #[test]

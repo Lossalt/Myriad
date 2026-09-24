@@ -789,23 +789,19 @@ impl Executor {
                                     &step.capability_id,
                                     &step.params,
                                 );
-                                let max_retries = step
-                                    .retry
-                                    .as_ref()
-                                    .map(|r| r.max_attempts.min(3))
-                                    .unwrap_or_else(|| {
-                                        if step.capability_id.starts_with("ai.")
-                                            || step.capability_id.starts_with("skill:")
-                                            || step.capability_id == "prompt.generate"
-                                        {
-                                            2
-                                        } else {
-                                            1
-                                        }
-                                    });
+                                let max_retries =
+                                    crate::services::agent::retry_pure::default_max_retries(&step);
+                                let retryable =
+                                    crate::services::agent::error_analyzer_pure::may_retry_step(
+                                        analysis.retryable,
+                                        crate::services::agent::capability::is_effectful(
+                                            &step.capability_id,
+                                        )
+                                        .await,
+                                        &e,
+                                    );
 
-                                if analysis.retryable && global_retry_budget > 0 && max_retries > 1
-                                {
+                                if retryable && global_retry_budget > 0 && max_retries > 1 {
                                     tracing::info!(
                                         step_id = %step.id,
                                         category = ?analysis.category,

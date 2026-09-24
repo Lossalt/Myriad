@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 pub use myriad_agent_rules::{
-    ErrorAnalysis, ErrorCategory, ParamFix, analyze_error, apply_param_fixes,
+    ErrorAnalysis, ErrorCategory, ParamFix, analyze_error, apply_param_fixes, may_retry_step,
 };
 
 #[cfg(test)]

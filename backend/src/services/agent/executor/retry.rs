@@ -6,7 +6,9 @@
 use super::Executor;
 use super::handlers::HandlerContext;
 use crate::config::ModelTier;
-use crate::services::agent::error_analyzer_pure::{analyze_error, apply_param_fixes};
+use crate::services::agent::error_analyzer_pure::{
+    analyze_error, apply_param_fixes, may_retry_step,
+};
 use crate::services::agent::retry_pure::{
     compute_retry_delay_ms, default_max_retries as pure_default_max_retries,
     format_retry_final_error, prepend_step_id, should_retry_step, step_retry_delay_config,
@@ -155,11 +157,13 @@ impl Executor {
                     let effective_params = retry_params_override.as_ref().unwrap_or(&step.params);
                     let analysis = analyze_error(&e, &step.capability_id, effective_params);
 
+                    let effectful =
+                        crate::services::agent::capability::is_effectful(&step.capability_id).await;
                     let should_retry = should_retry_step(
                         retry_count,
                         config.max_attempts,
                         config.global_budget,
-                        analysis.retryable,
+                        may_retry_step(analysis.retryable, effectful, &e),
                     );
 
                     if should_retry {
