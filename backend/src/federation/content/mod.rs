@@ -16,3 +16,4 @@ pub use types::{
 };
 
 pub(crate) use ap_object::fan_out_to_followers;
+pub(crate) use timeline::preview_from_ap_object;

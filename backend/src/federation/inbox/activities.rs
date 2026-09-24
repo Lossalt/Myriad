@@ -938,7 +938,7 @@ pub(crate) async fn handle_content_activity(
 
     // 添加到 Timeline — prefer plain source.content for Note objects
     // Announce / Create / Update land on the feed.
-    let preview = timeline_preview_from_object(&activity["object"]);
+    let preview = crate::federation::content::preview_from_ap_object(&activity["object"]);
 
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -960,32 +960,6 @@ pub(crate) async fn handle_content_activity(
     .map_err(db_err)?;
 
     Ok(StatusCode::ACCEPTED)
-}
-
-/// Plain timeline preview from an AP object (Note prefers source.content).
-fn timeline_preview_from_object(object: &serde_json::Value) -> Option<String> {
-    object
-        .pointer("/source/content")
-        .and_then(|v| v.as_str())
-        .or_else(|| object.get("content").and_then(|v| v.as_str()))
-        .or_else(|| object.get("summary").and_then(|v| v.as_str()))
-        .or_else(|| object.get("content_preview").and_then(|v| v.as_str()))
-        .or_else(|| object.get("mfp:contentPreview").and_then(|v| v.as_str()))
-        .or_else(|| object.get("name").and_then(|v| v.as_str()))
-        .map(|s| {
-            let plain = s
-                .replace("<p>", "")
-                .replace("</p>", "")
-                .replace("<br>", " ")
-                .replace("<br/>", " ")
-                .replace("<br />", " ")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-                .replace("&quot;", "\"");
-            plain.chars().take(200).collect::<String>()
-        })
-        .filter(|s| !s.trim().is_empty())
 }
 
 /// 留存群邻实例的公开帖，即使本地没有任何人关注作者。
@@ -1073,7 +1047,7 @@ pub(crate) async fn distribute_to_followers(
 
     let activity_id_str = activity["id"].as_str().unwrap_or("");
     let object_type = activity["object"]["type"].as_str().map(|s| s.to_string());
-    let preview = timeline_preview_from_object(&activity["object"]);
+    let preview = crate::federation::content::preview_from_ap_object(&activity["object"]);
 
     // 批量 INSERT — 一次 SQL 分发到所有关注者的时间线，避免 N+1
     db.execute_raw(Statement::from_sql_and_values(
