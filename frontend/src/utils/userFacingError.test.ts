@@ -1131,7 +1131,7 @@ describe('userFacingError', () => {
 
   it('maps leftover MCP runtime errors without dumps and keeps method or tool phrase', () => {
     const timeout = userFacingError(
-      "MCP server timeout (30s) for method 'tools/call'",
+      "MCP request timed out for method 'tools/call'",
     )
     const write = userFacingError(
       'Failed to write to MCP server: Permission denied (os error 13)',

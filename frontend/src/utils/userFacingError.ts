@@ -638,36 +638,22 @@ export function userFacingError(reason: unknown, fallback?: string): string {
   ) {
     return classified(t.imageCacheFailed, raw, hint)
   }
-  if (/^mcp server timeout/i.test(raw)) {
+  if (is('mcp_timeout')) {
     const method = raw.match(/method ['"]([^'"]+)['"]/i)?.[1] || ''
     return joinParts(t.mcpTimeout, method, usefulExtra(hint, t.mcpTimeout, method))
   }
-  if (
-    /^invalid (json-rpc|mcp initialize|mcp tools\/list|mcp tools\/call) response/i.test(
-      raw,
-    ) ||
-    /^invalid (initialize|tools\/list|tools\/call) response/i.test(raw)
-  ) {
+  if (is('mcp_response_invalid')) {
     return classified(t.mcpResponseInvalid, raw, hint)
   }
-  if (/^mcp (error|tool (error|failed))/i.test(raw)) {
+  if (is('mcp_tool_failed')) {
     return classified(t.mcpToolFailed, raw, hint)
   }
-  if (/^mcp server ['"][^'"]+['"] is not ready/i.test(raw)) {
+  if (is('mcp_server_not_ready')) {
     const id = raw.match(/mcp server ['"]([^'"]+)['"]/i)?.[1] || ''
     const state = raw.match(/not ready \(([^)]+)\)/i)?.[1] || ''
     return joinParts(t.mcpTalkFailed, id, state, usefulExtra(hint, t.mcpTalkFailed, id, state))
   }
-  if (
-    /^failed to (read from mcp|drain mcp|write to mcp|flush mcp|serialize mcp|write mcp)/i.test(
-      raw,
-    ) ||
-    /^mcp (line is not valid utf-8|message exceeds|request exceeds|notification exceeds|server closed)/i.test(
-      raw,
-    ) ||
-    /^json serialize error/i.test(raw) ||
-    /^too many concurrent mcp/i.test(raw)
-  ) {
+  if (is('mcp_io_failed')) {
     return classified(t.mcpTalkFailed, raw, hint)
   }
   if (/^upstream (request failed|http)/i.test(raw)) {
