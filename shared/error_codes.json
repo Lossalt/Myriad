@@ -939,6 +939,7 @@
     "x_bearer_not_configured",
     "x_username_required",
     "youtube_api_key_required",
-    "youtube_upstream_failed"
+    "youtube_upstream_failed",
+    "pagination_invalid"
   ]
 }

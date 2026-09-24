@@ -593,7 +593,7 @@
     "media_read_failed": "Impossible de lire ce fichier. Réessayez.",
     "media_store_failed": "Impossible d’enregistrer le fichier. Réessayez.",
     "model3d_read_failed": "Impossible de lire le modèle 3D. Réessayez.",
-    "pagination_invalid": "Cette page est hors limites. Revenez à la première page.",
+    "pagination_invalid": "La page ou la taille de page est hors limites. Actualisez et réessayez.",
     "phantasi_application_pending": "Une demande pour ce site attend déjà d’être examinée.",
     "phantasi_article_empty": "Cet article n’a pas de contenu.",
     "phantasi_comment_too_long": "Les commentaires sont limités à 2000 caractères.",

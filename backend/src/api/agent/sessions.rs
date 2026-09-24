@@ -90,9 +90,12 @@ fn session_pagination(query: &SessionListQuery) -> Result<(u64, u64), HttpError>
         return Err(HttpError(AppError::bad_request("page must be >= 1")));
     }
     if query.limit < SESSION_LIMIT_MIN || query.limit > SESSION_LIMIT_MAX {
-        return Err(HttpError(AppError::bad_request(format!(
-            "limit must be between {SESSION_LIMIT_MIN} and {SESSION_LIMIT_MAX}"
-        ))));
+        return Err(HttpError(
+            AppError::bad_request(format!(
+                "limit must be between {SESSION_LIMIT_MIN} and {SESSION_LIMIT_MAX}"
+            ))
+            .with_code("pagination_invalid"),
+        ));
     }
     let page_index = query.page - 1;
     if page_index.checked_mul(query.limit).is_none() {

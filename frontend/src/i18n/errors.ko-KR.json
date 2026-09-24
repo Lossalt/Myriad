@@ -593,7 +593,7 @@
     "media_read_failed": "이 파일을 읽지 못했어요. 다시 시도하세요.",
     "media_store_failed": "파일을 저장하지 못했어요. 다시 시도하세요.",
     "model3d_read_failed": "3D 모델을 읽지 못했어요. 다시 시도하세요.",
-    "pagination_invalid": "페이지 번호가 범위를 벗어났어요. 첫 페이지로 돌아가세요.",
+    "pagination_invalid": "페이지 번호나 페이지 크기가 범위를 벗어났어요. 새로 고친 뒤 다시 시도하세요.",
     "phantasi_application_pending": "이 사이트의 신청이 이미 심사를 기다리고 있어요.",
     "phantasi_article_empty": "이 글에는 본문이 없어요.",
     "phantasi_comment_too_long": "댓글은 2000자까지 쓸 수 있어요.",

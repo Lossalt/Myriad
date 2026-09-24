@@ -593,7 +593,7 @@
     "media_read_failed": "这个文件没能读取，请重试。",
     "media_store_failed": "文件没能保存，请重试。",
     "model3d_read_failed": "3D 模型没能读取，请重试。",
-    "pagination_invalid": "页码超出范围，请回到第一页。",
+    "pagination_invalid": "页码或每页数量超出范围，刷新后再试。",
     "phantasi_application_pending": "这个站点已经有一份申请在等审核了。",
     "phantasi_article_empty": "这篇文章没有正文。",
     "phantasi_comment_too_long": "评论最多 2000 字。",

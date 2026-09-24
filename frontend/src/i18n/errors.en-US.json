@@ -593,7 +593,7 @@
     "media_read_failed": "Could not read this file. Please try again.",
     "media_store_failed": "Could not save the file. Please try again.",
     "model3d_read_failed": "Could not read the 3D model. Please try again.",
-    "pagination_invalid": "That page is out of range. Go back to the first page.",
+    "pagination_invalid": "The page or page size is out of range. Refresh and try again.",
     "phantasi_application_pending": "An application for this site is already waiting for review.",
     "phantasi_article_empty": "This article has no content to work with.",
     "phantasi_comment_too_long": "Comments can be up to 2000 characters.",

@@ -593,7 +593,7 @@
     "media_read_failed": "このファイルを読み込めませんでした。再試行してください。",
     "media_store_failed": "ファイルを保存できませんでした。再試行してください。",
     "model3d_read_failed": "3D モデルを読み込めませんでした。再試行してください。",
-    "pagination_invalid": "ページ番号が範囲外です。最初のページに戻ってください。",
+    "pagination_invalid": "ページ番号または表示件数が範囲外です。再読み込みしてから再試行してください。",
     "phantasi_application_pending": "このサイトの申請はすでに審査待ちです。",
     "phantasi_article_empty": "この記事には本文がありません。",
     "phantasi_comment_too_long": "コメントは 2000 文字までです。",
