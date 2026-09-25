@@ -881,6 +881,12 @@
         "navigate": "방금 이동했습니다",
         "phantasi_open_article": "방금 글을 열었습니다"
       }
+    },
+    "herTime": {
+      "listening": "{title} 듣는 중",
+      "reading": "{title} 읽는 중",
+      "join": "같이 듣기",
+      "together": "같이 듣는 중"
     }
   },
   "agentPersona": {

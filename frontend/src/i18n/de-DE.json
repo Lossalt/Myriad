@@ -881,6 +881,12 @@
         "navigate": "Habe gerade für Sie navigiert",
         "phantasi_open_article": "Habe gerade einen Artikel geöffnet"
       }
+    },
+    "herTime": {
+      "listening": "Hört „{title}“",
+      "reading": "Liest „{title}“",
+      "join": "Mithören",
+      "together": "Ihr hört gemeinsam"
     }
   },
   "agentPersona": {

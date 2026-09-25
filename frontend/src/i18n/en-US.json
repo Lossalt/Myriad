@@ -881,6 +881,12 @@
         "navigate": "Just navigated for you",
         "phantasi_open_article": "Just opened an article"
       }
+    },
+    "herTime": {
+      "listening": "Listening to {title}",
+      "reading": "Reading {title}",
+      "join": "Listen together",
+      "together": "Listening together"
     }
   },
   "agentPersona": {

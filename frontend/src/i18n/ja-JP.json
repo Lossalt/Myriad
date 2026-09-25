@@ -881,6 +881,12 @@
         "navigate": "ページを移動しました",
         "phantasi_open_article": "記事を開きました"
       }
+    },
+    "herTime": {
+      "listening": "「{title}」を聴いてる",
+      "reading": "「{title}」を読んでる",
+      "join": "一緒に聴く",
+      "together": "一緒に聴いてる"
     }
   },
   "agentPersona": {

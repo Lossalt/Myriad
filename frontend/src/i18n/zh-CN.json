@@ -881,6 +881,12 @@
         "navigate": "刚跳了一次页面",
         "phantasi_open_article": "刚打开了一篇文章"
       }
+    },
+    "herTime": {
+      "listening": "在听《{title}》",
+      "reading": "在读《{title}》",
+      "join": "一起听",
+      "together": "一起在听"
     }
   },
   "agentPersona": {

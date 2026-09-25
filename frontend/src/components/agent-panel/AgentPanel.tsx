@@ -29,6 +29,7 @@ import {
   dispatchAgentPanelSubmit,
 } from './agentPanelEvents'
 import { AgentPanelFull, AgentPanelSessionChrome } from './AgentPanelFull'
+import { AgentPanelHerTime } from './AgentPanelHerTime'
 import { AgentPanelIntention } from './AgentPanelIntention'
 import {
   cycleAgentPanelMode,
@@ -313,6 +314,9 @@ export const AgentPanel: React.FC = () => {
                 autoFocus={fullView !== 'sessions' && stage.phase === 'settled'}
                 leading={
                   <>
+                    <AgentPanelHerTime
+                      open={open && stage.phase === 'settled' && !undoOffer}
+                    />
                     <AgentPresence open={!!undoOffer} kind="chip" from="self">
                       {undoOffer ? (
                         <span className="agent-panel-tag" data-tone="primary">
