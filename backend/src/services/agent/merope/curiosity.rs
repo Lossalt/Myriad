@@ -315,6 +315,30 @@ async fn wonder_and_find_out(user_id: i32, user_text: &str, reply: &str) {
     }
 }
 
+/// The wonder call as production sends it, for the semantic suite.
+#[cfg(test)]
+pub(crate) fn wonder_probe_contract(soul: &str) -> (String, Value) {
+    (wonder_system(soul), wonder_schema())
+}
+
+/// The digest call as production sends it, for the semantic suite.
+#[cfg(test)]
+pub(crate) fn digest_probe_contract(soul: &str, why: &str) -> (String, Value) {
+    (digest_system(soul, why), digest_schema())
+}
+
+/// `Some(query)` when she would look something up, `Some(None)` when not.
+#[cfg(test)]
+pub(crate) fn parse_wonder(raw: &str) -> Option<Option<String>> {
+    parse::<Wonder>(raw).map(|wonder| wonder.query.filter(|query| !query.trim().is_empty()))
+}
+
+/// Whether a digest honors the contract.
+#[cfg(test)]
+pub(crate) fn parse_found_out(raw: &str) -> bool {
+    parse::<FoundOut>(raw).is_some_and(|found| !found.learned.trim().is_empty())
+}
+
 async fn ask_model<T: for<'de> Deserialize<'de>>(
     user_id: i32,
     operation: &'static str,

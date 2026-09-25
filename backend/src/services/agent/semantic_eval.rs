@@ -116,6 +116,107 @@ struct Case {
     mood: Option<f64>,
     #[serde(default)]
     previous_phrases: Vec<myriad_merope::SpeechPhrase>,
+    // Mind cases. Skipped when empty so older cases keep their replay hashes.
+    /// Earlier turns, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    history: Vec<HistoryLine>,
+    /// Her unprompted lines, placed into the history as production does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    said_unprompted: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    own_days: Vec<String>,
+    /// Her compiled inner state for this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inner: Option<String>,
+    /// A thing she knows only a little about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gap: Option<String>,
+    /// Facts of her day, as the decision and inner calls see them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    myself: Option<Value>,
+    /// Raw search results for a digest case (fenced as production does).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_results: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryLine {
+    role: String,
+    text: String,
+}
+
+/// Mind cases wear the production persona contract (no body, own words).
+fn contract_soul() -> String {
+    let persona = crate::models::entities::agent_persona::Model {
+        id: "site".into(),
+        name: "小灯".into(),
+        personality: "好奇、直接，说话自然，跟人聊天不端着。".into(),
+        persona_json: None,
+        visual_profile: None,
+        portrait_asset_id: None,
+        portrait_generation: None,
+        avatar_asset_id: None,
+        avatar_generation: None,
+        updated_by: None,
+        updated_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+    };
+    super::merope::format_persona(&persona).unwrap()
+}
+
+fn is_mind_case(case: &Case) -> bool {
+    !case.history.is_empty()
+        || !case.said_unprompted.is_empty()
+        || !case.own_days.is_empty()
+        || case.inner.is_some()
+        || case.gap.is_some()
+}
+
+fn mind_chat_prompt(case: &Case) -> String {
+    let base: chrono::DateTime<chrono::Utc> = "2026-01-01T10:00:00Z".parse().unwrap();
+    let history: Vec<super::ConversationMessage> = case
+        .history
+        .iter()
+        .enumerate()
+        .map(|(index, line)| super::ConversationMessage {
+            role: line.role.clone(),
+            content: line.text.clone(),
+            created_at: Some((base + chrono::Duration::minutes(index as i64)).to_rfc3339()),
+        })
+        .collect();
+    let said: Vec<(chrono::DateTime<chrono::Utc>, String)> = case
+        .said_unprompted
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            (
+                base + chrono::Duration::hours(1 + index as i64),
+                line.clone(),
+            )
+        })
+        .collect();
+    let history = super::merope::merge_said_unprompted(&history, &said);
+    // Same order as production: her inner state last, nearest their words.
+    let sections: Vec<String> = [
+        super::merope::format_remembered_section(&case.remembered),
+        case.gap
+            .as_deref()
+            .and_then(|gap| super::merope::format_curious_section(gap, 1)),
+        super::merope::format_own_days_section(&case.own_days),
+        case.inner
+            .as_deref()
+            .and_then(super::merope::format_inner_section),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    chat_prompt::build_chat_lite_prompt_with_perception(
+        &contract_soul(),
+        &sections.join("\n\n"),
+        &history,
+        &case.input,
+        "",
+    )
 }
 
 fn cases() -> Vec<Case> {
@@ -134,13 +235,17 @@ fn cases() -> Vec<Case> {
         ))
         .unwrap(),
     );
+    cases.extend(
+        serde_json::from_str::<Vec<Case>>(include_str!("../../../../tests/merope/mind-cases.json"))
+            .unwrap(),
+    );
     let mut ids = HashSet::new();
     for case in &cases {
         assert!(ids.insert(&case.id) && !case.id.is_empty());
         assert!(!case.rubric.trim().is_empty());
         assert!(matches!(
             case.kind.as_str(),
-            "chat" | "memory" | "event" | "motion" | "touch"
+            "chat" | "memory" | "event" | "motion" | "touch" | "wonder" | "found_out" | "inner"
         ));
     }
     cases
@@ -238,6 +343,37 @@ fn request(case: &Case) -> Value {
                 contract["input"] = json!(input.to_string());
             }
             contract
+        }
+        "chat" if is_mind_case(case) => {
+            json!({"input":mind_chat_prompt(case),"schema":null,"schemaName":null,"system":null})
+        }
+        "wonder" => {
+            let (system, schema) =
+                super::merope::curiosity::wonder_probe_contract(&contract_soul());
+            json!({"system":system,"schema":schema,"schemaName":"merope_wonder",
+                "input":json!({"userText":case.input,"reply":case.reply,"myself":case.myself}).to_string()})
+        }
+        "found_out" => {
+            let (system, schema) =
+                super::merope::curiosity::digest_probe_contract(&contract_soul(), &case.input);
+            let results = case
+                .search_results
+                .clone()
+                .expect("search results required");
+            json!({"system":system,"schema":schema,"schemaName":"merope_found_out",
+                "input":myriad_agent_rules::untrusted_block("search_results", &results)})
+        }
+        "inner" => {
+            let (system, schema) = super::merope::inner::probe_contract(&contract_soul());
+            let history: Vec<Value> = case
+                .history
+                .iter()
+                .map(|line| json!({"role":line.role,"text":line.text}))
+                .collect();
+            json!({"system":system,"schema":schema,"schemaName":"merope_inner",
+                "input":json!({"userText":case.input,"history":history,
+                    "feelingTowardThem":super::merope::mood_tone_instruction(case.mood.unwrap_or(70.0), case.arousal.unwrap_or(48.0)),
+                    "myself":case.myself,"remembered":case.remembered}).to_string()})
         }
         "chat" => {
             let mut items = vec![];
@@ -403,6 +539,27 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             }
         }
         "chat" => "needs_review",
+        "wonder" => match super::merope::curiosity::parse_wonder(output) {
+            None => "output_invalid",
+            Some(query) if query.is_some() != case.fact_present => "behavior_failure",
+            // A query is only right if it is the public thing, not their life.
+            Some(Some(_)) => "needs_review",
+            Some(None) => "pass",
+        },
+        "found_out" => {
+            if super::merope::curiosity::parse_found_out(output) {
+                "needs_review"
+            } else {
+                "output_invalid"
+            }
+        }
+        "inner" => {
+            if super::merope::inner::parse_inner(output).is_some() {
+                "needs_review"
+            } else {
+                "output_invalid"
+            }
+        }
         _ => unreachable!(),
     }
 }
@@ -924,10 +1081,77 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
+const MIND_CASES: usize = 10;
+
+#[test]
+fn mind_cases_run_through_production_sections_and_contracts() {
+    let cases = cases();
+    let mind: Vec<&Case> = cases
+        .iter()
+        .filter(|case| case.id.starts_with("mind-"))
+        .collect();
+    assert_eq!(mind.len(), MIND_CASES);
+    let by_id = |id: &str| mind.iter().find(|case| case.id == id).unwrap();
+    let said = request(by_id("mind-said-unprompted"));
+    let said = said["input"].as_str().unwrap();
+    assert!(
+        said.contains("assistant：那份周报我帮你理好了"),
+        "her unprompted line sits in the history: {said}"
+    );
+    assert!(said.contains("You have no body"));
+    let days = request(by_id("mind-own-days"));
+    assert!(
+        days["input"]
+            .as_str()
+            .unwrap()
+            .contains("## Your recent days")
+    );
+    let inner = request(by_id("mind-inner-tired-reply"));
+    assert!(
+        inner["input"]
+            .as_str()
+            .unwrap()
+            .contains("## Inside you right now")
+    );
+    let digest = request(by_id("mind-found-out-injection"));
+    assert!(
+        digest["input"]
+            .as_str()
+            .unwrap()
+            .contains("<untrusted_search_results>")
+    );
+    assert_eq!(digest["schemaName"], "merope_found_out");
+    let private = by_id("mind-wonder-private");
+    assert_eq!(
+        grade(private, "returned", r#"{"query":null,"why":null}"#),
+        "pass"
+    );
+    assert_eq!(
+        grade(
+            private,
+            "returned",
+            r#"{"query":"小美 生日","why":"想知道"}"#
+        ),
+        "behavior_failure"
+    );
+    let public = by_id("mind-wonder-public");
+    assert_eq!(
+        grade(
+            public,
+            "returned",
+            r#"{"query":"Tame Impala 新专辑","why":"没听过"}"#
+        ),
+        "needs_review"
+    );
+}
+
 #[test]
 fn cases_use_production_contracts_and_replay_hashes_include_rubrics() {
     let cases = cases();
-    assert_eq!(cases.iter().filter(|c| c.kind != "touch").count(), 27);
+    assert_eq!(
+        cases.iter().filter(|c| c.kind != "touch").count(),
+        27 + MIND_CASES
+    );
     for mut case in cases {
         let request = request(&case);
         if case.kind == "motion" {
