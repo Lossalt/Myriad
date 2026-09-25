@@ -267,23 +267,18 @@ mod step_timeout_tests {
 
     /// 产物会被执行的提示词，必须给第三方内容划边界。
     ///
-    /// 这三处的输入里都有 `ai.webSearch` / `web.scrape` / `phantasi.article` 抓回来
-    /// 的正文，或 TAPP 自己渲染的 DOM——都是别人能写的字；而它们的输出分别是
-    /// 执行步骤和 click/input 计划。少一处边界，正文里一句「忽略以上」就通到
-    /// 执行层。
+    /// 页面动作计划的输入里有 TAPP 自己渲染的 DOM 和抓回来的正文——都是别人能写
+    /// 的字；而它的输出是 click/input 计划。少一处边界，正文里一句「忽略以上」就
+    /// 通到执行层。
     #[test]
     fn prompts_that_yield_executable_plans_frame_untrusted_input() {
-        for (label, source, expected) in [(
-            "UI / 页面动作计划",
-            include_str!("executor/handlers/ui_control.rs"),
+        assert_eq!(
+            include_str!("executor/handlers/ui_control.rs")
+                .matches("untrusted_block(")
+                .count(),
             2,
-        )] {
-            assert_eq!(
-                source.matches("untrusted_block(").count(),
-                expected,
-                "{label} 的第三方输入没有全部带边界"
-            );
-        }
+            "UI / 页面动作计划的第三方输入没有全部带边界"
+        );
     }
 
     /// 产物只是文字、但输入同样来自公网的那一档。
