@@ -170,7 +170,7 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
         .take(2000)
         .collect();
     let Some(analyzer) = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
-        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(60),
     ))
     .await
     else {

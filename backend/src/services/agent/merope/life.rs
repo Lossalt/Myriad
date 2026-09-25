@@ -134,7 +134,7 @@ async fn write_yesterday(db: &DatabaseConnection, owner: i32, day: NaiveDate) {
         return;
     };
     let Some(analyzer) = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
-        std::time::Duration::from_secs(20),
+        std::time::Duration::from_secs(60),
     ))
     .await
     else {
@@ -246,7 +246,7 @@ async fn fill_old_concepts(db: &DatabaseConnection, owner: i32) {
             continue;
         }
         let Some(analyzer) = crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(60),
         ))
         .await
         else {

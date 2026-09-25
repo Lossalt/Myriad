@@ -32,7 +32,7 @@ const PER_SITE_PER_DAY: u32 = 40;
 const MIN_USER_CHARS: usize = 6;
 const MAX_QUERY_CHARS: usize = 80;
 const MAX_RESULTS_CHARS: usize = 3000;
-const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const WONDER_SCHEMA: &str = "merope_wonder";
 const DIGEST_SCHEMA: &str = "merope_found_out";
 
@@ -90,7 +90,7 @@ pub fn spawn_curiosity(
     }
     tokio::spawn(async move {
         if tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(120),
             wonder_and_find_out(user_id, &user_text, &reply, &present, &turn),
         )
         .await

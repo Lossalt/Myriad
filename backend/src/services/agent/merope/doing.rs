@@ -41,7 +41,7 @@ const PAUSE_MINUTES: std::ops::Range<i64> = 3..12;
 const REST: chrono::Duration = chrono::Duration::minutes(30);
 /// She brings something up to the same person at most this often.
 const TELL_EVERY: Duration = Duration::from_secs(45 * 60);
-const CALL_TIMEOUT: Duration = Duration::from_secs(20);
+const CALL_TIMEOUT: Duration = Duration::from_secs(45);
 const MATERIAL_CHARS: usize = 2500;
 const CHOICE_SCHEMA: &str = "merope_doing_choice";
 const DIGEST_SCHEMA: &str = "merope_doing_digest";
@@ -158,7 +158,7 @@ pub async fn tick(db: DatabaseConnection) {
         }
     });
     if let Some(done) = finished {
-        if tokio::time::timeout(Duration::from_secs(60), finish(&db, owner, done))
+        if tokio::time::timeout(Duration::from_secs(120), finish(&db, owner, done))
             .await
             .is_err()
         {
@@ -183,7 +183,7 @@ pub async fn tick(db: DatabaseConnection) {
     if !free_to_start(now) {
         return;
     }
-    let chosen = tokio::time::timeout(Duration::from_secs(60), choose(&db, owner))
+    let chosen = tokio::time::timeout(Duration::from_secs(120), choose(&db, owner))
         .await
         .ok()
         .flatten();

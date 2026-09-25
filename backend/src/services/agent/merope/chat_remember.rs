@@ -16,8 +16,9 @@ use super::ingest::{compact_summary, persona_remember_insert};
 use super::is_logged_in_addressee;
 use super::store::recall_remembered;
 
-const EXTRACT_TIMEOUT: Duration = Duration::from_secs(4);
-const EXTRACT_TOTAL_TIMEOUT: Duration = Duration::from_secs(5);
+// Nobody waits on this: generous enough to ride out a stalled provider.
+const EXTRACT_TIMEOUT: Duration = Duration::from_secs(20);
+const EXTRACT_TOTAL_TIMEOUT: Duration = Duration::from_secs(25);
 const EXTRACT_SCHEMA_NAME: &str = "merope_chat_remember";
 const MIN_USER_CHARS: usize = 2;
 
@@ -131,7 +132,7 @@ pub fn spawn_chat_remember(
     }
     tokio::spawn(async move {
         if tokio::time::timeout(
-            Duration::from_secs(12),
+            Duration::from_secs(45),
             extract_and_store(user_id, &user_text, &reply, input_at, &present, &turn),
         )
         .await

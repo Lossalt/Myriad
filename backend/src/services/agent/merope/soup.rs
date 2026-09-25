@@ -189,8 +189,24 @@ const SETTINGS: &[&str] = &[
 static RECENT_SURFACES: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// She said she would host one: make it up and return what she says to open
-/// it. `None` when it could not be made (she then just said she would).
+/// it. If it cannot be made after a retry she says so rather than leave her
+/// word hanging. `None` only outside a private conversation.
 pub async fn start(request: &UserRequest) -> Option<String> {
+    key_of(request)?;
+    Some(match make_up(request).await {
+        Some(opening) => opening,
+        None => NOT_THIS_TIME.to_string(),
+    })
+}
+
+/// What she says when no puzzle came to her.
+const NOT_THIS_TIME: &str = "……不行，一下子没想出好的。你再叫我一次，我重新想一个。";
+/// A first try that thinks freely, then one more that thinks little. Both
+/// generous: a stalled provider is the thing retried, not a slow puzzle.
+const FIRST_TRY: Duration = Duration::from_secs(45);
+const SECOND_TRY: Duration = Duration::from_secs(30);
+
+async fn make_up(request: &UserRequest) -> Option<String> {
     let key = key_of(request)?;
     let soul: String = crate::services::agent::identity::get_speaking_soul()
         .await
@@ -208,24 +224,48 @@ pub async fn start(request: &UserRequest) -> Option<String> {
         "recentSurfaces": recent,
     })
     .to_string();
-    // Her own voice, thinking as long as a good puzzle takes.
-    let analyzer =
-        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
-            .await?;
-    let raw = crate::services::ai_cost_ledger::with_site_ai_ledger(
-        request.user_id,
-        "merope",
-        "soup_start",
-        analyzer.analyze_json(
-            &start_system(&soul),
-            &input,
-            START_SCHEMA,
-            Some(&start_schema()),
-        ),
-    )
-    .await
-    .ok()?;
-    let puzzle: Puzzle = parse(&raw)?;
+    // Her own voice: first thinking as long as a good puzzle takes, and if
+    // that stalls, once more thinking little.
+    let mut puzzle: Option<Puzzle> = None;
+    for (attempt, limit) in [(1, FIRST_TRY), (2, SECOND_TRY)] {
+        let Some(analyzer) =
+            crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(limit)).await
+        else {
+            return None;
+        };
+        let analyzer = if attempt == 1 {
+            analyzer
+        } else {
+            analyzer.with_light_thinking()
+        };
+        let raw = tokio::time::timeout(
+            limit,
+            crate::services::ai_cost_ledger::with_site_ai_ledger(
+                request.user_id,
+                "merope",
+                "soup_start",
+                analyzer.analyze_json(
+                    &start_system(&soul),
+                    &input,
+                    START_SCHEMA,
+                    Some(&start_schema()),
+                ),
+            ),
+        )
+        .await;
+        match raw {
+            Ok(Ok(raw)) => match parse::<Puzzle>(&raw) {
+                Some(made) => {
+                    puzzle = Some(made);
+                    break;
+                }
+                None => tracing::warn!(attempt, "[Merope] turtle soup came back unreadable"),
+            },
+            Ok(Err(error)) => tracing::warn!(attempt, %error, "[Merope] turtle soup failed"),
+            Err(_) => tracing::warn!(attempt, "[Merope] turtle soup timed out"),
+        }
+    }
+    let puzzle = puzzle?;
     let presentation = puzzle.presentation.trim().to_string();
     if puzzle.surface.trim().is_empty() || puzzle.truth.trim().is_empty() || presentation.is_empty()
     {
@@ -542,6 +582,12 @@ mod tests {
             serde_json::from_str(&judge_input(&game(), "他以前遇到过海难吗？")).unwrap();
         assert_eq!(input["latest"], "他以前遇到过海难吗？");
         assert_eq!(input["keys"][1], "吃过人肉");
+    }
+
+    #[test]
+    fn she_does_not_leave_her_word_hanging() {
+        assert!(NOT_THIS_TIME.contains("再叫我一次"));
+        assert!(SECOND_TRY <= FIRST_TRY);
     }
 
     #[test]
