@@ -138,6 +138,7 @@ pub async fn tick(db: DatabaseConnection) {
         return;
     }
     let Ok(owner) = crate::services::ai_cost_ledger::resolve_site_owner_id().await else {
+        tracing::debug!("[Merope] no site owner to bill her own time to");
         return;
     };
     let now = Utc::now();
@@ -233,9 +234,16 @@ fn option_view(index: usize, thing: &Thing) -> Value {
 }
 
 async fn choose(db: &DatabaseConnection, owner: i32) -> Option<Doing> {
-    let lately = unified::own_experiences(db, 300).await.ok()?;
+    let lately = match unified::own_experiences(db, 300).await {
+        Ok(lately) => lately,
+        Err(error) => {
+            tracing::warn!(%error, "[Merope] could not read what she did lately");
+            return None;
+        }
+    };
     let options = options(db, &lately).await;
     if options.is_empty() {
+        tracing::info!("[Merope] nothing at hand for her own time");
         return None;
     }
     let soul = soul().await;
@@ -252,7 +260,7 @@ async fn choose(db: &DatabaseConnection, owner: i32) -> Option<Doing> {
         "options": options.iter().enumerate().map(|(index, thing)| option_view(index, thing)).collect::<Vec<_>>(),
     })
     .to_string();
-    let choice: Choice = ask(
+    let choice: Option<Choice> = ask(
         Voice::Judge,
         owner,
         "doing_choice",
@@ -261,8 +269,15 @@ async fn choose(db: &DatabaseConnection, owner: i32) -> Option<Doing> {
         CHOICE_SCHEMA,
         &choice_schema(options.len()),
     )
-    .await?;
-    let thing = options.get(choice.choice?)?.clone();
+    .await;
+    let Some(choice) = choice else {
+        tracing::info!("[Merope] could not decide what to do on her own");
+        return None;
+    };
+    let Some(thing) = choice.choice.and_then(|index| options.get(index)).cloned() else {
+        tracing::info!("[Merope] chose to do nothing for a while");
+        return None;
+    };
     let started = Utc::now();
     let length = match &thing {
         Thing::Song { duration_ms, .. } => {
