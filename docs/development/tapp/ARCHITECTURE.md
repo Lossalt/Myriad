@@ -528,12 +528,12 @@ Widget 模板在商店索引、安装请求和资源响应中统一按 `widgetId
 
 Agent Interaction 由可信 Agent 后端创建具名 interaction，Tapp 通过在线 SSE 接收并由单一
 runtime 接受；输入与结果都按 Manifest schema 校验，生命周期、幂等和 intent 的宿主确认由
-后端状态机约束。结果会安全存储并可由 Tapp 查询。Executor 遇到 interaction 会持久化为
+后端状态机约束。结果会安全存储并可由 Tapp 查询。办事任务遇到 interaction 会持久化为
 `waiting_for_input`；结果或拒绝由任意
 副本从 `agent_tasks` 恢复原任务。`ui.open`、`report.create` 与 `dataExchange.request` 有可信
 宿主 adapter，其中跨 Tapp 数据仍只显示 Data Exchange 的一张明细化一次性授权弹窗。
 交互的 5 分钟操作截止时间与 registry 终态保留时间分离；每个副本运行过期扫描，使用数据库
-CAS 只允许一个副本把未完成交互转为 `expired` 并恢复等待中的 Executor。Agent 服务重启时，
+CAS 只允许一个副本把未完成交互转为 `expired` 并恢复等待中的办事任务。Agent 服务重启时，
 无法续跑的 `pending/running` 任务在数据库中一次性转为 `cancelled`；具备持久化
 recipe/context/question 的 `waiting_for_input` 才进入内存恢复索引。等待输入两小时超时只转为
 可查询的失败终态，统一保留 24 小时后删除。恢复前先用 `agent_tasks` 状态 CAS 从

@@ -744,7 +744,7 @@ const off = Tapp.agent.onInteraction("report.compose", async (interaction) => {
 结果提交默认使用基于 interactionId 的幂等键，提交后恢复原 Agent task。`requestIntent()`
 经后端授权后由 `ui.open`、`report.create` 或 `dataExchange.request` 宿主 adapter 执行；跨
 Tapp 数据读取只显示 Data Exchange 自己的一张明细化一次性授权弹窗。
-到期不是简单删除：共享过期 worker 会以 CAS 转为 `expired`，并让原 Executor 从持久化任务
+到期不是简单删除：共享过期 worker 会以 CAS 转为 `expired`，并让原办事任务从持久化检查点
 恢复，避免任务永久停在等待状态。
 
 ---

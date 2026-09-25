@@ -16,7 +16,7 @@
 - 车道：`backend/src/services/agent/queue.rs`（`user:{id}:session:{sid}`）
 - 现有 Discord 路由是数据平台 OAuth，不是 Bot：`backend/src/api/discord.rs`
 
-术语见 `CONTEXT.md` 的办事 / 聊天 / 设定。不要把 `PlannerStatus::Chat` 当成产品聊天档。
+术语见 `CONTEXT.md` 的办事 / 聊天 / 设定。
 
 ## 管道
 
@@ -86,13 +86,12 @@ ChannelAdapter
 
 ### 终态 `responseType`
 
-Planner 先分流。`backend/src/services/agent/process_work.rs`
+聊天与办事先分流；办事走工具循环（`backend/src/services/agent/process_work.rs`）。
 
 | `responseType` | 含义 | 通道至少要能 | 做不到 |
 | --- | --- | --- | --- |
-| `answer` | 一句话结束。内部 `PlannerStatus::Chat` 也走这里 | 发文本 | 不能接办事 |
+| `answer` | 一句话结束 | 发文本 | 不能接办事 |
 | `clarification` | 规划前问清楚，带 `suggestions` | 按钮或让人回复 | 任务不会开始 |
-| `confirmation_required` | 敏感步骤等点头，有过期 | 明确是/否 | **必须失败**，不能默认同意 |
 | `task_created` / `task_progress` | 任务还在跑 | 过程事件 | 人会以为卡住 |
 | `task_completed` | 配方跑完，内嵌完整 `ApiResponse` | 按字段渲染 | 只说「好了」会丢表/图/动作 |
 | `error` | 失败文案 + `code` | 文本 | — |
@@ -128,8 +127,7 @@ Planner 先分流。`backend/src/services/agent/process_work.rs`
 | 人做了什么 | 接口 |
 | --- | --- |
 | 规划前澄清 | `POST /api/agent/clarify` |
-| 敏感确认 | `POST /api/agent/confirm/stream` |
-| 执行中答题 | `POST /api/agent/tasks/{id}/answer` 或 `.../answer/stream` |
+| 执行中答题（含敏感操作确认） | `POST /api/agent/tasks/{id}/answer` 或 `.../answer/stream` |
 | 浏览器做完一步 | `POST /api/agent/tasks/{id}/frontend-ack`（IM 没有这个表面） |
 | 取消 | `POST /api/agent/tasks/{id}/cancel` |
 | 办事换题 | `POST /api/agent/session/interrupt` |
