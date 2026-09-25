@@ -10,6 +10,7 @@ pub mod motion_preview;
 pub mod onboarding_ai;
 pub mod onboarding_prompts;
 pub mod outfit_overlay;
+mod priming;
 pub mod report_dna;
 pub mod speaking_prompts;
 pub mod state;
@@ -296,8 +297,24 @@ async fn speaking_prompt_from_db(
     let Ok(state) = get_or_create_state(db, user_id).await else {
         return sections;
     };
-    if let Ok(ranked) = store::recall_remembered(db, user_id, query, REMEMBERED_PROMPT_LIMIT).await
-    {
+    // Only a chat turn (it has the person's words) carries its train of
+    // thought to the next turn; other readers see memory without moving it.
+    let remembered = match query.filter(|query| !query.trim().is_empty()) {
+        Some(query) => store::recall_remembered_primed(
+            db,
+            user_id,
+            Some(query),
+            REMEMBERED_PROMPT_LIMIT,
+            &priming::current(user_id),
+        )
+        .await
+        .map(|(ranked, next)| {
+            priming::keep(user_id, next);
+            ranked
+        }),
+        None => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT).await,
+    };
+    if let Ok(ranked) = remembered {
         if let Some(block) = format_remembered_section(&ranked) {
             sections.push(block);
         }

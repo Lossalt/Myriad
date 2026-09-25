@@ -523,7 +523,7 @@ mod tests {
         assert!(!chat_fn.contains("unified::"));
         assert!(!chat_fn.contains("FOR_WORK"));
         let recall = include_str!("merope/store.rs")
-            .split("pub async fn recall_remembered")
+            .split("pub async fn recall_remembered_primed")
             .nth(1)
             .and_then(|rest| rest.split("\n}\n").next())
             .unwrap();

@@ -1004,20 +1004,38 @@ pub async fn recall_remembered(
     query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<String>, anyhow::Error> {
+    use crate::services::agent::memory::unified::Priming;
+    Ok(recall_remembered_primed(db, user_id, query, limit, &Priming::default())
+        .await?
+        .0)
+}
+
+/// [`recall_remembered`] for a chat turn: also starts from what the previous
+/// turn left on the mind, and returns what this one leaves.
+pub async fn recall_remembered_primed(
+    db: &DatabaseConnection,
+    user_id: i32,
+    query: Option<&str>,
+    limit: usize,
+    priming: &crate::services::agent::memory::unified::Priming,
+) -> Result<(Vec<String>, crate::services::agent::memory::unified::Priming), anyhow::Error> {
     use crate::services::agent::memory::unified;
-    Ok(unified::recall(
+    let (recalled, next) = unified::recall_primed(
         db,
         user_id,
         &unified::Audience::private(user_id),
         query.filter(|query| !query.trim().is_empty()),
         &unified::MemoryKind::ABOUT_PERSON,
         limit,
+        priming,
     )
-    .await?
-    .into_iter()
-    .map(|note| super::ingest::compact_summary(&note.content))
-    .filter(|content| !content.is_empty())
-    .collect())
+    .await?;
+    let recalled = recalled
+        .into_iter()
+        .map(|note| super::ingest::compact_summary(&note.content))
+        .filter(|content| !content.is_empty())
+        .collect();
+    Ok((recalled, next))
 }
 
 #[cfg(test)]

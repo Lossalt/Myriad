@@ -36,6 +36,10 @@ const MAX_CONCEPT_CHARS: usize = 24;
 const DIRECT_WEIGHT: f64 = 0.6;
 /// Activation an unnamed memory needs before it comes to mind at all.
 const ASSOCIATED_MIN: f64 = 0.15;
+/// Share of a memory's activation still there one turn later.
+const PRIMING_FADE: f64 = 0.5;
+/// How many memories stay on the mind between turns.
+const PRIMING_KEPT: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
@@ -403,6 +407,36 @@ fn fade_order(left: &agent_memories::Model, right: &agent_memories::Model) -> st
         .then_with(|| used(left).cmp(&used(right)))
 }
 
+/// Activation left over from recent turns, by memory id: what was on the
+/// person's mind a moment ago. It seeds the next recall, so a topic carries
+/// over a turn that does not name it ("它又吐了" after talking about the cat),
+/// and fades within a few turns unless the talk keeps it alive.
+///
+/// Only ids are kept, never text. A memory retired or no longer admitted for
+/// the present audience in the meantime is simply not among the rows it can
+/// seed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Priming {
+    by_id: std::collections::HashMap<String, f64>,
+}
+
+impl Priming {
+    pub fn is_empty(&self) -> bool {
+        self.by_id.is_empty()
+    }
+
+    fn of(&self, id: &str) -> f64 {
+        self.by_id.get(id).copied().unwrap_or(0.0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with(id: &str, activation: f64) -> Self {
+        Self {
+            by_id: [(id.to_string(), activation)].into(),
+        }
+    }
+}
+
 /// Relevant active memories of `user_id` that may be said in front of
 /// `present`. With a query, rows it truly names (BM25, see `lexical`) come to
 /// mind first, then what they bring along by association (see
@@ -416,15 +450,39 @@ pub async fn recall<C: ConnectionTrait>(
     kinds: &[MemoryKind],
     limit: usize,
 ) -> Result<Vec<MemoryRecord>, DbErr> {
+    Ok(recall_primed(
+        db,
+        user_id,
+        present,
+        query,
+        kinds,
+        limit,
+        &Priming::default(),
+    )
+    .await?
+    .0)
+}
+
+/// [`recall`] that also starts from what was active a moment ago, and returns
+/// what is active now for the next turn.
+pub async fn recall_primed<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    query: Option<&str>,
+    kinds: &[MemoryKind],
+    limit: usize,
+    priming: &Priming,
+) -> Result<(Vec<MemoryRecord>, Priming), DbErr> {
     if user_id <= 0 || limit == 0 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Priming::default()));
     }
     let rows: Vec<agent_memories::Model> = active_rows(db, user_id, kinds)
         .await?
         .into_iter()
         .filter(|row| audience_admits(&audience_of(row), present))
         .collect();
-    let chosen = rank(rows, query, limit);
+    let (chosen, next) = rank_primed(rows, query, limit, priming);
     if !chosen.is_empty() {
         let now = Utc::now().fixed_offset();
         agent_memories::Entity::update_many()
@@ -440,14 +498,24 @@ pub async fn recall<C: ConnectionTrait>(
             .exec(db)
             .await?;
     }
-    Ok(chosen.into_iter().map(MemoryRecord::from).collect())
+    Ok((chosen.into_iter().map(MemoryRecord::from).collect(), next))
 }
 
+#[cfg(test)]
 fn rank(
     rows: Vec<agent_memories::Model>,
     query: Option<&str>,
     limit: usize,
 ) -> Vec<agent_memories::Model> {
+    rank_primed(rows, query, limit, &Priming::default()).0
+}
+
+fn rank_primed(
+    rows: Vec<agent_memories::Model>,
+    query: Option<&str>,
+    limit: usize,
+    priming: &Priming,
+) -> (Vec<agent_memories::Model>, Priming) {
     // Blank and repeated legacy rows must not spend the recall budget.
     let mut seen = std::collections::HashSet::new();
     let rows: Vec<agent_memories::Model> = rows
@@ -472,16 +540,7 @@ fn rank(
         .filter(|score| score.strong)
         .map(|score| score.value)
         .fold(0.0, f64::max);
-    if strongest <= 0.0 {
-        // Nothing truly named: weak evidence, then recency. No association
-        // starts from a guess.
-        let mut scored: Vec<(f64, agent_memories::Model)> =
-            scores.iter().map(|score| score.value).zip(rows).collect();
-        // Stable: equal scores keep newest-first order from the query.
-        scored.sort_by(|left, right| right.0.total_cmp(&left.0));
-        return scored.into_iter().take(limit).map(|(_, row)| row).collect();
-    }
-    let seeds: Vec<f64> = scores
+    let named: Vec<f64> = scores
         .iter()
         .map(|score| {
             if score.strong {
@@ -490,6 +549,30 @@ fn rank(
                 0.0
             }
         })
+        .collect();
+    let residual: Vec<f64> = rows.iter().map(|row| priming.of(&row.id)).collect();
+    // By weak evidence, then recency (stable: newest-first from the query).
+    let mut by_recency: Vec<(f64, usize)> = scores
+        .iter()
+        .enumerate()
+        .map(|(index, score)| (score.value, index))
+        .collect();
+    by_recency.sort_by(|left, right| right.0.total_cmp(&left.0));
+    if named.iter().chain(&residual).all(|seed| *seed <= 0.0) {
+        // Nothing named and nothing on the mind: no association starts from
+        // a guess.
+        let mut rows: Vec<Option<agent_memories::Model>> = rows.into_iter().map(Some).collect();
+        let chosen = by_recency
+            .into_iter()
+            .take(limit)
+            .filter_map(|(_, index)| rows[index].take())
+            .collect();
+        return (chosen, Priming::default());
+    }
+    let seeds: Vec<f64> = named
+        .iter()
+        .zip(&residual)
+        .map(|(named, residual)| f64::max(*named, *residual))
         .collect();
     let nodes: Vec<super::association::Node> = rows
         .iter()
@@ -500,23 +583,24 @@ fn rank(
         })
         .collect();
     let activation = super::association::spread(&seeds, &nodes);
-    let mut scored: Vec<(f64, bool, agent_memories::Model)> = seeds
+    let next = next_priming(&rows, &activation);
+    let mut scored: Vec<(f64, bool, usize)> = named
         .iter()
         .zip(&activation)
-        .zip(rows)
-        .filter(|((seed, activation), _)| **seed > 0.0 || **activation >= ASSOCIATED_MIN)
-        .map(|((seed, activation), row)| {
+        .enumerate()
+        .filter(|(_, (named, activation))| **named > 0.0 || **activation >= ASSOCIATED_MIN)
+        .map(|(index, (named, activation))| {
             (
-                DIRECT_WEIGHT * seed + (1.0 - DIRECT_WEIGHT) * activation,
-                *seed > 0.0,
-                row,
+                DIRECT_WEIGHT * named + (1.0 - DIRECT_WEIGHT) * activation,
+                *named > 0.0,
+                index,
             )
         })
         .collect();
     scored.sort_by(|left, right| right.0.total_cmp(&left.0));
     // What the query named comes first in number; association fills in.
     let mut associated_left = (limit / 2).max(1);
-    scored
+    let mut order: Vec<usize> = scored
         .into_iter()
         .filter(|(_, direct, _)| {
             *direct
@@ -525,9 +609,46 @@ fn rank(
                     true
                 })
         })
+        .map(|(_, _, index)| index)
         .take(limit)
-        .map(|(_, _, row)| row)
-        .collect()
+        .collect();
+    if strongest <= 0.0 {
+        // Only the lingering topic came to mind: the rest of the budget is
+        // the ordinary recent context, as when nothing is on the mind.
+        for (_, index) in by_recency {
+            if order.len() == limit {
+                break;
+            }
+            if !order.contains(&index) {
+                order.push(index);
+            }
+        }
+    }
+    let mut rows: Vec<Option<agent_memories::Model>> = rows.into_iter().map(Some).collect();
+    let chosen = order
+        .into_iter()
+        .filter_map(|index| rows[index].take())
+        .collect();
+    (chosen, next)
+}
+
+/// What stays on the mind for the next turn: the most active memories, each
+/// fading by half per turn and dropped once it no longer clears the bar.
+fn next_priming(rows: &[agent_memories::Model], activation: &[f64]) -> Priming {
+    let mut active: Vec<(f64, &str)> = activation
+        .iter()
+        .zip(rows)
+        .map(|(activation, row)| (activation * PRIMING_FADE, row.id.as_str()))
+        .filter(|(activation, _)| *activation >= ASSOCIATED_MIN)
+        .collect();
+    active.sort_by(|left, right| right.0.total_cmp(&left.0));
+    Priming {
+        by_id: active
+            .into_iter()
+            .take(PRIMING_KEPT)
+            .map(|(activation, id)| (id.to_string(), activation))
+            .collect(),
+    }
 }
 
 /// A person's active memories, newest first, for the memory panel.
@@ -794,6 +915,50 @@ mod tests {
             vec!["cat", "vet"],
             "nothing named: recency, no association"
         );
+    }
+
+    #[test]
+    fn a_topic_carries_over_a_turn_that_does_not_name_it_then_fades() {
+        let rows = vec![
+            row("news", "最近在学吉他", 0.5, 0),
+            about(
+                row("cat", "养了一只猫叫年糕", 0.5, 10 * DAY),
+                &["猫", "年糕"],
+            ),
+            about(row("vet", "年糕上周打了疫苗", 0.5, 20 * DAY), &["年糕"]),
+            row("tea", "喜欢茉莉花茶", 0.5, 30 * DAY),
+        ];
+        let ids = |chosen: Vec<agent_memories::Model>| -> Vec<String> {
+            chosen.into_iter().map(|row| row.id).collect()
+        };
+        let (first, primed) = rank_primed(rows.clone(), Some("猫怎么样"), 3, &Priming::default());
+        assert_eq!(ids(first), vec!["cat", "vet"]);
+        assert!(primed.of("cat") > 0.0);
+
+        // "它又吐了" names nothing, yet the cat is still on the mind; the
+        // rest of the budget is ordinary recent context.
+        let (second, primed) = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed);
+        let second = ids(second);
+        assert_eq!(second[0], "cat");
+        assert!(second.contains(&"news".to_string()));
+        assert_eq!(second.len(), 3);
+
+        // Without the talk renewing it, it is gone within a few turns.
+        let mut primed = primed;
+        for _ in 0..3 {
+            primed = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed).1;
+        }
+        assert!(primed.is_empty(), "{primed:?}");
+        let (cold, _) = rank_primed(rows, Some("明日预报"), 2, &primed);
+        assert_eq!(ids(cold), vec!["news", "cat"], "back to recency");
+    }
+
+    #[test]
+    fn a_primed_memory_no_longer_admitted_cannot_seed() {
+        let rows = vec![row("left", "喜欢茉莉花茶", 0.5, 0)];
+        let (chosen, next) = rank_primed(rows, Some("它又吐了"), 3, &Priming::with("gone", 1.0));
+        assert_eq!(chosen.len(), 1, "recency");
+        assert!(next.is_empty());
     }
 
     #[test]
