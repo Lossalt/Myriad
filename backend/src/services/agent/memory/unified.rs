@@ -6,7 +6,9 @@
 //!
 //! Rules this module owns:
 //! - A memory is surfaced only where everyone present belongs to its original
-//!   audience (`audience_admits`). A private memory stays with its person.
+//!   audience (`admits`). A private memory stays with its person; what was
+//!   learned in a group stays in that group, and nothing private ever
+//!   reaches a group, where people outside the community may be listening.
 //! - Retired rows (superseded, deleted, faded) are filtered here, at retrieval,
 //!   never left to the caller.
 //! - Recalled text is data. Callers inject it through an untrusted block.
@@ -100,17 +102,41 @@ impl Speaker {
     }
 }
 
-/// Who was present when something was said. Every current entry point is a
-/// one-to-one conversation, so the only venue so far is private.
+/// Who was present when something was said, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Audience {
     members: Vec<i32>,
+    venue: Venue,
 }
+
+/// Where a conversation happens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Venue {
+    /// One person and her.
+    Private,
+    /// A group chat, identified by platform and chat (`telegram:-100123`).
+    /// Open: people outside the community may be listening, so only what was
+    /// said in front of this same group may be said here.
+    Group(String),
+}
+
+/// Longest stored venue: `group:` plus a platform and chat id.
+pub const MAX_VENUE_CHARS: usize = 96;
 
 impl Audience {
     pub fn private(user_id: i32) -> Self {
         Self {
             members: vec![user_id],
+            venue: Venue::Private,
+        }
+    }
+
+    /// A group chat where `speaker` is the community member she answers.
+    pub fn group(id: impl Into<String>, speaker: i32) -> Self {
+        let id: String = id.into();
+        Self {
+            members: vec![speaker],
+            venue: Venue::Group(id.chars().take(MAX_VENUE_CHARS - 6).collect()),
         }
     }
 
@@ -118,9 +144,27 @@ impl Audience {
         &self.members
     }
 
-    fn venue(&self) -> &'static str {
-        "private"
+    pub fn is_group(&self) -> bool {
+        matches!(self.venue, Venue::Group(_))
     }
+
+    /// The stored form: `private`, or `group:<id>`.
+    pub fn venue(&self) -> String {
+        match &self.venue {
+            Venue::Private => "private".into(),
+            Venue::Group(id) => format!("group:{id}"),
+        }
+    }
+}
+
+/// Whether a stored memory may be said in front of `present`. In a group:
+/// only what was learned in that same group. In private: never what was
+/// learned in a group, and only if everyone present was there.
+fn admits(row: &agent_memories::Model, present: &Audience) -> bool {
+    if present.is_group() {
+        return row.venue == present.venue();
+    }
+    !row.venue.starts_with("group:") && audience_admits(&audience_of(row), present)
 }
 
 /// Whether a memory learned before `original` may be said in front of
@@ -271,6 +315,38 @@ fn audience_of(model: &agent_memories::Model) -> Vec<i32> {
     }
 }
 
+/// The rows a conversation could draw on before the audience check: in a
+/// group, everything learned in that group, whoever it was about; in
+/// private, the person's own memories.
+async fn rows_for<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    kinds: &[MemoryKind],
+) -> Result<Vec<agent_memories::Model>, DbErr> {
+    let rows = if present.is_group() {
+        let mut query = agent_memories::Entity::find()
+            .filter(agent_memories::Column::Venue.eq(present.venue()))
+            .filter(agent_memories::Column::InvalidAt.is_null());
+        if !kinds.is_empty() {
+            query = query
+                .filter(agent_memories::Column::Kind.is_in(kinds.iter().map(|kind| kind.as_str())));
+        }
+        query
+            .order_by_desc(agent_memories::Column::CreatedAt)
+            .order_by_desc(agent_memories::Column::Id)
+            .limit(MAX_ACTIVE_PER_USER)
+            .all(db)
+            .await?
+    } else {
+        active_rows(db, user_id, kinds).await?
+    };
+    Ok(rows
+        .into_iter()
+        .filter(|row| admits(row, present))
+        .collect())
+}
+
 async fn active_rows<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
@@ -301,10 +377,13 @@ pub async fn remember<C: ConnectionTrait>(
     if memory.user_id <= 0 || content.is_empty() {
         return Ok(None);
     }
+    // The same thing said privately and again in a group is two memories:
+    // one for the person, one the group shares.
+    let venue = memory.audience.venue();
     let duplicate = active_rows(db, memory.user_id, &[])
         .await?
         .iter()
-        .any(|row| normalize_content(&row.content) == content);
+        .any(|row| row.venue == venue && normalize_content(&row.content) == content);
     if duplicate {
         return Ok(None);
     }
@@ -320,7 +399,7 @@ pub async fn remember<C: ConnectionTrait>(
             .map(|text| text.chars().take(MAX_EVIDENCE_CHARS).collect())),
         speaker: Set(memory.speaker.as_str().into()),
         source: Set(memory.source.into()),
-        venue: Set(memory.audience.venue().into()),
+        venue: Set(venue),
         audience: Set(json!(memory.audience.members())),
         concepts: Set(json!(clean_concepts(memory.concepts))),
         importance: Set(memory.importance.clamp(0.0, 1.0)),
@@ -348,6 +427,23 @@ pub async fn active<C: ConnectionTrait>(
     Ok(active_rows(db, user_id, kinds)
         .await?
         .into_iter()
+        .map(MemoryRecord::from)
+        .collect())
+}
+
+/// A person's active memories of `kinds` that may be said in front of
+/// `present` (in a group: only those learned in that group), newest first,
+/// without counting them as used.
+pub async fn active_in<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    kinds: &[MemoryKind],
+) -> Result<Vec<MemoryRecord>, DbErr> {
+    Ok(active_rows(db, user_id, kinds)
+        .await?
+        .into_iter()
+        .filter(|row| admits(row, present))
         .map(MemoryRecord::from)
         .collect())
 }
@@ -487,11 +583,7 @@ pub async fn recall_primed<C: ConnectionTrait>(
     if user_id <= 0 || limit == 0 {
         return Ok((Vec::new(), Priming::default()));
     }
-    let rows: Vec<agent_memories::Model> = active_rows(db, user_id, kinds)
-        .await?
-        .into_iter()
-        .filter(|row| audience_admits(&audience_of(row), present))
-        .collect();
+    let rows = rows_for(db, user_id, present, kinds).await?;
     let (chosen, next) = rank_primed(rows, query, limit, priming, breadth);
     if !chosen.is_empty() {
         let now = Utc::now().fixed_offset();
@@ -666,15 +758,15 @@ pub async fn wander<C: ConnectionTrait>(
         return Ok(None);
     }
     let mut seen = std::collections::HashSet::new();
-    let rows: Vec<agent_memories::Model> = active_rows(db, user_id, &MemoryKind::ABOUT_PERSON)
-        .await?
-        .into_iter()
-        .filter(|row| audience_admits(&audience_of(row), present))
-        .filter(|row| {
-            let content = normalize_content(&row.content);
-            !content.is_empty() && seen.insert(content)
-        })
-        .collect();
+    let rows: Vec<agent_memories::Model> =
+        rows_for(db, user_id, present, &MemoryKind::ABOUT_PERSON)
+            .await?
+            .into_iter()
+            .filter(|row| {
+                let content = normalize_content(&row.content);
+                !content.is_empty() && seen.insert(content)
+            })
+            .collect();
     if rows.len() < 2 {
         return Ok(None);
     }
@@ -758,11 +850,7 @@ pub async fn curiosity_gap<C: ConnectionTrait>(
     if user_id <= 0 || query.trim().is_empty() {
         return Ok(None);
     }
-    let rows: Vec<agent_memories::Model> = active_rows(db, user_id, &MemoryKind::ABOUT_PERSON)
-        .await?
-        .into_iter()
-        .filter(|row| audience_admits(&audience_of(row), present))
-        .collect();
+    let rows = rows_for(db, user_id, present, &MemoryKind::ABOUT_PERSON).await?;
     Ok(gap_in(&rows, query))
 }
 
@@ -1074,15 +1162,47 @@ mod tests {
     fn a_memory_is_said_only_where_everyone_present_was_there() {
         assert!(audience_admits(&[7], &Audience::private(7)));
         assert!(!audience_admits(&[7], &Audience::private(8)));
-        let group = Audience {
+        let both = Audience {
             members: vec![7, 8],
+            venue: Venue::Private,
         };
-        assert!(audience_admits(&[7, 8, 9], &group));
+        assert!(audience_admits(&[7, 8, 9], &both));
+        assert!(!audience_admits(&[7], &both));
+        assert!(!audience_admits(
+            &[7],
+            &Audience {
+                members: vec![],
+                venue: Venue::Private,
+            }
+        ));
+    }
+
+    #[test]
+    fn a_group_hears_only_what_was_said_in_that_group() {
+        let here = Audience::group("telegram:-100123", 7);
+        assert_eq!(here.venue(), "group:telegram:-100123");
+        let private = row("p", "养了一只猫", 0.5, 0);
         assert!(
-            !audience_admits(&[7], &group),
+            !admits(&private, &here),
             "a private fact stays out of a group"
         );
-        assert!(!audience_admits(&[7], &Audience { members: vec![] }));
+        let mut learned_here = row("g", "群里说过周五聚餐", 0.5, 0);
+        learned_here.venue = here.venue();
+        learned_here.audience = json!([8]);
+        assert!(
+            admits(&learned_here, &here),
+            "whoever said it, the group heard it"
+        );
+        let mut elsewhere = learned_here.clone();
+        elsewhere.venue = "group:telegram:-100999".into();
+        assert!(!admits(&elsewhere, &here), "another group is other people");
+        assert!(
+            !admits(&learned_here, &Audience::private(8)),
+            "what a group heard stays in the group"
+        );
+        assert!(admits(&private, &Audience::private(7)));
+        let long = Audience::group("x".repeat(200), 7);
+        assert!(long.venue().chars().count() <= MAX_VENUE_CHARS);
     }
 
     #[test]
@@ -1405,6 +1525,65 @@ mod db_tests {
                 .unwrap()
                 .is_some(),
             "a retired fact may be learned again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_and_a_private_chat_never_share_what_they_heard() {
+        let Some(db) = temp_db().await else {
+            return;
+        };
+        let group = Audience::group("telegram:-100123", 7);
+        remember(&db, fact(7, "私下说过在准备跳槽")).await.unwrap();
+        let mut said_in_group = fact(7, "周五想去吃火锅");
+        said_in_group.audience = group.clone();
+        assert!(remember(&db, said_in_group).await.unwrap().is_some());
+        let mut someone_else = fact(8, "周五要加班");
+        someone_else.audience = Audience::group("telegram:-100123", 8);
+        remember(&db, someone_else).await.unwrap();
+        let mut same_words = fact(7, "私下说过在准备跳槽");
+        same_words.audience = group.clone();
+        assert!(
+            remember(&db, same_words).await.unwrap().is_some(),
+            "said again in front of the group, the group now shares it"
+        );
+
+        let in_group: Vec<String> = recall(&db, 7, &group, None, &[], 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|memory| memory.content)
+            .collect();
+        assert!(in_group.contains(&"周五想去吃火锅".to_string()));
+        assert!(
+            in_group.contains(&"周五要加班".to_string()),
+            "whoever said it in the group"
+        );
+        assert_eq!(
+            in_group
+                .iter()
+                .filter(|content| content.contains("跳槽"))
+                .count(),
+            1,
+            "only the copy the group heard"
+        );
+        let in_private: Vec<String> = recall(&db, 7, &Audience::private(7), None, &[], 8)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|memory| memory.content)
+            .collect();
+        assert_eq!(
+            in_private,
+            vec!["私下说过在准备跳槽"],
+            "the group's memories stay there"
+        );
+        let other_group = Audience::group("telegram:-100999", 7);
+        assert!(
+            recall(&db, 7, &other_group, None, &[], 8)
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 

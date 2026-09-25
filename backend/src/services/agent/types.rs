@@ -74,6 +74,11 @@ pub struct RequestContext {
     /// Semantic live-face snapshot from the client. Event-scoped, never a driver.
     #[serde(default)]
     pub rig_state: Option<myriad_merope::RigStateSummary>,
+    /// The group chat this turn happens in (`telegram:-100123`), set only by
+    /// the server for channel group messages. Never taken from a client
+    /// request: it decides whose memories may be said aloud.
+    #[serde(default)]
+    pub venue: Option<String>,
 }
 
 /// 对话消息

@@ -78,14 +78,14 @@ fn spend(user_id: i32, query: &str) -> bool {
     true
 }
 
-pub fn spawn_curiosity(user_id: i32, user_text: String, reply: String) {
+pub fn spawn_curiosity(user_id: i32, user_text: String, reply: String, present: unified::Audience) {
     if user_id <= 0 || user_text.trim().chars().count() < MIN_USER_CHARS {
         return;
     }
     tokio::spawn(async move {
         if tokio::time::timeout(
             Duration::from_secs(60),
-            wonder_and_find_out(user_id, &user_text, &reply),
+            wonder_and_find_out(user_id, &user_text, &reply, &present),
         )
         .await
         .is_err()
@@ -200,7 +200,12 @@ fn parse<T: for<'de> Deserialize<'de>>(raw: &str) -> Option<T> {
     serde_json::from_str(json.as_deref().unwrap_or(raw.trim())).ok()
 }
 
-async fn wonder_and_find_out(user_id: i32, user_text: &str, reply: &str) {
+async fn wonder_and_find_out(
+    user_id: i32,
+    user_text: &str,
+    reply: &str,
+    present: &unified::Audience,
+) {
     if !super::is_logged_in_addressee(user_id) || !super::is_enabled().await {
         return;
     }
@@ -300,13 +305,15 @@ async fn wonder_and_find_out(user_id: i32, user_text: &str, reply: &str) {
             speaker: unified::Speaker::Agent,
             source: "lookup",
             // Found out because of this conversation: heard where it was.
-            audience: unified::Audience::private(user_id),
+            audience: present.clone(),
             importance: 0.5,
             concepts: found.concepts,
         },
     )
     .await;
-    if matches!(kept, Ok(Some(_))) && found.tell {
+    // Telling is said in person to one person; a group hears it next time
+    // the topic comes up there.
+    if matches!(kept, Ok(Some(_))) && found.tell && !present.is_group() {
         super::spawn_ingest(
             user_id,
             FOUND_OUT_EVENT,

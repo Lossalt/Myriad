@@ -120,6 +120,7 @@ pub fn spawn_chat_remember(
     user_text: String,
     reply: String,
     input_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    present: crate::services::agent::memory::unified::Audience,
 ) {
     let Some(input_at) = input_at else {
         return;
@@ -130,7 +131,7 @@ pub fn spawn_chat_remember(
     tokio::spawn(async move {
         if tokio::time::timeout(
             Duration::from_secs(12),
-            extract_and_store(user_id, &user_text, &reply, input_at),
+            extract_and_store(user_id, &user_text, &reply, input_at, &present),
         )
         .await
         .is_err()
@@ -199,6 +200,7 @@ async fn extract_and_store(
     user_text: &str,
     reply: &str,
     input_at: chrono::DateTime<chrono::FixedOffset>,
+    present: &crate::services::agent::memory::unified::Audience,
 ) {
     let Some(user_text) = memory_user_text(user_text) else {
         return;
@@ -214,8 +216,20 @@ async fn extract_and_store(
         );
         return;
     };
-    let existing = match recall_remembered(&db, user_id, Some(&user_text), 8).await {
-        Ok(facts) => facts,
+    // What is known in front of this audience: in a group, what the group
+    // heard. A private fact is neither shown to nor corrected from a group.
+    let existing = match super::store::recall_remembered_primed(
+        &db,
+        user_id,
+        present,
+        Some(&user_text),
+        8,
+        &crate::services::agent::memory::unified::Priming::default(),
+        1.0,
+    )
+    .await
+    {
+        Ok((facts, _)) => facts,
         Err(_) => {
             tracing::warn!(
                 user_id,
@@ -298,7 +312,8 @@ async fn extract_and_store(
         tracing::info!(user_id, outcome = "no_change", "[Merope] memory extraction");
         return;
     }
-    match super::store::apply_chat_memory_update(&db, user_id, input_at, &update).await {
+    match super::store::apply_chat_memory_update_in(&db, user_id, input_at, &update, present).await
+    {
         Ok(applied) => tracing::info!(
             user_id,
             outcome = if applied {

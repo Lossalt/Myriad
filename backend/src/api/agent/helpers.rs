@@ -38,6 +38,8 @@ pub(crate) fn build_request_context(ctx: ProcessContext) -> RequestContext {
             .rig_state
             .as_ref()
             .and_then(myriad_merope::sanitize_rig_state),
+        // Only a channel group run sets this, after building the context.
+        venue: None,
     }
 }
 

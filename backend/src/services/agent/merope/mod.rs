@@ -282,7 +282,7 @@ pub use speaking_prompts::{
     format_emotion_section, format_found_out_section, format_inner_moment_ago_section,
     format_inner_section, format_mood_section, format_on_your_mind_section,
     format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    guest_speaking_section, mood_tone_instruction,
+    group_speaking_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -291,19 +291,47 @@ pub async fn speaking_prompt(user_id: i32) -> Vec<String> {
 }
 
 pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Vec<String> {
-    speaking_prompt_for_turn(user_id, query, true).await
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    speaking_prompt_for_turn(user_id, query, true, &present).await
+}
+
+/// A turn in a group chat (`venue` such as `telegram:-100123`), answering
+/// `user_id`. Others outside the community may be reading: only what this
+/// group heard is said, never anyone's private matters.
+pub async fn speaking_prompt_in_group(user_id: i32, query: &str, venue: &str) -> Vec<String> {
+    let present = crate::services::agent::memory::unified::Audience::group(venue, user_id);
+    speaking_prompt_for_turn(user_id, Some(query), true, &present).await
+}
+
+/// Who is present for this request: a group when the server placed the turn
+/// in one, otherwise the person alone.
+pub fn audience_for(
+    request: &crate::services::agent::UserRequest,
+) -> crate::services::agent::memory::unified::Audience {
+    match request
+        .context
+        .as_ref()
+        .and_then(|context| context.venue.as_deref())
+    {
+        Some(venue) => {
+            crate::services::agent::memory::unified::Audience::group(venue, request.user_id)
+        }
+        None => crate::services::agent::memory::unified::Audience::private(request.user_id),
+    }
 }
 
 /// A live call: silence is loud, so the reply does not wait for this turn's
 /// appraisal. The appraisal still lands, for the next turn.
 pub async fn speaking_prompt_on_call(user_id: i32, query: Option<&str>) -> Vec<String> {
-    speaking_prompt_for_turn(user_id, query, false).await
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    speaking_prompt_for_turn(user_id, query, false, &present).await
 }
 
 async fn speaking_prompt_for_turn(
     user_id: i32,
     query: Option<&str>,
     wait_for_appraisal: bool,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Vec<String> {
     if !is_enabled().await {
         return Vec::new();
@@ -330,7 +358,7 @@ async fn speaking_prompt_for_turn(
         }
         None => Turn::Plain,
     };
-    speaking_prompt_from_db(&db, user_id, turn).await
+    speaking_prompt_from_db(&db, user_id, turn, present).await
 }
 
 /// Sections for speaking up unprompted about `summary`. The same mind as a
@@ -345,7 +373,8 @@ pub async fn speaking_prompt_for_event(
     if user_id <= 0 || !is_logged_in_addressee(user_id) || !is_enabled().await {
         return Vec::new();
     }
-    speaking_prompt_from_db(db, user_id, Turn::Event(summary)).await
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    speaking_prompt_from_db(db, user_id, Turn::Event(summary), &present).await
 }
 
 /// Why she is about to speak.
@@ -444,9 +473,18 @@ async fn speaking_prompt_from_db(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     turn: Turn<'_>,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Vec<String> {
+    // In a group, people outside the community may be reading: nothing
+    // private to anyone — the person's diary, her unprompted lines to them,
+    // what was on her mind — is brought in, and memory is what the group heard.
+    let group = present.is_group();
     let addressee = resolve_addressee_label(db, user_id).await;
-    let mut sections = vec![addressee_speaking_section(&addressee)];
+    let mut sections = vec![if group {
+        group_speaking_section(&addressee)
+    } else {
+        addressee_speaking_section(&addressee)
+    }];
     let Ok(state) = get_or_create_state(db, user_id).await else {
         return sections;
     };
@@ -457,14 +495,19 @@ async fn speaking_prompt_from_db(
         Turn::Chat(words) | Turn::Event(words) => store::recall_remembered_primed(
             db,
             user_id,
+            present,
             Some(words),
             REMEMBERED_PROMPT_LIMIT,
-            &priming::current(user_id),
+            &if group {
+                crate::services::agent::memory::unified::Priming::default()
+            } else {
+                priming::current(user_id)
+            },
             myself.recall_breadth(),
         )
         .await
         .map(|(ranked, next)| {
-            if matches!(turn, Turn::Chat(_)) {
+            if matches!(turn, Turn::Chat(_)) && !group {
                 priming::keep(user_id, next);
             }
             ranked
@@ -476,14 +519,18 @@ async fn speaking_prompt_from_db(
             sections.push(block);
         }
     }
-    if let Ok(notes) = list_diary_from_sources(
-        db,
-        user_id,
-        RECENT_SPEAKING_DIARY_SOURCES,
-        RECENT_LEDGER_LIMIT,
-    )
-    .await
-    {
+    let diary = if group {
+        Ok(Vec::new())
+    } else {
+        list_diary_from_sources(
+            db,
+            user_id,
+            RECENT_SPEAKING_DIARY_SOURCES,
+            RECENT_LEDGER_LIMIT,
+        )
+        .await
+    };
+    if let Ok(notes) = diary {
         let contents: Vec<String> = notes
             .into_iter()
             .map(|note| ingest::compact_summary(&note.content))
@@ -522,7 +569,7 @@ async fn speaking_prompt_from_db(
         let found = crate::services::agent::memory::unified::recall(
             db,
             user_id,
-            &crate::services::agent::memory::unified::Audience::private(user_id),
+            present,
             Some(words),
             &[crate::services::agent::memory::unified::MemoryKind::Knowledge],
             FOUND_OUT_LIMIT,
@@ -548,13 +595,9 @@ async fn speaking_prompt_from_db(
         if let Turn::Chat(words) = turn {
             // Something they just named that she knows only a little about.
             // Whether she wants to know more is hers to judge.
-            let gap = crate::services::agent::memory::unified::curiosity_gap(
-                db,
-                user_id,
-                &crate::services::agent::memory::unified::Audience::private(user_id),
-                words,
-            )
-            .await;
+            let gap =
+                crate::services::agent::memory::unified::curiosity_gap(db, user_id, present, words)
+                    .await;
             if let Some(block) = gap
                 .ok()
                 .flatten()
@@ -563,7 +606,10 @@ async fn speaking_prompt_from_db(
                 sections.push(block);
             }
         }
-        if let Some(segment) = crate::services::agent::consciousness::last_attention(user_id) {
+        let on_mind = (!group)
+            .then(|| crate::services::agent::consciousness::last_attention(user_id))
+            .flatten();
+        if let Some(segment) = on_mind {
             if let Some(block) = format_on_your_mind_section(&segment.inner) {
                 sections.push(block);
             }

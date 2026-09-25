@@ -34,11 +34,13 @@ impl Agent {
             request.raw_input.clone(),
             reply.clone(),
             memory_input_at,
+            crate::services::agent::merope::audience_for(&request),
         );
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),
             reply.clone(),
+            crate::services::agent::merope::audience_for(&request),
         );
         return attach_motion_to_result(
             Ok(AgentResponse {
@@ -147,11 +149,13 @@ impl Agent {
             request.raw_input.clone(),
             reply.clone(),
             memory_input_at,
+            crate::services::agent::merope::audience_for(&request),
         );
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),
             reply.clone(),
+            crate::services::agent::merope::audience_for(&request),
         );
         let performance = None;
 

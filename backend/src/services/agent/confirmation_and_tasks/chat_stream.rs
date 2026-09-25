@@ -296,7 +296,18 @@ impl Agent {
             .and_then(|data| data.get("voice"))
             .and_then(|voice| voice.as_str())
             == Some("realtime");
-        let sections = if on_call {
+        let venue = request
+            .context
+            .as_ref()
+            .and_then(|context| context.venue.clone());
+        let sections = if let Some(venue) = venue.as_deref() {
+            crate::services::agent::merope::speaking_prompt_in_group(
+                request.user_id,
+                request.raw_input.as_str(),
+                venue,
+            )
+            .await
+        } else if on_call {
             crate::services::agent::merope::speaking_prompt_on_call(
                 request.user_id,
                 Some(request.raw_input.as_str()),
@@ -343,14 +354,25 @@ impl Agent {
                 merope_block = format!("{merope_block}\n\n{player}");
             }
         }
+        let supplied = request
+            .context
+            .as_ref()
+            .and_then(|context| context.conversation_history.as_deref())
+            .unwrap_or(&[]);
+        if venue.is_some() {
+            // A group turn: the history is the group's transcript, other
+            // people's words included, and nothing she said in private.
+            return crate::services::agent::chat_prompt::build_group_chat_prompt(
+                &soul,
+                &merope_block,
+                supplied,
+                &request.raw_input,
+            );
+        }
         let history = crate::services::agent::merope::with_said_unprompted(
             &self.db,
             request.user_id,
-            request
-                .context
-                .as_ref()
-                .and_then(|context| context.conversation_history.as_deref())
-                .unwrap_or(&[]),
+            supplied,
         )
         .await;
 

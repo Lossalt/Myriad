@@ -930,11 +930,26 @@ async fn lock_persona_memory<C: ConnectionTrait>(
 /// Commit a validated extraction atomically. The input anchor is captured when
 /// the utterance is persisted, before reply generation and model extraction.
 /// Later activity/mood writes are not new inputs. A later user utterance is.
+#[cfg(test)]
 pub(crate) async fn apply_chat_memory_update(
     db: &DatabaseConnection,
     user_id: i32,
     input_at: chrono::DateTime<chrono::FixedOffset>,
     update: &super::chat_remember::ChatMemoryUpdate,
+) -> Result<bool, anyhow::Error> {
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    apply_chat_memory_update_in(db, user_id, input_at, update, &present).await
+}
+
+/// [`apply_chat_memory_update`] for what was said in front of `present`: in a
+/// group, the fact is kept for that group, and only facts the group heard can
+/// be corrected there.
+pub(crate) async fn apply_chat_memory_update_in(
+    db: &DatabaseConnection,
+    user_id: i32,
+    input_at: chrono::DateTime<chrono::FixedOffset>,
+    update: &super::chat_remember::ChatMemoryUpdate,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Result<bool, anyhow::Error> {
     if user_id <= 0 || (update.fact.is_none() && update.supersedes.is_empty()) {
         return Ok(false);
@@ -951,7 +966,14 @@ pub(crate) async fn apply_chat_memory_update(
     let mut targets = Vec::new();
     let mut found = std::collections::HashSet::new();
     let mut duplicate = false;
-    for note in unified::active(&transaction, user_id, &unified::MemoryKind::ABOUT_PERSON).await? {
+    for note in unified::active_in(
+        &transaction,
+        user_id,
+        present,
+        &unified::MemoryKind::ABOUT_PERSON,
+    )
+    .await?
+    {
         let content = super::ingest::compact_summary(&note.content);
         if update.supersedes.contains(&content) {
             targets.push(note.id);
@@ -978,7 +1000,7 @@ pub(crate) async fn apply_chat_memory_update(
                 evidence: update.evidence.clone(),
                 speaker: unified::Speaker::User,
                 source: "chat",
-                audience: unified::Audience::private(user_id),
+                audience: present.clone(),
                 importance: 0.6,
                 concepts: update.concepts.clone(),
             },
@@ -1013,15 +1035,19 @@ pub async fn recall_remembered(
     limit: usize,
 ) -> Result<Vec<String>, anyhow::Error> {
     let priming = Priming::default();
-    let (recalled, _) = recall_remembered_primed(db, user_id, query, limit, &priming, 1.0).await?;
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    let (recalled, _) =
+        recall_remembered_primed(db, user_id, &present, query, limit, &priming, 1.0).await?;
     Ok(recalled)
 }
 
 /// [`recall_remembered`] for a chat turn: also starts from what the previous
 /// turn left on the mind, and returns what this one leaves.
+#[allow(clippy::too_many_arguments)]
 pub async fn recall_remembered_primed(
     db: &DatabaseConnection,
     user_id: i32,
+    present: &crate::services::agent::memory::unified::Audience,
     query: Option<&str>,
     limit: usize,
     priming: &Priming,
@@ -1031,7 +1057,7 @@ pub async fn recall_remembered_primed(
     let (recalled, next) = unified::recall_primed(
         db,
         user_id,
-        &unified::Audience::private(user_id),
+        present,
         query.filter(|query| !query.trim().is_empty()),
         &unified::MemoryKind::ABOUT_PERSON,
         limit,

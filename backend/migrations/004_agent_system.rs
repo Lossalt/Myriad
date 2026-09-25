@@ -549,7 +549,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     evidence TEXT,
     speaker VARCHAR(16) NOT NULL DEFAULT 'user',
     source VARCHAR(16) NOT NULL,
-    venue VARCHAR(16) NOT NULL DEFAULT 'private',
+    venue VARCHAR(96) NOT NULL DEFAULT 'private',
     audience JSONB NOT NULL DEFAULT '[]'::jsonb,
     concepts JSONB NOT NULL DEFAULT '[]'::jsonb,
     importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,

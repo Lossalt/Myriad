@@ -25,8 +25,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 时间线只放帖子（`ensure_timeline_posts_only`）；半撤回转发收尾
 /// （`ensure_repost_state_consistent`）；已发布行的发布幂等键；旧自治授权收窄
 /// （`narrow_legacy_autonomy_grants`）；统一记忆表
-/// （`ensure_agent_memories_table`）；记忆的概念与别名列（`agent_memories.concepts`）。
-pub const SCHEMA_VERSION: &str = "2026.09.25.2";
+/// （`ensure_agent_memories_table`）；记忆的概念与别名列（`agent_memories.concepts`）；
+/// 记忆的场合放宽到能放下群的标识（`agent_memories.venue` VARCHAR(96)）。
+pub const SCHEMA_VERSION: &str = "2026.09.25.3";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

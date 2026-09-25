@@ -209,8 +209,23 @@ CREATE TABLE IF NOT EXISTS agent_autonomy_grants (
 }
 
 /// 统一记忆表（`migrations/004` 已 CREATE）。与 004 的 DDL 必须一字不差。
+/// `venue` 早先是 VARCHAR(16)，放不下群的标识；只在确实偏短时放宽，
+/// 免得每次启动都拿一次表锁。
 pub(crate) async fn ensure_agent_memories_table(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(AGENT_MEMORIES_DDL).await?;
+    db.execute_unprepared(
+        r#"
+DO $$
+BEGIN
+    IF (SELECT character_maximum_length FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'agent_memories'
+          AND column_name = 'venue') < 96 THEN
+        ALTER TABLE agent_memories ALTER COLUMN venue TYPE VARCHAR(96);
+    END IF;
+END $$;
+"#,
+    )
+    .await?;
     Ok(())
 }
 
@@ -253,7 +268,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     evidence TEXT,
     speaker VARCHAR(16) NOT NULL DEFAULT 'user',
     source VARCHAR(16) NOT NULL,
-    venue VARCHAR(16) NOT NULL DEFAULT 'private',
+    venue VARCHAR(96) NOT NULL DEFAULT 'private',
     audience JSONB NOT NULL DEFAULT '[]'::jsonb,
     concepts JSONB NOT NULL DEFAULT '[]'::jsonb,
     importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
@@ -686,7 +701,10 @@ WHERE n.nspname = 'public'
             .iter()
             .enumerate()
             .map(|(idx, fk)| {
-                format!("SELECT {idx}::int AS idx, q.orphans FROM ({}) AS q", fk.orphan_sql)
+                format!(
+                    "SELECT {idx}::int AS idx, q.orphans FROM ({}) AS q",
+                    fk.orphan_sql
+                )
             })
             .collect::<Vec<_>>()
             .join("\nUNION ALL\n");
@@ -954,7 +972,10 @@ pub(crate) async fn ensure_repost_state_consistent(db: &DatabaseConnection) -> R
             ))
             .await?
             .rows_affected();
-        tracing::info!(healed, "repost state heal: timeline rows of withdrawn reposts");
+        tracing::info!(
+            healed,
+            "repost state heal: timeline rows of withdrawn reposts"
+        );
     }
     txn.commit().await
 }

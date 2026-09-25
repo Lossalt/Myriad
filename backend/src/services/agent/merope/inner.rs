@@ -113,6 +113,7 @@ pub fn spawn(db: DatabaseConnection, request: &UserRequest, input_at: DateTime<F
         return;
     }
     let history = history_of(request);
+    let present = super::audience_for(request);
     let (sender, receiver) = watch::channel(());
     if let Ok(mut held) = HELD.lock() {
         held.retain(|_, entry| entry.started.elapsed() < KEEP_FOR);
@@ -136,10 +137,13 @@ pub fn spawn(db: DatabaseConnection, request: &UserRequest, input_at: DateTime<F
     }
     tokio::spawn(async move {
         let done = sender;
-        let inner = tokio::time::timeout(CALL_TIMEOUT, compile(&db, user_id, &user_text, history))
-            .await
-            .ok()
-            .flatten();
+        let inner = tokio::time::timeout(
+            CALL_TIMEOUT,
+            compile(&db, user_id, &user_text, history, &present),
+        )
+        .await
+        .ok()
+        .flatten();
         if let (Some(inner), Ok(mut held)) = (inner, HELD.lock()) {
             if let Some(entry) = held.get_mut(&user_id) {
                 if entry.input_at == input_at {
@@ -159,14 +163,26 @@ async fn compile(
     user_id: i32,
     user_text: &str,
     history: Vec<Value>,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Option<String> {
     let soul = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_default();
     let soul: String = soul.chars().take(2000).collect();
+    let no_priming = crate::services::agent::memory::unified::Priming::default();
     let (state, remembered, myself) = tokio::join!(
         super::get_or_create_state(db, user_id),
-        super::store::recall_remembered(db, user_id, Some(user_text), 4),
+        // In a group, only what the group heard: this state is read back
+        // into a reply everyone there can see.
+        super::store::recall_remembered_primed(
+            db,
+            user_id,
+            present,
+            Some(user_text),
+            4,
+            &no_priming,
+            1.0,
+        ),
         super::self_state::current(db),
     );
     let feeling = state
@@ -178,7 +194,7 @@ async fn compile(
         "history": history,
         "feelingTowardThem": feeling,
         "myself": myself.facts_view(),
-        "remembered": remembered.unwrap_or_default(),
+        "remembered": remembered.map(|(facts, _)| facts).unwrap_or_default(),
     })
     .to_string();
     let analyzer =
