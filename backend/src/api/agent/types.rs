@@ -35,6 +35,19 @@ pub struct ProcessContext {
     /// Semantic live-face snapshot. Extra keys are dropped at the sanitizer.
     #[serde(default)]
     pub rig_state: Option<serde_json::Value>,
+    /// A channel group turn. Set only by the server: never read from a
+    /// request body, because it decides whose memories may be said aloud.
+    #[serde(skip)]
+    pub group: Option<GroupTurn>,
+}
+
+/// Where a channel group turn happens and what the group said lately.
+#[derive(Debug, Clone)]
+pub struct GroupTurn {
+    /// `telegram:<chat_id>`.
+    pub venue: String,
+    /// Recent group lines, oldest first; others' lines are `name：text`.
+    pub transcript: Vec<crate::services::agent::types::ConversationMessage>,
 }
 
 /// 对话消息（API 格式）

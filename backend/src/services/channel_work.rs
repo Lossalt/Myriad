@@ -537,6 +537,7 @@ async fn start_new_work(
                 intention_id: None,
                 autonomy_permission_cap: None,
                 rig_state: None,
+                group: None,
             }),
         },
     )
@@ -601,6 +602,7 @@ async fn resume_pending(
                         intention_id: None,
                         autonomy_permission_cap: None,
                         rig_state: None,
+                        group: None,
                     }),
                 },
             )
@@ -670,7 +672,10 @@ async fn resume_pending(
     }
 }
 
-async fn claims_for_user(db: &DatabaseConnection, user_id: i32) -> Result<Claims, DbErr> {
+pub(crate) async fn claims_for_user(
+    db: &DatabaseConnection,
+    user_id: i32,
+) -> Result<Claims, DbErr> {
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,

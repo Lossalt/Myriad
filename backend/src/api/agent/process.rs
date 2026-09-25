@@ -296,7 +296,7 @@ pub async fn process_stream(
 pub(crate) async fn start_process_run(
     db: DatabaseConnection,
     claims: Claims,
-    req: ProcessRequest,
+    mut req: ProcessRequest,
 ) -> Result<Arc<AgentRun>, HttpError> {
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
     validate_input(&req.input)?;
@@ -305,6 +305,17 @@ pub(crate) async fn start_process_run(
         .as_ref()
         .and_then(|context| context.mode)
         .unwrap_or_default();
+    // Server-set only (`serde(skip)`): a group turn speaks as her, in Chat.
+    let group = req
+        .context
+        .as_mut()
+        .and_then(|context| context.group.take());
+    if group.is_some() && interaction_mode != crate::services::agent::AgentInteractionMode::Chat {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("A group turn must be a Chat turn")),
+        )));
+    }
     let source_intent_id = req
         .context
         .as_ref()
@@ -357,8 +368,11 @@ pub(crate) async fn start_process_run(
 
     let has_session = !session_id.is_empty();
 
-    // 从数据库加载最近 20 条会话历史（替代前端传入的 conversation_history）
-    let conversation_history = if has_session {
+    // 从数据库加载最近 20 条会话历史（替代前端传入的 conversation_history）。
+    // A group turn answers in the group: its history is the group transcript.
+    let conversation_history = if let Some(group) = &group {
+        Some(group.transcript.clone())
+    } else if has_session {
         let history = load_session_history(
             &db,
             &session_id,
@@ -418,6 +432,7 @@ pub(crate) async fn start_process_run(
         if let Some(history) = conversation_history {
             ctx.conversation_history = Some(history);
         }
+        ctx.venue = group.as_ref().map(|group| group.venue.clone());
     } else {
         let mut new_ctx = RequestContext {
             lane_key: Some(lane_key.clone()),

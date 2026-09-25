@@ -1916,6 +1916,192 @@ pub fn parse_telegram_bot_identity(result: &serde_json::Value) -> Option<Telegra
     })
 }
 
+/// One human line in a Telegram group or supergroup, as the persona sees it.
+/// `addressed` is whether it speaks to her: an @mention of the bot, a
+/// `text_mention` of the bot, a command aimed at the bot, or a reply to one of
+/// her messages. Only addressed lines are answered; the rest is context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramGroupMessage {
+    pub update_id: i64,
+    pub message_id: i64,
+    pub chat_id: i64,
+    pub message_thread_id: Option<i64>,
+    pub from_id: i64,
+    /// What the sender goes by in the group; attacker-controlled, bounded.
+    pub display_name: String,
+    /// The text with the bot's own @mention taken out.
+    pub text: String,
+    pub addressed: bool,
+}
+
+const GROUP_NAME_CHARS: usize = 40;
+
+/// Human group lines from a `getUpdates` body. Private chats, channel posts,
+/// anonymous admins, other bots, and lines without text drop.
+pub fn parse_telegram_group_messages(
+    status: u16,
+    body: &str,
+    bot: &TelegramBotIdentity,
+) -> Result<Vec<TelegramGroupMessage>, ConnectFailureKind> {
+    let result = parse_telegram_ok_payload(status, body)?;
+    let updates = result.as_array().cloned().unwrap_or_default();
+    Ok(updates
+        .iter()
+        .filter_map(|update| telegram_group_message(update, bot))
+        .collect())
+}
+
+fn telegram_group_message(
+    update: &serde_json::Value,
+    bot: &TelegramBotIdentity,
+) -> Option<TelegramGroupMessage> {
+    let update_id = json_i64(update.get("update_id")?)?;
+    let message = update.get("message")?;
+    let chat = message.get("chat")?;
+    if !matches!(
+        chat.get("type").and_then(|value| value.as_str()),
+        Some("group" | "supergroup")
+    ) {
+        return None;
+    }
+    // Posts made as a chat (anonymous admins, linked channels) are not people.
+    if message.get("sender_chat").is_some() {
+        return None;
+    }
+    let from = message.get("from")?;
+    if from.get("is_bot").and_then(|value| value.as_bool()) == Some(true) {
+        return None;
+    }
+    let from_id = json_i64(from.get("id")?)?;
+    let chat_id = json_i64(chat.get("id")?)?;
+    let message_id = json_i64(message.get("message_id")?)?;
+    let raw = message
+        .get("text")
+        .or_else(|| message.get("caption"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let entities = message
+        .get("entities")
+        .or_else(|| message.get("caption_entities"))
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let username = bot.username.as_deref().map(|name| name.to_lowercase());
+    let mut addressed = false;
+    let mut cut: Vec<(usize, usize)> = Vec::new();
+    for entity in &entities {
+        let kind = entity.get("type").and_then(|value| value.as_str());
+        let offset = entity.get("offset").and_then(|value| value.as_u64());
+        let length = entity.get("length").and_then(|value| value.as_u64());
+        let (Some(offset), Some(length)) = (offset, length) else {
+            continue;
+        };
+        let (offset, length) = (offset as usize, length as usize);
+        let piece = utf16_slice(raw, offset, length).to_lowercase();
+        let names_her = match kind {
+            Some("mention") => username
+                .as_deref()
+                .is_some_and(|name| piece.trim_start_matches('@') == name),
+            Some("text_mention") => {
+                entity
+                    .get("user")
+                    .and_then(|user| user.get("id"))
+                    .and_then(json_i64)
+                    == Some(bot.id)
+            }
+            Some("bot_command") => username
+                .as_deref()
+                .is_some_and(|name| piece.ends_with(&format!("@{name}"))),
+            _ => false,
+        };
+        if names_her {
+            addressed = true;
+            if kind == Some("mention") {
+                cut.push((offset, length));
+            }
+        }
+    }
+    let replies_to_her = message
+        .get("reply_to_message")
+        .and_then(|reply| reply.get("from"))
+        .and_then(|from| from.get("id"))
+        .and_then(json_i64)
+        == Some(bot.id);
+    addressed |= replies_to_her;
+    let text = without_utf16_ranges(raw, &cut)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() {
+        return None;
+    }
+    let first = from
+        .get("first_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let last = from
+        .get("last_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let handle = from
+        .get("username")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let name = format!("{first} {last}");
+    let name = if name.trim().is_empty() {
+        handle
+    } else {
+        name.trim()
+    };
+    let display_name: String = name
+        .chars()
+        .filter(|ch| !ch.is_control() && !matches!(ch, '<' | '>' | '：'))
+        .take(GROUP_NAME_CHARS)
+        .collect();
+    Some(TelegramGroupMessage {
+        update_id,
+        message_id,
+        chat_id,
+        message_thread_id: message.get("message_thread_id").and_then(json_i64),
+        from_id,
+        display_name: if display_name.trim().is_empty() {
+            "someone".into()
+        } else {
+            display_name
+        },
+        text,
+        addressed,
+    })
+}
+
+/// Telegram entity offsets count UTF-16 code units.
+fn utf16_slice(text: &str, offset: usize, length: usize) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let end = offset.saturating_add(length).min(units.len());
+    String::from_utf16_lossy(&units[offset.min(end)..end])
+}
+
+fn without_utf16_ranges(text: &str, ranges: &[(usize, usize)]) -> String {
+    if ranges.is_empty() {
+        return text.to_string();
+    }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let kept: Vec<u16> = units
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            !ranges
+                .iter()
+                .any(|(offset, length)| *index >= *offset && *index < offset + length)
+        })
+        .map(|(_, unit)| *unit)
+        .collect();
+    String::from_utf16_lossy(&kept)
+}
+
 /// Private-chat texts from a `getUpdates` body. Groups, edits, and empty `from` drop.
 pub fn parse_telegram_private_texts(
     status: u16,
