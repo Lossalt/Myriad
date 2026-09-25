@@ -772,7 +772,6 @@
     "answerFailed": "Réponse échouée : {error}",
     "askArael": "Demander à Agent",
     "cancelFailed": "Impossible d'annuler cette tâche.",
-    "confirmExpiredHint": "Cette confirmation a expiré. Annulez ou renvoyez la demande.",
     "errorWithDetail": "Erreur : {error}",
     "executionFailed": "Exécution échouée",
     "failReason": "Échec : {reason}",
@@ -875,21 +874,6 @@
       "minutesAgo": "il y a {value} min",
       "hoursAgo": "il y a {value} h",
       "daysAgo": "il y a {value} j"
-    },
-    "action": {
-      "risk": {
-        "none": "Sans risque",
-        "low": "Annulable",
-        "medium": "Modifie des données",
-        "high": "Irréversible",
-        "critical": "Niveau système"
-      },
-      "steps": "Sur le point de",
-      "impact": "Concerne",
-      "expiresIn": "Valide {seconds} s",
-      "expired": "Expiré — redemandez",
-      "confirm": "Allez-y",
-      "cancel": "Laissez tomber"
     },
     "undo": {
       "button": "Annuler",

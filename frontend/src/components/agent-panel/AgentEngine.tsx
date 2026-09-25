@@ -91,17 +91,14 @@ import {
   errorCode,
   generationFailureMessage,
 } from '../agent/onboarding/generationError'
-import { buildAgentPendingAction } from './agentAction'
 import { attachmentsForRequest } from './agentAttachments'
 import { getAgentContextConsent } from './agentContextConsent'
 import { setAgentSessionId } from './agentMessages'
 import {
-  AGENT_PANEL_ACTION_EVENT,
   AGENT_PANEL_ANSWER_EVENT,
   AGENT_PANEL_COMMAND_EVENT,
   AGENT_PANEL_OPEN_SESSION_EVENT,
   AGENT_PANEL_SUBMIT_EVENT,
-  agentPanelActionDetail,
   agentPanelAnswerDetail,
   agentPanelCommand,
   agentPanelOpenSessionCount,
@@ -113,11 +110,9 @@ import {
 import { getAgentPanelMode, useAgentPanelMode } from './agentPanelMode'
 import { turnSelectionText } from './agentSelection'
 import {
-  clearAgentPendingAction,
   pushAgentStatusEvent,
   resetAgentStatus,
   setAgentLaneLoading,
-  setAgentPendingAction,
   setAgentStatusAwaitingConfirmation,
   setAgentStatusThinking,
   setAgentUndoOffer,
@@ -134,10 +129,7 @@ import { restoreHistoryAnswer } from './restoreHistoryAnswer'
 import { restoreSessionMessage } from './sessionHistoryMessage'
 
 import { SessionLoadScope } from './sessionLoadScope'
-import {
-  restoreFollowUpQuestion,
-  restorePendingActionFromMessages,
-} from './sessionPendingRestore'
+import { restoreFollowUpQuestion } from './sessionPendingRestore'
 import { SummaryTextStream } from './summaryTextStream'
 import { useMessageState } from './useMessageState'
 
@@ -194,7 +186,6 @@ export const AgentEngine: React.FC = () => {
     setMessages,
     messagesRef,
     findMessage,
-    findMessageWhere,
     updateMessage,
     updateMessageExecution,
     addExecutionStep,
@@ -372,17 +363,12 @@ export const AgentEngine: React.FC = () => {
             if (task.pendingQuestion) {
               pendingQ = {
                 questionId: task.pendingQuestion.questionId,
-                confirmationId: existing?.confirmationId,
                 questionType: task.pendingQuestion.questionType,
                 question: task.pendingQuestion.question,
                 context: task.pendingQuestion.context,
                 options: task.pendingQuestion.options,
                 required: task.pendingQuestion.required,
                 defaultValue: task.pendingQuestion.defaultValue,
-                riskLevel: existing?.riskLevel,
-                expiresInSeconds: existing?.expiresInSeconds,
-                receivedAtMs: existing?.receivedAtMs,
-                pendingSteps: existing?.pendingSteps,
               }
             } else if (existing) {
               pendingQ = existing
@@ -489,14 +475,8 @@ export const AgentEngine: React.FC = () => {
         setMessages(retained, requestedMode)
         installed = true
         if (requestedMode === 'work') {
-          const action = restorePendingActionFromMessages(loaded, Date.now())
-          if (action) {
-            setAgentPendingAction(action)
-          } else {
-            clearAgentPendingAction()
-            const followUp = restoreFollowUpQuestion(loaded)
-            if (followUp) setAgentStatusAwaitingConfirmation(followUp)
-          }
+          const followUp = restoreFollowUpQuestion(loaded)
+          if (followUp) setAgentStatusAwaitingConfirmation(followUp)
         }
         if (requestedMode === 'work') void reattachLiveWork(loaded, reattachHints, subject)
       } catch (error) {
@@ -583,27 +563,6 @@ export const AgentEngine: React.FC = () => {
     return () =>
       window.removeEventListener(AGENT_PANEL_SUBMIT_EVENT, handleSubmit)
   }, [])
-
-  useEffect(() => {
-    const handleDecision = (event: Event) => {
-      const detail = agentPanelActionDetail(event)
-      if (!detail) return
-      clearAgentPendingAction(detail.id)
-      const target = findMessageWhere(
-        (message) =>
-          message.pendingQuestion?.confirmationId === detail.id &&
-          !message.selectedAnswer,
-      )
-      if (!target) return
-      answerQuestionRef.current?.(
-        target.id,
-        detail.approved ? 'confirm' : 'cancel',
-      )
-    }
-    window.addEventListener(AGENT_PANEL_ACTION_EVENT, handleDecision)
-    return () =>
-      window.removeEventListener(AGENT_PANEL_ACTION_EVENT, handleDecision)
-  }, [findMessageWhere])
 
   useEffect(() => {
     const handleAnswer = (event: Event) => {
@@ -717,7 +676,7 @@ export const AgentEngine: React.FC = () => {
           : undefined,
         content: msg.content || t.agentPanel.interrupted,
       })
-      if (taskId && !taskId.startsWith('confirmation:')) {
+      if (taskId) {
         try {
           await agentService.cancelTask(taskId)
         } catch {
@@ -1343,8 +1302,7 @@ export const AgentEngine: React.FC = () => {
         const activeTaskMessage = messages.findLast(
           (message) =>
             message.taskExecution?.status === 'processing' &&
-            !!message.taskExecution.taskId &&
-            !message.taskExecution.taskId.startsWith('confirmation:'),
+            !!message.taskExecution.taskId,
         )
         if (!activeTaskMessage?.taskExecution?.taskId) return
 
@@ -1643,50 +1601,13 @@ export const AgentEngine: React.FC = () => {
       if (discardedResponseIdsRef.current.has(messageId)) return
       const subject = authSubject.signal
       const taskData = response.task as Record<string, unknown> | undefined
-      let pendingQuestion = taskData?.pendingQuestion as
+      const pendingQuestion = taskData?.pendingQuestion as
         PendingQuestion | undefined
-      if (
-        response.responseType === 'confirmation_required' &&
-        response.confirmation
-      ) {
-        const confirmation = response.confirmation
-        const details = confirmation.pendingSteps
-          .map((step) => {
-            const impact =
-              step.impact.length > 0 ? `\n${step.impact.join('\n')}` : ''
-            return `${step.capabilityName}: ${step.message}${impact}`
-          })
-          .join('\n\n')
-        pendingQuestion = {
-          questionId: `confirmation:${confirmation.confirmationId}`,
-          confirmationId: confirmation.confirmationId,
-          questionType: 'confirmation',
-          question: response.message,
-          context: details || undefined,
-          options: [
-            { value: 'confirm', label: t.common.confirm },
-            { value: 'cancel', label: t.common.cancel },
-          ],
-          required: true,
-          riskLevel: confirmation.riskLevel,
-          expiresInSeconds: confirmation.expiresInSeconds,
-          receivedAtMs: Date.now(),
-        }
-        setAgentPendingAction(
-          buildAgentPendingAction({
-            confirmation,
-            prompt: response.message,
-            nowMs: Date.now(),
-          }),
-        )
-      }
       const taskId = taskData?.taskId as string | undefined
       const taskStatus = taskData?.status as string | undefined
-      const responseKey = response.confirmation?.confirmationId
-        ? `confirmation:${response.confirmation.confirmationId}`
-        : taskId
-          ? `${taskId}:${taskStatus ?? response.responseType}:${pendingQuestion?.questionId ?? ''}`
-          : null
+      const responseKey = taskId
+        ? `${taskId}:${taskStatus ?? response.responseType}:${pendingQuestion?.questionId ?? ''}`
+        : null
       if (responseKey) {
         if (handledResponseKeysRef.current.has(responseKey)) return
         handledResponseKeysRef.current.add(responseKey)
@@ -1694,20 +1615,14 @@ export const AgentEngine: React.FC = () => {
       }
 
       if (pendingQuestion?.question) {
-        if (!pendingQuestion.confirmationId) {
-          setAgentStatusAwaitingConfirmation(pendingQuestion.question)
-        }
+        setAgentStatusAwaitingConfirmation(pendingQuestion.question)
         await updateMessage(messageId, {
           pendingQuestion,
           selectedAnswer: undefined,
         })
         updateMessageExecution(messageId, {
           status: 'waiting',
-          taskId:
-            (taskData?.taskId as string) ||
-            (pendingQuestion.confirmationId
-              ? `confirmation:${pendingQuestion.confirmationId}`
-              : ''),
+          taskId: (taskData?.taskId as string) || '',
           progress: 100,
         })
         deliverTurnLine(mode, {
@@ -2049,26 +1964,6 @@ export const AgentEngine: React.FC = () => {
       if (!msg?.taskExecution?.taskId || !msg.pendingQuestion) return
       if (subject.aborted || msg.sessionId !== sessionIdsByModeRef.current.work) return
 
-      const pq = msg.pendingQuestion
-      if (
-        answer === 'confirm' &&
-        pq.confirmationId &&
-        typeof pq.expiresInSeconds === 'number' &&
-        pq.expiresInSeconds > 0 &&
-        typeof pq.receivedAtMs === 'number'
-      ) {
-        const remaining =
-          pq.expiresInSeconds -
-          Math.floor((Date.now() - pq.receivedAtMs) / 1000)
-        if (remaining <= 0) {
-          updateMessage(messageId, {
-            content: t.agentPanel.confirmExpiredHint,
-          })
-          updateMessageExecution(messageId, { status: 'error' })
-          return
-        }
-      }
-
       updateMessage(messageId, {
         selectedAnswer: answer,
       })
@@ -2085,19 +1980,12 @@ export const AgentEngine: React.FC = () => {
       try {
         beginTurnTrace(messageId)
         markTurnTraceOnce('request_sent')
-        const response = msg.pendingQuestion.confirmationId
-          ? await agentService.confirmOperation(
-              msg.pendingQuestion.confirmationId,
-              answer === 'confirm',
-              undefined,
-              createProgressHandler(messageId, 'work', 0, 'local', undefined, subject),
-            )
-          : await agentService.answerQuestionWithProgress(
-              msg.taskExecution.taskId,
-              msg.pendingQuestion.questionId,
-              answer,
-              createProgressHandler(messageId, 'work', 0, 'local', undefined, subject),
-            )
+        const response = await agentService.answerQuestionWithProgress(
+          msg.taskExecution.taskId,
+          msg.pendingQuestion.questionId,
+          answer,
+          createProgressHandler(messageId, 'work', 0, 'local', undefined, subject),
+        )
         if (subject.aborted) return
         await handleAgentResponseRef.current?.(messageId, response, 'work')
       } catch (error) {
@@ -2131,7 +2019,6 @@ export const AgentEngine: React.FC = () => {
       updateMessage,
       updateMessageExecution,
       createProgressHandler,
-      t.agentPanel.confirmExpiredHint,
       t.errors.agentConfirmFailed,
       t.agentPanel.answerFailed,
       format,

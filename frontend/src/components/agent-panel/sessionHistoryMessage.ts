@@ -14,11 +14,15 @@ export function restoreSessionMessage(
     ?.stepHistory as Array<Record<string, unknown>> | undefined
   const imageUrls = imageUrlsFromAgentPayload(data, stepHistory)
 
-  const metaTaskId =
+  const storedTaskId =
     (typeof meta?.taskId === 'string' && meta.taskId) ||
     (typeof meta?.task_id === 'string' && meta.task_id) ||
     m.taskId ||
     undefined
+  // Legacy recipe-level confirmations stored a synthetic id no task endpoint knows.
+  const metaTaskId = storedTaskId?.startsWith('confirmation:')
+    ? undefined
+    : storedTaskId
   const metaRunId =
     (typeof meta?.runId === 'string' && meta.runId) ||
     (typeof meta?.run_id === 'string' && meta.run_id) ||
@@ -46,10 +50,7 @@ export function restoreSessionMessage(
     }
   }
 
-  const pendingQuestion = pendingQuestionFromMetadata(
-    meta,
-    new Date(m.createdAt).getTime(),
-  )
+  const pendingQuestion = pendingQuestionFromMetadata(meta)
   if (pendingQuestion && taskExecution) taskExecution.status = 'waiting'
 
   return {

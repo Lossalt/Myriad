@@ -772,7 +772,6 @@
     "answerFailed": "回答失敗：{error}",
     "askArael": "Agent に聞く",
     "cancelFailed": "そのタスクをキャンセルできませんでした。",
-    "confirmExpiredHint": "確認の有効期限が切れました。キャンセルするか、もう一度リクエストしてください。",
     "errorWithDetail": "エラー：{error}",
     "executionFailed": "実行失敗",
     "failReason": "失敗理由: {reason}",
@@ -875,21 +874,6 @@
       "minutesAgo": "{value} 分前",
       "hoursAgo": "{value} 時間前",
       "daysAgo": "{value} 日前"
-    },
-    "action": {
-      "risk": {
-        "none": "リスクなし",
-        "low": "取り消せます",
-        "medium": "データを変更",
-        "high": "取り消せません",
-        "critical": "システム操作"
-      },
-      "steps": "実行する内容",
-      "impact": "影響",
-      "expiresIn": "残り {seconds} 秒",
-      "expired": "期限切れ — もう一度お願いします",
-      "confirm": "実行する",
-      "cancel": "やめる"
     },
     "undo": {
       "button": "元に戻す",

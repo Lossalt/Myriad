@@ -772,7 +772,6 @@
     "answerFailed": "답변하지 못했습니다: {error}",
     "askArael": "Agent에게 묻기",
     "cancelFailed": "그 작업을 취소하지 못했습니다.",
-    "confirmExpiredHint": "이 확인은 만료됐습니다. 취소하거나 요청을 다시 보내세요.",
     "errorWithDetail": "오류: {error}",
     "executionFailed": "실행에 실패했습니다",
     "failReason": "실패: {reason}",
@@ -875,21 +874,6 @@
       "minutesAgo": "{value}분 전",
       "hoursAgo": "{value}시간 전",
       "daysAgo": "{value}일 전"
-    },
-    "action": {
-      "risk": {
-        "none": "위험 없음",
-        "low": "되돌릴 수 있음",
-        "medium": "데이터를 바꿈",
-        "high": "되돌릴 수 없음",
-        "critical": "시스템 수준"
-      },
-      "steps": "하려는 일",
-      "impact": "영향",
-      "expiresIn": "{seconds}초간 유효",
-      "expired": "만료됨 — 다시 요청하세요",
-      "confirm": "진행",
-      "cancel": "됐어"
     },
     "undo": {
       "button": "되돌리기",

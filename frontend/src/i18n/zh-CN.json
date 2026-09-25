@@ -772,7 +772,6 @@
     "answerFailed": "回答失败：{error}",
     "askArael": "问 Agent",
     "cancelFailed": "没能取消这个任务。",
-    "confirmExpiredHint": "确认已过期，请取消或重新发起请求。",
     "errorWithDetail": "出错了：{error}",
     "executionFailed": "执行失败",
     "failReason": "失败原因: {reason}",
@@ -875,21 +874,6 @@
       "minutesAgo": "{value} 分钟前",
       "hoursAgo": "{value} 小时前",
       "daysAgo": "{value} 天前"
-    },
-    "action": {
-      "risk": {
-        "none": "无风险",
-        "low": "可撤销",
-        "medium": "会改动数据",
-        "high": "不可撤销",
-        "critical": "系统级操作"
-      },
-      "steps": "它准备做",
-      "impact": "会影响",
-      "expiresIn": "{seconds} 秒内有效",
-      "expired": "已失效，需要重新发起",
-      "confirm": "确认执行",
-      "cancel": "算了"
     },
     "undo": {
       "button": "撤销",

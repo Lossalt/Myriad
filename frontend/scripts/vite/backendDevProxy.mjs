@@ -72,7 +72,6 @@ function isAgentSsePath(urlPath) {
   const path = requestPathname(urlPath)
   return (
     path === '/api/agent/process/stream' ||
-    path === '/api/agent/confirm/stream' ||
     /^\/api\/agent\/runs\/[^/]+\/stream$/.test(path) ||
     /^\/api\/agent\/tasks\/[^/]+\/answer\/stream$/.test(path)
   )

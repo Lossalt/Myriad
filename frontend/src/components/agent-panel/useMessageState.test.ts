@@ -44,8 +44,7 @@ test('id updates still find a background Work message while Chat is visible', ()
 test('predicate search still finds a Work confirmation while Chat is visible', () => {
   const work = msg('w1', '办事中')
   work.pendingQuestion = {
-    questionId: 'confirmation:c1',
-    confirmationId: 'c1',
+    questionId: 'q1',
     questionType: 'confirmation',
     question: '继续？',
     required: true,
@@ -56,7 +55,7 @@ test('predicate search still finds a Work confirmation while Chat is visible', (
   const found = findMessageWhereInBag(
     bag,
     (message) =>
-      message.pendingQuestion?.confirmationId === 'c1' && !message.selectedAnswer,
+      message.pendingQuestion?.questionId === 'q1' && !message.selectedAnswer,
   )
   assert.equal(found?.id, 'w1')
 })

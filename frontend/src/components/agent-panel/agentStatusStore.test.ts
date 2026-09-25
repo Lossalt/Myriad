@@ -1,17 +1,13 @@
 import type { ProgressEvent } from '../../services/agent'
 import assert from 'node:assert/strict'
 import { afterEach, mock, test } from 'node:test'
-import { buildAgentPendingAction } from './agentAction'
 import { DONE_LINGER_MS, ERROR_LINGER_MS } from './agentStatus'
 import {
-  clearAgentPendingAction,
   getAgentLaneLoading,
-  getAgentPendingActionSnapshot,
   getAgentStatusSnapshot,
   pushAgentStatusEvent,
   resetAgentStatus,
   setAgentLaneLoading,
-  setAgentPendingAction,
   setAgentStatusAwaitingConfirmation,
   setAgentStatusRecording,
   setAgentStatusThinking,
@@ -139,48 +135,6 @@ test('敏感确认落到等回话那一档，带上问题本身', () => {
   })
 })
 
-function pendingAction() {
-  return buildAgentPendingAction({
-    confirmation: {
-      confirmationId: 'c1',
-      riskLevel: 'high',
-      expiresInSeconds: 300,
-      pendingSteps: [],
-    },
-    prompt: '确定要删掉这些吗？',
-    nowMs: Date.now(),
-  })
-}
-
-test('摆出操作卡片的同时把状态推到等回话 —— 两者是一件事', () => {
-  setAgentPendingAction(pendingAction())
-  assert.equal(getAgentStatusSnapshot().status, 'needsInput')
-  assert.equal(getAgentStatusSnapshot().detail, '确定要删掉这些吗？')
-  assert.equal(getAgentPendingActionSnapshot()?.id, 'c1')
-})
-
-test('状态一离开等回话，卡片自己就没了 —— 不会留在界面上问过去的事', () => {
-  setAgentPendingAction(pendingAction())
-  pushAgentStatusEvent({
-    type: 'step_started',
-    stepId: 's1',
-    stepIndex: 0,
-    totalSteps: 1,
-    capabilityName: 'delete',
-    description: '正在删除',
-  })
-  assert.equal(getAgentStatusSnapshot().status, 'working')
-  assert.equal(getAgentPendingActionSnapshot(), null)
-})
-
-test('按 id 收卡片，收错的那张不动', () => {
-  setAgentPendingAction(pendingAction())
-  clearAgentPendingAction('another')
-  assert.equal(getAgentPendingActionSnapshot()?.id, 'c1')
-  clearAgentPendingAction('c1')
-  assert.equal(getAgentPendingActionSnapshot(), null)
-})
-
 test('车道占用变了就算岛状态没变也要叫醒订阅者', () => {
   setAgentStatusThinking()
   let notifications = 0
@@ -196,25 +150,5 @@ test('车道占用变了就算岛状态没变也要叫醒订阅者', () => {
   setAgentLaneLoading('chat', false)
   assert.equal(getAgentLaneLoading('chat'), false)
   assert.equal(notifications, 2)
-  unsubscribe()
-})
-
-test('中断时卡片一起收走', () => {
-  setAgentPendingAction(pendingAction())
-  resetAgentStatus()
-  assert.equal(getAgentPendingActionSnapshot(), null)
-  assert.equal(getAgentStatusSnapshot().status, 'idle')
-})
-
-test('卡片出现和消失都会叫醒订阅者', () => {
-  let notifications = 0
-  const unsubscribe = subscribeAgentStatus(() => {
-    notifications += 1
-  })
-  setAgentPendingAction(pendingAction())
-  const afterSet = notifications
-  assert.ok(afterSet > 0)
-  clearAgentPendingAction('c1')
-  assert.ok(notifications > afterSet)
   unsubscribe()
 })

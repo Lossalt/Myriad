@@ -147,7 +147,6 @@ export interface ClarificationPoint {
 export type AgentResponseType =
   | 'answer'
   | 'clarification'
-  | 'confirmation_required'
   | 'task_created'
   | 'task_progress'
   | 'task_completed'
@@ -228,24 +227,9 @@ export interface AgentResponse {
   dataDisplay?: DataDisplayHint
   suggestions: string[]
   task?: TaskInfo
-  confirmation?: ConfirmationInfo
   frontendAction?: FrontendAction
   performance?: PerformanceDirective
   sessionId?: string
-}
-
-export interface ConfirmationStep {
-  stepId: string
-  capabilityName: string
-  message: string
-  impact: string[]
-}
-
-export interface ConfirmationInfo {
-  confirmationId: string
-  riskLevel: string
-  expiresInSeconds: number
-  pendingSteps: ConfirmationStep[]
 }
 
 /** Resume via runId; do not create a new task. */

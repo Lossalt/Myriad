@@ -558,25 +558,6 @@ class AgentService {
     return apiService.post<AgentResponse>(`${this.baseUrl}/clarify`, request)
   }
 
-  async confirmOperation(
-    confirmationId: string,
-    confirmed: boolean,
-    note?: string,
-    onProgress?: ProgressCallback,
-  ): Promise<AgentResponse> {
-    return this.executeSSERequest(
-      `/api${this.baseUrl}/confirm/stream`,
-      'POST',
-      {
-        confirmationId,
-        confirmed,
-        ...(note ? { note } : {}),
-      },
-      onProgress,
-      false,
-    )
-  }
-
   async getTask(
     taskId: string,
     signal = authSubject.signal,

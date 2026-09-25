@@ -25,8 +25,7 @@ export function collectReattachCandidates(
 
   for (const m of messages) {
     if (m.role !== 'assistant') continue
-    const taskId =
-      m.taskId && !m.taskId.startsWith('confirmation:') ? m.taskId : undefined
+    const taskId = m.taskId || undefined
     const runId = m.runId || undefined
 
     if (taskId) {
@@ -53,7 +52,6 @@ export function collectReattachCandidates(
 
   for (const m of messages) {
     if (!m.taskId || !m.runId) continue
-    if (m.taskId.startsWith('confirmation:')) continue
     const t = byTask.get(m.taskId)
     if (t && !t.runId) t.runId = m.runId
   }

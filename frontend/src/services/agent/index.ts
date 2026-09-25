@@ -25,8 +25,6 @@ export type {
   ClarificationType,
   ClarifyRequest,
   ColumnDef,
-  ConfirmationInfo,
-  ConfirmationStep,
   ConversationMessage,
   CreatePresetRequest,
   DataDisplayHint,

@@ -119,7 +119,7 @@ export function projectAgentMessage(message: ChatMessage): AgentMessage {
       ? { suggestions: message.suggestions }
       : {}),
     ...(workOffer ? { workOffer } : {}),
-    ...(message.pendingQuestion && !message.pendingQuestion.confirmationId
+    ...(message.pendingQuestion
       ? {
           question: {
             id: message.pendingQuestion.questionId,

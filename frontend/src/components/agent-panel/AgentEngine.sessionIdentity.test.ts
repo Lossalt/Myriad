@@ -39,7 +39,6 @@ function harness(getMessages: (...args: unknown[]) => Promise<unknown[]>) {
     imageUrlsFromAgentPayload: () => [], executionStepsFromHistory: () => [],
     restoreSessionMessage, prepareMessageBody, releaseMessageBody, retainHotMessages, prepareChatBody,
     setMessages: (rows: unknown) => writes.push(rows),
-    restorePendingActionFromMessages: () => null, clearAgentPendingAction: noop,
     restoreFollowUpQuestion: () => null,
     reattachLiveWork: (...args: unknown[]) => reattaches.push(args),
   }
