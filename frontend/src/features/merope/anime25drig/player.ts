@@ -293,6 +293,8 @@ export class Anime25DPlayer {
     wide: 0,
     round: 0,
     narrow: 0,
+    openCenterY: 0,
+    openHeight: 1,
   }
 
   private mouthMorphSources!: Anime25DMouthMorphSources

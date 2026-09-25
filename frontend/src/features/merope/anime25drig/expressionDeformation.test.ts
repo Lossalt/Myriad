@@ -218,6 +218,8 @@ function expressionFrame(
     wide: 0.2,
     round: 0.3,
     narrow: 0.1,
+    openCenterY: 170 + Math.cos(progress * 3.7) * 1.8,
+    openHeight: 14 + progress * 24,
   }
   return {
     expression: {

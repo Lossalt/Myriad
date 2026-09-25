@@ -32,6 +32,8 @@ const MORPH = {
   wide: 0,
   round: 0,
   narrow: 0,
+  openCenterY: 20,
+  openHeight: 12,
 }
 
 test('change capture reports only geometry inputs that actually moved', () => {

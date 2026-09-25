@@ -55,6 +55,8 @@ test('mouth stage preserves the frozen sequence outside ordinary expression curv
       wide: Math.max(0, Math.sin(progress * Math.PI)),
       round: Math.max(0, Math.cos(progress * Math.PI * 1.3)),
       narrow: Math.max(0, Math.sin(progress * Math.PI * 2.1)) * 0.7,
+      openCenterY: 171 + Math.cos(progress * 2.7) * 2.1,
+      openHeight: 12 + progress * 38,
     }
     const deformationFrame: Anime25DMouthDeformationFrame = {
       mouth: MOUTH,
@@ -118,7 +120,8 @@ test('ordinary mouth curvature is visible, symmetric and continuous across mater
     deformAnime25DMouthPoint(point, restX, restY, source, {
       mouth: MOUTH, face: FACE, faceScale: scale,
       morph: { centerX: 130 * scale, centerY: 170 * scale, width: 60 * scale,
-        height: 20 * scale, openMix: opening, round: opening, wide: 0, narrow: 0 },
+        height: 20 * scale, openMix: opening, round: opening, wide: 0, narrow: 0,
+        openCenterY: 170 * scale, openHeight: 20 * scale },
       expression: { ...IDENTITY_DRIVER, mouthForm: form },
       jawDrop: 0, jawOpen: opening, time: 0, stylizedMotion: null,
     }, 'continuous')
@@ -156,7 +159,7 @@ test('a tilted mouth keeps the face angle while it morphs to another size', () =
     const frame: Anime25DMouthDeformationFrame = {
       mouth: MOUTH, face: FACE, faceAxes, faceScale: 1,
       // Morphing toward a narrower, taller material.
-      morph: { centerX, centerY, width: 46, height: 36, openMix, wide: 0, round: 0, narrow: 0 },
+      morph: { centerX, centerY, width: 46, height: 36, openMix, wide: 0, round: 0, narrow: 0, openCenterY: centerY, openHeight: 36 },
       expression: IDENTITY_DRIVER, jawDrop: 0, jawOpen: 0, time: 0, stylizedMotion: null,
     }
     // Two points on the drawn mouth's own horizontal axis.
@@ -173,7 +176,7 @@ test('a tilted mouth keeps the face angle while it morphs to another size', () =
   // At its own size a tilted mouth does not move at all.
   const own: Anime25DMouthDeformationFrame = {
     mouth: MOUTH, face: FACE, faceAxes, faceScale: 1,
-    morph: { centerX, centerY, width: source.w, height: source.h, openMix: 0, wide: 0, round: 0, narrow: 0 },
+    morph: { centerX, centerY, width: source.w, height: source.h, openMix: 0, wide: 0, round: 0, narrow: 0, openCenterY: centerY, openHeight: source.h },
     expression: IDENTITY_DRIVER, jawDrop: 0, jawOpen: 0, time: 0, stylizedMotion: null,
   }
   for (const [restX, restY] of [[source.x, source.y], [source.x + source.w, source.y + source.h], [centerX + 11, centerY - 7]]) {

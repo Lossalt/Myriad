@@ -78,6 +78,14 @@ export function deformAnime25DMouthPoint(
   const { expression, morph, mouth, stylizedMotion } = frame
   const continuous = kind === 'continuous'
   if (continuous) {
+    // Speaking materials open from a parted slit; the closed line keeps its drawn curve.
+    const speaking =
+      source.fade === 'mouthOpen' ||
+      source.fade === 'mouthWide' ||
+      source.fade === 'mouthRound' ||
+      source.fade === 'mouthNarrow'
+    const centerY = speaking ? morph.openCenterY : morph.centerY
+    const height = speaking ? morph.openHeight : morph.height
     const axes = frame.faceAxes
     const tilted = axes !== undefined && axes.sin !== 0
     let offsetX = restX - (source.x + source.w / 2)
@@ -99,34 +107,34 @@ export function deformAnime25DMouthPoint(
     const cornerCurve =
       (0.075 + morph.round * 0.14 - morph.wide * 0.025) * xMagnitude ** 1.65
     const cupidBow =
-      morph.openMix * morph.height * 0.034 * (1 - xMagnitude) ** 2
+      morph.openMix * height * 0.034 * (1 - xMagnitude) ** 2
     const lowerFullness =
-      morph.height *
+      height *
       (0.018 + morph.openMix * 0.018) *
       (1 - xMagnitude ** 1.7)
     const upperRail =
-      morph.centerY -
-      morph.height / 2 +
-      morph.height * cornerCurve -
+      centerY -
+      height / 2 +
+      height * cornerCurve -
       cupidBow
     const lowerRail =
-      morph.centerY +
-      morph.height / 2 -
-      morph.height * cornerCurve * 0.82 +
+      centerY +
+      height / 2 -
+      height * cornerCurve * 0.82 +
       lowerFullness
     const verticalProgress = clamp((localY + 1) / 2, 0, 1)
     const upperAnchoredProgress =
       verticalProgress ** (1 + morph.openMix * 0.12)
     const trackedY =
       upperRail + (lowerRail - upperRail) * upperAnchoredProgress
-    const restingY = morph.centerY + localY * (morph.height / 2)
+    const restingY = centerY + localY * (height / 2)
     const railInfluence = smoothstep(morph.openMix)
     point.y = restingY + (trackedY - restingY) * railInfluence
     if (tilted) {
       const alongX = point.x - morph.centerX
-      const downY = point.y - morph.centerY
+      const downY = point.y - centerY
       point.x = morph.centerX + alongX * axes.cos - downY * axes.sin
-      point.y = morph.centerY + alongX * axes.sin + downY * axes.cos
+      point.y = centerY + alongX * axes.sin + downY * axes.cos
     }
   }
   if (
