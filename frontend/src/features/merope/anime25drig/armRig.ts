@@ -1,5 +1,6 @@
 import type { Anime25DPlaybackAnchors, Anime25DPlaybackLayer } from './types'
 import type { CroppedLayerPixels } from './webglRuntime'
+import { isSkinTone } from './shoulderContact'
 
 /**
  * A sleeve drawing hung from the shoulder it belongs to. Bind-time evidence only:
@@ -15,10 +16,17 @@ export interface ArmRig {
   radius: number
   /** Shoulder to hand, including the part the crop hides; drives inertia. */
   reach: number
+  /** Joint to the bottom of the drawing. */
+  length: number
   /** A drawing already raised across the body swings less. */
   scale: number
   /** The canvas cut this drawing runs into, if any; a swing slides along it. */
   cutY: number | null
+  /**
+   * Fabric all the way down, no forearm or hand showing: the lower sleeve is
+   * cloth hanging from the arm, so it may trail and sag behind the arm's swing.
+   */
+  drape: boolean
 }
 
 type Layer = Pick<Anime25DPlaybackLayer, 'x' | 'y' | 'w' | 'h' | 'side'>
@@ -31,7 +39,12 @@ export const ARM_SHRUG = 8
 export const ARM_CUT_BAND = 0.45
 
 const OPAQUE = 128
-const POSED_AREA = 0.08
+/**
+ * Any more visible skin in the lower sleeve and it is an arm, not a drape.
+ * Fabric, printed flowers included, stays under 4%; a bare forearm is over 25%.
+ */
+const DRAPE_SKIN = 0.05
+const POSED_AREA = 0.05
 const POSED_SCALE = 0.3
 
 export function bindArmRig(
@@ -107,6 +120,7 @@ export function bindArmRig(
       if (opaque(x, y)) raised++
     }
   }
+  const posed = raised / area > POSED_AREA
   // The portrait crop, not a natural cuff: opaque across the bottom rows. The
   // very last row is often resampled to partial alpha, so read just above it.
   let cutColumns = 0
@@ -114,15 +128,38 @@ export function bindArmRig(
     if (opaque(x, Math.max(0, height - 2)) && opaque(x, Math.max(0, height - 4))) cutColumns++
   }
   const cut = Math.abs(arm.y + arm.h - contentBottom) <= 0.5 && cutColumns * scaleX >= radius * 0.5
+  let lower = 0
+  let skin = 0
+  for (let y = Math.max(0, Math.floor((pivotY + (arm.y + arm.h - pivotY) * 0.5 - arm.y) / scaleY)); y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!opaque(x, y)) continue
+      lower++
+      const i = (y * width + x) * 4
+      if (isSkinTone(pixels[i], pixels[i + 1], pixels[i + 2])) skin++
+    }
+  }
   return {
     outward: arm.side === 'L' ? 1 : -1,
     pivotX,
     pivotY,
     radius,
     reach: Math.max(arm.y + arm.h - pivotY, faceHeight * 2.2),
-    scale: raised / area > POSED_AREA ? POSED_SCALE : 1,
+    length: arm.y + arm.h - pivotY,
+    scale: posed ? POSED_SCALE : 1,
     cutY: cut ? arm.y + arm.h : null,
+    // A raised arm's lower sleeve is folded around an elbow, not hanging.
+    drape: !posed && lower > 0 && skin / lower < DRAPE_SKIN,
   }
+}
+
+/** Where along a drape the cloth starts to follow its own swing. */
+const DRAPE_START = 0.35
+
+/** 0 on the arm, 1 at the hem: how much of the drape's own swing a point takes. */
+export function armDrapeWeight(rig: Readonly<ArmRig>, y: number): number {
+  if (!rig.drape) return 0
+  const t = Math.max(0, Math.min(1, (y - rig.pivotY - rig.length * DRAPE_START) / (rig.length * (1 - DRAPE_START))))
+  return t * t * (3 - 2 * t)
 }
 
 export interface ArmRigMesh {

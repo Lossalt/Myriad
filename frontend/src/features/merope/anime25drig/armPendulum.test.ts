@@ -5,7 +5,9 @@ import {
   ARM_MAX_RADIANS,
   ARM_OPEN_RADIANS,
   ARM_SWAY_RADIANS,
+  ArmDrape,
   ArmPendulum,
+  DRAPE_SAG,
 } from './armPendulum'
 
 const STILL = { open: 0, sway: 0, bodyRoll: 0, dynamic: true }
@@ -109,4 +111,31 @@ test('bad input and a jump in the shoulder cannot throw the arm around', () => {
   arm.step(STILL, { x: 0, y: 0, reach: 400 }, DT)
   const jumped = arm.step(STILL, { x: 5000, y: 0, reach: 400 }, DT)
   assert.ok(Math.abs(jumped) < ARM_MAX_RADIANS)
+})
+
+test('a drape trails its arm and settles nearer vertical than it', () => {
+  const drape = new ArmDrape()
+  drape.step(0, 0, true, DT)
+  const arm = 0.1
+  const sagged = ARM_MAX_RADIANS * Math.tanh((arm * (1 - DRAPE_SAG)) / ARM_MAX_RADIANS)
+  let early = 0
+  for (let t = 0; t < 0.1; t += DT) early = drape.step(arm, 0, true, DT)
+  assert.ok(early > 0 && early < sagged)
+  let settled = 0
+  for (let t = 0; t < 8; t += DT) settled = drape.step(arm, 0, true, DT)
+  assert.ok(Math.abs(settled - sagged) < 1e-4, `${settled}`)
+  assert.ok(settled < arm)
+})
+
+test('a leaning body pulls the drape back toward vertical', () => {
+  const drape = new ArmDrape()
+  let angle = 0
+  for (let t = 0; t < 8; t += DT) angle = drape.step(0, 0.05, true, DT)
+  assert.ok(Math.abs(angle + 0.05 * DRAPE_SAG) < 1e-3)
+})
+
+test('a drape without dynamics or with bad input sits on its target', () => {
+  const drape = new ArmDrape()
+  assert.ok(Math.abs(drape.step(0.1, 0, false, DT) - ARM_MAX_RADIANS * Math.tanh((0.1 * (1 - DRAPE_SAG)) / ARM_MAX_RADIANS)) < 1e-12)
+  assert.ok(Number.isFinite(drape.step(Number.NaN, Infinity, true, Number.NaN)))
 })

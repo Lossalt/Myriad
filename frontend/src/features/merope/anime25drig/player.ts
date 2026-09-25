@@ -55,7 +55,7 @@ import { resolveAnime25DFaceFrame } from '../rig/faceFrame'
 import { SingingGrooveController } from '../singing/singingGroove'
 import { noteTurnTraceFrame } from '../turnTrace'
 import { AmbientMotionController } from './ambientMotion'
-import { ArmPendulum } from './armPendulum'
+import { ArmDrape, ArmPendulum } from './armPendulum'
 import { Anime25DBehaviorMotionController } from './behaviorMotion'
 import {
   buildChestWeightField,
@@ -320,6 +320,8 @@ export class Anime25DPlayer {
 
   /** Each sleeve hangs from its shoulder; its swing is simulated, not authored. */
   private readonly armPendulums = { L: new ArmPendulum(1), R: new ArmPendulum(-1) } as const
+
+  private readonly armDrapes = { L: new ArmDrape(), R: new ArmDrape() } as const
 
   private readonly armJoint = { x: 0, y: 0, reach: 0 }
 
@@ -642,6 +644,8 @@ export class Anime25DPlayer {
       breath: 0,
       armAngleL: 0,
       armAngleR: 0,
+      armDrapeL: 0,
+      armDrapeR: 0,
       chestCenterX: this.chestRegion.centerX,
       chestRegionCenterY: this.chestRegion.centerY,
       chestMotionCenterY: this.chestRegion.centerY,
@@ -1221,8 +1225,14 @@ export class Anime25DPlayer {
     for (const side of ['L', 'R'] as const) {
       const joint = this.writeArmJoint(side) ? this.armJoint : null
       const angle = this.armPendulums[side].step(input, joint, dt)
-      if (side === 'L') frame.armAngleL = angle
-      else frame.armAngleR = angle
+      const drape = this.armDrapes[side].step(angle, input.bodyRoll, input.dynamic, dt)
+      if (side === 'L') {
+        frame.armAngleL = angle
+        frame.armDrapeL = drape
+      } else {
+        frame.armAngleR = angle
+        frame.armDrapeR = drape
+      }
     }
   }
 

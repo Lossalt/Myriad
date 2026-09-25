@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindArmRig, bindArmRigMesh } from './armRig'
+import { armDrapeWeight, bindArmRig, bindArmRigMesh } from './armRig'
 
 const ANCHORS = {
   face: { x0: 300, y0: 150, x1: 700, y1: 650, cx: 500, cy: 400 },
@@ -10,11 +10,19 @@ const ANCHORS = {
 
 type Paint = (x: number, y: number) => boolean
 
-function sleeve(layer: { x: number; y: number; w: number; h: number }, paint: Paint) {
+const FABRIC = [200, 205, 235]
+const SKIN = [250, 222, 205]
+
+function sleeve(
+  layer: { x: number; y: number; w: number; h: number },
+  paint: Paint,
+  color: (x: number, y: number) => number[] = () => FABRIC,
+) {
   const pixels = new Uint8ClampedArray(layer.w * layer.h * 4)
   for (let y = 0; y < layer.h; y++) {
     for (let x = 0; x < layer.w; x++) {
-      if (paint(layer.x + x, layer.y + y)) pixels[(y * layer.w + x) * 4 + 3] = 255
+      if (!paint(layer.x + x, layer.y + y)) continue
+      pixels.set([...color(layer.x + x, layer.y + y), 255], (y * layer.w + x) * 4)
     }
   }
   return { pixels, width: layer.w, height: layer.h }
@@ -75,4 +83,30 @@ test('mesh weights are zero at the joint and whole beyond the shoulder', () => {
   assert.equal(mesh.weights[0], 0)
   assert.ok(mesh.weights[1] > 0 && mesh.weights[1] < 1)
   assert.equal(mesh.weights[2], 1)
+})
+
+test('a sleeve that is fabric down to the crop is a drape; a bare forearm is not', () => {
+  const kimono = bindArmRig(LEFT, sleeve(LEFT, hanging), ANCHORS, 1320)!
+  assert.equal(kimono.drape, true)
+  // A few warm printed flowers do not make an arm.
+  const printed = bindArmRig(LEFT, sleeve(LEFT, hanging, (x, y) => (x + y) % 40 === 0 ? SKIN : FABRIC), ANCHORS, 1320)!
+  assert.equal(printed.drape, true)
+  const forearm = bindArmRig(LEFT, sleeve(LEFT, hanging, (_x, y) => (y > 1150 ? SKIN : FABRIC)), ANCHORS, 1320)!
+  assert.equal(forearm.drape, false)
+})
+
+test('a raised arm swings less and never drapes', () => {
+  const posed = { x: 120, y: 500, w: 260, h: 820, side: 'L' as const }
+  const paint: Paint = (x, y) =>
+    (x >= 150 && x < 310 && y >= 790) || (x >= 300 && x < 380 && y >= 520 && y < 800)
+  const rig = bindArmRig(posed, sleeve(posed, paint), ANCHORS, 1320)!
+  assert.ok(rig.scale < 1)
+  assert.equal(rig.drape, false)
+})
+
+test('drape weight is zero on the upper arm and whole at the hem', () => {
+  const rig = bindArmRig(LEFT, sleeve(LEFT, hanging), ANCHORS, 1320)!
+  assert.equal(armDrapeWeight(rig, rig.pivotY + rig.length * 0.3), 0)
+  assert.equal(armDrapeWeight(rig, rig.pivotY + rig.length), 1)
+  assert.equal(armDrapeWeight({ ...rig, drape: false }, rig.pivotY + rig.length), 0)
 })

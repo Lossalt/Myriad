@@ -825,6 +825,8 @@ function secondaryFrame(
     faceScale: 0.82,
     armAngleL: Math.sin(progress * 5.9) * 0.3,
     armAngleR: Math.cos(progress * 5.3) * 0.3,
+    armDrapeL: Math.sin(progress * 5.1) * 0.2,
+    armDrapeR: Math.cos(progress * 4.7) * 0.2,
     headAngleY: Math.cos(progress * 5.4) * 0.9,
     headRotationCosine: Math.cos(rotation),
     headRotationSine: Math.sin(rotation),
@@ -1081,6 +1083,8 @@ function torsoTurnFrame(
   }
   frame.armAngleL = armAngle
   frame.armAngleR = armAngle
+  frame.armDrapeL = armAngle
+  frame.armDrapeR = armAngle
   return frame
 }
 
@@ -1223,12 +1227,14 @@ const ARM = {
   pivotY: 90,
   radius: 12,
   reach: 300,
+  length: 134,
   scale: 1,
   cutY: 224,
+  drape: false,
 }
 
-function riggedSleeve(cutY: number | null = ARM.cutY): Anime25DSecondaryDeformationBinding {
-  const arm = { ...ARM, cutY }
+function riggedSleeve(cutY: number | null = ARM.cutY, drape = false): Anime25DSecondaryDeformationBinding {
+  const arm = { ...ARM, cutY, drape }
   const rest = new Float32Array([
     arm.pivotX, arm.pivotY, 40, 150, 80, 150, 40, 200, 80, 200, 40, 224, 80, 224, 60, 130,
   ])
@@ -1246,9 +1252,12 @@ function swung(
   restY: number,
   angle: number,
   armY = 0,
+  drape = angle,
 ): { x: number; y: number } {
   const point = { x: restX, y: restY }
-  deformAnime25DSecondaryPoint(point, restX, restY, vertex, binding, torsoTurnFrame(0, angle, armY))
+  const frame = torsoTurnFrame(0, angle, armY)
+  frame.armDrapeL = drape
+  deformAnime25DSecondaryPoint(point, restX, restY, vertex, binding, frame)
   return point
 }
 
@@ -1305,6 +1314,31 @@ test('a cropped arm slides along the frame line instead of lifting off it', () =
   // Without a crop the same swing lifts the hand, as a rotation must.
   const free = riggedSleeve(null)
   assert.ok(swung(free, 5, 40, ARM.cutY, 0.35).y < swung(free, 5, 40, ARM.cutY, 0).y - 5)
+})
+
+test('a drape follows the arm at the shoulder and its own swing at the hem', () => {
+  const draped = riggedSleeve(null, true)
+  const plain = riggedSleeve(null, false)
+  // Near the joint the cloth is the arm.
+  assert.deepEqual(swung(draped, 7, 60, 130, 0.3, 0, 0.1), swung(plain, 7, 60, 130, 0.3))
+  // At the hem it takes the drape's angle, not the arm's.
+  const hem = swung(draped, 3, 40, ARM.pivotY + ARM.length, 0.3, 0, 0.1)
+  const asDrape = swung(plain, 3, 40, ARM.pivotY + ARM.length, 0.1)
+  assert.ok(Math.abs(hem.x - asDrape.x) < 1e-9 && Math.abs(hem.y - asDrape.y) < 1e-9)
+  // A sleeve with its forearm showing never bends: the arm's angle all the way.
+  assert.deepEqual(
+    swung(plain, 3, 40, ARM.pivotY + ARM.length, 0.3, 0, 0.1),
+    swung(plain, 3, 40, ARM.pivotY + ARM.length, 0.3),
+  )
+})
+
+test('a cropped drape still slides its cut along the frame line', () => {
+  const draped = riggedSleeve(ARM.cutY, true)
+  for (const [angle, drape] of [[0.3, 0.1], [-0.25, -0.05], [0.1, 0.25]]) {
+    const cut = swung(draped, 5, 40, ARM.cutY, angle, 0, drape)
+    const rest = swung(draped, 5, 40, ARM.cutY, 0, 0, 0)
+    assert.ok(Math.abs(cut.y - rest.y) < 1e-9, `${angle} ${drape}`)
+  }
 })
 
 test('lifting raises the shoulder of every sleeve layer the same amount', () => {

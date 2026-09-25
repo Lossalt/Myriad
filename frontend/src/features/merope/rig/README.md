@@ -28,6 +28,13 @@ back to gravity. The swing saturates softly into the contract's
 its cut edge on the frame line and slides along it instead of lifting off.
 A drawing whose hand is raised above its shoulder swings at 30%.
 
+A sleeve that is fabric all the way down (under 5% skin-toned pixels in its
+lower half, so no forearm or hand shows) is a drape: below a third of its length
+it blends from the arm's swing to its own softer pendulum, which trails the arm
+and settles 30% nearer vertical. A visible forearm never bends; a raised arm
+never drapes. Ribbons and tassels painted inside a sleeve cannot be separated
+from it and move with the sleeve.
+
 This boundary is shared by
 `shared/merope_rig_contract.json`, the Rust compiler, TypeScript
 validation, the PSD importer, and diagnostics. Do not add a frontend-only

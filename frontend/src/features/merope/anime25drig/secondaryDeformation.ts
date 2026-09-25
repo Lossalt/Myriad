@@ -18,7 +18,7 @@ import type {
   Anime25DTorsoShellProfile,
 } from './types'
 import { anime25DLayerUsesFaceSurface } from '../rig/anime25dLayerSemantics'
-import { ARM_CUT_BAND, ARM_SHRUG } from './armRig'
+import { ARM_CUT_BAND, ARM_SHRUG, armDrapeWeight } from './armRig'
 import { chestDeformationWeight } from './chestPhysics'
 import {
   BODY_HEAD_FOLLOW,
@@ -72,6 +72,9 @@ export interface Anime25DSecondaryDeformationFrame {
   /** Image-plane shoulder rotation of the L and R sleeve drawings. */
   armAngleL: number
   armAngleR: number
+  /** The same rotation for cloth hanging from each arm, which lags and sags. */
+  armDrapeL: number
+  armDrapeR: number
   chestCenterX: number
   chestRegionCenterY: number
   chestMotionCenterY: number
@@ -382,10 +385,13 @@ export function deformAnime25DSecondaryPoint(
     const shrug = frame.expression.armY * ARM_SHRUG * frame.faceScale
     point.y -= shrug
     const arm = binding.arm
-    const swing = arm
-      ? (binding.handwearSide === 'L' ? frame.armAngleL : frame.armAngleR) * arm.scale
+    const left = binding.handwearSide === 'L'
+    const swing = arm ? (left ? frame.armAngleL : frame.armAngleR) * arm.scale : 0
+    const drape = arm?.drape ? (left ? frame.armDrapeL : frame.armDrapeR) * arm.scale : swing
+    const angle = arm
+      ? swing * (binding.armMesh?.weights[vertex] ?? 1) +
+        (drape - swing) * armDrapeWeight(arm, restY)
       : 0
-    const angle = swing * (binding.armMesh?.weights[vertex] ?? 1)
     if (arm && angle !== 0) {
       // About the shoulder joint, in rest space. Everything applied above is a
       // uniform carry of the whole sleeve, so the joint travels with it.
@@ -404,7 +410,9 @@ export function deformAnime25DSecondaryPoint(
       const blend = smoothstep((restY - arm.cutY + band) / band)
       if (blend > 0) {
         const cutDy = arm.cutY - arm.pivotY
-        const lifted = cutDy - ((restX - arm.pivotX) * Math.sin(swing) + cutDy * Math.cos(swing))
+        const cutAngle = swing + (drape - swing) * armDrapeWeight(arm, arm.cutY)
+        const lifted =
+          cutDy - ((restX - arm.pivotX) * Math.sin(cutAngle) + cutDy * Math.cos(cutAngle))
         point.y += (lifted + shrug) * blend
       }
     }

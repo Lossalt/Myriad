@@ -722,6 +722,8 @@ function frame(
     breath,
     armAngleL: 0,
     armAngleR: 0,
+    armDrapeL: 0,
+    armDrapeR: 0,
     chestCenterX: chest.centerX,
     chestRegionCenterY: chest.centerY,
     chestMotionCenterY: chest.centerY,

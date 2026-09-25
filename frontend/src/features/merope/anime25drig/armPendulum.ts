@@ -117,6 +117,43 @@ export class ArmPendulum {
   }
 }
 
+export const DRAPE_HZ = 0.85
+export const DRAPE_DAMPING = 0.2
+
+/** Gravity holds a hanging drape this much nearer vertical than its arm. */
+export const DRAPE_SAG = 0.3
+
+/** Cloth hung from an arm: softer than the arm, it trails the swing and sags. */
+export class ArmDrape {
+  angle = 0
+  private state = 0
+  private velocity = 0
+  private initialized = false
+
+  /** `armAngle` and the result are rotations about the same shoulder. */
+  step(armAngle: number, bodyRoll: number, dynamic: boolean, dt: number): number {
+    const arm = finite(armAngle)
+    // In the body's frame, world vertical is the body roll undone.
+    const target = arm * (1 - DRAPE_SAG) - finite(bodyRoll) * DRAPE_SAG
+    const step = Number.isFinite(dt) ? Math.max(0, dt) : 0
+    if (!this.initialized || !dynamic) {
+      this.initialized = true
+      this.state = target
+      this.velocity = 0
+    } else {
+      const omega = 2 * Math.PI * DRAPE_HZ
+      this.velocity += (-omega * omega * (this.state - target) - 2 * DRAPE_DAMPING * omega * this.velocity) * step
+      this.state += this.velocity * step
+      if (!Number.isFinite(this.state) || !Number.isFinite(this.velocity)) {
+        this.state = target
+        this.velocity = 0
+      }
+    }
+    this.angle = ARM_MAX_RADIANS * Math.tanh(this.state / ARM_MAX_RADIANS)
+    return this.angle
+  }
+}
+
 function finite(value: number): number {
   return Number.isFinite(value) ? value : 0
 }
