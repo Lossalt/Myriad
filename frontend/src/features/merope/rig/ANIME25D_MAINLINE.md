@@ -64,6 +64,16 @@ visible face pixels even though the standalone reference permits a fallback.
 Source/ancestor opacity is baked once into copied import pixels, not multiplied
 again during playback. Existing stored assets are not recompiled automatically.
 
+Two import fixes from `7ddbd9943e` (v2.0) are adopted. A strand whose peak box
+smoothing moved off the painted columns snaps to the nearest painted column
+instead of being dropped, so thin hair parts keep their spring. A plain `hair`
+layer is front hair when painted above the face and back hair below it. That
+release's flat-top peak centring is not adopted: on flat-bottomed parts it
+leaves too little room for the second strand and loses a spring. Its webcam
+tracking, OBS relay, recording, anchor editor, jewellery/tail sway, new side
+hair/ahoge slots, and settings format are editor features outside this
+integration. Its smooth iris mask is a renderer change still to evaluate here.
+
 The renderer builds left/right eye masks before painting using independent
 stencil bits; collar reconstruction has a separate bit and cannot erase or
 satisfy an eye mask. Invisible ordinary eye whites remain valid masks during

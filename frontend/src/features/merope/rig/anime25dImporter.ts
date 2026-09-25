@@ -304,7 +304,7 @@ function toRiggerLayerName(value: string | undefined): string {
 }
 
 function flattenPsdForRigger(psd: Psd): Psd {
-  const children = flattenVisibleLayers(psd.children ?? [])
+  const visible = flattenVisibleLayers(psd.children ?? [])
     .filter((layer) => validPixelData(layer.imageData))
     .filter(
       (layer) =>
@@ -312,27 +312,47 @@ function flattenPsdForRigger(psd: Psd): Psd {
           anime25DLayerNameParts(normalizeAnime25DLayerName(layer.name)).base,
         ),
     )
-    .map((layer) => {
-      const pixels = layer.imageData
-      if (!validPixelData(pixels)) return layer
-      const data = new Uint8ClampedArray(pixels.data)
-      const opacity = layer.opacity ?? 1
-      if (opacity !== 1) {
-        for (let index = 3; index < data.length; index += 4)
-          data[index] *= opacity
-      }
-      return {
-        ...layer,
-        opacity: 1,
-        name: toRiggerLayerName(layer.name),
-        imageData: {
-          width: pixels.width,
-          height: pixels.height,
-          data,
-        },
-      }
-    })
+  const face = visible.findIndex(
+    (layer) =>
+      anime25DBaseRole(normalizeAnime25DLayerName(layer.name)) === 'face',
+  )
+  const children = visible.map((layer, index) => {
+    const pixels = layer.imageData
+    if (!validPixelData(pixels)) return layer
+    const data = new Uint8ClampedArray(pixels.data)
+    const opacity = layer.opacity ?? 1
+    if (opacity !== 1) {
+      for (let offset = 3; offset < data.length; offset += 4)
+        data[offset] *= opacity
+    }
+    return {
+      ...layer,
+      opacity: 1,
+      name: toRiggerLayerName(plainHairBySide(layer.name, index, face)),
+      imageData: {
+        width: pixels.width,
+        height: pixels.height,
+        data,
+      },
+    }
+  })
   return { width: psd.width, height: psd.height, children }
+}
+
+/**
+ * A plain `hair` layer names no side of the face. As in upstream 7ddbd99,
+ * the painter's order decides: above the face it is front hair, below it back.
+ */
+function plainHairBySide(
+  name: string | undefined,
+  index: number,
+  face: number,
+): string | undefined {
+  const { base, suffix } = anime25DLayerNameParts(
+    canonicalAnime25DLayerName(name),
+  )
+  if (base !== 'hair' || face < 0) return name
+  return `${index > face ? 'front-hair' : 'back-hair'}${suffix}`
 }
 
 function rasterFromRiggerPart(
