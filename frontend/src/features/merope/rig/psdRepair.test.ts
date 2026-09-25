@@ -206,7 +206,7 @@ test('a covered layer that matches only by coincidence is recovered instead', ()
     2,
   )
   assert.equal(result.layers[2], torso, 'the torso is left intact')
-  assert.equal(result.layers[3]?.id, 'recovered-body')
+  assert.equal(result.layers[3]?.id, 'recovered-objects')
   const recovered = result.layers.find((candidate) =>
     candidate.id.startsWith('recovered-'),
   )!
@@ -265,6 +265,55 @@ test('an accessory broken into thin parts is recovered whole', () => {
     'hair seen between the bars belongs to the accessory',
   )
   assert.equal(result.reconciliation?.repairs.recovered, 1)
+})
+
+test('a piece hanging from an accessory joins that drawing', () => {
+  const ornament = layer('headwear', [150, 30, 10, 20], GOLD, 'head')
+  const result = repairAnime25DPsd(
+    [
+      layer('face', FACE, SKIN, 'head'),
+      ornament,
+      layer('topwear', TORSO, CLOTH),
+    ],
+    allVisible,
+    reference((fill) => {
+      portrait(fill)
+      fill([150, 30, 10, 20], GOLD)
+      // A tassel below the ornament that the split dropped.
+      fill([151, 50, 8, 30], GEM)
+    }),
+    2,
+  )
+  assert.equal(result.layers.length, 3, 'no new layer')
+  const joined = result.layers[1]
+  assert.equal(joined.role, 'headwear')
+  assert.deepEqual(pixel(joined, 155, 40), [...GOLD, 255])
+  assert.deepEqual(pixel(joined, 155, 70), [...GEM, 255])
+  assert.equal(pixel(ornament, 155, 40)[3], 255)
+  assert.equal(ornament.height, 20, 'the input layer is untouched')
+  assert.equal(result.reconciliation?.repairs.recovered, 1)
+})
+
+test('a dropped earring hangs from the ear', () => {
+  const result = repairAnime25DPsd(
+    [
+      layer('ears', [52, 50, 10, 16], SKIN, 'head'),
+      layer('face', FACE, SKIN, 'head'),
+      layer('topwear', TORSO, CLOTH),
+    ],
+    allVisible,
+    reference((fill) => {
+      fill([52, 50, 10, 16], SKIN)
+      portrait(fill)
+      fill([50, 66, 10, 24], GEM)
+    }),
+    2,
+  )
+  const earring = result.layers.find((candidate) =>
+    candidate.id.startsWith('recovered-'),
+  )!
+  assert.equal(earring.role, 'earwear')
+  assert.equal(earring.group, 'head')
 })
 
 test('without a free layer slot recoveries are only reported', () => {

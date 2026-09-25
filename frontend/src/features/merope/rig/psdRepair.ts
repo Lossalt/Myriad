@@ -197,15 +197,8 @@ export function repairAnime25DPsd(
     revealed += 1
   }
 
-  const overlays = new Map<
-    Group,
-    {
-      pixels: Map<number, readonly [number, number, number, number]>
-      above: number
-    }
-  >()
-  let recovered = 0
-  if (maxNewLayers > 0) {
+  const pieces: RecoveredPiece[] = []
+  {
     const mask = closeMask(
       support,
       bounds.width,
@@ -237,35 +230,75 @@ export function repairAnime25DPsd(
       ) {
         continue
       }
-      const group = regionGroup(before, shown, visible)
-      if (!overlays.has(group) && overlays.size >= maxNewLayers) continue
-      const overlay = overlays.get(group) ?? { pixels: new Map(), above: -1 }
-      overlays.set(group, overlay)
+      const pixels = new Map<
+        number,
+        readonly [number, number, number, number]
+      >()
+      let above = -1
       for (const target of shown) {
         const { x, y } = at(target)
         const offset = (y * reference.width + x) * 4
-        overlay.pixels.set(y * reference.width + x, [
+        pixels.set(y * reference.width + x, [
           reference.data[offset],
           reference.data[offset + 1],
           reference.data[offset + 2],
           255,
         ])
-        overlay.above = Math.max(overlay.above, before.top[target])
-        repaired[y * reference.width + x] = 1
+        above = Math.max(above, before.top[target])
       }
-      addAntialiasedRim(before, shown, reference, overlay.pixels)
-      recovered += 1
+      addAntialiasedRim(before, shown, reference, pixels)
+      pieces.push({ pixels, above, ...mountFor(before, shown, visible) })
     }
   }
+  // A piece of an existing accessory, e.g. the tassel under a hair ornament,
+  // joins that drawing so both stay one rigid body. It only can when nothing
+  // drawn above the accessory covers the piece at rest.
+  let absorbed = 0
+  const standalone: RecoveredPiece[] = []
+  for (const piece of pieces) {
+    if (piece.owner < 0 || piece.above > piece.owner) {
+      standalone.push(piece)
+      continue
+    }
+    const original = visible[piece.owner]
+    copies.set(
+      original,
+      withPixels(
+        copies.get(original) ?? original,
+        piece.pixels,
+        reference.width,
+      ),
+    )
+    for (const key of piece.pixels.keys()) repaired[key] = 1
+    absorbed += 1
+  }
+  // One layer per piece lets each follow what it hangs from; over budget,
+  // pieces of one body part share a plain rigid layer instead.
+  const recoveredLayers =
+    standalone.length <= maxNewLayers
+      ? standalone
+      : mergeByGroup(standalone, maxNewLayers)
+  for (const piece of recoveredLayers) {
+    for (const key of piece.pixels.keys()) repaired[key] = 1
+  }
+  const recovered =
+    absorbed +
+    standalone.filter((piece) =>
+      recoveredLayers.some(
+        (layer) => layer === piece || layer.group === piece.group,
+      ),
+    ).length
 
   let output = layers.map((layer) => copies.get(layer) ?? layer)
-  for (const [group, overlay] of overlays) {
-    const layer = overlayLayer(group, overlay.pixels, reference.width, layers)
+  for (const piece of recoveredLayers) {
+    const layer = overlayLayer(piece, reference.width, output)
     if (!layer) continue
     const anchor =
-      overlay.above >= 0
-        ? visible[overlay.above]
-        : visible.findLast((candidate) => candidate.group === group)
+      piece.above >= 0
+        ? visible[piece.above]
+        : piece.neighbour >= 0
+          ? visible[piece.neighbour]
+          : visible.findLast((candidate) => candidate.group === piece.group)
     const index = anchor
       ? output.indexOf(copies.get(anchor) ?? anchor)
       : output.length - 1
@@ -370,13 +403,44 @@ function revealableBelow(
   return -1
 }
 
-/** The body part a recovered region belongs to, by the layers around it. */
-function regionGroup(
+interface RecoveredPiece {
+  pixels: Map<number, readonly [number, number, number, number]>
+  /** Topmost layer the piece overrides, or -1 over open backdrop. */
+  above: number
+  /** The layer it touches most, used to place art over open backdrop. */
+  neighbour: number
+  /** A rigid accessory this piece belongs to, or -1. */
+  owner: number
+  group: Group
+  role: RasterLayer['role']
+}
+
+const ACCESSORY_ROLES = new Set([
+  'headwear',
+  'earwear',
+  'neckwear',
+  'eyewear',
+  'wings',
+  'tail',
+])
+/** An accessory touching this much of the rim is taken as the piece's owner. */
+const ACCESSORY_VOTE_SHARE = 0.15
+/** Hanging art is held at its top: that end must reach what holds it. */
+const HOOK_REACH = 8
+const HOOK_BAND = 0.2
+
+/**
+ * Recovered art should move with what it hangs from: a tassel under a hair
+ * ornament shares that ornament's role and so its mount and depth, an earring
+ * mounts on the ears, anything on hair rides the hair.
+ */
+function mountFor(
   analysis: Readonly<Anime25DPsdAnalysis>,
   members: readonly number[],
   visible: readonly RasterLayer[],
-): Group {
-  const votes = { head: 0, body: 0 }
+): Pick<RecoveredPiece, 'group' | 'neighbour' | 'owner' | 'role'> {
+  const votes = new Map<number, number>()
+  let total = 0
   for (const [target] of fringe(
     members,
     analysis.bounds.width,
@@ -384,9 +448,122 @@ function regionGroup(
     GROUP_VOTE_RING,
   )) {
     const top = analysis.top[target]
-    if (top >= 0) votes[visible[top].group] += 1
+    if (top < 0) continue
+    votes.set(top, (votes.get(top) ?? 0) + 1)
+    total += 1
   }
-  return votes.head > votes.body ? 'head' : 'body'
+  if (total === 0) {
+    return { group: 'body', neighbour: -1, owner: -1, role: 'objects' }
+  }
+  const ranked = [...votes].toSorted((left, right) => right[1] - left[1])
+  const neighbour = ranked[0][0]
+  const accessory = ranked.find(
+    ([index, count]) =>
+      ACCESSORY_ROLES.has(visible[index].role) &&
+      count / total >= ACCESSORY_VOTE_SHARE,
+  )
+  const holder = hangsFrom(analysis, members, visible, (layer) =>
+    ACCESSORY_ROLES.has(layer.role),
+  )
+  if (holder >= 0) {
+    const owner = visible[holder]
+    return {
+      group: owner.group,
+      neighbour: holder,
+      owner: hasExpressionVariants(owner) ? -1 : holder,
+      role: owner.role,
+    }
+  }
+  if (accessory) {
+    const owner = visible[accessory[0]]
+    return {
+      group: owner.group,
+      neighbour: accessory[0],
+      owner: hasExpressionVariants(owner) ? -1 : accessory[0],
+      role: owner.role,
+    }
+  }
+  if (
+    hangsFrom(
+      analysis,
+      members,
+      visible,
+      (layer) => layer.role === 'ears' || layer.role === 'earwear',
+    ) >= 0
+  ) {
+    return { group: 'head', neighbour, owner: -1, role: 'earwear' }
+  }
+  const main = visible[neighbour]
+  if (main.role === 'front-hair' || main.role === 'back-hair') {
+    return { group: 'head', neighbour, owner: -1, role: 'headwear' }
+  }
+  if (
+    main.role === 'neck' ||
+    main.role === 'collar-front' ||
+    main.role === 'collar-back'
+  ) {
+    return { group: 'body', neighbour, owner: -1, role: 'neckwear' }
+  }
+  return { group: main.group, neighbour, owner: -1, role: 'objects' }
+}
+
+/** The first layer matching `accepts` that the piece's top end reaches. */
+function hangsFrom(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  members: readonly number[],
+  visible: readonly RasterLayer[],
+  accepts: (layer: RasterLayer) => boolean,
+): number {
+  const candidates = visible
+    .map((layer, index) => ({ layer, index }))
+    .filter(({ layer }) => accepts(layer))
+  if (candidates.length === 0) return -1
+  const { bounds } = analysis
+  let top = Number.POSITIVE_INFINITY
+  let bottom = 0
+  for (const target of members) {
+    const y = Math.floor(target / bounds.width)
+    top = Math.min(top, y)
+    bottom = Math.max(bottom, y)
+  }
+  const band = top + Math.max(4, (bottom - top) * HOOK_BAND)
+  for (const target of members) {
+    if (Math.floor(target / bounds.width) > band) continue
+    const x = bounds.x0 + (target % bounds.width)
+    const y = bounds.y0 + Math.floor(target / bounds.width)
+    for (let dy = -HOOK_REACH; dy <= HOOK_REACH; dy += 2) {
+      for (let dx = -HOOK_REACH; dx <= HOOK_REACH; dx += 2) {
+        const hook = candidates.find(
+          ({ layer }) => alphaAt(layer, x + dx, y + dy) >= 128,
+        )
+        if (hook) return hook.index
+      }
+    }
+  }
+  return -1
+}
+
+function mergeByGroup(
+  pieces: readonly RecoveredPiece[],
+  maxLayers: number,
+): RecoveredPiece[] {
+  const merged = new Map<Group, RecoveredPiece>()
+  for (const piece of pieces) {
+    const existing = merged.get(piece.group)
+    if (!existing) {
+      if (merged.size >= maxLayers) continue
+      merged.set(piece.group, {
+        ...piece,
+        pixels: new Map(piece.pixels),
+        role: 'objects',
+      })
+      continue
+    }
+    for (const [key, rgba] of piece.pixels) existing.pixels.set(key, rgba)
+    existing.above = Math.max(existing.above, piece.above)
+    if (existing.neighbour < 0) existing.neighbour = piece.neighbour
+  }
+  return [...merged.values()]
 }
 
 /** Recovers anti-aliased edges of art that sits on the flat backdrop. */
@@ -570,9 +747,58 @@ function components(
   return result
 }
 
-function overlayLayer(
-  group: Group,
+/** Paints recovered pixels into a layer, growing its bounds as needed. */
+function withPixels(
+  layer: RasterLayer,
   pixels: ReadonlyMap<number, readonly [number, number, number, number]>,
+  referenceWidth: number,
+): RasterLayer {
+  let left = layer.left
+  let top = layer.top
+  let right = layer.left + layer.width
+  let bottom = layer.top + layer.height
+  for (const key of pixels.keys()) {
+    const x = key % referenceWidth
+    const y = Math.floor(key / referenceWidth)
+    left = Math.min(left, x)
+    top = Math.min(top, y)
+    right = Math.max(right, x + 1)
+    bottom = Math.max(bottom, y + 1)
+  }
+  const width = right - left
+  const height = bottom - top
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < layer.height; y += 1) {
+    const start = y * layer.width * 4
+    data.set(
+      layer.data.subarray(start, start + layer.width * 4),
+      ((y + layer.top - top) * width + layer.left - left) * 4,
+    )
+  }
+  for (const [key, [red, green, blue, alpha]] of pixels) {
+    const offset =
+      ((Math.floor(key / referenceWidth) - top) * width +
+        (key % referenceWidth) -
+        left) *
+      4
+    // Over, in straight alpha: the source illustration wins where it is opaque.
+    const coverage = alpha / 255
+    const below = data[offset + 3] / 255
+    const combined = coverage + below * (1 - coverage)
+    if (combined <= 0) continue
+    const mix = (channel: number, value: number) =>
+      (value * coverage + data[offset + channel] * below * (1 - coverage)) /
+      combined
+    data[offset] = mix(0, red)
+    data[offset + 1] = mix(1, green)
+    data[offset + 2] = mix(2, blue)
+    data[offset + 3] = combined * 255
+  }
+  return { ...layer, left, top, width, height, data }
+}
+
+function overlayLayer(
+  { group, pixels, role }: RecoveredPiece,
   referenceWidth: number,
   layers: readonly RasterLayer[],
 ): RasterLayer | null {
@@ -598,12 +824,12 @@ function overlayLayer(
     data.set(rgba, (y * width + x) * 4)
   }
   const id = uniquePartId(
-    `recovered-${group}`,
+    `recovered-${role}`,
     new Set(layers.map((layer) => layer.id)),
   )
   return {
     id,
-    role: 'objects',
+    role,
     sourceName: id,
     order: 0,
     side: null,

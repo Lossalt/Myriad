@@ -158,13 +158,19 @@ layer still beats the composite, so it stops at the covering drawing's own
 outline instead of a jagged threshold contour, and the removed drawing's
 translucent rim is cleared so no ghost outline remains. Anything else
 the illustration shows (`missing`, `mismatch`, weak `buried`) is lifted from
-the illustration itself into a rigid `objects` layer per body group, placed
-just above the layers it overrides. A morphological closing plus small-hole
-fill keeps an accessory whole, so a birdcage earring comes back with the hair
-seen between its bars. Layers with expression variants are never edited or
-covered, areas above 2% of the content are too garment-sized to pin as static
-art, and at most `MAX_RIG_PARTS` limits new layers; all of those are only
-reported. Surfaces the illustration hides cannot be recovered. Preflight shows
+the illustration itself. A morphological closing plus small-hole fill keeps an
+accessory whole, so a birdcage earring comes back with the hair seen between
+its bars. Each recovered piece then follows what holds it: one whose top end
+reaches a rigid accessory is painted into that drawing (a tassel under a hair
+ornament becomes part of the ornament, so a head turn cannot separate them),
+one hanging from the ears becomes `earwear`, one on hair `headwear`, one at the
+neck `neckwear`, and anything else a rigid `objects` layer, each placed just
+above the layers it overrides. Joining an accessory needs nothing drawn above
+it to cover the piece at rest; otherwise the piece gets its own layer. Beyond
+the `MAX_RIG_PARTS` budget, pieces of one body part share a plain `objects`
+layer. Layers with expression variants are never edited or covered, and areas
+above 2% of the content are too garment-sized to pin as static art; those are
+only reported. Surfaces the illustration hides cannot be recovered. Preflight shows
 the repairs in green on the difference map alongside what remains. Faults the
 runtime corrects later (for example lifting `neckwear` over recovered skin)
 are judged before that correction.
