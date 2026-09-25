@@ -38,8 +38,7 @@ pub use engine::{
 pub use grant::{
     AutonomyGrantView, AutonomyGrantWriteError, AutonomyVerdict, autonomy_cap_still_allows,
     autonomy_execute_permission_error, effective_granted_permissions, evaluate_autonomy_grant,
-    intention_may_enter_work, prepare_personal_grant,
-    revoke_personal_grant, skips_user_review,
+    intention_may_enter_work, prepare_personal_grant, revoke_personal_grant, skips_user_review,
 };
 pub use grant_store::AutonomyGrantStore;
 pub use policy::{DecisionPolicyError, validate_decision};
@@ -54,7 +53,8 @@ pub use speak_intent::{
 pub use store::IntentStore;
 pub use types::{
     AcceptSource, ConsciousnessAction, ConsciousnessDecision, ConsciousnessEvent, EventUrgency,
-    IntentRecord, IntentStatus, RecentIntent, SelfLivePresence, SelfSnapshot, WorkProposal,
+    IntentRecord, IntentStatus, RecentIntent, SelfBands, SelfLivePresence, SelfSnapshot,
+    WorkProposal,
 };
 
 #[cfg(test)]

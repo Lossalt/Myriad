@@ -1006,7 +1006,7 @@ pub async fn recall_remembered(
     limit: usize,
 ) -> Result<Vec<String>, anyhow::Error> {
     let priming = Priming::default();
-    let (recalled, _) = recall_remembered_primed(db, user_id, query, limit, &priming).await?;
+    let (recalled, _) = recall_remembered_primed(db, user_id, query, limit, &priming, 1.0).await?;
     Ok(recalled)
 }
 
@@ -1018,6 +1018,7 @@ pub async fn recall_remembered_primed(
     query: Option<&str>,
     limit: usize,
     priming: &Priming,
+    breadth: f64,
 ) -> Result<(Vec<String>, Priming), anyhow::Error> {
     use crate::services::agent::memory::unified;
     let (recalled, next) = unified::recall_primed(
@@ -1028,6 +1029,7 @@ pub async fn recall_remembered_primed(
         &unified::MemoryKind::ABOUT_PERSON,
         limit,
         priming,
+        breadth,
     )
     .await?;
     let recalled = recalled

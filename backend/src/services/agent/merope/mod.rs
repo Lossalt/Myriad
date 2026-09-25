@@ -12,6 +12,7 @@ pub mod onboarding_prompts;
 pub mod outfit_overlay;
 mod priming;
 pub mod report_dna;
+pub mod self_state;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
@@ -304,6 +305,7 @@ async fn speaking_prompt_from_db(
     let Ok(state) = get_or_create_state(db, user_id).await else {
         return sections;
     };
+    let myself = self_state::current(db).await;
     // Only a chat turn (it has the person's words) carries its train of
     // thought to the next turn; other readers see memory without moving it.
     let remembered = match query.filter(|query| !query.trim().is_empty()) {
@@ -313,6 +315,7 @@ async fn speaking_prompt_from_db(
             Some(query),
             REMEMBERED_PROMPT_LIMIT,
             &priming::current(user_id),
+            myself.recall_breadth(),
         )
         .await
         .map(|(ranked, next)| {
@@ -348,6 +351,9 @@ async fn speaking_prompt_from_db(
     }
     sections.push(format_mood_section(state.mood, state.arousal));
     if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
+        sections.push(block);
+    }
+    if let Some(block) = self_state::format_self_section(&myself) {
         sections.push(block);
     }
     sections

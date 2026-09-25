@@ -89,7 +89,10 @@ async fn redeem_speak_intent(
     let last_proactive = state
         .last_proactive_at
         .map(|value| value.with_timezone(&Utc));
-    if within_proactive_cooldown(&intent.topic, last_proactive, Utc::now()) {
+    let cooldown = crate::services::agent::merope::self_state::current(db)
+        .await
+        .proactive_cooldown_secs();
+    if within_proactive_cooldown(&intent.topic, last_proactive, Utc::now(), cooldown) {
         log_skip(intent.user_id, &intent.topic, "proactive_cooldown");
         return Ok(());
     }
@@ -492,23 +495,23 @@ async fn display_name(db: &DatabaseConnection) -> String {
     public_persona_name(true, stored.as_deref())
 }
 
-/// 两次主动开口之间的最短间隔，跨事件计算。同一事件的重复另有
-/// `SAME_EVENT_MINUTES` 管。
-const PROACTIVE_COOLDOWN_SECONDS: i64 = 180;
-
-/// 刚主动说过话就先不再开口。触摸是对当下动作的回应，任务结果是对方在等的事，
-/// 这两类不受间隔限制。
+/// 刚主动说过话就先不再开口。间隔跨事件计算（同一事件的重复另有
+/// `SAME_EVENT_MINUTES` 管），由她自己的精力决定，最短
+/// `BASE_PROACTIVE_COOLDOWN_SECS`，累了就等更久（见 `self_state`）。
+/// 触摸是对当下动作的回应，任务结果是对方在等的事，这两类不受间隔限制。
 fn within_proactive_cooldown(
     topic: &str,
     last_proactive_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
+    cooldown_secs: i64,
 ) -> bool {
     if topic == "agent.merope.touch" || is_task_outcome(topic) {
         return false;
     }
-    last_proactive_at.is_some_and(|last| {
-        now.signed_duration_since(last) < chrono::Duration::seconds(PROACTIVE_COOLDOWN_SECONDS)
-    })
+    let cooldown =
+        cooldown_secs.max(crate::services::agent::merope::self_state::BASE_PROACTIVE_COOLDOWN_SECS);
+    last_proactive_at
+        .is_some_and(|last| now.signed_duration_since(last) < chrono::Duration::seconds(cooldown))
 }
 
 #[cfg(test)]
@@ -517,31 +520,53 @@ mod tests {
     fn proactive_speech_waits_between_events_but_not_for_touch_or_outcomes() {
         let now = chrono::Utc::now();
         let recent = Some(now - chrono::Duration::seconds(30));
-        let old = Some(now - chrono::Duration::seconds(super::PROACTIVE_COOLDOWN_SECONDS + 1));
+        let old = Some(
+            now - chrono::Duration::seconds(
+                crate::services::agent::merope::self_state::BASE_PROACTIVE_COOLDOWN_SECS + 1,
+            ),
+        );
         assert!(super::within_proactive_cooldown(
             "phantasi.digest",
             recent,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "phantasi.digest",
             old,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "phantasi.digest",
             None,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "agent.merope.touch",
             recent,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "agent.task_completed",
             recent,
-            now
+            now,
+            180
+        ));
+        // A tired persona waits longer; nothing makes the wait shorter.
+        assert!(super::within_proactive_cooldown(
+            "phantasi.digest",
+            old,
+            now,
+            600
+        ));
+        assert!(super::within_proactive_cooldown(
+            "phantasi.digest",
+            Some(now - chrono::Duration::seconds(100)),
+            now,
+            10
         ));
     }
     #[test]

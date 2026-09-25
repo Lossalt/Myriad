@@ -196,6 +196,7 @@ fn event_context(case: &Case) -> (event::ConsciousnessEvent, event::SelfSnapshot
             last_touched_at: now,
             event_ids: vec![case.id.clone()],
         }),
+        myself: None,
     };
     (event, snapshot)
 }

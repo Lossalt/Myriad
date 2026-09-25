@@ -450,21 +450,17 @@ pub async fn recall<C: ConnectionTrait>(
     kinds: &[MemoryKind],
     limit: usize,
 ) -> Result<Vec<MemoryRecord>, DbErr> {
-    Ok(recall_primed(
-        db,
-        user_id,
-        present,
-        query,
-        kinds,
-        limit,
-        &Priming::default(),
-    )
-    .await?
-    .0)
+    let priming = Priming::default();
+    let (recalled, _) =
+        recall_primed(db, user_id, present, query, kinds, limit, &priming, 1.0).await?;
+    Ok(recalled)
 }
 
 /// [`recall`] that also starts from what was active a moment ago, and returns
-/// what is active now for the next turn.
+/// what is active now for the next turn. `breadth` (`0..=1`) is how far
+/// thought may wander: the share of the budget association may fill, from
+/// none (only what was named) to half.
+#[allow(clippy::too_many_arguments)]
 pub async fn recall_primed<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
@@ -473,6 +469,7 @@ pub async fn recall_primed<C: ConnectionTrait>(
     kinds: &[MemoryKind],
     limit: usize,
     priming: &Priming,
+    breadth: f64,
 ) -> Result<(Vec<MemoryRecord>, Priming), DbErr> {
     if user_id <= 0 || limit == 0 {
         return Ok((Vec::new(), Priming::default()));
@@ -482,7 +479,7 @@ pub async fn recall_primed<C: ConnectionTrait>(
         .into_iter()
         .filter(|row| audience_admits(&audience_of(row), present))
         .collect();
-    let (chosen, next) = rank_primed(rows, query, limit, priming);
+    let (chosen, next) = rank_primed(rows, query, limit, priming, breadth);
     if !chosen.is_empty() {
         let now = Utc::now().fixed_offset();
         agent_memories::Entity::update_many()
@@ -507,7 +504,7 @@ fn rank(
     query: Option<&str>,
     limit: usize,
 ) -> Vec<agent_memories::Model> {
-    rank_primed(rows, query, limit, &Priming::default()).0
+    rank_primed(rows, query, limit, &Priming::default(), 1.0).0
 }
 
 fn rank_primed(
@@ -515,6 +512,7 @@ fn rank_primed(
     query: Option<&str>,
     limit: usize,
     priming: &Priming,
+    breadth: f64,
 ) -> (Vec<agent_memories::Model>, Priming) {
     // Blank and repeated legacy rows must not spend the recall budget.
     let mut seen = std::collections::HashSet::new();
@@ -598,8 +596,14 @@ fn rank_primed(
         })
         .collect();
     scored.sort_by(|left, right| right.0.total_cmp(&left.0));
-    // What the query named comes first in number; association fills in.
-    let mut associated_left = (limit / 2).max(1);
+    // What the query named comes first in number; association fills in, up
+    // to half the budget when thought is free to wander.
+    let wander = breadth.clamp(0.0, 1.0);
+    let mut associated_left = if wander > 0.0 {
+        ((limit as f64 * 0.5 * wander).floor() as usize).max(1)
+    } else {
+        0
+    };
     let mut order: Vec<usize> = scored
         .into_iter()
         .filter(|(_, direct, _)| {
@@ -931,13 +935,14 @@ mod tests {
         let ids = |chosen: Vec<agent_memories::Model>| -> Vec<String> {
             chosen.into_iter().map(|row| row.id).collect()
         };
-        let (first, primed) = rank_primed(rows.clone(), Some("猫怎么样"), 3, &Priming::default());
+        let (first, primed) =
+            rank_primed(rows.clone(), Some("猫怎么样"), 3, &Priming::default(), 1.0);
         assert_eq!(ids(first), vec!["cat", "vet"]);
         assert!(primed.of("cat") > 0.0);
 
         // "它又吐了" names nothing, yet the cat is still on the mind; the
         // rest of the budget is ordinary recent context.
-        let (second, primed) = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed);
+        let (second, primed) = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed, 1.0);
         let second = ids(second);
         assert_eq!(second[0], "cat");
         assert!(second.contains(&"news".to_string()));
@@ -946,17 +951,18 @@ mod tests {
         // Without the talk renewing it, it is gone within a few turns.
         let mut primed = primed;
         for _ in 0..3 {
-            primed = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed).1;
+            primed = rank_primed(rows.clone(), Some("它又吐了"), 3, &primed, 1.0).1;
         }
         assert!(primed.is_empty(), "{primed:?}");
-        let (cold, _) = rank_primed(rows, Some("明日预报"), 2, &primed);
+        let (cold, _) = rank_primed(rows, Some("明日预报"), 2, &primed, 1.0);
         assert_eq!(ids(cold), vec!["news", "cat"], "back to recency");
     }
 
     #[test]
     fn a_primed_memory_no_longer_admitted_cannot_seed() {
         let rows = vec![row("left", "喜欢茉莉花茶", 0.5, 0)];
-        let (chosen, next) = rank_primed(rows, Some("它又吐了"), 3, &Priming::with("gone", 1.0));
+        let (chosen, next) =
+            rank_primed(rows, Some("它又吐了"), 3, &Priming::with("gone", 1.0), 1.0);
         assert_eq!(chosen.len(), 1, "recency");
         assert!(next.is_empty());
     }

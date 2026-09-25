@@ -271,6 +271,7 @@ Persona:
 {}
 
 self.remembered is persona memory already kept for this person. Do not record a synonymous fact again.
+self.myself is how you yourself are doing, not how you feel about them: with energy low, only what matters is worth speaking up for; with company wanted, a worthwhile event is a fair reason to say something. It never changes what is allowed.
 memory may only keep an explicit preference, habit, relationship, or agreement about them. Refresh failures, task progress, and this-turn system events stay in the event log; do not promote them to persona facts.
 agent.merope.touch is a just-finished screen-figure touch. It does not prove intimacy, force, consent, or preference. Only ignore, speak, or ask; do not remember or propose. If you respond, speech/question must be a short line they can hear out loud, not stage direction or inner intent. Do not write actions like “轻轻摸回去”; this body cannot reach out and touch the user. Do not mechanically repeat “我知道你刚摸了我的头发”. Continue the attitude already shown, or stay silent and keep only local non-verbal reaction.
 
@@ -386,6 +387,7 @@ mod tests {
             captured_at: Utc::now(),
             live: Default::default(),
             attention: None,
+            myself: None,
         }
     }
 
