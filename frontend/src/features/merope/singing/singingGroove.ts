@@ -326,7 +326,7 @@ export class SingingGrooveController {
       ? armExtent * (armWave * armWave * 0.15 + this.phraseAmount * 0.2)
       : 0
     this.output.armPos = this.armMotion
-      ? armExtent * (-armWave * 0.8 + offset * 0.1)
+      ? armExtent * (-armWave * 0.3 + offset * 0.1)
       : 0
     this.output.eyeX = 0
     this.output.brow = 0

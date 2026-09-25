@@ -13,7 +13,7 @@ export const ARM_MAX_RADIANS = (MAX_RIGID_ARM_ROTATION_DEGREES * Math.PI) / 180
 export const ARM_HANG = 0.5
 
 export const ARM_PENDULUM_HZ = 1.25
-export const ARM_PENDULUM_DAMPING = 0.32
+export const ARM_PENDULUM_DAMPING = 0.55
 
 /** Shoulder acceleration above this is a discontinuity, not motion. */
 const MAX_SUPPORT_ACCELERATION = 20_000
@@ -118,7 +118,7 @@ export class ArmPendulum {
 }
 
 export const DRAPE_HZ = 0.85
-export const DRAPE_DAMPING = 0.2
+export const DRAPE_DAMPING = 0.35
 
 /** Gravity holds a hanging drape this much nearer vertical than its arm. */
 export const DRAPE_SAG = 0.3
