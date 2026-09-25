@@ -509,7 +509,7 @@ mod tests {
             .next()
             .unwrap();
         let chat_call_src = include_str!("confirmation_and_tasks/chat_stream.rs");
-        assert!(!chat_prompt_prod.contains("recall_with_params"));
+        assert!(!chat_prompt_prod.contains("unified::recall"));
         assert!(chat_call_src.contains("fn chat_response_prompt"));
         assert!(chat_call_src.contains("speaking_prompt_with_query"));
         assert!(chat_call_src.contains("chat_wardrobe_section"));
@@ -518,8 +518,17 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("async fn ").next())
             .unwrap();
-        assert!(!chat_fn.contains("recall_with_params"));
-        assert!(!chat_fn.contains("get_memory"));
+        // Chat speaks from what it knows about this person (facts and
+        // preferences), never from Work lessons or patterns.
+        assert!(!chat_fn.contains("unified::"));
+        assert!(!chat_fn.contains("FOR_WORK"));
+        let recall = include_str!("merope/store.rs")
+            .split("pub async fn recall_remembered")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap();
+        assert!(recall.contains("MemoryKind::ABOUT_PERSON"));
+        assert!(!recall.contains("FOR_WORK"));
         assert!(chat_fn.contains("format_chat_scene"));
         assert!(!chat_fn.contains("format_perception_block"));
     }
