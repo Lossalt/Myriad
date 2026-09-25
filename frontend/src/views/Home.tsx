@@ -415,7 +415,11 @@ export default function Home() {
   }
 
   // Debounce 500ms (same as control panel); UI updates immediately.
-  const handleWidgetsChange = (newWidgets: WidgetConfig[]) => {
+  // `mode` defaults to the one on screen; stickers always belong to `free`.
+  const handleWidgetsChange = (
+    newWidgets: WidgetConfig[],
+    mode: HomeLayoutMode = effectiveMode,
+  ) => {
     if (layoutImportInFlightRef.current) return
     const registeredWidgetIds = new Set(ALL_AVAILABLE_WIDGETS.map((w) => w.id))
     const isRenderable = (w: WidgetConfig) =>
@@ -428,16 +432,16 @@ export default function Home() {
       ? newWidgets.filter(isRenderable)
       : keepUnrenderedTiles(
           newWidgets,
-          rawLayouts?.[effectiveMode] ?? layoutsRef.current[effectiveMode],
+          rawLayouts?.[mode] ?? layoutsRef.current[mode],
           isRenderable,
         )
-    if (effectiveMode === 'standard') {
+    if (mode === 'standard') {
       validWidgets = validWidgets.filter((w) => !isHomeStickerItem(w))
     }
 
     const nextLayouts: HomeDashboardLayouts = {
       ...layoutsRef.current,
-      [effectiveMode]: validWidgets,
+      [mode]: validWidgets,
     }
     setLayouts(nextLayouts)
     // The registry effect re-derives layouts from rawLayouts; a stale source
@@ -466,7 +470,12 @@ export default function Home() {
           )
         } catch (err) {
           console.error('保存小组件配置失败:', err)
-          showError(await formatUserFacingError(err, t.errors.dashboardLayoutSaveFailed))
+          // Sticky: what is on screen is not saved and will be gone on reload.
+          showStickyToast({
+            message: await formatUserFacingError(err, t.errors.dashboardLayoutSaveFailed),
+            type: 'error',
+            replaceKey: 'home-layout-save',
+          })
         }
       })()
     }, 500)
@@ -520,7 +529,7 @@ export default function Home() {
             stickerDraft.size,
           ),
         }),
-      ])
+      ], 'free')
       setStickerDraft(null)
     } catch (err) {
       showStickyToast({
@@ -548,7 +557,7 @@ export default function Home() {
           prompt: '',
           crop,
         }),
-      ])
+      ], 'free')
       setStickerDraft(null)
     } catch (err) {
       showStickyToast({

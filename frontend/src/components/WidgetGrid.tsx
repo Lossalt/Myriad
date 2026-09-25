@@ -167,7 +167,12 @@ const WidgetGrid = forwardRef<WidgetGridHandle, WidgetGridProps>(
       isFreeLayout,
     )
     const rowCountMorphing = useRowCountMorphing(currentGridHeight)
-    const { saveToHistory } = useWidgetGridHistory(isEditMode, onWidgetsChange)
+    const { saveToHistory } = useWidgetGridHistory(
+      isEditMode,
+      widgets,
+      layoutMode,
+      onWidgetsChange,
+    )
 
     const widgetTypeById = useMemo(() => {
       const map = new Map<string, WidgetType>()

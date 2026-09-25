@@ -33,6 +33,25 @@ export function redoWidgetHistory(
   return { index: index + 1, widgets: history[index + 1] }
 }
 
+/** Same tiles in the same order, compared by value (undo re-renders copies). */
+export function sameWidgets(a: WidgetConfig[] | undefined, b: WidgetConfig[]): boolean {
+  if (a === b) return true
+  if (!a || a.length !== b.length) return false
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+/** Keys typed into a text field belong to that field, not the grid. */
+export function isEditableKeyTarget(target: EventTarget | null): boolean {
+  const element = target as {
+    isContentEditable?: boolean
+    closest?: (selector: string) => unknown
+  } | null
+  if (!element) return false
+  if (element.isContentEditable) return true
+  return typeof element.closest === 'function'
+    && element.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') != null
+}
+
 export function isUndoKey(event: {
   ctrlKey: boolean
   metaKey: boolean
