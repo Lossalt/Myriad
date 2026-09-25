@@ -28,6 +28,7 @@ impl Agent {
             }
         };
         crate::services::agent::merope::mark_activity(&self.db, user_id, "idle").await;
+        let (reply, handed_off) = crate::services::agent::delegate::split(&reply);
         let (reply, music) = publish_model_outfit_overlay(&self.db, &request, &reply, None).await;
         crate::services::agent::merope::spawn_chat_remember(
             user_id,
@@ -56,7 +57,10 @@ impl Agent {
             Ok(AgentResponse {
                 response_type: AgentResponseType::Answer,
                 message: reply.clone(),
-                data: Some(chat_reply_with_overlay(&self.db, &request, &reply).await),
+                data: Some(
+                    chat_reply_with_overlay(&self.db, &request, &reply, handed_off.as_deref())
+                        .await,
+                ),
                 data_display: None,
                 suggestions: vec![],
                 task: None,
@@ -133,14 +137,18 @@ impl Agent {
         crate::services::agent::merope::note_chat_diary(&self.db, user_id, &request.raw_input)
             .await;
 
-        let reply = match self
+        let (reply, handed_off) = match self
             .stream_strict_lite_chat_response(&request, &progress_tx, speech_delivery)
             .await
         {
             Ok(reply) => {
-                publish_model_outfit_overlay(&self.db, &request, &reply, Some(&progress_tx))
-                    .await
-                    .0
+                let (reply, handed_off) = crate::services::agent::delegate::split(&reply);
+                (
+                    publish_model_outfit_overlay(&self.db, &request, &reply, Some(&progress_tx))
+                        .await
+                        .0,
+                    handed_off,
+                )
             }
             Err(error) => {
                 if let Some(live) = &live_direction {
@@ -230,7 +238,9 @@ impl Agent {
         return Ok(AgentResponse {
             response_type: AgentResponseType::Answer,
             message: reply.clone(),
-            data: Some(chat_reply_with_overlay(&self.db, &request, &reply).await),
+            data: Some(
+                chat_reply_with_overlay(&self.db, &request, &reply, handed_off.as_deref()).await,
+            ),
             data_display: None,
             suggestions: vec![],
             task: None,
@@ -254,8 +264,21 @@ async fn chat_reply_with_overlay(
     db: &sea_orm::DatabaseConnection,
     request: &UserRequest,
     reply: &str,
+    handed_off: Option<&str>,
 ) -> Value {
     let mut data = crate::services::agent::chat_prompt::chat_reply_data(reply, &request.raw_input);
+    // Work she handed off, for the channel to start; only where she may.
+    if let (Some(instruction), Some(object)) = (
+        handed_off.filter(|_| {
+            request
+                .context
+                .as_ref()
+                .is_some_and(|context| context.channel_chat.is_some())
+        }),
+        data.as_object_mut(),
+    ) {
+        object.insert("handOff".into(), json!({ "instruction": instruction }));
+    }
     let session_id = request
         .context
         .as_ref()

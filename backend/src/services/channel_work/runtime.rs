@@ -71,6 +71,7 @@ pub(super) async fn start_delivery(
             original_input: String::new(),
             binding: None,
             address: None,
+            chat_session_id: None,
         });
     if let Some(id) = run.session_id() {
         stored.session_id = id.to_string();

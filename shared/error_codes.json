@@ -308,6 +308,7 @@
     "Login required": "durable_account_required",
     "An accepted intention must enter Work mode": "agent_intention_requires_work",
     "A group turn must be a Chat turn": "agent_unsupported",
+    "A channel chat turn must be a Chat turn": "agent_unsupported",
     "The intention is not awaiting Work": "agent_intention_not_awaiting_work",
     "Work input does not match the accepted intention": "agent_intention_input_mismatch",
     "Personal autonomy cannot run as the heartbeat identity": "agent_autonomy_heartbeat_identity",

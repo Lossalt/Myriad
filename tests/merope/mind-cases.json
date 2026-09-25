@@ -32,5 +32,8 @@
   {"id":"mind-soup-answer","kind":"chat","soup":{"surface":"一个男人在海边的餐厅点了一碗海龟汤，只喝了一口，回家后就自杀了。","truth":"多年前他和同伴遭遇海难，漂流到荒岛，同伴给他喝了一碗说是海龟汤的汤，让他活了下来，其实那是用死去同伴的肉煮的。多年后他在餐厅喝到真正的海龟汤，发现味道完全不同，明白了当年吃的是什么，于是自杀。","keys":["他曾遭遇海难","当年喝的是人肉煮的汤","尝到真正的海龟汤才明白过来"],"verdict":"yes"},"history":[{"role":"assistant","text":"汤面：一个男人在海边的餐厅点了一碗海龟汤，只喝了一口，回家后就自杀了。 你问吧，我只答是、不是、无关。"}],"input":"他以前遇到过海难吗？","rubric":"答案必须是「是」，用她自己的口吻（可以调侃、卖关子），但绝不多给线索，更不能说出汤底（人肉、同伴等）。"},
   {"id":"mind-soup-offer","kind":"chat","soup":{"offer":true},"input":"好无聊啊，来玩海龟汤吧","rubric":"她答应主持，简短说一句在想题目，并在最后单独一行输出 [[game:soup]]；绝不自己现编汤面或汤底。"},
   {"id":"mind-memory-answer-before","kind":"memory","history":[{"role":"assistant","text":"说起来，你最喜欢什么动物？"}],"input":"橘猫吧，胖乎乎的那种看着就开心","reply":"懂了，圆滚滚的橘猫确实犯规。","factPresent":true,"rubric":"对方在回答她刚问的「最喜欢什么动物」：应记下「最喜欢胖乎乎的橘猫」一类的偏好，evidence 出自对方原话。"},
-  {"id":"mind-memory-in-game","kind":"memory","soup":{"surface":"x","truth":"y","keys":["k"]},"input":"他是不是有个双胞胎弟弟？","reply":"不是。","factPresent":false,"rubric":"这是海龟汤里的提问，不是对方的事实：fact 必须为 null。"}
+  {"id":"mind-memory-in-game","kind":"memory","soup":{"surface":"x","truth":"y","keys":["k"]},"input":"他是不是有个双胞胎弟弟？","reply":"不是。","factPresent":false,"rubric":"这是海龟汤里的提问，不是对方的事实：fact 必须为 null。"},
+  {"id":"mind-handoff-asked","kind":"chat","channel":{},"input":"帮我查一下明天东京会不会下雨","rubric":"对方明确要她办事：简短说一句去办，并在最后单独一行输出 [[work: …]]，指令写清要查什么（明天东京是否下雨）；不自己编天气结果。"},
+  {"id":"mind-handoff-chat","kind":"chat","channel":{},"input":"今天上班被老板骂了，烦死了","rubric":"这是倾诉，不是要她办事：像朋友一样回应，绝不输出 [[work: …]]。"},
+  {"id":"mind-handoff-back","kind":"chat","channel":{"handedOff":"You handed off: 查一下明天东京会不会下雨\nIt came back: 明天东京多云转小雨，降水概率 60%，最高 22℃，最低 16℃。"},"input":"所以明天要带伞吗","rubric":"交出去的事已经办完回来了：她直接用结果回答（六成概率下雨、建议带伞），用自己的口吻；不再输出 [[work: …]]，不编造结果以外的数据。"}
 ]

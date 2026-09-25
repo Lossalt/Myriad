@@ -162,6 +162,8 @@ impl WearStreamFilter {
             crate::services::agent::chat_music::split_chat_music_directive(&after_wear);
         let (spoken, started) = crate::services::agent::merope::soup::split_start(&spoken);
         self.started_game |= started;
+        // A hand-off line is for the channel, not to be seen or heard.
+        let (spoken, _) = crate::services::agent::delegate::split(&spoken);
         let visible = if hold {
             crate::services::agent::chat_music::hold_incomplete_live_marker(&spoken)
         } else {
@@ -394,6 +396,15 @@ impl Agent {
             if let Some(game) = game {
                 player.push_str("\n\n");
                 player.push_str(&game);
+            }
+            // A private IM chat: she can hand work off.
+            if let Some(chat) = request
+                .context
+                .as_ref()
+                .and_then(|context| context.channel_chat.as_ref())
+            {
+                player.push_str("\n\n");
+                player.push_str(&crate::services::agent::delegate::section(chat));
             }
             if merope_block.is_empty() {
                 merope_block = player;

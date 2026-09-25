@@ -83,6 +83,19 @@ pub struct RequestContext {
     /// out of `custom_data` by the server; never serialized, so never stored.
     #[serde(skip)]
     pub images: Vec<crate::services::analyzer::ImageInput>,
+    /// A private IM chat, where she may hand work off (see `delegate`). Set
+    /// only by the server for channel turns; never serialized.
+    #[serde(skip)]
+    pub channel_chat: Option<ChannelChat>,
+}
+
+/// A private IM chat turn: she talks as herself and may hand work off.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChannelChat {
+    /// What she handed off last in this conversation and how it came back.
+    pub handed_off: Option<String>,
+    /// Work she handed off is still being done.
+    pub busy: bool,
 }
 
 /// 对话消息

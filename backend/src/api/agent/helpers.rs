@@ -42,6 +42,8 @@ pub(crate) fn build_request_context(mut ctx: ProcessContext) -> RequestContext {
         // Only a channel group run sets this, after building the context.
         venue: None,
         images,
+        // Only a channel private chat sets this, after building the context.
+        channel_chat: None,
     }
 }
 

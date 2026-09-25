@@ -171,6 +171,9 @@ struct Case {
     /// What the referee must say: `{"verdict", "solved", "gave_up"}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expect: Option<Value>,
+    /// A private IM chat where she may hand work off: `{"busy"?, "handedOff"?}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    channel: Option<Value>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -213,6 +216,7 @@ fn is_mind_case(case: &Case) -> bool {
         || !case.views.is_empty()
         || case.playing.is_some()
         || case.soup.is_some()
+        || case.channel.is_some()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -278,6 +282,12 @@ fn mind_chat_prompt(case: &Case) -> String {
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
         super::merope::format_views_section(&case.views),
+        case.channel.as_ref().map(|channel| {
+            super::delegate::section(&super::types::ChannelChat {
+                handed_off: channel["handedOff"].as_str().map(str::to_string),
+                busy: channel["busy"].as_bool().unwrap_or(false),
+            })
+        }),
         case.playing
             .as_deref()
             .and_then(super::merope::format_playing_section),
@@ -1388,7 +1398,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 34;
+const MIND_CASES: usize = 37;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

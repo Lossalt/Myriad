@@ -267,7 +267,7 @@ impl ChannelTransport {
     }
 }
 
-async fn load_channel_image_bytes(url: &str) -> Result<ChannelImageBytes, String> {
+pub(super) async fn load_channel_image_bytes(url: &str) -> Result<ChannelImageBytes, String> {
     let cache = crate::services::image_cache::ImageCacheService::new();
     if cache.local_path_for_public_url(url).is_some() {
         let (bytes, mime) = cache.read_local_public_url(url).await?;
@@ -287,9 +287,9 @@ async fn load_channel_image_bytes(url: &str) -> Result<ChannelImageBytes, String
     Ok(ChannelImageBytes { bytes, mime })
 }
 
-struct ChannelImageBytes {
-    bytes: Vec<u8>,
-    mime: String,
+pub(super) struct ChannelImageBytes {
+    pub(super) bytes: Vec<u8>,
+    pub(super) mime: String,
 }
 
 pub(super) async fn cache_inbound_images(

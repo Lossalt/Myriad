@@ -39,6 +39,9 @@ pub struct ProcessContext {
     /// request body, because it decides whose memories may be said aloud.
     #[serde(skip)]
     pub group: Option<GroupTurn>,
+    /// A private IM chat turn. Set only by the server, like `group`.
+    #[serde(skip)]
+    pub channel_chat: Option<crate::services::agent::types::ChannelChat>,
 }
 
 /// Where a channel group turn happens and what the group said lately.

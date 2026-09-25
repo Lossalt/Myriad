@@ -6,6 +6,7 @@ pub mod chat_prompt;
 pub mod consciousness;
 pub mod data_read_pure;
 pub mod data_write_pure;
+pub mod delegate;
 pub mod error_analyzer_pure;
 pub mod executor;
 pub mod executor_resolve_pure;

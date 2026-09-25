@@ -354,6 +354,20 @@ pub(crate) async fn start_process_run(
             Json(AppError::public_json("A group turn must be a Chat turn")),
         )));
     }
+    let channel_chat = req
+        .context
+        .as_mut()
+        .and_then(|context| context.channel_chat.take());
+    if channel_chat.is_some()
+        && interaction_mode != crate::services::agent::AgentInteractionMode::Chat
+    {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json(
+                "A channel chat turn must be a Chat turn",
+            )),
+        )));
+    }
     let source_intent_id = req
         .context
         .as_ref()
@@ -508,6 +522,7 @@ pub(crate) async fn start_process_run(
             ctx.conversation_history = Some(history);
         }
         ctx.venue = group.as_ref().map(|group| group.venue.clone());
+        ctx.channel_chat = channel_chat.clone();
     } else {
         let mut new_ctx = RequestContext {
             lane_key: Some(lane_key.clone()),
