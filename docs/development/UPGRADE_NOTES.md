@@ -1,5 +1,12 @@
 # 升级说明
 
+## 每日 AI 配额改为平台设施
+
+每日 AI 配额计数原名 `tapp_quota_usage`，以 `tapp_id` 为键，Agent 和游客全站上限只能占用
+`__agent__`、`__anonymous_ai_site__` 这类伪 Tapp id。现在改名为 `ai_quota_usage`，由 `001`
+创建；键列改名为 `scope`：Tapp 仍用安装 id，站点自身的功能用 `site:<名字>`（Tapp id 不能
+含冒号，不会相撞）。已有库在 `Migrator::up` 里原地改名，当日计数保留。
+
 ## AI 费用账本改为平台设施
 
 全站 AI 费用账本原名 `tapp_ai_cost_ledger`，站点自身的调用（Agent、报告、人设等）只能往

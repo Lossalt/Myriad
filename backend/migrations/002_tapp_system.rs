@@ -308,74 +308,6 @@ ALTER TABLE tapp_storage
             )
             .await?;
 
-        // ==================== 4. TAPP_QUOTA_USAGE 表 ====================
-        // 存储 Tapp 的配额使用情况
-        manager
-            .create_table(
-                Table::create()
-                    .table(TappQuotaUsage::Table)
-                    .if_not_exists()
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::Id)
-                            .integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::TappId)
-                            .string_len(255)
-                            .not_null(),
-                    )
-                    .col(ColumnDef::new(TappQuotaUsage::UserId).integer().not_null())
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::QuotaType)
-                            .string_len(50)
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::Used)
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(ColumnDef::new(TappQuotaUsage::Limit).integer().not_null())
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::PeriodStart)
-                            .timestamp_with_time_zone()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::PeriodEnd)
-                            .timestamp_with_time_zone()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::UpdatedAt)
-                            .timestamp_with_time_zone()
-                            .not_null()
-                            .default(Expr::current_timestamp()),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        // 唯一索引
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_tapp_quota_unique")
-                    .table(TappQuotaUsage::Table)
-                    .col(TappQuotaUsage::UserId)
-                    .col(TappQuotaUsage::TappId)
-                    .col(TappQuotaUsage::QuotaType)
-                    .col(TappQuotaUsage::PeriodStart)
-                    .unique()
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
         // ==================== 5. TAPP_STORE_SOURCES 表 ====================
         // 存储远程商店源配置
         manager
@@ -916,9 +848,6 @@ FOR EACH ROW EXECUTE FUNCTION enforce_tapp_storage_quota();
             .drop_table(Table::drop().table(TappStoreSources::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(TappQuotaUsage::Table).to_owned())
-            .await?;
-        manager
             .drop_table(Table::drop().table(TappStorage::Table).to_owned())
             .await?;
         manager
@@ -987,20 +916,6 @@ enum TappStorage {
     EncryptedValue,
     BindingFingerprint,
     CreatedAt,
-    UpdatedAt,
-}
-
-#[derive(DeriveIden)]
-enum TappQuotaUsage {
-    Table,
-    Id,
-    TappId,
-    UserId,
-    QuotaType,
-    Used,
-    Limit,
-    PeriodStart,
-    PeriodEnd,
     UpdatedAt,
 }
 

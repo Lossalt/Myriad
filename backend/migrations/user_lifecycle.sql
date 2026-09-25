@@ -82,7 +82,7 @@ BEGIN
        OR scheduled_task_id IN (SELECT id FROM tapp_scheduled_tasks WHERE user_id = OLD.id);
     DELETE FROM tapp_scheduled_tasks WHERE user_id = OLD.id;
     DELETE FROM tapp_user_activities WHERE user_id = OLD.id;
-    DELETE FROM tapp_quota_usage WHERE user_id = OLD.id;
+    DELETE FROM ai_quota_usage WHERE user_id = OLD.id;
     DELETE FROM tapp_storage WHERE user_id = OLD.id;
     DELETE FROM tapp_widgets WHERE user_id = OLD.id;
     DELETE FROM tapps WHERE user_id = OLD.id;
@@ -135,7 +135,7 @@ BEGIN
             ('tapp_task_executions', ARRAY['user_id']),
             ('tapp_scheduled_tasks', ARRAY['user_id']),
             ('tapp_user_activities', ARRAY['user_id']),
-            ('tapp_quota_usage', ARRAY['user_id']),
+            ('ai_quota_usage', ARRAY['user_id']),
             ('tapp_storage', ARRAY['user_id']),
             ('tapp_widgets', ARRAY['user_id']),
             ('tapps', ARRAY['user_id']),

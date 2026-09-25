@@ -1,6 +1,6 @@
 //! Append-only per-call AI cost ledger (write path).
 //!
-//! `tapp_quota_usage` answers "how much budget is left today"; this ledger
+//! `ai_quota_usage` answers "how much budget is left today"; this ledger
 //! answers "which caller spent what, when, on which provider/model". Entries are
 //! written for governed AI tasks (Tapp / scheduler) via [`record_ai_cost`], and
 //! for every other site-wide path from `AiAnalyzer` / image / speech hooks.

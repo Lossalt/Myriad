@@ -194,13 +194,13 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             columns: vec!["expires_at".into()],
             is_unique: false,
         },
-        // tapp_quota_usage 索引
+        // ai_quota_usage 索引
         IndexDef {
-            name: "idx_tapp_quota_unique".into(),
-            table: "tapp_quota_usage".into(),
+            name: "idx_ai_quota_unique".into(),
+            table: "ai_quota_usage".into(),
             columns: vec![
                 "user_id".into(),
-                "tapp_id".into(),
+                "scope".into(),
                 "quota_type".into(),
                 "period_start".into(),
             ],

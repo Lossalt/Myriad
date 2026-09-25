@@ -710,7 +710,7 @@ CREATE INDEX IF NOT EXISTS idx_analytics_country_visitor_day
 
         // 平台运行时注册表与邮箱：所有后端副本共享的租约、邮箱和带过期的记录。
         // 智能体运行、AI 任务、IM 通道、限流和 Tapp 运行时都是它的租户。
-        // 全站 AI 费用账本同属平台：Tapp 只是调用方之一。
+        // 全站 AI 费用账本和每日 AI 配额同属平台：Tapp 只是调用方之一。
         manager
             .get_connection()
             .execute_unprepared(
@@ -750,7 +750,7 @@ CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_expiry
     ON runtime_mailbox (expires_at);
 
 -- 全站 AI 费用账本：逐次调用的 append-only 流水，与按日聚合的
--- tapp_quota_usage 配额计数相互独立，不随每日重置。Tapp 发起的调用带
+-- ai_quota_usage 配额计数相互独立，不随每日重置。Tapp 发起的调用带
 -- tapp_id；站点自身的调用（Agent、报告、人设等）没有，靠 source 区分。
 CREATE TABLE IF NOT EXISTS ai_cost_ledger (
     id BIGSERIAL PRIMARY KEY,
@@ -775,6 +775,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_cost_subject_time
     ON ai_cost_ledger (subject_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_ai_cost_tapp_time
     ON ai_cost_ledger (tapp_id, occurred_at);
+
+-- 全站每日 AI 配额计数：按主体和 scope（Tapp 安装 id，或站点功能的
+-- site:<名字>）分开计。
+CREATE TABLE IF NOT EXISTS ai_quota_usage (
+    id SERIAL PRIMARY KEY,
+    scope VARCHAR(255) NOT NULL,
+    user_id INTEGER NOT NULL,
+    quota_type VARCHAR(50) NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    "limit" INTEGER NOT NULL,
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_quota_unique
+    ON ai_quota_usage (user_id, scope, quota_type, period_start);
 "#,
             )
             .await?;
@@ -791,6 +807,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_cost_tapp_time
 DROP TABLE IF EXISTS runtime_mailbox;
 DROP TABLE IF EXISTS runtime_registry;
 DROP TABLE IF EXISTS ai_cost_ledger;
+DROP TABLE IF EXISTS ai_quota_usage;
 DROP TABLE IF EXISTS analytics_country_visitor;
 DROP TABLE IF EXISTS analytics_country_daily;
 DROP TABLE IF EXISTS analytics_referrer_daily;

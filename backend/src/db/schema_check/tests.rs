@@ -2280,3 +2280,56 @@ async fn tapp_named_ai_cost_ledger_is_renamed_in_place() {
     .unwrap();
     schema.drop().await;
 }
+
+/// A database from before the daily AI quota was platform infrastructure
+/// comes up with the platform names; a Tapp's counts stay under its id, the
+/// site's own move from their stand-ins to `site:` scopes, counts kept.
+#[tokio::test]
+async fn tapp_named_ai_quota_is_renamed_in_place() {
+    use sea_orm::{ConnectionTrait, Statement};
+    // An isolated schema: safe on the shared test database.
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    let schema = crate::db::IsolatedSchema::migrated(&url, "quota_rename").await;
+    let db = &schema.db;
+    db.execute_unprepared(
+        "ALTER TABLE ai_quota_usage RENAME TO tapp_quota_usage;
+         ALTER TABLE tapp_quota_usage RENAME COLUMN scope TO tapp_id;
+         ALTER INDEX ai_quota_usage_pkey RENAME TO tapp_quota_usage_pkey;
+         ALTER INDEX idx_ai_quota_unique RENAME TO idx_tapp_quota_unique;
+         ALTER SEQUENCE ai_quota_usage_id_seq RENAME TO tapp_quota_usage_id_seq;
+         ALTER TRIGGER trg_ai_quota_usage_subject_user ON tapp_quota_usage
+             RENAME TO trg_tapp_quota_usage_subject_user;
+         INSERT INTO tapp_quota_usage (tapp_id, user_id, quota_type, used, \"limit\", period_start, period_end)
+             VALUES ('com.example.app', -1, 'ai_calls', 3, 10, NOW(), NOW()),
+                    ('__agent__', -1, 'ai_calls', 5, 10, NOW(), NOW()),
+                    ('__anonymous_ai_site__', -1, 'ai_calls', 7, 10, NOW(), NOW());",
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        migration::rename_ai_quota_usage_if_needed(db).await.unwrap();
+    }
+    let names = |sql: &'static str| async move {
+        db.query_all_raw(Statement::from_string(db.get_database_backend(), sql))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get::<String>("", "name").unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names("SELECT indexname::text AS name FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE '%quota%' ORDER BY 1").await,
+        ["ai_quota_usage_pkey", "idx_ai_quota_unique"]
+    );
+    assert_eq!(
+        names("SELECT tgname::text AS name FROM pg_trigger WHERE tgrelid = to_regclass('ai_quota_usage') AND NOT tgisinternal").await,
+        ["trg_ai_quota_usage_subject_user"]
+    );
+    assert_eq!(
+        names("SELECT scope || '=' || used AS name FROM ai_quota_usage ORDER BY used").await,
+        ["com.example.app=3", "site:agent=5", "site:anonymous=7"]
+    );
+    schema.drop().await;
+}

@@ -1,4 +1,10 @@
-//! Persistent, server-authoritative AI quota ledger for Tapp runtimes.
+//! Persistent, server-authoritative daily AI quota for every subject.
+//!
+//! Platform infrastructure: the budget is per role (`user_ai_daily_*`,
+//! `guest_ai_daily_*`), counted per subject and per *scope* — whose budget
+//! within the subject's. A scope is a Tapp installation id, or `site:<name>`
+//! for the site's own features (the Agent, the guests' site-wide cap); a Tapp
+//! id cannot hold `:`, so the two never collide.
 //!
 //! Domain implementation lives in services so `ai_tasks` / governed paths do not
 //! own HTTP error tuples for reserve/settle/release/usage.
@@ -14,6 +20,11 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 use crate::GLOBAL_DYNAMIC_CONFIG;
+
+/// The Agent's scope: its turns share one budget, apart from any Tapp's.
+pub const SITE_AGENT_SCOPE: &str = "site:agent";
+/// Guests' site-wide cap, across every scope.
+pub const SITE_ANONYMOUS_SCOPE: &str = "site:anonymous";
 use crate::services::permission_service::UserRole;
 // Anonymous guest quota scopes (IP / unresolved) share the rate limiter's
 // fingerprint, so one client address maps to one key in both.
@@ -37,7 +48,7 @@ pub struct AiQuotaReservation {
 #[derive(Debug, Clone)]
 struct AiQuotaBucket {
     subject_id: i32,
-    ledger_tapp_id: String,
+    scope: String,
     calls_type: String,
     tokens_type: String,
     period_start: DateTime<Utc>,
@@ -217,14 +228,14 @@ fn anonymous_quota_type(kind: &str, owner_id: i32, scope: &str) -> String {
 fn guest_quota_buckets(
     subject_id: i32,
     owner_id: i32,
-    tapp_id: &str,
+    scope: &str,
     limits: AiQuotaLimits,
     anonymous_scope: Option<&str>,
 ) -> Vec<AiQuotaBucketLimits> {
     let mut buckets = vec![AiQuotaBucketLimits {
         bucket: AiQuotaBucket {
             subject_id,
-            ledger_tapp_id: tapp_id.to_string(),
+            scope: scope.to_string(),
             calls_type: quota_type("calls", owner_id),
             tokens_type: quota_type("tokens", owner_id),
             period_start: DateTime::<Utc>::UNIX_EPOCH,
@@ -240,7 +251,7 @@ fn guest_quota_buckets(
     buckets.push(AiQuotaBucketLimits {
         bucket: AiQuotaBucket {
             subject_id: ANONYMOUS_LEDGER_USER_ID,
-            ledger_tapp_id: tapp_id.to_string(),
+            scope: scope.to_string(),
             calls_type: anonymous_quota_type("calls", owner_id, &ip_scope),
             tokens_type: anonymous_quota_type("tokens", owner_id, &ip_scope),
             period_start: DateTime::<Utc>::UNIX_EPOCH,
@@ -253,7 +264,7 @@ fn guest_quota_buckets(
     buckets.push(AiQuotaBucketLimits {
         bucket: AiQuotaBucket {
             subject_id: ANONYMOUS_LEDGER_USER_ID,
-            ledger_tapp_id: "__anonymous_ai_site__".to_string(),
+            scope: SITE_ANONYMOUS_SCOPE.to_string(),
             calls_type: anonymous_quota_type("calls", owner_id, "guest-site"),
             tokens_type: anonymous_quota_type("tokens", owner_id, "guest-site"),
             period_start: DateTime::<Utc>::UNIX_EPOCH,
@@ -284,11 +295,7 @@ struct QuotaRow<'a> {
 
 impl QuotaRow<'_> {
     fn key(&self) -> (i32, &str, &str) {
-        (
-            self.bucket.subject_id,
-            &self.bucket.ledger_tapp_id,
-            self.quota_type,
-        )
+        (self.bucket.subject_id, &self.bucket.scope, self.quota_type)
     }
 }
 
@@ -316,7 +323,7 @@ fn quota_values(rows: &mut [QuotaRow<'_>]) -> Result<(String, Vec<SeaValue>), Ai
         ));
         values.extend([
             SeaValue::Int(Some(row.bucket.subject_id)),
-            SeaValue::String(Some(row.bucket.ledger_tapp_id.clone())),
+            SeaValue::String(Some(row.bucket.scope.clone())),
             SeaValue::String(Some(row.quota_type.to_owned())),
             SeaValue::Int(Some(row.amount)),
             SeaValue::Bool(Some(row.touch)),
@@ -335,13 +342,13 @@ async fn ensure_quota_rows<C: ConnectionTrait>(
         DbBackend::Postgres,
         format!(
             r#"
-        INSERT INTO tapp_quota_usage
-            (user_id, tapp_id, quota_type, used, "limit", period_start, period_end, updated_at)
-        SELECT user_id, tapp_id, quota_type, 0, amount, date_trunc('day', NOW()),
+        INSERT INTO ai_quota_usage
+            (user_id, scope, quota_type, used, "limit", period_start, period_end, updated_at)
+        SELECT user_id, scope, quota_type, 0, amount, date_trunc('day', NOW()),
                date_trunc('day', NOW()) + interval '1 day', NOW()
-        FROM (VALUES {tuples}) AS input(user_id, tapp_id, quota_type, amount, touch, period_start)
-        ORDER BY user_id, tapp_id COLLATE "C", quota_type COLLATE "C"
-        ON CONFLICT (user_id, tapp_id, quota_type, period_start)
+        FROM (VALUES {tuples}) AS input(user_id, scope, quota_type, amount, touch, period_start)
+        ORDER BY user_id, scope COLLATE "C", quota_type COLLATE "C"
+        ON CONFLICT (user_id, scope, quota_type, period_start)
         DO UPDATE SET "limit" = EXCLUDED."limit"
     "#
         ),
@@ -368,13 +375,13 @@ async fn read_rows_for_update<C: ConnectionTrait>(
             DbBackend::Postgres,
             format!(
                 r#"
-        SELECT q.user_id, q.tapp_id, q.quota_type, q.used, q.updated_at, q.period_start
-        FROM tapp_quota_usage q
-        JOIN (VALUES {tuples}) AS input(user_id, tapp_id, quota_type, amount, touch, period_start)
-          ON q.user_id = input.user_id AND q.tapp_id = input.tapp_id
+        SELECT q.user_id, q.scope, q.quota_type, q.used, q.updated_at, q.period_start
+        FROM ai_quota_usage q
+        JOIN (VALUES {tuples}) AS input(user_id, scope, quota_type, amount, touch, period_start)
+          ON q.user_id = input.user_id AND q.scope = input.scope
          AND q.quota_type = input.quota_type
         WHERE q.period_start = date_trunc('day', NOW())
-        ORDER BY q.user_id, q.tapp_id COLLATE "C", q.quota_type COLLATE "C"
+        ORDER BY q.user_id, q.scope COLLATE "C", q.quota_type COLLATE "C"
         FOR UPDATE OF q
     "#
             ),
@@ -390,7 +397,7 @@ async fn read_rows_for_update<C: ConnectionTrait>(
         let decode_error = |_| ledger_error("AI quota row is invalid");
         let key = (
             row.try_get::<i32>("", "user_id").map_err(decode_error)?,
-            row.try_get::<String>("", "tapp_id").map_err(decode_error)?,
+            row.try_get::<String>("", "scope").map_err(decode_error)?,
             row.try_get::<String>("", "quota_type")
                 .map_err(decode_error)?,
         );
@@ -428,19 +435,19 @@ async fn increment_rows(
             DbBackend::Postgres,
             format!(
                 r#"
-        WITH input(user_id, tapp_id, quota_type, amount, touch, period_start) AS (VALUES {tuples}),
+        WITH input(user_id, scope, quota_type, amount, touch, period_start) AS (VALUES {tuples}),
         locked AS MATERIALIZED (
-            SELECT q.user_id, q.tapp_id, q.quota_type, q.period_start, input.amount, input.touch
-            FROM tapp_quota_usage q
-            JOIN input USING (user_id, tapp_id, quota_type, period_start)
-            ORDER BY q.user_id, q.tapp_id COLLATE "C", q.quota_type COLLATE "C", q.period_start
+            SELECT q.user_id, q.scope, q.quota_type, q.period_start, input.amount, input.touch
+            FROM ai_quota_usage q
+            JOIN input USING (user_id, scope, quota_type, period_start)
+            ORDER BY q.user_id, q.scope COLLATE "C", q.quota_type COLLATE "C", q.period_start
             FOR UPDATE OF q
         )
-        UPDATE tapp_quota_usage q
+        UPDATE ai_quota_usage q
         SET used = q.used + locked.amount,
             updated_at = CASE WHEN locked.touch THEN NOW() ELSE q.updated_at END
         FROM locked
-        WHERE q.user_id = locked.user_id AND q.tapp_id = locked.tapp_id
+        WHERE q.user_id = locked.user_id AND q.scope = locked.scope
           AND q.quota_type = locked.quota_type AND q.period_start = locked.period_start
           AND q.used + locked.amount >= 0
     "#
@@ -486,7 +493,7 @@ pub async fn reserve_ai_quota(
     role: UserRole,
     subject_id: i32,
     owner_id: i32,
-    tapp_id: &str,
+    scope: &str,
     estimated_tokens: usize,
     anonymous_scope: Option<&str>,
 ) -> Result<AiQuotaReservation, AiQuotaError> {
@@ -495,7 +502,7 @@ pub async fn reserve_ai_quota(
         role,
         subject_id,
         owner_id,
-        tapp_id,
+        scope,
         estimated_tokens,
         anonymous_scope,
         AiQuotaReserveOptions::default(),
@@ -509,7 +516,7 @@ pub async fn reserve_ai_quota_with_options(
     role: UserRole,
     subject_id: i32,
     owner_id: i32,
-    tapp_id: &str,
+    scope: &str,
     estimated_tokens: usize,
     anonymous_scope: Option<&str>,
     options: AiQuotaReserveOptions,
@@ -526,12 +533,12 @@ pub async fn reserve_ai_quota_with_options(
     let estimated_tokens = i32::try_from(estimated_tokens).unwrap_or(i32::MAX).max(0);
     let cooldown_seconds = limits.cooldown_seconds;
     let bucket_limits = if role == UserRole::Guest {
-        guest_quota_buckets(subject_id, owner_id, tapp_id, limits, anonymous_scope)
+        guest_quota_buckets(subject_id, owner_id, scope, limits, anonymous_scope)
     } else {
         vec![AiQuotaBucketLimits {
             bucket: AiQuotaBucket {
                 subject_id,
-                ledger_tapp_id: tapp_id.to_string(),
+                scope: scope.to_string(),
                 calls_type: quota_type("calls", owner_id),
                 tokens_type: quota_type("tokens", owner_id),
                 period_start: DateTime::<Utc>::UNIX_EPOCH,
@@ -592,7 +599,7 @@ async fn reserve_buckets(
         let key = |kind: &str| {
             (
                 limits.bucket.subject_id,
-                limits.bucket.ledger_tapp_id.clone(),
+                limits.bucket.scope.clone(),
                 kind.to_owned(),
             )
         };
@@ -768,7 +775,7 @@ pub async fn rollback_ai_quota_reservation(
 async fn read_usage_value(
     db: &DatabaseConnection,
     subject_id: i32,
-    tapp_id: &str,
+    scope: &str,
     quota_type: &str,
 ) -> Result<Option<(i32, DateTime<Utc>)>, AiQuotaError> {
     let row = db
@@ -776,13 +783,13 @@ async fn read_usage_value(
             DbBackend::Postgres,
             r#"
                 SELECT used, updated_at
-                FROM tapp_quota_usage
-                WHERE user_id = $1 AND tapp_id = $2 AND quota_type = $3
+                FROM ai_quota_usage
+                WHERE user_id = $1 AND scope = $2 AND quota_type = $3
                   AND period_start = date_trunc('day', NOW())
             "#,
             vec![
                 SeaValue::Int(Some(subject_id)),
-                SeaValue::String(Some(tapp_id.to_string())),
+                SeaValue::String(Some(scope.to_string())),
                 SeaValue::String(Some(quota_type.to_string())),
             ],
         ))
@@ -806,7 +813,7 @@ pub async fn get_ai_usage(
     role: UserRole,
     subject_id: i32,
     owner_id: i32,
-    tapp_id: &str,
+    scope: &str,
 ) -> Result<AiUsageSnapshot, AiQuotaError> {
     let limits = limits_for_role(role).await;
     let resets_at = period_end();
@@ -835,8 +842,8 @@ pub async fn get_ai_usage(
         });
     }
 
-    let calls = read_usage_value(db, subject_id, tapp_id, &quota_type("calls", owner_id)).await?;
-    let tokens = read_usage_value(db, subject_id, tapp_id, &quota_type("tokens", owner_id)).await?;
+    let calls = read_usage_value(db, subject_id, scope, &quota_type("calls", owner_id)).await?;
+    let tokens = read_usage_value(db, subject_id, scope, &quota_type("tokens", owner_id)).await?;
     let calls_used = calls.as_ref().map_or(0, |value| value.0);
     let tokens_used = tokens.as_ref().map_or(0, |value| value.0);
     let remaining_seconds = calls
@@ -885,8 +892,8 @@ pub async fn get_ai_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        AiQuotaError, AiQuotaLimits, AiQuotaReserveOptions, cooldown_remaining,
-        guest_quota_buckets, is_client_limit_message, quota_type,
+        AiQuotaError, AiQuotaLimits, AiQuotaReserveOptions, SITE_AGENT_SCOPE, SITE_ANONYMOUS_SCOPE,
+        cooldown_remaining, guest_quota_buckets, is_client_limit_message, quota_type,
     };
 
     #[test]
@@ -952,6 +959,15 @@ mod tests {
     }
 
     #[test]
+    fn site_scopes_can_never_be_a_tapp() {
+        for scope in [SITE_AGENT_SCOPE, SITE_ANONYMOUS_SCOPE] {
+            assert!(scope.starts_with("site:"));
+            assert!(crate::services::tapp_validation::validate_tapp_id(scope).is_err());
+        }
+        assert!(crate::services::tapp_validation::validate_tapp_id("agent").is_ok());
+    }
+
+    #[test]
     fn quota_key_isolated_by_install_owner() {
         assert_ne!(quota_type("calls", 1), quota_type("calls", 2));
         assert_ne!(quota_type("calls", 1), quota_type("tokens", 1));
@@ -971,7 +987,7 @@ mod tests {
         assert_eq!(buckets[0].calls, 10);
         assert_eq!(buckets[1].calls, 30);
         assert_eq!(buckets[2].calls, 1_000);
-        assert_eq!(buckets[2].bucket.ledger_tapp_id, "__anonymous_ai_site__");
+        assert_eq!(buckets[2].bucket.scope, SITE_ANONYMOUS_SCOPE);
         assert!(!buckets[1].bucket.calls_type.contains("203.0.113.8"));
         assert_ne!(
             buckets[1].bucket.calls_type,

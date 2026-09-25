@@ -854,5 +854,65 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 },
             ],
         },
+        // Daily AI quota per subject and scope (a Tapp id, or site:<name>).
+        TableDef {
+            name: "ai_quota_usage".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "scope".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "user_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "quota_type".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "used".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "limit".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "period_start".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "period_end".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "updated_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("CURRENT_TIMESTAMP".into()),
+                    not_null: false,
+                },
+            ],
+        },
     ]
 }

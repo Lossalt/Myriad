@@ -135,7 +135,7 @@ impl AgentTurnBudget {
         task_id: String,
         kind: AgentTurnKind,
     ) -> Result<Self, String> {
-        let role = crate::services::tapp_context::role_for_subject(
+        let role = crate::services::permission_service::role_from_user_id(
             user_id,
             user_is_current_admin(db, user_id).await?,
         );
@@ -144,7 +144,7 @@ impl AgentTurnBudget {
             role,
             user_id,
             user_id,
-            AGENT_QUOTA_BUCKET,
+            crate::services::ai_quota::SITE_AGENT_SCOPE,
             AGENT_TURN_TOKEN_ESTIMATE,
             None,
             kind.reserve_options(),
@@ -276,10 +276,6 @@ impl AgentTurnBudget {
         }
     }
 }
-
-/// Agent 在 AI 配额里的 bucket key。成本账本里 Agent 不是 Tapp，没有 `tapp_id`，
-/// 靠 `source = "agent"` 区分。
-pub(crate) const AGENT_QUOTA_BUCKET: &str = "__agent__";
 
 /// Discovery list filtered by the same granted permissions the planner uses (`TappPermissionService::check`).
 pub async fn get_capabilities_summary_for_user(
