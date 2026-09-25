@@ -528,9 +528,16 @@ where
         .exec(db)
         .await?;
     agent_diary::Entity::delete_many().exec(db).await?;
-    // What the persona learned in conversation goes with her; Work lessons stay.
+    // What the persona learned in conversation, and her own days, go with
+    // her; Work lessons stay.
     crate::models::entities::agent_memories::Entity::delete_many()
-        .filter(crate::models::entities::agent_memories::Column::Source.is_in(["chat", "event"]))
+        .filter(
+            crate::models::entities::agent_memories::Column::Source.is_in([
+                "chat",
+                "event",
+                "narrative",
+            ]),
+        )
         .exec(db)
         .await?;
     agent_addressee_state::Entity::delete_many()

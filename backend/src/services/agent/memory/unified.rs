@@ -53,6 +53,9 @@ pub enum MemoryKind {
     Lesson,
     /// A way of doing a task that worked.
     Pattern,
+    /// A day of her own life, told by her. Belongs to no one else and names
+    /// no one (see [`write_own_day`]).
+    Narrative,
 }
 
 impl MemoryKind {
@@ -62,6 +65,7 @@ impl MemoryKind {
             Self::Preference => "preference",
             Self::Lesson => "lesson",
             Self::Pattern => "pattern",
+            Self::Narrative => "narrative",
         }
     }
 
@@ -760,6 +764,134 @@ pub async fn update_content<C: ConnectionTrait>(
     Ok(result.rows_affected == 1)
 }
 
+/// Keep one day of her own life. One entry per day: writing the same day
+/// again changes nothing. The text must be built from material that names no
+/// one, because every audience may hear it.
+pub async fn write_own_day<C: ConnectionTrait>(
+    db: &C,
+    day: chrono::NaiveDate,
+    content: &str,
+) -> Result<bool, DbErr> {
+    let content = normalize_content(content);
+    if content.is_empty() {
+        return Ok(false);
+    }
+    let Some(at) = day
+        .and_hms_opt(12, 0, 0)
+        .map(|noon| noon.and_utc().fixed_offset())
+    else {
+        return Ok(false);
+    };
+    let row = agent_memories::ActiveModel {
+        id: Set(format!("day_{day}")),
+        user_id: Set(None),
+        kind: Set(MemoryKind::Narrative.as_str().into()),
+        content: Set(content),
+        evidence: Set(None),
+        speaker: Set(Speaker::Agent.as_str().into()),
+        source: Set("narrative".into()),
+        venue: Set("own".into()),
+        audience: Set(json!([])),
+        concepts: Set(json!([])),
+        importance: Set(0.5),
+        access_count: Set(0),
+        last_accessed_at: Set(None),
+        valid_from: Set(at),
+        invalid_at: Set(None),
+        invalid_reason: Set(None),
+        created_at: Set(at),
+        updated_at: Set(Utc::now().fixed_offset()),
+    };
+    let inserted = agent_memories::Entity::insert(row)
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::column(agent_memories::Column::Id)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(inserted > 0)
+}
+
+/// Her latest days, most recent first.
+pub async fn own_days<C: ConnectionTrait>(db: &C, limit: u64) -> Result<Vec<MemoryRecord>, DbErr> {
+    Ok(agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Kind.eq(MemoryKind::Narrative.as_str()))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .order_by_desc(agent_memories::Column::CreatedAt)
+        .limit(limit)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(MemoryRecord::from)
+        .collect())
+}
+
+/// A person's active memories that no concept was ever written for (kept
+/// before concepts existed), oldest first, so association can reach them.
+pub async fn without_concepts<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    limit: u64,
+) -> Result<Vec<MemoryRecord>, DbErr> {
+    Ok(agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(sea_orm::sea_query::Expr::cust("concepts = '[]'::jsonb"))
+        .order_by_asc(agent_memories::Column::CreatedAt)
+        .limit(limit)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(MemoryRecord::from)
+        .collect())
+}
+
+/// People who have memories still lacking concepts.
+pub async fn people_without_concepts<C: ConnectionTrait>(
+    db: &C,
+    limit: u64,
+) -> Result<Vec<i32>, DbErr> {
+    let people: Vec<Option<i32>> = agent_memories::Entity::find()
+        .select_only()
+        .column(agent_memories::Column::UserId)
+        .distinct()
+        .filter(agent_memories::Column::UserId.is_not_null())
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(sea_orm::sea_query::Expr::cust("concepts = '[]'::jsonb"))
+        .limit(limit)
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(people.into_iter().flatten().collect())
+}
+
+/// Give a memory the concepts it was never written with. Only fills an empty
+/// list, so a concurrent writer's concepts are never overwritten.
+pub async fn fill_concepts<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    id: &str,
+    concepts: Vec<Concept>,
+) -> Result<bool, DbErr> {
+    let concepts = clean_concepts(concepts);
+    if concepts.is_empty() {
+        return Ok(false);
+    }
+    let result = agent_memories::Entity::update_many()
+        .col_expr(
+            agent_memories::Column::Concepts,
+            sea_orm::sea_query::Expr::value(json!(concepts)),
+        )
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::Id.eq(id))
+        .filter(sea_orm::sea_query::Expr::cust("concepts = '[]'::jsonb"))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected == 1)
+}
+
 /// One row carried over from a pre-unified store, keeping its identity and
 /// history. An id seen before is skipped, so importing twice is harmless.
 pub struct ImportedMemory {
@@ -1150,6 +1282,71 @@ mod db_tests {
                 .is_some(),
             "a retired fact may be learned again"
         );
+    }
+
+    #[tokio::test]
+    async fn her_own_days_belong_to_no_one_and_are_kept_once() {
+        let Some(db) = temp_db().await else {
+            return;
+        };
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 9, 24).unwrap();
+        assert!(
+            write_own_day(&db, day, "今天陪了好几个人聊天，有点累。")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !write_own_day(&db, day, "另一个版本").await.unwrap(),
+            "one entry per day"
+        );
+        let days = own_days(&db, 3).await.unwrap();
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].content, "今天陪了好几个人聊天，有点累。");
+        assert_eq!(days[0].user_id, None);
+        remember(&db, fact(7, "养了一只猫")).await.unwrap();
+        assert!(
+            recall(&db, 7, &Audience::private(7), None, &[], 8)
+                .await
+                .unwrap()
+                .iter()
+                .all(|memory| memory.user_id == Some(7)),
+            "her days never come back as a memory about someone"
+        );
+    }
+
+    #[tokio::test]
+    async fn old_memories_get_concepts_only_once_and_only_for_their_person() {
+        let Some(db) = temp_db().await else {
+            return;
+        };
+        let id = remember(&db, fact(7, "养了一只猫叫年糕"))
+            .await
+            .unwrap()
+            .unwrap();
+        remember(&db, fact(8, "喜欢茶")).await.unwrap();
+        let mut people = people_without_concepts(&db, 10).await.unwrap();
+        people.sort();
+        assert_eq!(people, vec![7, 8]);
+        let cat = || {
+            vec![Concept {
+                name: "猫".into(),
+                aliases: vec!["喵".into()],
+            }]
+        };
+        assert!(
+            !fill_concepts(&db, 8, &id, cat()).await.unwrap(),
+            "not 8's memory"
+        );
+        assert!(fill_concepts(&db, 7, &id, cat()).await.unwrap());
+        assert!(
+            !fill_concepts(&db, 7, &id, cat()).await.unwrap(),
+            "already filled"
+        );
+        assert!(without_concepts(&db, 7, 10).await.unwrap().is_empty());
+        let found = recall(&db, 7, &Audience::private(7), Some("喵呢"), &[], 8)
+            .await
+            .unwrap();
+        assert_eq!(found[0].id, id);
     }
 
     #[tokio::test]

@@ -118,6 +118,19 @@ pub fn format_recent_section(contents: &[String]) -> Option<String> {
     ))
 }
 
+/// Her own last few days, in her own words, oldest first. They are about her,
+/// not about the person she is talking to.
+pub fn format_own_days_section(days: &[String]) -> Option<String> {
+    let lines = bullet_facts(days);
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Your recent days\nYour own diary lines. This is your life, not theirs: let it show only when it fits, and do not recite it.\n{}",
+        lines.join("\n")
+    ))
+}
+
 /// What she said on her own to this person lately, oldest first, so a chat
 /// turn answers as the one who said it.
 pub fn format_said_unprompted_section(lines: &[String]) -> Option<String> {

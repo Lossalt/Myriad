@@ -4,6 +4,7 @@ mod appraisal;
 pub mod chat_remember;
 pub mod gates;
 pub mod ingest;
+pub mod life;
 pub mod motion;
 pub mod motion_local;
 pub mod motion_preview;
@@ -259,9 +260,9 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_emotion_section,
-    format_mood_section, format_on_your_mind_section, format_persona, format_recent_section,
-    format_remembered_section, format_said_unprompted_section, guest_speaking_section,
-    mood_tone_instruction,
+    format_mood_section, format_on_your_mind_section, format_own_days_section, format_persona,
+    format_recent_section, format_remembered_section, format_said_unprompted_section,
+    guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -327,6 +328,8 @@ const RECENT_LEDGER_LIMIT: u64 = 4;
 /// Chat diary only. Event diary reaches speaking via Remember, not this ledger.
 const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_CHAT];
 
+/// Her own days a conversation carries, most recent last.
+const OWN_DAYS_LIMIT: u64 = 3;
 /// Her own unprompted lines a chat turn should know it said.
 const SAID_UNPROMPTED_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
@@ -393,6 +396,11 @@ async fn speaking_prompt_from_db(
     }
     if let Some(block) = self_state::format_self_section(&myself) {
         sections.push(block);
+    }
+    if !matches!(turn, Turn::Plain) {
+        if let Some(block) = format_own_days_section(&life::recent_days(db, OWN_DAYS_LIMIT).await) {
+            sections.push(block);
+        }
     }
     if matches!(turn, Turn::Chat(_)) {
         // One mouth: what she said on her own and what was on her mind
