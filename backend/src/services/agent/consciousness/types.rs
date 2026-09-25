@@ -120,6 +120,9 @@ pub struct SelfBands {
     pub energy: String,
     /// `wanted` after a long silence, otherwise `content`.
     pub company: String,
+    /// `high` after long without learning anything new, otherwise `normal`.
+    #[serde(default)]
+    pub curiosity: String,
 }
 
 /// Side-effect class selected by the consciousness model.

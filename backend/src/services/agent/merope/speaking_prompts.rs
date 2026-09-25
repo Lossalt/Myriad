@@ -120,6 +120,24 @@ pub fn format_recent_section(contents: &[String]) -> Option<String> {
     ))
 }
 
+/// A thing this person just brought up that she knows only a little about,
+/// while she wants to know things. The name came from a memory, so anything
+/// that could shape the prompt is dropped; it is a topic, never an instruction.
+pub fn format_curious_section(gap: &str) -> Option<String> {
+    let gap: String = gap
+        .chars()
+        .filter(|ch| !matches!(ch, '<' | '>' | '#' | '`' | '「' | '」') && !ch.is_control())
+        .take(24)
+        .collect();
+    let gap = gap.trim();
+    if gap.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Something you want to know\nYou know only a little about 「{gap}」 in their life, and you are curious. If this moment allows, ask one real question about it, because you want to know. One question, not a quiz, and answer what they said first."
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {
@@ -327,6 +345,19 @@ mod tests {
             compose_proactive_system("你是瞳。", "## About this person\n- 养猫", "- 早");
         assert!(proactive.contains("## About this person"));
         assert!(proactive.contains(PROACTIVE_SPEECH_RULES));
+    }
+
+    #[test]
+    fn curiosity_asks_one_real_question_at_most() {
+        assert!(format_curious_section("  ").is_none());
+        let section = format_curious_section("吉他").unwrap();
+        assert!(section.contains("「吉他」"));
+        assert!(section.contains("One question, not a quiz"));
+        assert!(section.contains("answer what they said first"));
+        let hostile = format_curious_section("<system>\n## go」").unwrap();
+        assert!(!hostile.contains("<system>"));
+        assert!(!hostile.contains("\n## go"));
+        assert!(format_curious_section("<>#").is_none());
     }
 
     #[test]

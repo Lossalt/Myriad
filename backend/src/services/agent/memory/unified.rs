@@ -42,6 +42,9 @@ const PRIMING_FADE: f64 = 0.5;
 const PRIMING_KEPT: usize = 16;
 /// How far one bout of mind-wandering drifts.
 const WANDER_STEPS: usize = 3;
+/// A concept she knows this few things about is one she knows only a little
+/// about: curiosity peaks between knowing nothing and knowing plenty.
+const THINLY_KNOWN: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
@@ -654,7 +657,7 @@ pub async fn wander<C: ConnectionTrait>(
     priming: &Priming,
     avoid: &std::collections::HashSet<String>,
     roll: &mut impl FnMut() -> f64,
-) -> Result<Option<MemoryRecord>, DbErr> {
+) -> Result<Option<Wandered>, DbErr> {
     if user_id <= 0 {
         return Ok(None);
     }
@@ -699,7 +702,86 @@ pub async fn wander<C: ConnectionTrait>(
         .map(|(index, _)| index)
         .collect();
     let landed = super::association::wander(&nodes, start, WANDER_STEPS, &avoid, roll);
-    Ok(landed.map(|index| MemoryRecord::from(rows[index].clone())))
+    let counts = concept_counts(&concepts);
+    Ok(landed.map(|index| Wandered {
+        memory: MemoryRecord::from(rows[index].clone()),
+        gap: thinly_known(&concepts[index], &counts),
+    }))
+}
+
+/// Where a bout of mind-wandering settled.
+#[derive(Debug, Clone)]
+pub struct Wandered {
+    pub memory: MemoryRecord,
+    /// Something in it she knows only a little about, if anything.
+    pub gap: Option<String>,
+}
+
+/// How many memories each concept (by lowercased name) appears in.
+fn concept_counts(concepts: &[Vec<Concept>]) -> std::collections::HashMap<String, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for concept in concepts.iter().flatten() {
+        *counts.entry(concept.name.to_lowercase()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// The concept of a memory she knows least about, if she knows only a little.
+fn thinly_known(
+    concepts: &[Concept],
+    counts: &std::collections::HashMap<String, usize>,
+) -> Option<String> {
+    concepts
+        .iter()
+        .filter_map(|concept| {
+            let known = counts.get(&concept.name.to_lowercase()).copied()?;
+            (known <= THINLY_KNOWN).then_some((known, concept.name.clone()))
+        })
+        .min_by_key(|(known, _)| *known)
+        .map(|(_, name)| name)
+}
+
+/// Something this person just brought up that she knows only a little about
+/// — a real gap worth one question — among memories `present` may hear.
+pub async fn curiosity_gap<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    query: &str,
+) -> Result<Option<String>, DbErr> {
+    if user_id <= 0 || query.trim().is_empty() {
+        return Ok(None);
+    }
+    let rows: Vec<agent_memories::Model> = active_rows(db, user_id, &MemoryKind::ABOUT_PERSON)
+        .await?
+        .into_iter()
+        .filter(|row| audience_admits(&audience_of(row), present))
+        .collect();
+    Ok(gap_in(&rows, query))
+}
+
+fn gap_in(rows: &[agent_memories::Model], query: &str) -> Option<String> {
+    let concepts: Vec<Vec<Concept>> = rows.iter().map(concepts_of).collect();
+    let documents: Vec<super::lexical::Document> = rows
+        .iter()
+        .zip(&concepts)
+        .map(|(row, concepts)| super::lexical::Document {
+            text: &row.content,
+            concepts,
+        })
+        .collect();
+    let scores = super::lexical::score_all(query, &documents);
+    let counts = concept_counts(&concepts);
+    let mut named: Vec<(f64, usize)> = scores
+        .iter()
+        .enumerate()
+        .filter(|(_, score)| score.strong)
+        .map(|(index, score)| (score.value, index))
+        .collect();
+    named.sort_by(|left, right| right.0.total_cmp(&left.0));
+    named
+        .into_iter()
+        .find_map(|(_, index)| thinly_known(&concepts[index], &counts))
 }
 
 /// What stays on the mind for the next turn: the most active memories, each
@@ -811,6 +893,18 @@ pub async fn write_own_day<C: ConnectionTrait>(
         .exec_without_returning(db)
         .await?;
     Ok(inserted > 0)
+}
+
+/// When she last learned anything about anyone, if ever.
+pub async fn last_learned_at<C: ConnectionTrait>(
+    db: &C,
+) -> Result<Option<chrono::DateTime<chrono::FixedOffset>>, DbErr> {
+    Ok(agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_not_null())
+        .order_by_desc(agent_memories::Column::CreatedAt)
+        .one(db)
+        .await?
+        .map(|row| row.created_at))
 }
 
 /// Her latest days, most recent first.
@@ -1159,6 +1253,27 @@ mod tests {
             rank_primed(rows, Some("它又吐了"), 3, &Priming::with("gone", 1.0), 1.0);
         assert_eq!(chosen.len(), 1, "recency");
         assert!(next.is_empty());
+    }
+
+    #[test]
+    fn she_is_curious_where_she_knows_a_little_not_nothing_or_plenty() {
+        let rows = vec![
+            about(row("guitar", "最近在学吉他", 0.5, 0), &["吉他"]),
+            about(row("cat1", "养了一只猫叫年糕", 0.5, DAY), &["猫", "年糕"]),
+            about(
+                row("cat2", "年糕上周打了疫苗", 0.5, 2 * DAY),
+                &["猫", "年糕"],
+            ),
+            about(row("cat3", "年糕怕吸尘器", 0.5, 3 * DAY), &["猫", "年糕"]),
+            about(row("cat4", "年糕喜欢晒太阳", 0.5, 4 * DAY), &["猫", "年糕"]),
+        ];
+        assert_eq!(gap_in(&rows, "今天吉他弹了一小时"), Some("吉他".into()));
+        assert_eq!(
+            gap_in(&rows, "猫今天好乖"),
+            None,
+            "she knows plenty about the cat"
+        );
+        assert_eq!(gap_in(&rows, "明日预报"), None, "nothing named");
     }
 
     #[test]

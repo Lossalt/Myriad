@@ -10,9 +10,12 @@
 //!   more than five turns with one.
 //! - **Social** is the want for company: it grows with the time since anyone
 //!   last talked to her and is gone while someone is.
+//! - **Curiosity** is the want to know: it grows with the time since she last
+//!   learned anything new about anyone, and learning eases it.
 //!
 //! It turns real knobs: how long she waits between speaking up unprompted,
-//! how far recall wanders by association, and a line in the speaking prompt.
+//! how far recall wanders by association, how often her mind drifts and
+//! whether she asks, and a line in the speaking prompt.
 //! Numbers never reach a prompt.
 
 use std::sync::{LazyLock, Mutex};
@@ -31,6 +34,8 @@ const FATIGUE_TAU_H: f64 = 1.5;
 const SOCIAL_TAU_H: f64 = 3.0;
 /// Only this far back counts toward either.
 const LOOKBACK_H: i64 = 24;
+/// The want to know builds over most of a day without anything new.
+const CURIOSITY_TAU_H: f64 = 6.0;
 const CACHE_FOR: Duration = Duration::from_secs(30);
 /// The shortest wait between unprompted words; tiredness only lengthens it.
 pub const BASE_PROACTIVE_COOLDOWN_SECS: i64 = 180;
@@ -41,6 +46,8 @@ pub struct SelfState {
     pub energy: f64,
     /// 0–100: 0 is company right now, 100 a long silence.
     pub social: f64,
+    /// 0–100: 0 just learned something, 100 nothing new for long.
+    pub curiosity: f64,
 }
 
 impl SelfState {
@@ -54,6 +61,22 @@ impl SelfState {
 
     pub fn lonely(&self) -> bool {
         self.social >= 70.0
+    }
+
+    pub fn curious(&self) -> bool {
+        self.curiosity >= 60.0
+    }
+
+    /// The same state, with curiosity from how long ago she last learned
+    /// something new (`None`: never).
+    pub fn with_last_learned(self, hours_ago: Option<f64>) -> Self {
+        let hours = hours_ago
+            .filter(|hours| hours.is_finite() && *hours >= 0.0)
+            .unwrap_or(f64::INFINITY);
+        Self {
+            curiosity: 100.0 * (1.0 - (-hours / CURIOSITY_TAU_H).exp()),
+            ..self
+        }
     }
 
     /// How long to wait after speaking up before speaking up again. Never
@@ -79,9 +102,11 @@ impl SelfState {
             "normal"
         };
         let company = if self.lonely() { "wanted" } else { "content" };
+        let curiosity = if self.curious() { "high" } else { "normal" };
         crate::services::agent::consciousness::SelfBands {
             energy: energy.into(),
             company: company.into(),
+            curiosity: curiosity.into(),
         }
     }
 }
@@ -113,7 +138,11 @@ pub fn derive(hour: u32, contacts: &[f64]) -> SelfState {
         .filter(|hours| hours.is_finite() && *hours >= 0.0)
         .fold(LOOKBACK_H as f64, f64::min);
     let social = 100.0 * (1.0 - (-silence / SOCIAL_TAU_H).exp());
-    SelfState { energy, social }
+    SelfState {
+        energy,
+        social,
+        curiosity: 0.0,
+    }
 }
 
 static CACHE: LazyLock<Mutex<Option<(Instant, SelfState)>>> = LazyLock::new(|| Mutex::new(None));
@@ -131,8 +160,13 @@ pub async fn current(db: &DatabaseConnection) -> SelfState {
     }
     let now = Utc::now();
     let contacts = recent_contacts(db, now).await.unwrap_or_default();
+    let learned = crate::services::agent::memory::unified::last_learned_at(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|at| (now - at.with_timezone(&Utc)).num_seconds().max(0) as f64 / 3600.0);
     // Her day runs on the host clock, as the do-not-disturb window does.
-    let state = derive(chrono::Local::now().hour(), &contacts);
+    let state = derive(chrono::Local::now().hour(), &contacts).with_last_learned(learned);
     if let Ok(mut cached) = CACHE.lock() {
         *cached = Some((Instant::now(), state));
     }
@@ -202,10 +236,12 @@ mod tests {
         let fresh = SelfState {
             energy: 100.0,
             social: 50.0,
+            curiosity: 0.0,
         };
         let spent = SelfState {
             energy: 5.0,
             social: 50.0,
+            curiosity: 0.0,
         };
         assert_eq!(
             fresh.proactive_cooldown_secs(),
@@ -214,6 +250,22 @@ mod tests {
         assert!(spent.proactive_cooldown_secs() > 3 * BASE_PROACTIVE_COOLDOWN_SECS);
         assert_eq!(fresh.recall_breadth(), 1.0);
         assert!(spent.recall_breadth() < 1.0);
+    }
+
+    #[test]
+    fn nothing_new_for_long_makes_her_curious_and_learning_eases_it() {
+        let base = derive(14, &[]);
+        assert!(
+            base.with_last_learned(None).curious(),
+            "never learned anything"
+        );
+        assert!(base.with_last_learned(Some(10.0)).curious());
+        assert!(!base.with_last_learned(Some(0.5)).curious());
+        assert_eq!(
+            base.with_last_learned(Some(0.5)).bands().curiosity,
+            "normal"
+        );
+        assert_eq!(base.with_last_learned(Some(12.0)).bands().curiosity, "high");
     }
 
     #[test]

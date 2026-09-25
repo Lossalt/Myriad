@@ -259,10 +259,10 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 }
 
 pub use speaking_prompts::{
-    addressee_speaking_section, format_activity_section, format_emotion_section,
-    format_mood_section, format_on_your_mind_section, format_own_days_section, format_persona,
-    format_recent_section, format_remembered_section, format_said_unprompted_section,
-    guest_speaking_section, mood_tone_instruction,
+    addressee_speaking_section, format_activity_section, format_curious_section,
+    format_emotion_section, format_mood_section, format_on_your_mind_section,
+    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
+    format_said_unprompted_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -416,6 +416,26 @@ async fn speaking_prompt_from_db(
                 .collect();
             if let Some(block) = format_said_unprompted_section(&lines) {
                 sections.push(block);
+            }
+        }
+        if let Turn::Chat(words) = turn {
+            // Curiosity: something they just named that she knows only a
+            // little about, while she wants to know things.
+            if myself.curious() {
+                let gap = crate::services::agent::memory::unified::curiosity_gap(
+                    db,
+                    user_id,
+                    &crate::services::agent::memory::unified::Audience::private(user_id),
+                    words,
+                )
+                .await;
+                if let Some(block) = gap
+                    .ok()
+                    .flatten()
+                    .and_then(|gap| format_curious_section(&gap))
+                {
+                    sections.push(block);
+                }
             }
         }
         if let Some(segment) = crate::services::agent::consciousness::last_attention(user_id) {

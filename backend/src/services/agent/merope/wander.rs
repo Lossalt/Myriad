@@ -26,8 +26,18 @@ pub const THOUGHT_EVENT: &str = "agent.merope.thought";
 const QUIET_SECS: i64 = 3 * 60;
 /// Between two thoughts about the same person.
 const BETWEEN_THOUGHTS_SECS: i64 = 20 * 60;
-/// Chance that an eligible minute actually brings a thought.
+/// Chance that an eligible minute actually brings a thought; a curious mind
+/// drifts more readily.
 const DRIFT_CHANCE: f64 = 0.2;
+const CURIOUS_DRIFT_CHANCE: f64 = 0.35;
+
+fn drift_chance(myself: &super::self_state::SelfState) -> f64 {
+    if myself.curious() {
+        CURIOUS_DRIFT_CHANCE
+    } else {
+        DRIFT_CHANCE
+    }
+}
 /// A thought is not had again about the same memory for this long.
 const NOT_AGAIN_SECS: i64 = 3 * 24 * 3600;
 const THOUGHTS_KEPT: usize = 64;
@@ -81,6 +91,18 @@ fn note_thought(user_id: i32, memory_id: String, now: DateTime<Utc>) {
     }
 }
 
+/// What the thought is, for the event decision. A thought that lands where
+/// she knows only a little becomes a wish to know more.
+fn thought_summary(wandered: &unified::Wandered) -> String {
+    match &wandered.gap {
+        Some(gap) => format!(
+            "你忽然想起关于对方的一件事：{}。关于「{gap}」你只知道这么一点，想知道更多。",
+            wandered.memory.content
+        ),
+        None => format!("你忽然想起关于对方的一件事：{}", wandered.memory.content),
+    }
+}
+
 /// One minute of her idle mind across everyone present.
 pub async fn tick(db: DatabaseConnection) {
     if !super::is_enabled().await {
@@ -114,7 +136,7 @@ pub async fn tick(db: DatabaseConnection) {
             last_thought,
             myself.proactive_cooldown_secs(),
             now,
-        ) || rand::random::<f64>() >= DRIFT_CHANCE
+        ) || rand::random::<f64>() >= drift_chance(&myself)
         {
             continue;
         }
@@ -128,16 +150,16 @@ pub async fn tick(db: DatabaseConnection) {
             &mut roll,
         )
         .await;
-        let Ok(Some(memory)) = landed else {
+        let Ok(Some(wandered)) = landed else {
             continue;
         };
-        note_thought(user_id, memory.id.clone(), now);
-        tracing::info!(user_id, "[Merope] a thought came to mind");
-        super::spawn_ingest(
+        note_thought(user_id, wandered.memory.id.clone(), now);
+        tracing::info!(
             user_id,
-            THOUGHT_EVENT,
-            format!("你忽然想起关于对方的一件事：{}", memory.content),
+            curious = wandered.gap.is_some(),
+            "[Merope] a thought came to mind"
         );
+        super::spawn_ingest(user_id, THOUGHT_EVENT, thought_summary(&wandered));
     }
 }
 
