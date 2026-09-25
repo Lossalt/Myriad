@@ -562,6 +562,8 @@ where
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
         .exec(db)
         .await?;
+    // How often she has talked with people outside the community.
+    super::strangers::forget_counts(db).await?;
     resync_persona_avatar_snapshots(db, None).await?;
     Ok(())
 }

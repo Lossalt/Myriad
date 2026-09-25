@@ -12,11 +12,9 @@
 //! ordinary memory: it comes up only when that person talks to her there. A
 //! note nobody has touched in two months fades.
 //!
-//! How often she has talked with someone is counted in this process; a
-//! restart starts the count again, but a note once kept stays.
+//! How often she has talked with someone is kept in the runtime registry for
+//! as long as a note would last, so restarts and replicas share one count.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
@@ -28,9 +26,8 @@ use crate::services::agent::memory::unified;
 
 pub const SOURCE: &str = "stranger";
 /// Exchanges before she starts keeping a note on someone.
-const REGULAR_AFTER: u32 = 3;
+const REGULAR_AFTER: i64 = 3;
 const MAX_NOTE_CHARS: usize = 200;
-const MAX_COUNTED: usize = 4096;
 /// A note nobody has touched this long fades.
 const FADE_AFTER: chrono::Duration = chrono::Duration::days(60);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -45,28 +42,33 @@ pub struct Stranger {
     pub name: String,
 }
 
-/// Exchanges with each (group venue, person) in this process.
-static TALKS: LazyLock<Mutex<HashMap<(String, String), u32>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Runtime-registry namespace of the exchange counts.
+pub const TALKS_NAMESPACE: &str = "merope_stranger_talks";
 
-pub fn forget() {
-    if let Ok(mut talks) = TALKS.lock() {
-        talks.clear();
-    }
+fn talks_key(venue: &str, who: &str) -> String {
+    format!("{venue}|{who}").chars().take(160).collect()
 }
 
-fn count_exchange(venue: &str, who: &str) -> u32 {
-    let Ok(mut talks) = TALKS.lock() else {
-        return 0;
-    };
-    if talks.len() >= MAX_COUNTED {
-        talks.clear();
-    }
-    let count = talks
-        .entry((venue.to_string(), who.to_string()))
-        .or_default();
-    *count += 1;
-    *count
+/// One more exchange with this person in this group; how many so far.
+async fn count_exchange(db: &DatabaseConnection, venue: &str, who: &str) -> i64 {
+    let keep_until = (chrono::Utc::now() + FADE_AFTER).timestamp();
+    crate::services::runtime_registry::increment(
+        db,
+        TALKS_NAMESPACE,
+        &talks_key(venue, who),
+        keep_until,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        tracing::warn!(%error, "[Merope] could not count an exchange with a stranger");
+        0
+    })
+}
+
+/// Forget every count, with the persona.
+pub async fn forget_counts<C: sea_orm::ConnectionTrait>(db: &C) -> Result<u64, sea_orm::DbErr> {
+    crate::services::runtime_registry::delete_matching(db, TALKS_NAMESPACE, None, None, None, None)
+        .await
 }
 
 /// The stored venue of a group (`telegram:-100123` → `group:telegram:-100123`).
@@ -235,8 +237,8 @@ pub fn spawn_after(
     words: String,
     reply: String,
 ) {
-    let count = count_exchange(&venue, &stranger.who);
     tokio::spawn(async move {
+        let count = count_exchange(&db, &venue, &stranger.who).await;
         let kept = note_on(&db, &venue, &stranger).await;
         if kept.is_none() && count < REGULAR_AFTER {
             return;
@@ -321,15 +323,29 @@ pub(crate) fn note_verdict(raw: &str) -> Option<Option<String>> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_note_is_kept_only_on_someone_she_keeps_running_into() {
+    /// Counts outlive a restart: they are in the database, per person and
+    /// group, and go with the persona.
+    #[tokio::test]
+    async fn a_note_is_kept_only_on_someone_she_keeps_running_into() {
+        assert_eq!(group_venue("telegram:-9100"), "group:telegram:-9100");
+        assert_eq!(
+            talks_key("discord:22", "discord:44"),
+            "discord:22|discord:44"
+        );
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let schema = crate::db::IsolatedSchema::migrated(&url, "stranger_talks").await;
+        let db = &schema.db;
         let venue = "telegram:-9100";
-        assert_eq!(count_exchange(venue, "telegram:1"), 1);
-        assert_eq!(count_exchange(venue, "telegram:1"), 2);
-        assert_eq!(count_exchange(venue, "telegram:2"), 1);
-        assert_eq!(count_exchange("telegram:-9101", "telegram:1"), 1);
-        assert!(count_exchange(venue, "telegram:1") >= REGULAR_AFTER);
-        assert_eq!(group_venue(venue), "group:telegram:-9100");
+        assert_eq!(count_exchange(db, venue, "telegram:1").await, 1);
+        assert_eq!(count_exchange(db, venue, "telegram:1").await, 2);
+        assert_eq!(count_exchange(db, venue, "telegram:2").await, 1);
+        assert_eq!(count_exchange(db, "telegram:-9101", "telegram:1").await, 1);
+        assert!(count_exchange(db, venue, "telegram:1").await >= REGULAR_AFTER);
+        assert_eq!(forget_counts(db).await.unwrap(), 3);
+        assert_eq!(count_exchange(db, venue, "telegram:1").await, 1);
+        schema.drop().await;
     }
 
     #[test]
