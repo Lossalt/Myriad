@@ -48,6 +48,27 @@ test('uses the source dark line while preventing a pale invisible outline', () =
   assert.ok(pale.line.red < 150)
 })
 
+test('the narrow mouth is the open mouth drawn flatter, tongue included', () => {
+  const palette = sampleMouthExpressionPalette(
+    new Uint8ClampedArray([162, 102, 90, 255, 236, 176, 160, 255]),
+  )
+  const sizes = mouthExpressionGeneratedSizes({ width: 74, height: 26 })
+  const open = createMouthExpressionBitmap('open', sizes.open, palette)
+  const narrow = createMouthExpressionBitmap('narrow', sizes.narrow, palette)
+  assert.ok(narrow.width / narrow.height > (open.width / open.height) * 2)
+  const tongue = (data: Uint8ClampedArray) => {
+    let count = 0
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index + 3] > 160 && data[index] > 180) count += 1
+    }
+    return count
+  }
+  assert.ok(countDarkPixels(narrow.data) > 40, 'a readable cavity')
+  // Passing through a consonant never drops the tongue the vowels show.
+  assert.ok(tongue(narrow.data) > 30, `${tongue(narrow.data)}`)
+  assert.ok(tongue(open.data) > 30)
+})
+
 function visibleColors(data: Uint8ClampedArray): Set<string> {
   const colors = new Set<string>()
   for (let index = 0; index < data.length; index += 4) {

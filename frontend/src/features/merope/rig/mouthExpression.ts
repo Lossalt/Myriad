@@ -206,20 +206,8 @@ export function createMouthExpressionBitmap(
   const maniacTongueShade = mixColor(palette.cavity, palette.fill, 0.48)
   const inner = insetPath(
     outer,
-    kind === 'maniac'
-      ? 0.985
-      : kind === 'cry'
-        ? 0.83
-        : kind === 'narrow'
-          ? 0.8
-          : 0.78,
-    kind === 'maniac'
-      ? 0.975
-      : kind === 'cry'
-        ? 0.76
-        : kind === 'narrow'
-          ? 0.58
-          : 0.75,
+    kind === 'maniac' ? 0.985 : kind === 'cry' ? 0.83 : 0.78,
+    kind === 'maniac' ? 0.975 : kind === 'cry' ? 0.76 : 0.75,
     kind === 'maniac'
       ? 0.006
       : kind === 'cry'
@@ -246,11 +234,7 @@ export function createMouthExpressionBitmap(
         if (pointInPolygon(px, py, outer)) outerCoverage += 0.25
         if (pointInPolygon(px, py, inner)) {
           innerCoverage += 0.25
-          if (
-            kind !== 'cry' &&
-            kind !== 'narrow' &&
-            py > tongueBoundary(kind, px)
-          ) {
+          if (kind !== 'cry' && py > tongueBoundary(kind, px)) {
             if (
               kind === 'maniac' &&
               py <= tongueBoundary(kind, px) + maniacTongueShadeDepth(px)
@@ -355,10 +339,13 @@ export function createManiacMouthShadowBitmap(
   return { width, height, data }
 }
 
+/**
+ * A consonant's narrow mouth is the open mouth drawn flatter, cavity and tongue
+ * included, so speech that passes through it never swaps to unrelated art.
+ */
 function mouthOuterPath(kind: MouthExpressionKind): Point[] {
   if (kind === 'wide') return wideOuterPath()
   if (kind === 'round') return roundOuterPath()
-  if (kind === 'narrow') return narrowOuterPath()
   if (kind === 'cry') return cryOuterPath()
   if (kind === 'maniac') return maniacOuterPath()
   if (kind === 'silly') return sillyOuterPath()
@@ -500,23 +487,6 @@ function roundOuterPath(): Point[] {
     [-0.58, 0.39],
     [-0.62, -0.06],
     [-0.57, -0.46],
-  ]
-}
-
-/** Restrained consonant/in-between shape used instead of collapsing the open art. */
-function narrowOuterPath(): Point[] {
-  return [
-    [-0.91, -0.12],
-    [-0.62, -0.31],
-    [-0.21, -0.37],
-    [0.2, -0.34],
-    [0.61, -0.28],
-    [0.9, -0.08],
-    [0.79, 0.16],
-    [0.39, 0.28],
-    [-0.05, 0.31],
-    [-0.5, 0.25],
-    [-0.82, 0.12],
   ]
 }
 
