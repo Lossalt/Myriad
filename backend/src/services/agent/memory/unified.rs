@@ -348,8 +348,14 @@ async fn rows_for<C: ConnectionTrait>(
     Ok(rows
         .into_iter()
         .filter(|row| admits(row, present))
+        // What only the two of them share has its own place in her mind.
+        .filter(|row| row.source != KEPT_APART)
         .collect())
 }
+
+/// Source of rows recalled on their own, not with ordinary memories: bits
+/// (see `merope::bits`).
+const KEPT_APART: &str = "bit";
 
 async fn active_rows<C: ConnectionTrait>(
     db: &C,
@@ -1204,6 +1210,61 @@ pub async fn find_active<C: ConnectionTrait>(
         .order_by_desc(agent_memories::Column::CreatedAt)
         .one(db)
         .await?)
+}
+
+/// A person's active rows from one source, freshest first.
+pub async fn source_rows<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    source: &str,
+    limit: u64,
+) -> Result<Vec<agent_memories::Model>, DbErr> {
+    agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::Source.eq(source))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .order_by_desc(agent_memories::Column::UpdatedAt)
+        .limit(limit)
+        .all(db)
+        .await
+}
+
+/// It came up again: keep it fresh.
+pub async fn refresh<C: ConnectionTrait>(db: &C, user_id: i32, id: &str) -> Result<bool, DbErr> {
+    let now = Utc::now().fixed_offset();
+    let result = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Id.eq(id))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected > 0)
+}
+
+/// Rows from `source` that have not come up again for `older_than` fade.
+pub async fn fade_source<C: ConnectionTrait>(
+    db: &C,
+    source: &str,
+    older_than: chrono::Duration,
+) -> Result<u64, DbErr> {
+    let now = Utc::now().fixed_offset();
+    Ok(agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            invalid_at: Set(Some(now)),
+            invalid_reason: Set(Some("faded".into())),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::Source.eq(source))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::UpdatedAt.lt(now - older_than))
+        .exec(db)
+        .await?
+        .rows_affected)
 }
 
 /// Retire something of her own (a view she no longer holds). Kept, not

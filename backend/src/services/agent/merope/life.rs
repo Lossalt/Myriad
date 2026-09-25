@@ -32,6 +32,10 @@ const CONCEPTS_SCHEMA: &str = "merope_memory_concepts";
 const FILL_PER_PERSON: u64 = 20;
 const FILL_PEOPLE: u64 = 10;
 const MAX_DAY_CHARS: usize = 300;
+/// The day whose bits were last gone over, so a night does it once.
+static BITS_DONE: std::sync::LazyLock<std::sync::Mutex<Option<NaiveDate>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
 /// Days a missed night can still be written for.
 const BACKFILL_DAYS: u64 = 3;
 
@@ -67,6 +71,18 @@ pub async fn tick(db: DatabaseConnection) {
         }
     }
     super::views::go_over(&db, owner).await;
+    // Yesterday with each person, once a night.
+    if let Some((start, end)) = now.date_naive().pred_opt().and_then(day_bounds) {
+        if BITS_DONE
+            .lock()
+            .is_ok_and(|done| *done != Some(start.date_naive()))
+        {
+            if let Ok(mut done) = BITS_DONE.lock() {
+                *done = Some(start.date_naive());
+            }
+            super::bits::go_over(&db, owner, start, end).await;
+        }
+    }
     super::views::let_fade(&db).await;
     fill_old_concepts(&db, owner).await;
 }

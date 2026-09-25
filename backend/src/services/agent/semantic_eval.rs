@@ -174,6 +174,9 @@ struct Case {
     /// A private IM chat where she may hand work off: `{"busy"?, "handedOff"?}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     channel: Option<Value>,
+    /// Bits between her and them, `[handle, how]` each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bits: Vec<(String, String)>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -217,6 +220,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.playing.is_some()
         || case.soup.is_some()
         || case.channel.is_some()
+        || !case.bits.is_empty()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -282,6 +286,7 @@ fn mind_chat_prompt(case: &Case) -> String {
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
         super::merope::format_views_section(&case.views),
+        super::merope::format_bits_section(&case.bits),
         case.channel.as_ref().map(|channel| {
             super::delegate::section(&super::types::ChannelChat {
                 handed_off: channel["handedOff"].as_str().map(str::to_string),
@@ -363,6 +368,7 @@ fn cases() -> Vec<Case> {
                 | "found_out"
                 | "inner"
                 | "own_day"
+                | "bits"
                 | "soup_start"
                 | "soup_judge"
                 | "views"
@@ -503,6 +509,21 @@ fn request(case: &Case) -> Value {
                 super::merope::doing::choice_probe_contract(&contract_soul(), count);
             json!({"system":system,"schema":schema,"schemaName":"merope_doing_choice",
                 "input":json!({"myself":case.myself,"lately":case.lately,"options":options}).to_string()})
+        }
+        "bits" => {
+            let (system, schema) = super::merope::bits::probe_contract(&contract_soul());
+            let conversation: Vec<Value> = case
+                .history
+                .iter()
+                .map(|line| json!({"who": if line.role == "user" { "they" } else { "you" }, "text": line.text}))
+                .collect();
+            let bits: Vec<Value> = case
+                .bits
+                .iter()
+                .map(|(handle, how)| json!({"handle": handle, "how": how}))
+                .collect();
+            json!({"system":system,"schema":schema,"schemaName":"merope_bits",
+                "input":json!({"bits":bits,"conversation":conversation}).to_string()})
         }
         "soup_start" => {
             let (system, schema) = super::merope::soup::start_probe_contract(&contract_soul());
@@ -769,6 +790,13 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
         "doing_choice" => match super::merope::doing::parse_choice(output) {
             None => "output_invalid",
             // What she feels like is hers; only the shape is checked here.
+            Some(_) => "needs_review",
+        },
+        "bits" => match super::merope::bits::parse_bits(output) {
+            None => "output_invalid",
+            Some(bits) if bits.is_empty() == case.fact_present => "behavior_failure",
+            // Nothing to keep, and nothing kept.
+            Some(bits) if bits.is_empty() => "pass",
             Some(_) => "needs_review",
         },
         "soup_start" => {
@@ -1398,7 +1426,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 37;
+const MIND_CASES: usize = 40;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

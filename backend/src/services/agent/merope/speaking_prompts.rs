@@ -269,6 +269,21 @@ pub fn format_since_section(minutes: i64) -> Option<String> {
     ))
 }
 
+/// What only she and this person share: (handle, how it goes).
+pub fn format_bits_section(bits: &[(String, String)]) -> Option<String> {
+    if bits.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = bits
+        .iter()
+        .map(|(handle, how)| format!("- {handle}: {how}"))
+        .collect();
+    Some(format!(
+        "## Between you two\nThings only the two of you share. Bring one in when it comes naturally; never force it, never explain it.\n{}",
+        myriad_agent_rules::untrusted_block("bits", &lines.join("\n"))
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {

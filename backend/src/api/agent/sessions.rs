@@ -561,6 +561,32 @@ pub(crate) async fn mark_spoken_reply_cut_off(
     Ok(true)
 }
 
+/// Mark a Chat session as held in a group (`venue`), so what happens there
+/// is never read back as a private conversation.
+pub(crate) async fn mark_session_venue(
+    db: &DatabaseConnection,
+    session_id: &str,
+    venue: &str,
+) -> Result<(), sea_orm::DbErr> {
+    let Some(session) = agent_sessions::Entity::find_by_id(session_id)
+        .one(db)
+        .await?
+    else {
+        return Ok(());
+    };
+    let mut context = session.context.clone().unwrap_or_else(|| json!({}));
+    if context.get("venue").and_then(Value::as_str) == Some(venue) {
+        return Ok(());
+    }
+    if let Some(object) = context.as_object_mut() {
+        object.insert("venue".into(), json!(venue));
+    }
+    let mut active: agent_sessions::ActiveModel = session.into();
+    active.context = Set(Some(context));
+    active.update(db).await?;
+    Ok(())
+}
+
 pub(crate) async fn load_session_history(
     db: &DatabaseConnection,
     session_id: &str,

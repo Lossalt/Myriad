@@ -1,6 +1,7 @@
 //! Merope: site persona, per-addressee state, hidden proactive speech.
 
 mod appraisal;
+pub mod bits;
 pub mod chat_remember;
 pub mod curiosity;
 pub mod doing;
@@ -329,12 +330,12 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 }
 
 pub use speaking_prompts::{
-    addressee_speaking_section, format_activity_section, format_brought_to_mind_section,
-    format_curious_section, format_doing_section, format_emotion_section, format_found_out_section,
-    format_inner_moment_ago_section, format_mood_section, format_on_your_mind_section,
-    format_own_days_section, format_persona, format_playing_section, format_recent_section,
-    format_remembered_section, format_since_section, format_views_section, group_speaking_section,
-    guest_speaking_section, mood_tone_instruction,
+    addressee_speaking_section, format_activity_section, format_bits_section,
+    format_brought_to_mind_section, format_curious_section, format_doing_section,
+    format_emotion_section, format_found_out_section, format_inner_moment_ago_section,
+    format_mood_section, format_on_your_mind_section, format_own_days_section, format_persona,
+    format_playing_section, format_recent_section, format_remembered_section, format_since_section,
+    format_views_section, group_speaking_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -441,6 +442,8 @@ const DOING_RECENT: usize = 3;
 const DOING_RELATED: usize = 2;
 /// Views of her own their words touch.
 const VIEWS_LIMIT: usize = 2;
+/// Bits between her and them, freshest first.
+const BITS_LIMIT: u64 = 3;
 /// Her own unprompted lines a chat turn should know it said.
 const SAID_UNPROMPTED_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
@@ -659,6 +662,13 @@ async fn speaking_prompt_from_db(
         let now = doing::current().map(|doing| doing::now_line(&doing, chrono::Utc::now()));
         if let Some(block) = format_doing_section(now.as_deref(), &lately) {
             sections.push(block);
+        }
+        // What only she and this person share: private, never in a group.
+        if !group {
+            if let Some(block) = format_bits_section(&bits::between(db, user_id, BITS_LIMIT).await)
+            {
+                sections.push(block);
+            }
         }
         // What she thinks of what their words touch: hers, the same whoever asks.
         if let Some(words) = words {

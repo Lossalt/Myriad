@@ -279,6 +279,13 @@ async fn run_turn(
     if let Ok(mut sessions) = SESSIONS.lock() {
         sessions.insert(key, session_id.clone());
     }
+    // A group session is never read back as a private conversation.
+    let venue = format!("telegram:{}", message.chat_id);
+    if known.as_deref() != Some(session_id.as_str()) {
+        if let Err(error) = crate::api::agent::mark_session_venue(db, &session_id, &venue).await {
+            warn!(%error, "[Telegram group] could not mark the session as a group's");
+        }
+    }
     let run = crate::api::agent::start_process_run(
         db.clone(),
         claims,
@@ -288,7 +295,7 @@ async fn run_turn(
                 mode: Some(AgentInteractionMode::Chat),
                 session_id: Some(session_id),
                 group: Some(crate::api::agent::GroupTurn {
-                    venue: format!("telegram:{}", message.chat_id),
+                    venue,
                     transcript: transcript(message.chat_id, message.message_id),
                 }),
                 ..Default::default()
