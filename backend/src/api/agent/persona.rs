@@ -474,6 +474,7 @@ pub async fn delete_persona(
         .await
         .map_err(|error| persona_store_http("commit persona delete", error))?;
     merope_rig::mirror_active_asset(cleared_asset).await;
+    merope::forget_in_memory();
     Ok(Json(json!({ "ok": true })))
 }
 

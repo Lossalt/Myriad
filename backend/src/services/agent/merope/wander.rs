@@ -51,6 +51,13 @@ struct Wandering {
 static WANDERING: LazyLock<Mutex<HashMap<i32, Wandering>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// A new persona has had no thoughts yet.
+pub(super) fn forget() {
+    if let Ok(mut wandering) = WANDERING.lock() {
+        wandering.clear();
+    }
+}
+
 /// Whether it has been quiet long enough, since they spoke, since she last
 /// spoke up and since her last thought, for her mind to drift to them.
 fn quiet_enough(

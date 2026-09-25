@@ -87,6 +87,16 @@ fn key_of(request: &UserRequest) -> Option<Key> {
     Some((request.user_id, session))
 }
 
+/// A new persona hosts no game she did not start.
+pub(super) fn forget() {
+    if let Ok(mut games) = GAMES.lock() {
+        games.clear();
+    }
+    if let Ok(mut recent) = RECENT_SURFACES.lock() {
+        recent.clear();
+    }
+}
+
 /// Take her start marker out of a reply: the text without it, and whether
 /// she started a game.
 pub fn split_start(raw: &str) -> (String, bool) {

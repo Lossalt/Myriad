@@ -22,6 +22,13 @@ static HELD: LazyLock<Mutex<HashMap<i32, (Instant, Priming)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The priming left by this person's last turn, if the talk is still warm.
+/// A new persona has nothing on her mind from before.
+pub(super) fn forget() {
+    if let Ok(mut held) = HELD.lock() {
+        held.clear();
+    }
+}
+
 pub fn current(user_id: i32) -> Priming {
     let Ok(held) = HELD.lock() else {
         return Priming::default();

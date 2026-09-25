@@ -335,9 +335,13 @@ impl Agent {
             .await
         };
         let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(&sections);
-        if request.context.as_ref().is_some_and(|context| {
-            context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
-        }) {
+        // A group has no wardrobe of hers to change and no player of theirs to
+        // run: those sections are for a private chat.
+        if venue.is_none()
+            && request.context.as_ref().is_some_and(|context| {
+                context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
+            })
+        {
             let session_id = request
                 .context
                 .as_ref()
@@ -364,7 +368,6 @@ impl Agent {
             let mut player = crate::services::agent::chat_music::format_chat_player_section(music);
             if let Some(line) = crate::services::agent::merope::doing::current()
                 .and_then(|doing| crate::services::agent::merope::doing::player_line(&doing, music))
-                .filter(|_| venue.is_none())
             {
                 player.push('\n');
                 player.push_str(line);

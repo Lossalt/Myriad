@@ -520,6 +520,18 @@ pub fn portrait_generation_is_pending(value: Option<&Value>) -> bool {
         .is_some_and(|token| !token.is_empty())
 }
 
+/// Memory sources that belong to the persona, not to Work.
+pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 8] = [
+    "chat",
+    "event",
+    "narrative",
+    "lookup",
+    crate::services::agent::memory::unified::OWN_EXPERIENCE,
+    crate::services::agent::memory::unified::OWN_VIEW,
+    "presence",
+    "game",
+];
+
 pub async fn clear_persona_on<C>(db: &C) -> Result<(), anyhow::Error>
 where
     C: ConnectionTrait,
@@ -528,18 +540,20 @@ where
         .exec(db)
         .await?;
     agent_diary::Entity::delete_many().exec(db).await?;
-    // What the persona learned in conversation, and her own days, go with
-    // her; Work lessons stay.
-    crate::models::entities::agent_memories::Entity::delete_many()
-        .filter(
-            crate::models::entities::agent_memories::Column::Source.is_in([
-                "chat",
-                "event",
-                "narrative",
-            ]),
-        )
-        .exec(db)
-        .await?;
+    // Everything the persona learned or lived goes with her: what she heard
+    // in conversation, what she looked up, played, saw them play, her days,
+    // what she did on her own and her views. Work lessons stay.
+    {
+        use crate::models::entities::agent_memories::Column;
+        crate::models::entities::agent_memories::Entity::delete_many()
+            .filter(
+                sea_orm::Condition::any()
+                    .add(Column::Source.is_in(PERSONA_MEMORY_SOURCES))
+                    .add(Column::Venue.eq(crate::services::agent::memory::unified::OWN_VENUE)),
+            )
+            .exec(db)
+            .await?;
+    }
     agent_addressee_state::Entity::delete_many()
         .exec(db)
         .await?;
@@ -1854,5 +1868,40 @@ mod tests {
             .unwrap()
         );
         transaction.rollback().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod persona_sources_tests {
+    use super::PERSONA_MEMORY_SOURCES;
+
+    /// Deleting the persona must take everything she learned or lived: a
+    /// source a persona module writes but this list misses would survive
+    /// into the next persona as if it were hers.
+    #[test]
+    fn every_source_the_persona_writes_goes_with_her() {
+        let writers = [
+            include_str!("curiosity.rs"),
+            include_str!("playing.rs"),
+            include_str!("soup.rs"),
+            include_str!("chat_remember.rs"),
+        ];
+        for source in writers.iter().flat_map(|code| {
+            code.match_indices("source: \"")
+                .map(|(at, _)| {
+                    let rest = &code[at + "source: \"".len()..];
+                    &rest[..rest.find('"').unwrap_or(0)]
+                })
+                .collect::<Vec<_>>()
+        }) {
+            assert!(
+                PERSONA_MEMORY_SOURCES.contains(&source),
+                "persona source {source:?} would survive deleting her"
+            );
+        }
+        assert!(
+            !PERSONA_MEMORY_SOURCES.contains(&"work"),
+            "Work lessons stay"
+        );
     }
 }

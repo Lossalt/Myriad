@@ -177,6 +177,17 @@ pub async fn note_user_turn(
     Some((transition, saved.last_user_message_at?))
 }
 
+/// After the persona is deleted: nothing of her stays in memory either, so
+/// the next one does not carry on her song, game, state or thoughts.
+pub fn forget_in_memory() {
+    doing::forget();
+    soup::forget();
+    inner::forget();
+    views::forget();
+    priming::forget();
+    wander::forget();
+}
+
 /// After a chat reply, let her state catch up with the exchange; the next
 /// turn starts from it without waiting.
 pub fn spawn_inner_after(

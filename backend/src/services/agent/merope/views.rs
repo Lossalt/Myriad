@@ -97,6 +97,13 @@ fn same_subject(a: &str, b: &str) -> bool {
     a == b || (shorter >= 2 && (a.contains(&b) || b.contains(&a)))
 }
 
+/// A new persona has not gone over anything yet.
+pub(super) fn forget() {
+    if let Ok(mut done) = DONE_ON.lock() {
+        *done = None;
+    }
+}
+
 /// Go over her own time and let views grow or change. Once a night, and only
 /// when she has done something since she last did.
 pub async fn go_over(db: &DatabaseConnection, owner: i32) {

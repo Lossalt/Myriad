@@ -43,6 +43,13 @@ fn key(user_id: i32, present: &Audience) -> Key {
     (user_id, present.venue())
 }
 
+/// A new persona is in no state a former one was left in.
+pub(super) fn forget() {
+    if let Ok(mut after) = AFTER.lock() {
+        after.clear();
+    }
+}
+
 /// The state each person's last exchange left her in, and when.
 static AFTER: LazyLock<Mutex<HashMap<Key, (String, Instant)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
