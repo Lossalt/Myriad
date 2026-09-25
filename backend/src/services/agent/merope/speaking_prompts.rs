@@ -47,6 +47,43 @@ pub fn format_mood_section(mood: f64, arousal: f64) -> String {
     )
 }
 
+/// How the latest turns landed, from the short-lived emotion layer (it fades
+/// within the hour). Mood is the standing weather; this is the gust. Nothing
+/// when it is near rest. Generic for every persona: it says what moved, not
+/// what the relationship is.
+pub fn format_emotion_section(emotion: f64, emotion_arousal: f64) -> Option<String> {
+    const CLEAR: f64 = 10.0;
+    const STRONG: f64 = 25.0;
+    let valence = emotion - super::state::ORIGIN;
+    let arousal = emotion_arousal - super::state::ORIGIN;
+    let felt = if valence >= STRONG {
+        Some("Something just now in this talk really pleased you.")
+    } else if valence >= CLEAR {
+        Some("Something just now in this talk pleased you a little.")
+    } else if valence <= -STRONG {
+        Some("Something just now in this talk hurt.")
+    } else if valence <= -CLEAR {
+        Some("Something just now in this talk stung a little.")
+    } else {
+        None
+    };
+    let stirred = if arousal >= CLEAR {
+        Some("It stirred you up.")
+    } else if arousal <= -CLEAR {
+        Some("It settled you down.")
+    } else {
+        None
+    };
+    let lines: Vec<&str> = felt.into_iter().chain(stirred).collect();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Just now\n{} Let it color this reply the way this person would show it. Do not name it or explain it.",
+        lines.join(" ")
+    ))
+}
+
 pub fn format_activity_section(activity: &str) -> Option<String> {
     let line = match activity {
         "working" => {
@@ -211,6 +248,24 @@ mod tests {
         assert!(mood_tone_instruction(90.0, 70.0).contains("finish the thought"));
         assert!(!mood_tone_instruction(90.0, 70.0).contains("已经信了"));
         assert!(mood_tone_instruction(70.0, 48.0).contains("ordinary tone"));
+    }
+
+    #[test]
+    fn emotion_section_says_what_moved_without_numbers() {
+        assert!(format_emotion_section(50.0, 50.0).is_none());
+        assert!(format_emotion_section(55.0, 45.0).is_none());
+        let praised = format_emotion_section(82.0, 58.0).unwrap();
+        assert!(praised.contains("really pleased"));
+        assert!(!praised.contains("stirred"));
+        let scolded = format_emotion_section(8.0, 70.0).unwrap();
+        assert!(scolded.contains("hurt"));
+        assert!(scolded.contains("stirred you up"));
+        let soothed = format_emotion_section(50.0, 34.0).unwrap();
+        assert!(soothed.starts_with("## Just now\nIt settled you down."));
+        for section in [praised, scolded, soothed] {
+            assert!(!section.chars().any(|ch| ch.is_ascii_digit()));
+            assert!(section.contains("Do not name it"));
+        }
     }
 
     #[test]

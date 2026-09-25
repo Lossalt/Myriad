@@ -256,9 +256,9 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 }
 
 pub use speaking_prompts::{
-    addressee_speaking_section, format_activity_section, format_mood_section, format_persona,
-    format_recent_section, format_remembered_section, guest_speaking_section,
-    mood_tone_instruction,
+    addressee_speaking_section, format_activity_section, format_emotion_section,
+    format_mood_section, format_persona, format_recent_section, format_remembered_section,
+    guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -347,6 +347,9 @@ async fn speaking_prompt_from_db(
         sections.push(block);
     }
     sections.push(format_mood_section(state.mood, state.arousal));
+    if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
+        sections.push(block);
+    }
     sections
 }
 
