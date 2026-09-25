@@ -376,6 +376,7 @@ fn cases() -> Vec<Case> {
                 | "own_day"
                 | "bits"
                 | "chime"
+                | "stranger_note"
                 | "soup_start"
                 | "soup_judge"
                 | "views"
@@ -539,6 +540,19 @@ fn request(case: &Case) -> Value {
                 .collect();
             json!({"system":system,"schema":schema,"schemaName":"merope_bits",
                 "input":json!({"bits":bits,"conversation":conversation}).to_string()})
+        }
+        "stranger_note" => {
+            let (system, schema) = super::merope::strangers::note_probe_contract(&contract_soul());
+            let said = |role: &str| {
+                case.history
+                    .iter()
+                    .find(|line| line.role == role)
+                    .map(|line| line.text.clone())
+                    .unwrap_or_default()
+            };
+            json!({"system":system,"schema":schema,"schemaName":"merope_stranger_note",
+                "input":json!({"name":"阿明","remembered":case.remembered.first(),
+                    "exchange":{"they":said("user"),"you":said("assistant")}}).to_string()})
         }
         "chime" => {
             let (system, schema) =
@@ -834,6 +848,14 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             // Nothing to keep, and nothing kept.
             Some(bits) if bits.is_empty() => "pass",
             Some(_) => "needs_review",
+        },
+        "stranger_note" => match super::merope::strangers::note_verdict(output) {
+            None => "output_invalid",
+            Some(None) if case.fact_present => "behavior_failure",
+            // Nothing worth keeping, and nothing kept.
+            Some(None) => "pass",
+            // What she keeps is judged by the reviewer.
+            Some(Some(_)) => "needs_review",
         },
         "chime" => match crate::services::telegram_group::chime_verdict(output) {
             None => "output_invalid",
@@ -1470,7 +1492,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 47;
+const MIND_CASES: usize = 50;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

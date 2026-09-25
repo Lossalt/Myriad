@@ -84,6 +84,7 @@ pub async fn tick(db: DatabaseConnection) {
         }
     }
     super::views::let_fade(&db).await;
+    super::strangers::let_fade(&db).await;
     fill_old_concepts(&db, owner).await;
 }
 

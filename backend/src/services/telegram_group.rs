@@ -1,19 +1,24 @@
 //! The persona in Telegram groups: the community's first shared venue.
 //!
-//! She answers a group line only when it speaks to her (an @mention, a
-//! mention of her, a command aimed at her, or a reply to her message), and
-//! only when the sender is a paired site user — a member of the community.
-//! Anyone else is silently left alone; groups get no pairing prompts.
+//! She answers a group line when it speaks to her (an @mention, a mention of
+//! her, a command aimed at her, or a reply to her message). Groups get no
+//! pairing prompts.
 //!
-//! The turn is a Chat turn under the sender's own account (their quota), in a
-//! group venue: people outside the community may be reading, so she draws
-//! only on what this group has heard, never anyone's private matters (see
-//! `memory::unified::Audience::group`). The group's recent lines, other
+//! For a member of the community (a paired site user) the turn is a Chat
+//! turn under their own account (their quota), in a group venue: people
+//! outside the community may be reading, so she draws only on what this group
+//! has heard, never anyone's private matters (see
+//! `memory::unified::Audience::group`). Anyone else she answers lightly, with
+//! far less context and only a small note on those she keeps running into
+//! (see `merope::strangers`); the site's owner hosts her there and pays, up to
+//! a daily number of such replies per group. The group's recent lines, other
 //! people's included, are the conversation she answers in; they are untrusted.
 //!
 //! A group gets one turn at a time and a short pause between replies, so a
-//! busy group cannot crowd out everyone else. Delivery is best effort: a
-//! restart mid-turn loses that reply, which is acceptable for chat.
+//! busy group cannot crowd out everyone else. A line that speaks to her while
+//! she is busy waits: when she is done she answers the latest one waiting.
+//! Delivery is best effort: a restart mid-turn loses that reply, which is
+//! acceptable for chat.
 //!
 //! Now and then she joins in without being addressed, as a person in a group
 //! does: when the talk is lively and she has something real to add. Cheap
@@ -53,6 +58,8 @@ const CHIME_LOOK_EVERY: Duration = Duration::from_secs(2 * 60);
 const LIVELY_WINDOW: Duration = Duration::from_secs(10 * 60);
 const LIVELY_LINES: usize = 3;
 const CHIME_SCHEMA: &str = "merope_group_chime";
+/// Replies a day to people outside the community, per group.
+const STRANGER_REPLIES_PER_DAY: u32 = 60;
 
 /// Longest she takes over one group reply before giving up on it.
 const TURN_DEADLINE: Duration = Duration::from_secs(90);
@@ -76,6 +83,30 @@ struct Group {
     /// Chime-ins today: the day, and how many.
     chimes: Option<(chrono::NaiveDate, u32)>,
     last_look: Option<Instant>,
+    /// The latest line that spoke to her while she was busy.
+    waiting: Option<TelegramGroupMessage>,
+    /// Replies today to people outside the community: the day, and how many.
+    stranger_replies: Option<(chrono::NaiveDate, u32)>,
+}
+
+enum Turn {
+    Began,
+    Busy,
+    Resting(Duration),
+}
+
+/// Count one more of today's, unless `limit` is reached.
+fn count_today(slot: &mut Option<(chrono::NaiveDate, u32)>, limit: u32) -> bool {
+    let today = chrono::Local::now().date_naive();
+    let count = match *slot {
+        Some((day, count)) if day == today => count,
+        _ => 0,
+    };
+    if count >= limit {
+        return false;
+    }
+    *slot = Some((today, count + 1));
+    true
 }
 
 static GROUPS: LazyLock<Mutex<HashMap<i64, Group>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -163,18 +194,23 @@ fn transcript(chat_id: i64, message_id: i64) -> Vec<ConversationMessage> {
 }
 
 /// Take the group's single turn, if it is free and not just replied in.
-fn begin_turn(chat_id: i64) -> bool {
-    with_group(chat_id, |group| {
-        let resting = group
-            .last_reply
-            .is_some_and(|at| at.elapsed() < GROUP_PAUSE);
-        if group.busy || resting {
-            return false;
-        }
-        group.busy = true;
-        true
-    })
-    .unwrap_or(false)
+fn begin_turn(chat_id: i64) -> Turn {
+    with_group(chat_id, begin).unwrap_or(Turn::Busy)
+}
+
+fn begin(group: &mut Group) -> Turn {
+    if group.busy {
+        return Turn::Busy;
+    }
+    if let Some(rest) = group
+        .last_reply
+        .and_then(|at| GROUP_PAUSE.checked_sub(at.elapsed()))
+        .filter(|rest| !rest.is_zero())
+    {
+        return Turn::Resting(rest);
+    }
+    group.busy = true;
+    Turn::Began
 }
 
 fn end_turn(chat_id: i64, replied: bool) {
@@ -186,18 +222,60 @@ fn end_turn(chat_id: i64, replied: bool) {
     });
 }
 
-/// Answer one group line that spoke to her.
-pub async fn handle(message: TelegramGroupMessage, token: String) {
+/// Answer one group line that spoke to her: now, or when she is done with
+/// the one on hand.
+pub async fn handle(mut message: TelegramGroupMessage, token: String) {
     let chat_id = message.chat_id;
-    if !begin_turn(chat_id) {
-        info!(
-            chat_id,
-            "[Telegram group] busy or resting; line left unanswered"
-        );
-        return;
+    loop {
+        // Busy or not is decided under the same lock that parks the line, so
+        // the turn on hand cannot end without seeing it.
+        let turn = with_group(chat_id, |group| {
+            let turn = begin(group);
+            if matches!(turn, Turn::Busy) {
+                group.waiting = Some(message.clone());
+            }
+            turn
+        })
+        .unwrap_or(Turn::Busy);
+        match turn {
+            Turn::Began => break,
+            Turn::Resting(rest) => tokio::time::sleep(rest).await,
+            Turn::Busy => {
+                info!(chat_id, "[Telegram group] busy; the line waits for her");
+                return;
+            }
+        }
     }
-    let replied = answer(&message, &token, None).await;
+    loop {
+        let replied = answer(&message, &token, None).await;
+        match finish_turn(chat_id, replied).await {
+            Some(next) => message = next,
+            None => return,
+        }
+    }
+}
+
+/// End the turn; if a line waited meanwhile, take the turn again for it
+/// after the pause.
+async fn finish_turn(chat_id: i64, replied: bool) -> Option<TelegramGroupMessage> {
     end_turn(chat_id, replied);
+    with_group(chat_id, |group| group.waiting.is_some()).filter(|waiting| *waiting)?;
+    if replied {
+        tokio::time::sleep(GROUP_PAUSE).await;
+    }
+    loop {
+        match begin_turn(chat_id) {
+            Turn::Began => break,
+            Turn::Resting(rest) => tokio::time::sleep(rest).await,
+            // Someone else took the turn; they will find the line waiting.
+            Turn::Busy => return None,
+        }
+    }
+    let next = with_group(chat_id, |group| group.waiting.take()).flatten();
+    if next.is_none() {
+        end_turn(chat_id, false);
+    }
+    next
 }
 
 /// Whether a line nobody addressed to her is worth a look: the cheap gates
@@ -240,7 +318,7 @@ pub async fn consider(message: TelegramGroupMessage, token: String) {
         return;
     };
     let chat_id = message.chat_id;
-    if !begin_turn(chat_id) {
+    if !matches!(begin_turn(chat_id), Turn::Began) {
         return;
     }
     let replied = answer(&message, &token, Some(why)).await;
@@ -254,7 +332,11 @@ pub async fn consider(message: TelegramGroupMessage, token: String) {
         });
         info!(chat_id, "[Telegram group] she chimed in");
     }
-    end_turn(chat_id, replied);
+    let mut next = finish_turn(chat_id, replied).await;
+    while let Some(message) = next {
+        let replied = answer(&message, &token, None).await;
+        next = finish_turn(chat_id, replied).await;
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -395,11 +477,12 @@ async fn answer(message: &TelegramGroupMessage, token: &str, chime: Option<Strin
         return false;
     }
     let sender = message.from_id.to_string();
-    // Only the community is answered; everyone else is left alone, quietly.
-    let Ok(PairingLookup::Paired { user_id }) =
-        crate::services::telegram_pairing::lookup_openid(&db, &sender).await
-    else {
-        return false;
+    let user_id = match crate::services::telegram_pairing::lookup_openid(&db, &sender).await {
+        Ok(PairingLookup::Paired { user_id }) => user_id,
+        // Someone from outside the community: answered lightly. Never a
+        // chime-in, which is only for the community.
+        Ok(_) if chime.is_none() => return answer_stranger(&db, message, token).await,
+        _ => return false,
     };
     let Some(binding) = current_binding(&db, user_id, &sender).await else {
         return false;
@@ -438,6 +521,89 @@ async fn answer(message: &TelegramGroupMessage, token: &str, chime: Option<Strin
     }
     if sent {
         record_hers(message.chat_id, &reply);
+    }
+    sent
+}
+
+/// Answer someone from outside the community, with little context, on the
+/// site owner's budget.
+async fn answer_stranger(
+    db: &DatabaseConnection,
+    message: &TelegramGroupMessage,
+    token: &str,
+) -> bool {
+    let within = with_group(message.chat_id, |group| {
+        count_today(&mut group.stranger_replies, STRANGER_REPLIES_PER_DAY)
+    })
+    .unwrap_or(false);
+    if !within {
+        info!(
+            chat_id = message.chat_id,
+            "[Telegram group] enough replies to outsiders today"
+        );
+        return false;
+    }
+    let Ok(owner) = crate::services::site_owner::site_owner_user_id(db).await else {
+        return false;
+    };
+    let venue = format!("telegram:{}", message.chat_id);
+    let stranger = crate::services::agent::merope::strangers::Stranger {
+        who: format!("telegram:{}", message.from_id),
+        name: message.display_name.chars().take(40).collect(),
+    };
+    let chat = message.chat_id.to_string();
+    let _ = crate::services::telegram_bot::send_typing(token, &chat).await;
+    let transcript = transcript(message.chat_id, message.message_id);
+    let Ok(Some(reply)) = tokio::time::timeout(
+        TURN_DEADLINE,
+        crate::services::agent::merope::strangers::reply(
+            db,
+            owner,
+            &venue,
+            &stranger,
+            &transcript,
+            &message.text,
+        ),
+    )
+    .await
+    else {
+        return false;
+    };
+    let mut sent = false;
+    for chunk in myriad_agent_rules::channel::split_channel_text(
+        &reply,
+        myriad_agent_rules::channel::TELEGRAM_TEXT_LIMIT,
+    ) {
+        match crate::services::telegram_bot::send_group_reply(
+            token,
+            message.chat_id,
+            &chunk,
+            message.message_id,
+            message.message_thread_id,
+        )
+        .await
+        {
+            Ok(()) => sent = true,
+            Err(kind) => {
+                warn!(
+                    ?kind,
+                    chat_id = message.chat_id,
+                    "[Telegram group] reply not sent"
+                );
+                break;
+            }
+        }
+    }
+    if sent {
+        record_hers(message.chat_id, &reply);
+        crate::services::agent::merope::strangers::spawn_after(
+            db.clone(),
+            owner,
+            venue,
+            stranger,
+            message.text.clone(),
+            reply,
+        );
     }
     sent
 }
@@ -577,14 +743,20 @@ mod tests {
     #[test]
     fn a_group_gets_one_turn_at_a_time_and_a_pause_after_replying() {
         let chat = -9_002;
-        assert!(begin_turn(chat));
-        assert!(!begin_turn(chat), "one turn at a time");
+        assert!(matches!(begin_turn(chat), Turn::Began));
+        assert!(matches!(begin_turn(chat), Turn::Busy), "one turn at a time");
         end_turn(chat, true);
-        assert!(!begin_turn(chat), "a short pause after a reply");
+        assert!(
+            matches!(begin_turn(chat), Turn::Resting(_)),
+            "a short pause after a reply"
+        );
         let other = -9_003;
-        assert!(begin_turn(other));
+        assert!(matches!(begin_turn(other), Turn::Began));
         end_turn(other, false);
-        assert!(begin_turn(other), "no reply, no pause");
+        assert!(
+            matches!(begin_turn(other), Turn::Began),
+            "no reply, no pause"
+        );
         end_turn(other, false);
     }
 
@@ -621,6 +793,23 @@ mod tests {
         assert_eq!(parse_chime(r#"{"chime":true,"why":"  "}"#), Some(None));
         assert_eq!(parse_chime(r#"{"chime":false,"why":null}"#), Some(None));
         assert_eq!(parse_chime("嗯"), None);
+    }
+
+    #[test]
+    fn a_line_that_comes_while_she_is_busy_waits_for_her() {
+        let chat = -9_007;
+        assert!(matches!(begin_turn(chat), Turn::Began));
+        assert!(matches!(begin_turn(chat), Turn::Busy));
+        with_group(chat, |group| {
+            group.waiting = Some(line(chat, 5, "阿明", "@她 在吗"))
+        });
+        end_turn(chat, true);
+        assert!(matches!(begin_turn(chat), Turn::Resting(_)));
+        let mut today = None;
+        for _ in 0..3 {
+            assert!(count_today(&mut today, 3));
+        }
+        assert!(!count_today(&mut today, 3));
     }
 
     #[test]

@@ -356,14 +356,16 @@ async fn rows_for<C: ConnectionTrait>(
     Ok(rows
         .into_iter()
         .filter(|row| admits(row, present))
-        // What only the two of them share has its own place in her mind.
-        .filter(|row| row.source != KEPT_APART)
+        // What only the two of them share, and her notes on people from
+        // outside, have their own place in her mind.
+        .filter(|row| !KEPT_APART.contains(&row.source.as_str()))
         .collect())
 }
 
-/// Source of rows recalled on their own, not with ordinary memories: bits
-/// (see `merope::bits`).
-const KEPT_APART: &str = "bit";
+/// Sources of rows recalled on their own, not with ordinary memories: bits
+/// (see `merope::bits`) and notes on people outside the community (see
+/// `merope::strangers`).
+const KEPT_APART: [&str; 2] = ["bit", "stranger"];
 
 async fn active_rows<C: ConnectionTrait>(
     db: &C,
@@ -1119,6 +1121,92 @@ pub async fn remember_own<C: ConnectionTrait>(
         .exec_without_returning(db)
         .await?;
     Ok(Some(id))
+}
+
+/// Something she keeps about no account, in one group (`group:<id>`): a
+/// note on someone there from outside the community. Heard only there.
+pub async fn remember_in_venue<C: ConnectionTrait>(
+    db: &C,
+    venue: &str,
+    content: &str,
+    evidence: &str,
+    source: &'static str,
+) -> Result<Option<String>, DbErr> {
+    let content = normalize_content(content);
+    if content.is_empty() || !venue.starts_with("group:") {
+        return Ok(None);
+    }
+    let now = Utc::now().fixed_offset();
+    let id = format!("grp_{}", uuid::Uuid::new_v4().simple());
+    let row = agent_memories::ActiveModel {
+        id: Set(id.clone()),
+        user_id: Set(None),
+        kind: Set(MemoryKind::Fact.as_str().into()),
+        content: Set(content),
+        evidence: Set(Some(evidence.chars().take(MAX_CONTENT_CHARS).collect())),
+        speaker: Set(Speaker::Agent.as_str().into()),
+        source: Set(source.into()),
+        venue: Set(venue.chars().take(MAX_VENUE_CHARS).collect()),
+        audience: Set(json!([])),
+        concepts: Set(json!([])),
+        importance: Set(0.4),
+        access_count: Set(0),
+        last_accessed_at: Set(None),
+        valid_from: Set(now),
+        invalid_at: Set(None),
+        invalid_reason: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+    agent_memories::Entity::insert(row)
+        .exec_without_returning(db)
+        .await?;
+    Ok(Some(id))
+}
+
+/// It came up again: keep a row of no account's fresh, in its venue.
+pub async fn refresh_unowned<C: ConnectionTrait>(
+    db: &C,
+    venue: &str,
+    id: &str,
+) -> Result<bool, DbErr> {
+    let now = Utc::now().fixed_offset();
+    let result = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(venue))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Id.eq(id))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected > 0)
+}
+
+/// Retire a row of no account's, in its venue.
+pub async fn retire_unowned<C: ConnectionTrait>(
+    db: &C,
+    venue: &str,
+    id: &str,
+    reason: &str,
+) -> Result<bool, DbErr> {
+    let now = Utc::now().fixed_offset();
+    let result = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            invalid_at: Set(Some(now)),
+            invalid_reason: Set(Some(reason.chars().take(16).collect())),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(venue))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Id.eq(id))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected > 0)
 }
 
 /// What she did on her own, most recent first.

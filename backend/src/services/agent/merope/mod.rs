@@ -23,6 +23,7 @@ pub mod soup;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
+pub mod strangers;
 pub mod views;
 pub mod wander;
 
@@ -229,6 +230,7 @@ pub fn forget_in_memory() {
     views::forget();
     priming::forget();
     wander::forget();
+    strangers::forget();
 }
 
 /// After a chat reply, let her state catch up with the exchange; the next
