@@ -101,6 +101,37 @@ test('pure expression stage matches the frozen player branches', () => {
   }
 })
 
+test('drool follows the mouth corner along a tilted face', () => {
+  const drool = binding(
+    'lovestruck-drool',
+    'lovestruckDrool',
+    'lovestruck-drool',
+  )
+  const roll = (-9 * Math.PI) / 180
+  const level = expressionFrame(0.6, true)
+  const tilted = {
+    ...level,
+    faceAxes: { cos: Math.cos(roll), sin: Math.sin(roll) },
+  }
+  const levelPoint = { x: drool.centerX, y: drool.centerY }
+  const tiltedPoint = { x: drool.centerX, y: drool.centerY }
+  deformAnime25DExpressionPoint(levelPoint, drool.centerY, drool, 0, 0, level)
+  deformAnime25DExpressionPoint(tiltedPoint, drool.centerY, drool, 0, 0, tilted)
+  const { centerX, centerY } = level.mouthMorph
+  const levelAngle = Math.atan2(levelPoint.y - centerY, levelPoint.x - centerX)
+  const tiltedAngle = Math.atan2(
+    tiltedPoint.y - centerY,
+    tiltedPoint.x - centerX,
+  )
+  assert.ok(Math.abs(tiltedAngle - levelAngle - roll) < 1e-9)
+  assert.ok(
+    Math.abs(
+      Math.hypot(levelPoint.x - centerX, levelPoint.y - centerY) -
+        Math.hypot(tiltedPoint.x - centerX, tiltedPoint.y - centerY),
+    ) < 1e-9,
+  )
+})
+
 function expressionBindings(): Anime25DExpressionDeformationBinding[] {
   return [
     eyeBinding('eye-dizzy', 'eyeDizzy', 'dizzy-eye', 38, 31),
@@ -197,6 +228,7 @@ function expressionFrame(
       eyeY: Math.cos(progress * 4.3) * 0.65,
       irisScale: 0.65 + progress * 0.6,
     },
+    faceAxes: { cos: 1, sin: 0 },
     faceScale: 0.83,
     mouthMorph,
     stylizedMotion: withMotion

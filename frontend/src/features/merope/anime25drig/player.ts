@@ -51,6 +51,7 @@ import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { currentCopy } from '../../../i18n/localeCopy'
 import { allowsPointerGaze, IDLE_MOTION_POLICY } from '../motion/policy'
 import { resolveAnime25DLayerSemantics } from '../rig/anime25dLayerSemantics'
+import { resolveAnime25DFaceFrame } from '../rig/faceFrame'
 import { SingingGrooveController } from '../singing/singingGroove'
 import { noteTurnTraceFrame } from '../turnTrace'
 import { AmbientMotionController } from './ambientMotion'
@@ -572,9 +573,11 @@ export class Anime25DPlayer {
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
     this.mouthTransition = new MouthTransitionController(playback.mouthProfile)
     this.mouthMorphSources = compileAnime25DMouthMorphSources(playback.layers)
+    const faceFrame = resolveAnime25DFaceFrame(playback.anchors)
     this.deformationFrame = {
       mouth: playback.anchors.mouth,
       face: playback.anchors.face,
+      faceAxes: { cos: faceFrame.cos, sin: faceFrame.sin },
       faceScale: playback.anchors.faceScale,
       morph: this.mouthMorph,
       mouthMorph: this.mouthMorph,

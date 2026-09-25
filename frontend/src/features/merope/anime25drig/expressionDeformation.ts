@@ -48,6 +48,8 @@ export type Anime25DExpressionDeformationKind =
 
 export interface Anime25DExpressionDeformationFrame {
   expression: Readonly<ExpressionGeometryDriver>
+  /** The drawn face's own axes; the eye line's rotation in image space. */
+  faceAxes: Readonly<{ cos: number; sin: number }>
   faceScale: number
   mouthMorph: Readonly<MouthMorphState>
   stylizedMotion: Readonly<ExpressionGeometryMotion> | null
@@ -196,15 +198,15 @@ export function deformAnime25DExpressionPoint(
     return
   }
   if (kind === 'lovestruck-drool') {
-    const desiredX =
-      frame.mouthMorph.centerX + frame.mouthMorph.width * 0.48
-    const desiredY =
-      frame.mouthMorph.centerY + frame.mouthMorph.height * 0.18
-    point.x += desiredX - binding.centerX
-    point.y +=
-      desiredY -
-      binding.centerY +
-      motion.lovestruckDroolOffsetY * frame.faceScale
+    // The corner and the drip follow a tilted face's own axes, like its art.
+    const { cos, sin } = frame.faceAxes
+    const along = frame.mouthMorph.width * 0.48
+    const down = frame.mouthMorph.height * 0.18
+    const drip = motion.lovestruckDroolOffsetY * frame.faceScale
+    const desiredX = frame.mouthMorph.centerX + along * cos - down * sin
+    const desiredY = frame.mouthMorph.centerY + along * sin + down * cos
+    point.x += desiredX - binding.centerX - drip * sin
+    point.y += desiredY - binding.centerY + drip * cos
     return
   }
   if (kind === 'nose-lift') {
