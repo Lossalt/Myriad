@@ -167,7 +167,11 @@ import {
   DIRECTED_BODY_BLOCK_LEVEL,
   RandomActionController,
 } from './randomAction'
-import { createAnime25DRendererBindings, drawAnime25DFrame } from './renderer'
+import {
+  createAnime25DRendererBindings,
+  disposeAnime25DRendererBindings,
+  drawAnime25DFrame,
+} from './renderer'
 import {
   resolveAnime25DRenderSurface,
   shouldApplyAnime25DResize,
@@ -923,6 +927,7 @@ export class Anime25DPlayer {
     this.touchAtlas = null
     this.touchLayers = []
     this.gl.deleteProgram(this.program)
+    disposeAnime25DRendererBindings(this.gl, this.rendererBindings)
     this.thinkingSticker.dispose(this.gl)
     // A canvas still in the document must keep the context
     try {

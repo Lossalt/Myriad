@@ -72,14 +72,18 @@ release's flat-top peak centring is not adopted: on flat-bottomed parts it
 leaves too little room for the second strand and loses a spring. Its webcam
 tracking, OBS relay, recording, anchor editor, jewellery/tail sway, new side
 hair/ahoge slots, and settings format are editor features outside this
-integration. Its smooth iris mask is a renderer change still to evaluate here.
+integration. Its smooth iris mask is adopted in the renderer (below).
 
-The renderer builds left/right eye masks before painting using independent
-stencil bits; collar reconstruction has a separate bit and cannot erase or
-satisfy an eye mask. Invisible ordinary eye whites remain valid masks during
-expression fades; inactive alternate whites do not contribute stale geometry.
-`renderer.test.ts` executes this against a small software stencil buffer across
-paint orders and consecutive frames. Import tests check both the standalone
+The renderer builds left/right eye masks before painting: every eye white
+paints its own alpha into a canvas-sized mask texture, the left eye in red and
+the right in green, and an iris multiplies by its eye's channel. Soft coverage
+replaced the earlier alpha-tested stencil bits, whose clip stair-stepped along
+the white's edge (upstream `7ddbd9943e`). Collar reconstruction and crown replay
+keep their stencil bits and cannot erase or satisfy an eye mask. Invisible
+ordinary eye whites remain valid masks during expression fades; inactive
+alternate whites do not contribute stale geometry. `renderer.test.ts` executes
+this against a small software mask and stencil across paint orders and
+consecutive frames. Import tests check both the standalone
 reference and the production atlas path. These tests do not claim GPU pixel or
 live visual acceptance. The demo's alternate long-blink policy is not adopted.
 
