@@ -59,6 +59,9 @@ pub enum MemoryKind {
     /// A day of her own life, told by her. Belongs to no one else and names
     /// no one (see [`write_own_day`]).
     Narrative,
+    /// Something she found out on her own, in her own words. Kept with the
+    /// audience of the conversation that made her curious.
+    Knowledge,
 }
 
 impl MemoryKind {
@@ -69,6 +72,7 @@ impl MemoryKind {
             Self::Lesson => "lesson",
             Self::Pattern => "pattern",
             Self::Narrative => "narrative",
+            Self::Knowledge => "knowledge",
         }
     }
 

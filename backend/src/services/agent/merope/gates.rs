@@ -39,10 +39,15 @@ pub fn is_task_outcome(event_key: &str) -> bool {
     NotificationEventKey::from_key(event_key).is_some_and(NotificationEventKey::is_task_outcome)
 }
 
+/// Said to someone here or not at all: a passing thought, or something she
+/// found out on her own. Never a notification, never a diary entry.
+pub fn said_only_in_person(event_key: &str) -> bool {
+    event_key == super::wander::THOUGHT_EVENT || event_key == super::curiosity::FOUND_OUT_EVENT
+}
+
 pub fn worth_notifying(event_key: &str) -> bool {
-    // A touch answers the moment; a passing thought is said to someone here
-    // or not at all. Neither is worth a notification.
-    if event_key == "agent.merope.touch" || event_key == super::wander::THOUGHT_EVENT {
+    // A touch answers the moment; the rest is said in person or not at all.
+    if event_key == "agent.merope.touch" || said_only_in_person(event_key) {
         return false;
     }
     is_valuable_event(event_key) || event_key.starts_with("agent.merope.")
@@ -60,7 +65,7 @@ pub fn decide_ingest(event_key: &str, sight: &IngestSight) -> IngestDecision {
             reason: "touch_not_present",
         };
     }
-    if event_key == super::wander::THOUGHT_EVENT && !sight.on_page {
+    if said_only_in_person(event_key) && !sight.on_page {
         return IngestDecision {
             allow_model: false,
             notify: false,
@@ -231,6 +236,9 @@ mod tests {
     fn a_passing_thought_is_said_to_someone_here_or_not_at_all() {
         let thought = crate::services::agent::merope::wander::THOUGHT_EVENT;
         assert!(!worth_notifying(thought));
+        let found = crate::services::agent::merope::curiosity::FOUND_OUT_EVENT;
+        assert!(!worth_notifying(found));
+        assert!(!decide_ingest(found, &IngestSight::default()).allow_model);
         let away = decide_ingest(thought, &IngestSight::default());
         assert!(!away.allow_model);
         assert!(!away.notify);

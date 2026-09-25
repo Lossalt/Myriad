@@ -175,8 +175,9 @@ pub async fn ingest(
     let sight = current_sight(user_id, &state).await;
     let decision = decide_ingest(event_key, &sight);
     let touch = event_key == "agent.merope.touch";
-    // A passing thought: said live to someone who can see her, or let go.
-    let thought = event_key == super::super::wander::THOUGHT_EVENT;
+    // A passing thought, or something she found out: said live to someone
+    // who can see her, or let go.
+    let thought = super::super::gates::said_only_in_person(event_key);
     if thought {
         let live = crate::services::agent::consciousness::last_live_presence(user_id);
         if !live.face_visible || live.speaking || !decision.allow_model {

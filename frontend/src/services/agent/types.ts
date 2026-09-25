@@ -680,7 +680,7 @@ export interface ExecutionTrace {
 export interface MemoryEntry {
   id: string
   /** Unified memory kind. Chat and Work share one store. */
-  memoryType: 'fact' | 'preference' | 'lesson' | 'pattern'
+  memoryType: 'fact' | 'preference' | 'lesson' | 'pattern' | 'knowledge'
   content: string
   /** Where it was learned: chat, event, work or import. */
   source?: string

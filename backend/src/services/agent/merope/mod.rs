@@ -2,6 +2,7 @@
 
 mod appraisal;
 pub mod chat_remember;
+pub mod curiosity;
 pub mod gates;
 pub mod ingest;
 pub mod life;
@@ -20,6 +21,7 @@ pub mod store;
 pub mod wander;
 
 pub use chat_remember::spawn_chat_remember;
+pub use curiosity::spawn_curiosity;
 pub use ingest::{
     allow_existing_notify, is_enabled, spawn as spawn_ingest, spawn_diary, spawn_presence,
     tick_speak_intents,
@@ -260,9 +262,9 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_curious_section,
-    format_emotion_section, format_mood_section, format_on_your_mind_section,
-    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    guest_speaking_section, mood_tone_instruction,
+    format_emotion_section, format_found_out_section, format_mood_section,
+    format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
+    format_remembered_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -344,6 +346,8 @@ const RECENT_LEDGER_LIMIT: u64 = 4;
 /// Chat diary only. Event diary reaches speaking via Remember, not this ledger.
 const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_CHAT];
 
+/// Things she looked up on her own that a turn carries.
+const FOUND_OUT_LIMIT: usize = 2;
 /// Her own days a conversation carries, most recent last.
 const OWN_DAYS_LIMIT: u64 = 3;
 /// Her own unprompted lines a chat turn should know it said.
@@ -480,6 +484,24 @@ async fn speaking_prompt_from_db(
     }
     if !matches!(turn, Turn::Plain) {
         sections.push(self_state::format_day_section(&myself.facts));
+    }
+    if let Turn::Chat(words) | Turn::Event(words) = turn {
+        let found = crate::services::agent::memory::unified::recall(
+            db,
+            user_id,
+            &crate::services::agent::memory::unified::Audience::private(user_id),
+            Some(words),
+            &[crate::services::agent::memory::unified::MemoryKind::Knowledge],
+            FOUND_OUT_LIMIT,
+        )
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|note| note.content)
+        .collect::<Vec<_>>();
+        if let Some(block) = format_found_out_section(&found) {
+            sections.push(block);
+        }
     }
     if !matches!(turn, Turn::Plain) {
         if let Some(block) = format_own_days_section(&life::recent_days(db, OWN_DAYS_LIMIT).await) {
