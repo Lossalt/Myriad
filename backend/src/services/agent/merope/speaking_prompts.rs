@@ -233,6 +233,19 @@ pub fn format_views_section(views: &[(String, String)]) -> Option<String> {
     ))
 }
 
+/// What they are playing right now, which she saw on their Steam status. The
+/// game title is outside text, so it is fenced.
+pub fn format_playing_section(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## What they are up to\nYou saw this on their Steam status yourself; they did not tell you. Bring it up only if it fits.\n{}",
+        myriad_agent_rules::untrusted_block("their_status", line)
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {

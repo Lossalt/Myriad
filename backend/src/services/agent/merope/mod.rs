@@ -14,6 +14,7 @@ pub mod motion_preview;
 pub mod onboarding_ai;
 pub mod onboarding_prompts;
 pub mod outfit_overlay;
+pub mod playing;
 mod priming;
 pub mod report_dna;
 pub mod self_state;
@@ -277,8 +278,9 @@ pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_brought_to_mind_section,
     format_curious_section, format_doing_section, format_emotion_section, format_found_out_section,
     format_inner_moment_ago_section, format_mood_section, format_on_your_mind_section,
-    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    format_views_section, group_speaking_section, guest_speaking_section, mood_tone_instruction,
+    format_own_days_section, format_persona, format_playing_section, format_recent_section,
+    format_remembered_section, format_views_section, group_speaking_section,
+    guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -540,6 +542,14 @@ async fn speaking_prompt_from_db(
     }
     if let Some(block) = format_activity_section(current_activity(&state)) {
         sections.push(block);
+    }
+    // What the site's owner is playing, to the owner alone.
+    if !group {
+        if let Some(block) = playing::now_for(user_id, chrono::Utc::now())
+            .and_then(|line| format_playing_section(&line))
+        {
+            sections.push(block);
+        }
     }
     sections.push(format_mood_section(state.mood, state.arousal));
     // Her state after the last exchange already weighs how she has been and

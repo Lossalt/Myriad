@@ -162,6 +162,9 @@ struct Case {
     /// by their words (chat).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     views: Vec<(String, String)>,
+    /// What they are playing, as she sees it on their Steam status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    playing: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -202,6 +205,7 @@ fn is_mind_case(case: &Case) -> bool {
         || !case.images.is_empty()
         || case.own_time.is_some()
         || !case.views.is_empty()
+        || case.playing.is_some()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -267,6 +271,9 @@ fn mind_chat_prompt(case: &Case) -> String {
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
         super::merope::format_views_section(&case.views),
+        case.playing
+            .as_deref()
+            .and_then(super::merope::format_playing_section),
         case.own_time.as_ref().and_then(|own| {
             let lately: Vec<(String, String)> =
                 serde_json::from_value(own["lately"].clone()).unwrap_or_default();
@@ -1304,7 +1311,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 22;
+const MIND_CASES: usize = 23;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1335,6 +1342,13 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .as_str()
             .unwrap()
             .contains("## Inside you a moment ago")
+    );
+    let playing = request(by_id("mind-playing-tired"));
+    assert!(
+        playing["input"]
+            .as_str()
+            .unwrap()
+            .contains("## What they are up to")
     );
     let view = request(by_id("mind-view-chat"));
     assert!(
