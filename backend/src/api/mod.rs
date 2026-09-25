@@ -108,7 +108,7 @@ pub async fn health() -> (StatusCode, Json<Value>) {
 pub async fn ready() -> (StatusCode, Json<Value>) {
     use std::sync::atomic::Ordering;
 
-    match crate::services::tapp_registry::database() {
+    match crate::services::process_db::database() {
         Ok(db) => {
             let _ = crate::db::health::probe_database(&db).await;
         }

@@ -16,7 +16,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::services::permission_service::TappPermission;
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 
 /// Query parameter name accepted by federation channel/room WS upgrades.
 /// Keep in sync with `FederationWsQuery` and `federationApi.connect*Ws`.

@@ -1,6 +1,6 @@
 //! Append-only per-call AI cost ledger (write path).
 //!
-//! `tapp_quota_usage` answers "how much budget is left today"; this ledger
+//! `ai_quota_usage` answers "how much budget is left today"; this ledger
 //! answers "which caller spent what, when, on which provider/model". Entries are
 //! written for governed AI tasks (Tapp / scheduler) via [`record_ai_cost`], and
 //! for every other site-wide path from `AiAnalyzer` / image / speech hooks.
@@ -32,19 +32,21 @@ pub struct AiLedgerAttribution {
     pub owner_id: i32,
     pub source: String,
     pub operation: String,
-    pub tapp_id: String,
+    /// The Tapp installation that made the call; site callers (Agent,
+    /// reports, the persona, …) have none and are told apart by `source`.
+    pub tapp_id: Option<String>,
     pub task_id: String,
 }
 
 impl AiLedgerAttribution {
-    /// Site-wide caller that is not a Tapp install (`tapp_id` is `__{source}__`).
+    /// Site-wide caller that is not a Tapp install: no `tapp_id`.
     pub fn site(subject_id: i32, source: impl Into<String>, operation: impl Into<String>) -> Self {
         let source = source.into();
         let operation = operation.into();
         Self {
             subject_id,
             owner_id: subject_id,
-            tapp_id: format!("__{source}__"),
+            tapp_id: None,
             task_id: operation.clone(),
             source,
             operation,
@@ -155,8 +157,8 @@ pub fn site_owner_id_from_lookup(lookup: Result<Option<i32>, String>) -> Result<
 
 /// Durable site owner. Lookup/decode failure is not user `1`.
 pub async fn resolve_site_owner_id() -> Result<i32, String> {
-    let lookup = match crate::services::tapp_registry::database() {
-        Ok(db) => crate::services::tapp_ownership::find_admin_user_id(&db)
+    let lookup = match crate::services::process_db::database() {
+        Ok(db) => crate::services::principal::site_owner_id(&db)
             .await
             .map_err(|_| "AI billing owner is unavailable".to_string()),
         Err(_) => Err("AI billing owner is unavailable".to_string()),
@@ -263,7 +265,7 @@ pub async fn record_ai_tokens_from_attribution(
         return;
     }
     let attr = current_attribution().unwrap_or_else(fallback_attribution);
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return;
     };
     record_ai_cost(
@@ -271,7 +273,7 @@ pub async fn record_ai_tokens_from_attribution(
         AiCostLedgerEntry {
             subject_id: attr.subject_id,
             owner_id: attr.owner_id,
-            tapp_id: &attr.tapp_id,
+            tapp_id: attr.tapp_id.as_deref(),
             task_id: &attr.task_id,
             source: &attr.source,
             operation: &attr.operation,
@@ -289,7 +291,8 @@ pub async fn record_ai_tokens_from_attribution(
 pub struct AiCostLedgerEntry<'a> {
     pub subject_id: i32,
     pub owner_id: i32,
-    pub tapp_id: &'a str,
+    /// The Tapp installation, when a Tapp made the call.
+    pub tapp_id: Option<&'a str>,
     pub task_id: &'a str,
     /// "runtime" · "scheduler" · "agent" · "reports" · "internal:<caller>" …
     pub source: &'a str,
@@ -308,7 +311,7 @@ pub async fn record_ai_cost(db: &DatabaseConnection, entry: AiCostLedgerEntry<'_
         .execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-                INSERT INTO tapp_ai_cost_ledger
+                INSERT INTO ai_cost_ledger
                     (subject_id, owner_id, tapp_id, task_id, source, operation,
                      provider, model, input_tokens, output_tokens,
                      tokens_estimated, status, error_code)
@@ -317,7 +320,7 @@ pub async fn record_ai_cost(db: &DatabaseConnection, entry: AiCostLedgerEntry<'_
             vec![
                 SeaValue::Int(Some(entry.subject_id)),
                 SeaValue::Int(Some(entry.owner_id)),
-                SeaValue::String(Some(entry.tapp_id.to_string())),
+                SeaValue::String(entry.tapp_id.map(str::to_string)),
                 SeaValue::String(Some(entry.task_id.to_string())),
                 SeaValue::String(Some(entry.source.to_string())),
                 SeaValue::String(Some(entry.operation.to_string())),
@@ -333,9 +336,9 @@ pub async fn record_ai_cost(db: &DatabaseConnection, entry: AiCostLedgerEntry<'_
     if let Err(error) = result {
         tracing::error!(
             %error,
-            tapp_id = entry.tapp_id,
+            tapp_id = ?entry.tapp_id,
             task_id = entry.task_id,
-            "[TAPP] Failed to append AI cost ledger entry"
+            "[AI ledger] Failed to append AI cost ledger entry"
         );
     }
 }
@@ -386,7 +389,7 @@ mod tests {
                     owner_id: 1,
                     source: "agent".into(),
                     operation: "inner".into(),
-                    tapp_id: "__agent__".into(),
+                    tapp_id: None,
                     task_id: "recipe_1".into(),
                 },
                 async {
@@ -426,7 +429,7 @@ mod tests {
         let entry = AiCostLedgerEntry {
             subject_id: 1,
             owner_id: 1,
-            tapp_id: "com.example.app",
+            tapp_id: Some("com.example.app"),
             task_id: "ait_1",
             source: "scheduler",
             operation: "generate",
@@ -437,7 +440,7 @@ mod tests {
             status: "completed",
             error_code: None,
         };
-        assert_eq!(entry.tapp_id, "com.example.app");
+        assert_eq!(entry.tapp_id, Some("com.example.app"));
         assert_eq!(entry.input_tokens, 10);
         assert!(entry.error_code.is_none());
     }
@@ -449,7 +452,7 @@ mod tests {
             owner_id: 1,
             source: "agent".into(),
             operation: "chat".into(),
-            tapp_id: "__agent__".into(),
+            tapp_id: None,
             task_id: "t1".into(),
         };
         let seen = with_ai_ledger_attribution(attr, async {
@@ -467,7 +470,7 @@ mod tests {
         assert_eq!(attr.owner_id, 7);
         assert_eq!(attr.source, "merope");
         assert_eq!(attr.operation, "onboarding");
-        assert_eq!(attr.tapp_id, "__merope__");
+        assert_eq!(attr.tapp_id, None, "the persona is not a Tapp");
         assert_eq!(attr.task_id, "onboarding");
     }
 
@@ -509,7 +512,7 @@ mod tests {
         .await;
         assert_eq!(
             seen,
-            Some((3, "playground".into(), "__playground__".into()))
+            Some((3, "playground".into(), None))
         );
     }
 

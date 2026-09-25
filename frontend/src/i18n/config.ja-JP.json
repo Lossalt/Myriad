@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "出典",
     "aiUsageFilterAll": "すべて",
     "aiUsageFiltersAria": "ユーザー・モデル・出典で AI 使用量を絞り込み",
-    "aiUsageNote": "全サイト費用台帳（tapp_ai_cost_ledger）：管理者と一般ユーザーを含む。テキスト・画像・音声の呼び出しを記録します。トークンは推定値のことが多いです。",
+    "aiUsageNote": "全サイト費用台帳（ai_cost_ledger）：管理者と一般ユーザーを含む。テキスト・画像・音声の呼び出しを記録します。トークンは推定値のことが多いです。",
     "pageLabels": {
       "/": "ホーム",
       "/library": "ライブラリ",

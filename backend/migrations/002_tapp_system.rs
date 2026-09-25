@@ -308,74 +308,6 @@ ALTER TABLE tapp_storage
             )
             .await?;
 
-        // ==================== 4. TAPP_QUOTA_USAGE 表 ====================
-        // 存储 Tapp 的配额使用情况
-        manager
-            .create_table(
-                Table::create()
-                    .table(TappQuotaUsage::Table)
-                    .if_not_exists()
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::Id)
-                            .integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::TappId)
-                            .string_len(255)
-                            .not_null(),
-                    )
-                    .col(ColumnDef::new(TappQuotaUsage::UserId).integer().not_null())
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::QuotaType)
-                            .string_len(50)
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::Used)
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(ColumnDef::new(TappQuotaUsage::Limit).integer().not_null())
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::PeriodStart)
-                            .timestamp_with_time_zone()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::PeriodEnd)
-                            .timestamp_with_time_zone()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TappQuotaUsage::UpdatedAt)
-                            .timestamp_with_time_zone()
-                            .not_null()
-                            .default(Expr::current_timestamp()),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        // 唯一索引
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_tapp_quota_unique")
-                    .table(TappQuotaUsage::Table)
-                    .col(TappQuotaUsage::UserId)
-                    .col(TappQuotaUsage::TappId)
-                    .col(TappQuotaUsage::QuotaType)
-                    .col(TappQuotaUsage::PeriodStart)
-                    .unique()
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
         // ==================== 5. TAPP_STORE_SOURCES 表 ====================
         // 存储远程商店源配置
         manager
@@ -832,73 +764,13 @@ ALTER TABLE tapp_storage
             )
             .await?;
 
-        // ==================== 9. TAPP RUNTIME SHARED STATE ====================
-        // tapp_runtime_registry、tapp_runtime_mailbox、tapp_ai_cost_ledger，
-        // 以及 tapp_storage 8388608 字节 INSERT/UPDATE 触发器。
+        // ==================== 9. TAPP STORAGE QUOTA ====================
+        // tapp_storage 8388608 字节 INSERT/UPDATE 触发器。跨副本的运行时注册表、
+        // 邮箱和全站 AI 费用账本是平台设施，在 001 创建。
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
-CREATE TABLE IF NOT EXISTS tapp_runtime_registry (
-    namespace VARCHAR(64) NOT NULL,
-    record_id VARCHAR(160) NOT NULL,
-    subject_id INTEGER,
-    owner_id INTEGER,
-    tapp_id VARCHAR(255),
-    runtime_id VARCHAR(160),
-    payload JSONB NOT NULL,
-    expires_at BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (namespace, record_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_subject
-    ON tapp_runtime_registry (namespace, subject_id, expires_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_tapp
-    ON tapp_runtime_registry (namespace, tapp_id, expires_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_runtime
-    ON tapp_runtime_registry (namespace, runtime_id, expires_at);
-
-CREATE TABLE IF NOT EXISTS tapp_runtime_mailbox (
-    message_id BIGSERIAL PRIMARY KEY,
-    channel VARCHAR(64) NOT NULL,
-    runtime_id VARCHAR(160) NOT NULL,
-    payload JSONB NOT NULL,
-    expires_at BIGINT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_mailbox_recipient
-    ON tapp_runtime_mailbox (channel, runtime_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_mailbox_expiry
-    ON tapp_runtime_mailbox (expires_at);
-
--- 独立 AI 费用账本：逐次调用的 append-only 流水，与按日聚合的
--- tapp_quota_usage 配额计数相互独立，不随每日重置。
-CREATE TABLE IF NOT EXISTS tapp_ai_cost_ledger (
-    id BIGSERIAL PRIMARY KEY,
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    subject_id INTEGER NOT NULL,
-    owner_id INTEGER NOT NULL,
-    tapp_id VARCHAR(255) NOT NULL,
-    task_id VARCHAR(160) NOT NULL,
-    source VARCHAR(64) NOT NULL,
-    operation VARCHAR(32) NOT NULL,
-    provider VARCHAR(64) NOT NULL,
-    model VARCHAR(255) NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    tokens_estimated BOOLEAN NOT NULL DEFAULT TRUE,
-    cost_micro_usd BIGINT,
-    status VARCHAR(16) NOT NULL,
-    error_code VARCHAR(64)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_ai_cost_subject_time
-    ON tapp_ai_cost_ledger (subject_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_ai_cost_tapp_time
-    ON tapp_ai_cost_ledger (tapp_id, occurred_at);
-
 CREATE OR REPLACE FUNCTION enforce_tapp_storage_quota()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -960,7 +832,7 @@ FOR EACH ROW EXECUTE FUNCTION enforce_tapp_storage_quota();
         manager
             .get_connection()
             .execute_unprepared(
-                "DROP TRIGGER IF EXISTS trg_tapp_storage_quota ON tapp_storage; DROP FUNCTION IF EXISTS enforce_tapp_storage_quota(); DROP TABLE IF EXISTS tapp_runtime_mailbox; DROP TABLE IF EXISTS tapp_runtime_registry;",
+                "DROP TRIGGER IF EXISTS trg_tapp_storage_quota ON tapp_storage; DROP FUNCTION IF EXISTS enforce_tapp_storage_quota();",
             )
             .await?;
         manager
@@ -974,9 +846,6 @@ FOR EACH ROW EXECUTE FUNCTION enforce_tapp_storage_quota();
             .await?;
         manager
             .drop_table(Table::drop().table(TappStoreSources::Table).to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(TappQuotaUsage::Table).to_owned())
             .await?;
         manager
             .drop_table(Table::drop().table(TappStorage::Table).to_owned())
@@ -1047,20 +916,6 @@ enum TappStorage {
     EncryptedValue,
     BindingFingerprint,
     CreatedAt,
-    UpdatedAt,
-}
-
-#[derive(DeriveIden)]
-enum TappQuotaUsage {
-    Table,
-    Id,
-    TappId,
-    UserId,
-    QuotaType,
-    Used,
-    Limit,
-    PeriodStart,
-    PeriodEnd,
     UpdatedAt,
 }
 

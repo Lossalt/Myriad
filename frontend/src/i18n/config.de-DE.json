@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "Quelle",
     "aiUsageFilterAll": "Alle",
     "aiUsageFiltersAria": "KI-Nutzung nach Nutzer, Modell und Quelle filtern",
-    "aiUsageNote": "Seitenweites Kostenbuch (tapp_ai_cost_ledger): inkl. Admins und regulärer Nutzer. Text-, Bild- und Sprachaufrufe werden erfasst. Tokens sind oft Schätzungen.",
+    "aiUsageNote": "Seitenweites Kostenbuch (ai_cost_ledger): inkl. Admins und regulärer Nutzer. Text-, Bild- und Sprachaufrufe werden erfasst. Tokens sind oft Schätzungen.",
     "pageLabels": {
       "/": "Startseite",
       "/library": "Bibliothek",

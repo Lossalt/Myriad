@@ -1,9 +1,9 @@
 [package]
-name = "myriad-tapp-registry"
+name = "myriad-runtime-registry"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "PostgreSQL-backed Tapp runtime registry and mailbox (shared leases across replicas)."
+description = "PostgreSQL-backed platform runtime registry and mailbox (shared leases across replicas)."
 authors = ["Myriad Contributors"]
 license = "AGPL-3.0-only"
 

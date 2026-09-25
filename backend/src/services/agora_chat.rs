@@ -219,7 +219,7 @@ impl ChatSession {
                 // Still writing: the run keeps what it had said. Already
                 // written: the whole reply is saved, but she was still saying it.
                 if !super::agent::turn::cancel_chat_run(user_id, &session_id, &run_id).await {
-                    if let Ok(db) = super::tapp_registry::database() {
+                    if let Ok(db) = super::process_db::database() {
                         if let Err(error) =
                             crate::api::agent::mark_spoken_reply_cut_off(&db, &session_id, &run_id)
                                 .await

@@ -27,7 +27,7 @@ pub(super) async fn load(
     if owner.user_id != user_id {
         return Err("Task not found".into());
     }
-    let mut state: Checkpoint = crate::services::tapp_registry::get(db, NAMESPACE, task_id)
+    let mut state: Checkpoint = crate::services::runtime_registry::get(db, NAMESPACE, task_id)
         .await
         .map_err(|_| "Unable to load Work checkpoint")?
         .ok_or("Work checkpoint has expired")?;
@@ -90,7 +90,7 @@ async fn save_inner(
             return Err("Task cancelled or unavailable".into());
         }
         let current: Checkpoint =
-            crate::services::tapp_registry::get(&txn, NAMESPACE, &state.task.task_id)
+            crate::services::runtime_registry::get(&txn, NAMESPACE, &state.task.task_id)
                 .await
                 .map_err(|_| "Unable to read Work revision")?
                 .ok_or("Work checkpoint has expired")?;
@@ -103,11 +103,11 @@ async fn save_inner(
     let mut next = state.clone();
     next.revision += 1;
     executor::task_store::save_task_on(&txn, state.user_id, &state.task).await?;
-    crate::services::tapp_registry::put(
+    crate::services::runtime_registry::put(
         &txn,
         NAMESPACE,
         &state.task.task_id,
-        crate::services::tapp_registry::RegistryIdentity {
+        crate::services::runtime_registry::RegistryIdentity {
             subject_id: Some(state.user_id),
             owner_id: Some(state.user_id),
             tapp_id: None,
@@ -146,7 +146,7 @@ pub(super) fn lease(db: sea_orm::DatabaseConnection, task_id: String, lease_id: 
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(20)).await;
                 let _ = db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-                "UPDATE agent_tasks SET updated_at = NOW() WHERE id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM tapp_runtime_registry WHERE namespace = 'agent_work_checkpoint' AND record_id = $1 AND payload->>'lease_id' = $2)",[task_id.clone().into(),lease_id.clone().into()])).await;
+                "UPDATE agent_tasks SET updated_at = NOW() WHERE id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM runtime_registry WHERE namespace = 'agent_work_checkpoint' AND record_id = $1 AND payload->>'lease_id' = $2)",[task_id.clone().into(),lease_id.clone().into()])).await;
             }
         }),
         _cancellation: cancellation,

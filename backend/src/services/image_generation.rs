@@ -520,7 +520,7 @@ pub async fn remove_persisted_generated(
 /// assets must not leak into generation just because their UUID is known.
 pub(crate) async fn read_public_local_media(url: &str) -> Option<(Vec<u8>, String)> {
     let path = crate::services::media::registered_local_path(url)?;
-    let db = crate::services::tapp_registry::database().ok()?;
+    let db = crate::services::process_db::database().ok()?;
     let store = MediaStore::new(paths().media.clone());
     let outcome = if let Some(rest) = path.strip_prefix("/media/assets/") {
         let (id, file) = rest.split_once('/')?;

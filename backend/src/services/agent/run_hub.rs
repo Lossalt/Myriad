@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
-use crate::services::tapp_registry as shared_registry;
+use crate::services::runtime_registry as shared_registry;
 
 use super::AgentProgressEvent;
 use super::notifications::get_notification_manager;
@@ -244,7 +244,7 @@ impl AgentRun {
 SELECT payload
 FROM (
     SELECT record_id, payload
-    FROM tapp_runtime_registry
+    FROM runtime_registry
     WHERE namespace = $1
       AND runtime_id = $2
       AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -330,7 +330,7 @@ ORDER BY record_id ASC
         envelope: &AgentRunEnvelope,
         snapshot: &PersistedAgentRun,
     ) -> Result<(), String> {
-        let db = shared_registry::database().map_err(|error| error.to_string())?;
+        let db = crate::services::process_db::database().map_err(|error| error.to_string())?;
         let expires_at =
             (snapshot.updated_at + chrono::Duration::hours(RUN_RETENTION_HOURS)).timestamp();
         let snapshot_payload = serde_json::to_value(&snapshot)
@@ -354,7 +354,7 @@ ORDER BY record_id ASC
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $3, $4, $5, $6, NOW())
 ON CONFLICT (namespace, record_id) DO NOTHING
@@ -373,7 +373,7 @@ ON CONFLICT (namespace, record_id) DO NOTHING
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $3, $4, $5, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -382,7 +382,7 @@ ON CONFLICT (namespace, record_id) DO UPDATE SET
     payload = EXCLUDED.payload,
     expires_at = EXCLUDED.expires_at,
     updated_at = NOW()
-WHERE COALESCE((tapp_runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
+WHERE COALESCE((runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
       <= (EXCLUDED.payload ->> 'next_sequence')::BIGINT
 "#,
                     vec![
@@ -398,11 +398,11 @@ WHERE COALESCE((tapp_runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-DELETE FROM tapp_runtime_registry
+DELETE FROM runtime_registry
 WHERE namespace = $1 AND runtime_id = $2
   AND record_id NOT IN (
       SELECT record_id
-      FROM tapp_runtime_registry
+      FROM runtime_registry
       WHERE namespace = $1 AND runtime_id = $2
       ORDER BY record_id DESC
       LIMIT $3
@@ -429,7 +429,7 @@ WHERE namespace = $1 AND runtime_id = $2
 
     /// Merge a newer shared snapshot and return events not present locally.
     pub async fn refresh_from_registry(&self) -> Vec<AgentRunEnvelope> {
-        let Ok(db) = shared_registry::database() else {
+        let Ok(db) = crate::services::process_db::database() else {
             return Vec::new();
         };
         let persisted = match shared_registry::get::<PersistedAgentRun>(
@@ -783,7 +783,7 @@ pub async fn get_run_for_user(run_id: &str, user_id: i32) -> Result<Option<Arc<A
         return Ok(Some(run));
     }
 
-    let db = shared_registry::database().map_err(|error| error.to_string())?;
+    let db = crate::services::process_db::database().map_err(|error| error.to_string())?;
     let persisted = match shared_registry::get::<PersistedAgentRun>(
         &db,
         RUN_REGISTRY_NAMESPACE,
@@ -984,7 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn persist_fails_when_database_unavailable() {
-        if shared_registry::database().is_ok() {
+        if crate::services::process_db::database().is_ok() {
             return;
         }
         let snapshot = PersistedAgentRun {
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn rehydrate_error_is_not_missing_run() {
-        if shared_registry::database().is_ok() {
+        if crate::services::process_db::database().is_ok() {
             return;
         }
         let result = get_run_for_user("run_does_not_exist", 42).await;

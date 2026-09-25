@@ -14,6 +14,7 @@ import {
   createAnime25DOpacityFrame,
   fadeOpacity,
   fadeOpacityFromFrame,
+  resolveMouthMorph,
   shouldDeformLayer,
   writeAnime25DOpacityFrame,
 } from './mouthRuntime'
@@ -77,6 +78,70 @@ test('precompiled mouth sources retain the first authored variant', () => {
   assert.equal(sources.closed, closed)
   assert.equal(sources.ordinary, ordinary)
   assert.equal(sources.wide, undefined)
+})
+
+test('a speaking mouth opens from a parted slit instead of popping to full height', () => {
+  // A smiling closed line whose drawn curve is 26px tall, and a 34px open mouth.
+  const closed = { fade: 'mouthClose', x: 500, y: 564, w: 74, h: 26 } as Anime25DPlaybackLayer
+  const open = { fade: 'mouthOpen', x: 515, y: 561, w: 44, h: 34 } as Anime25DPlaybackLayer
+  const sources = compileAnime25DMouthMorphSources([closed, open])
+  const mouth = { x0: 502, y0: 566, x1: 571, y1: 587, cx: 537, cy: 578 }
+  const face = { x0: 347, y0: 225, x1: 688, y1: 646, cx: 521, cy: 416 }
+  const morph = {
+    centerX: 0, centerY: 0, width: 1, height: 1, openMix: 0, wide: 0, round: 0, narrow: 0,
+    openCenterY: 0, openHeight: 1,
+  }
+  const sample = (mouthOpen: number) => {
+    resolveMouthMorph(sources, { ...IDENTITY_DRIVER, mouthOpen }, mouth, face, morph)
+    return { ...morph }
+  }
+  const rest = sample(0)
+  assert.equal(rest.height, closed.h, 'the closed line keeps its drawn size')
+  assert.equal(rest.centerY, closed.y + closed.h / 2)
+  // Where speech first swaps the closed line for open art.
+  const parted = sample(0.12)
+  assert.ok(parted.openHeight < open.h * 0.3, `${parted.openHeight}`)
+  assert.ok(parted.height > closed.h * 0.9, 'the drawn closed line is not squashed')
+  const closedCenterY = closed.y + closed.h / 2
+  let previous = parted.openHeight
+  for (let step = 13; step <= 100; step++) {
+    const next = sample(step / 100)
+    assert.ok(next.openHeight >= previous - 1e-9, 'opening never shrinks as the mouth opens')
+    assert.ok(next.openHeight - previous < 1.2, 'no single step pops the opening')
+    // The upper lip stays by the closed line; the jaw carries the opening down.
+    const upperLip = next.openCenterY - next.openHeight / 2
+    assert.ok(upperLip >= closed.y - 2 && upperLip <= closedCenterY, `${upperLip}`)
+    previous = next.openHeight
+  }
+  // Fully open, the speaking art is exactly where it always was.
+  const full = sample(1)
+  assert.ok(Math.abs(full.openHeight - full.height) < 1e-9)
+  assert.ok(Math.abs(full.openCenterY - full.centerY) < 1e-9)
+})
+
+test('the closed line hands over to the parting slit instead of cutting to it', () => {
+  const closed = { fade: 'mouthClose' } as Anime25DPlaybackLayer
+  const open = { fade: 'mouthOpen' } as Anime25DPlaybackLayer
+  const frame = createAnime25DOpacityFrame()
+  const at = (mouthOpen: number) => {
+    const driver = { ...IDENTITY_DRIVER, mouthOpen }
+    writeAnime25DOpacityFrame(frame, driver, 'mouthOpen')
+    return { closed: fadeOpacityFromFrame(closed, frame), open: fadeOpacityFromFrame(open, frame) }
+  }
+  let previous = at(0.1)
+  // Just parted: the line is still there and the slit is only coming in.
+  assert.ok(previous.closed > 0.9 && previous.open < 0.5, JSON.stringify(previous))
+  for (let step = 11; step <= 100; step++) {
+    const next = at(step / 100)
+    assert.ok(next.closed <= previous.closed + 1e-12 && next.open >= previous.open - 1e-12)
+    assert.ok(Math.abs(next.closed - previous.closed) < 0.12 && Math.abs(next.open - previous.open) < 0.25)
+    previous = next
+  }
+  assert.deepEqual(at(1), { closed: 0, open: 1 })
+  // Closed art is unaffected when the mouth is closed.
+  writeAnime25DOpacityFrame(frame, IDENTITY_DRIVER, 'mouthClose')
+  assert.equal(fadeOpacityFromFrame(closed, frame), 1)
+  assert.equal(fadeOpacityFromFrame(open, frame), 0)
 })
 
 test('precomputed opacity plan exactly preserves legacy fade results', () => {

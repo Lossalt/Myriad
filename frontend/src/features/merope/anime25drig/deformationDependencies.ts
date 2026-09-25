@@ -53,6 +53,8 @@ const MOUTH_MORPH_KEYS = [
   'wide',
   'round',
   'narrow',
+  'openCenterY',
+  'openHeight',
 ] as const satisfies readonly (keyof MouthMorphState)[]
 
 const STYLIZED_MOTION_KEYS = [

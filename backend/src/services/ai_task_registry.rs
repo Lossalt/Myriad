@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::services::ai_quota::AiUsageSnapshot;
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 use myriad_tapp_contract::manifest::TappAiOperation;
 
 pub const MAX_ACTIVE_TASKS_PER_SUBJECT: usize = 4;
@@ -126,13 +126,13 @@ pub async fn register_ai_task_atomically(
     transaction
         .execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT",
+            "DELETE FROM runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT",
             vec![AI_TASK_NAMESPACE.into(), task.subject_id.into()],
         ))
         .await?;
     let tasks = PayloadRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT payload FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT ORDER BY updated_at ASC",
+        "SELECT payload FROM runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT ORDER BY updated_at ASC",
         vec![AI_TASK_NAMESPACE.into(), task.subject_id.into()],
     ))
     .all(&transaction)
@@ -171,7 +171,7 @@ pub async fn register_ai_task_atomically(
         .execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, tapp_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (namespace, record_id) DO NOTHING

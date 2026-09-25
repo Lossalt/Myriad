@@ -173,11 +173,20 @@ function mouthMaterialPresence(input: MouthTransitionInput): number {
   )
 }
 
+/**
+ * A consonant between two vowels narrows the vowel's own art through the morph;
+ * only a narrow shape that is clearly held swaps its art in.
+ */
+const HELD_NARROW_MARGIN = 0.3
+
 function switchMargin(
   first: SpeechMouthMaterial,
   second: SpeechMouthMaterial,
 ): number {
   if (first === 'mouthClose' || second === 'mouthClose') return 0.04
+  if (first === 'mouthNarrow' && second !== 'mouthManiac') {
+    return HELD_NARROW_MARGIN
+  }
   if (first === 'mouthManiac' || second === 'mouthManiac') return 0.055
   const wideRound =
     (first === 'mouthWide' && second === 'mouthRound') ||

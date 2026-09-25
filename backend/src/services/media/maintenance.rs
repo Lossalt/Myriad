@@ -183,7 +183,7 @@ async fn upgrade_step(skips: &std::sync::atomic::AtomicU32) {
     {
         return;
     }
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return;
     };
     let service = MediaService::from_data_paths(crate::services::data_paths::paths());

@@ -20,7 +20,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::services::json_schema_subset::validate_inline_json_value;
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 
 const PREPARED_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 const DATA_ACCESS_GRANT_TTL: Duration = Duration::from_secs(60);
@@ -637,7 +637,7 @@ async fn delete_exchange_scope(
     tapp_id: Option<&str>,
     runtime_id: Option<&str>,
 ) {
-    match shared_registry::database() {
+    match crate::services::process_db::database() {
         Ok(db) => {
             if let Err(error) = shared_registry::delete_matching(
                 &db,
@@ -663,7 +663,7 @@ async fn delete_provider_exchange_scope(
     owner_id: Option<i32>,
     provider_tapp_id: &str,
 ) {
-    let db = match shared_registry::database() {
+    let db = match crate::services::process_db::database() {
         Ok(db) => db,
         Err(error) => {
             tracing::error!(%error, "[TAPP] Data Exchange registry is unavailable during provider revocation");
@@ -676,7 +676,7 @@ async fn delete_provider_exchange_scope(
             db.execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"
-DELETE FROM tapp_runtime_registry
+DELETE FROM runtime_registry
 WHERE namespace = $1
   AND ($2::INTEGER IS NULL OR subject_id = $2)
   AND payload ->> 'provider_tapp_id' = $3

@@ -48,6 +48,57 @@ test('uses the source dark line while preventing a pale invisible outline', () =
   assert.ok(pale.line.red < 150)
 })
 
+test('the narrow mouth is the open mouth drawn flatter, tongue included', () => {
+  const palette = sampleMouthExpressionPalette(
+    new Uint8ClampedArray([162, 102, 90, 255, 236, 176, 160, 255]),
+  )
+  const sizes = mouthExpressionGeneratedSizes({ width: 74, height: 26 })
+  const open = createMouthExpressionBitmap('open', sizes.open, palette)
+  const narrow = createMouthExpressionBitmap('narrow', sizes.narrow, palette)
+  assert.ok(narrow.width / narrow.height > (open.width / open.height) * 2)
+  const tongue = (data: Uint8ClampedArray) => {
+    let count = 0
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index + 3] > 160 && data[index] > 180) count += 1
+    }
+    return count
+  }
+  assert.ok(countDarkPixels(narrow.data) > 40, 'a readable cavity')
+  // Passing through a consonant never drops the tongue the vowels show.
+  assert.ok(tongue(narrow.data) > 30, `${tongue(narrow.data)}`)
+  assert.ok(tongue(open.data) > 30)
+})
+
+test('a tiny painted mouth still speaks at a size its face can read', () => {
+  const face = { width: 377, height: 457, mouthToChin: 70 }
+  const tiny = mouthExpressionGeneratedSizes({ width: 25, height: 13 }, face)
+  for (const kind of ['open', 'wide', 'round', 'narrow'] as const) {
+    assert.ok(tiny[kind].width >= face.width * 0.12 * 0.75, `${kind} ${tiny[kind].width}`)
+  }
+  // A mouth already drawn at a readable size keeps its own proportions.
+  const drawn = { width: 59, height: 17 }
+  assert.deepEqual(
+    mouthExpressionGeneratedSizes(drawn, { width: 407, height: 519, mouthToChin: 70 }).open,
+    mouthExpressionGeneratedSizes(drawn).open,
+  )
+})
+
+test('the wide mouth is drawn level and symmetric', () => {
+  const palette = sampleMouthExpressionPalette(undefined)
+  const wide = createMouthExpressionBitmap('wide', { width: 80, height: 30 }, palette)
+  let difference = 0
+  let total = 0
+  for (let y = 0; y < wide.height; y++) {
+    for (let x = 0; x < wide.width; x++) {
+      const alpha = wide.data[(y * wide.width + x) * 4 + 3]
+      const mirrored = wide.data[(y * wide.width + wide.width - 1 - x) * 4 + 3]
+      difference += Math.abs(alpha - mirrored)
+      total += alpha
+    }
+  }
+  assert.ok(difference / total < 0.02, `${difference / total}`)
+})
+
 function visibleColors(data: Uint8ClampedArray): Set<string> {
   const colors = new Set<string>()
   for (let index = 0; index < data.length; index += 4) {

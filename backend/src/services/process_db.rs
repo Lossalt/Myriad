@@ -1,12 +1,10 @@
-//! Tapp runtime registry adapter (process DB handle + re-export of workspace crate).
+//! The process's database connection, for code that runs outside a request.
 //!
-//! Pure registry/mailbox operations live in [`myriad_tapp_registry`]. This module
-//! is the **services-layer** entry point for agent / scheduler / runtime grants.
-//!
-//! `api::tapp_runtime::shared_registry` is a thin re-export of this module for
-//! path stability in HTTP handlers only — services must import this path.
-
-pub use myriad_tapp_registry::*;
+//! One slot, shared with [`crate::state::AppState`]: connect, reload and
+//! health reconnect write it once, and background services and HTTP
+//! extractors read the same handle — no dual live pools. Platform
+//! infrastructure: every subsystem (Tapp runtime, agent, channels, workers)
+//! depends on it; it depends on none of them.
 
 use sea_orm::{DatabaseConnection, DbErr};
 use std::sync::{Arc, OnceLock, RwLock};

@@ -118,7 +118,7 @@ async fn direct_motion_inner(
         crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(MOTION_TIMEOUT))
             .await;
     let result = if let Some(analyzer) = analyzer {
-        let persona_row = match crate::services::tapp_registry::database() {
+        let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,
         };
@@ -301,7 +301,7 @@ pub async fn resolve_round_motion_style(
     arousal: i32,
 ) -> String {
     let client_style = client.map(|summary| summary.motion_style.as_str());
-    if let Ok(db) = crate::services::tapp_registry::database() {
+    if let Ok(db) = crate::services::process_db::database() {
         if let Ok(Some(persona)) = get_persona(&db).await {
             return round_motion_style(
                 client_style,

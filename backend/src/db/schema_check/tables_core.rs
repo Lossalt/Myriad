@@ -651,5 +651,268 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 },
             ],
         },
+        // Platform runtime registry and mailbox, shared by every replica.
+        TableDef {
+            name: "runtime_registry".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "namespace".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "record_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "subject_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "owner_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "tapp_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "runtime_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "payload".into(),
+                    data_type: "jsonb".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "expires_at".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "updated_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("now()".into()),
+                    not_null: false,
+                },
+            ],
+        },
+        TableDef {
+            name: "runtime_mailbox".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "message_id".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "channel".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "runtime_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "payload".into(),
+                    data_type: "jsonb".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "expires_at".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "created_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("now()".into()),
+                    not_null: false,
+                },
+            ],
+        },
+        // Site-wide AI cost ledger; a Tapp is one caller among others.
+        TableDef {
+            name: "ai_cost_ledger".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "id".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "occurred_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("now()".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "subject_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "owner_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "tapp_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "task_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "source".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "operation".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "provider".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "model".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "input_tokens".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "output_tokens".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "tokens_estimated".into(),
+                    data_type: "boolean".into(),
+                    default_value: Some("true".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "cost_micro_usd".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "status".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "error_code".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+            ],
+        },
+        // Daily AI quota per subject and scope (a Tapp id, or site:<name>).
+        TableDef {
+            name: "ai_quota_usage".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "scope".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "user_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "quota_type".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "used".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "limit".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "period_start".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "period_end".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "updated_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("CURRENT_TIMESTAMP".into()),
+                    not_null: false,
+                },
+            ],
+        },
     ]
 }

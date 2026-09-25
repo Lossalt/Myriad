@@ -95,7 +95,7 @@ pub async fn handle_component(event: DiscordPrivateComponent, token: &str) {
     {
         warn!(?error, "Discord interaction ack failed");
     }
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         warn!("Discord callback skipped: database is not connected");
         return;
     };

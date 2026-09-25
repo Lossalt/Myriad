@@ -30,12 +30,12 @@ impl TestDb {
         let mut db = Database::connect(options).await.unwrap();
         db.execute_unprepared(
             r#"
-            CREATE TABLE tapp_quota_usage (
-                user_id integer NOT NULL, tapp_id text NOT NULL, quota_type text NOT NULL,
+            CREATE TABLE ai_quota_usage (
+                user_id integer NOT NULL, scope text NOT NULL, quota_type text NOT NULL,
                 used integer NOT NULL, "limit" integer NOT NULL,
                 period_start timestamptz NOT NULL, period_end timestamptz NOT NULL,
                 updated_at timestamptz NOT NULL,
-                UNIQUE(user_id, tapp_id, quota_type, period_start)
+                UNIQUE(user_id, scope, quota_type, period_start)
             )
         "#,
         )
@@ -64,9 +64,16 @@ impl TestDb {
         self.db.execute_unprepared(sql).await.unwrap();
     }
     async fn used(&self) -> Vec<i32> {
-        self.db.query_all_raw(Statement::from_string(DbBackend::Postgres,
-            "SELECT used FROM tapp_quota_usage ORDER BY user_id, tapp_id, quota_type, period_start"))
-            .await.unwrap().iter().map(|row| row.try_get("", "used").unwrap()).collect()
+        self.db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT used FROM ai_quota_usage ORDER BY user_id, scope, quota_type, period_start",
+            ))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get("", "used").unwrap())
+            .collect()
     }
     async fn finish(self) {
         self.exec(&format!("DROP SCHEMA {} CASCADE", self.schema))
@@ -116,7 +123,7 @@ async fn batch_counts_and_lifecycle() {
         .unwrap();
     test.assert_count(0);
     for count in [1, 3] {
-        test.exec("TRUNCATE tapp_quota_usage").await;
+        test.exec("TRUNCATE ai_quota_usage").await;
         let mut input = buckets(-1, "ip", 10, 1000);
         input.truncate(count);
         test.reset_count();
@@ -147,7 +154,7 @@ async fn batch_counts_and_lifecycle() {
         test.assert_count(1);
         assert_eq!(test.used().await, [2, 70].repeat(count));
     }
-    test.exec("TRUNCATE tapp_quota_usage").await;
+    test.exec("TRUNCATE ai_quota_usage").await;
     let zero = reserve(&test.db, buckets(-1, "ip", 10, 1000), 0)
         .await
         .unwrap();
@@ -197,11 +204,11 @@ async fn rejections_and_sql_failures_are_atomic() {
     );
     assert_eq!(test.used().await, before);
     let limit: i32 = test.db.query_one_raw(Statement::from_string(DbBackend::Postgres,
-        "SELECT \"limit\" FROM tapp_quota_usage WHERE user_id = -1 AND quota_type LIKE 'ai_calls%'"))
+        "SELECT \"limit\" FROM ai_quota_usage WHERE user_id = -1 AND quota_type LIKE 'ai_calls%'"))
         .await.unwrap().unwrap().try_get("", "limit").unwrap();
     assert_eq!(limit, 10);
     // Force the last statement to fail after ensure has changed the limits.
-    test.exec("ALTER TABLE tapp_quota_usage ADD CONSTRAINT injected_failure CHECK (used <= 100)")
+    test.exec("ALTER TABLE ai_quota_usage ADD CONSTRAINT injected_failure CHECK (used <= 100)")
         .await;
     assert!(
         reserve(&test.db, buckets(-1, "ip", 20, 2000), 100)
@@ -209,23 +216,23 @@ async fn rejections_and_sql_failures_are_atomic() {
             .is_err()
     );
     assert_eq!(test.used().await, before);
-    test.exec("ALTER TABLE tapp_quota_usage DROP CONSTRAINT injected_failure")
+    test.exec("ALTER TABLE ai_quota_usage DROP CONSTRAINT injected_failure")
         .await;
     // A failed ensure must not leave earlier rows or refreshed limits behind.
     test.exec("CREATE FUNCTION reject_ensure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.user_id = 0 THEN RAISE EXCEPTION 'injected ensure failure'; END IF; RETURN NEW; END $$").await;
-    test.exec("CREATE TRIGGER reject_ensure BEFORE INSERT ON tapp_quota_usage FOR EACH ROW EXECUTE FUNCTION reject_ensure()").await;
+    test.exec("CREATE TRIGGER reject_ensure BEFORE INSERT ON ai_quota_usage FOR EACH ROW EXECUTE FUNCTION reject_ensure()").await;
     assert!(
         reserve(&test.db, buckets(-2, "new-ip", 20, 2000), 10)
             .await
             .is_err()
     );
     assert_eq!(test.used().await, before);
-    test.exec("DROP TRIGGER reject_ensure ON tapp_quota_usage")
+    test.exec("DROP TRIGGER reject_ensure ON ai_quota_usage")
         .await;
     // Corrupt a lock-read scalar: strict decoding must reject and undo ensure.
-    test.exec("ALTER TABLE tapp_quota_usage ALTER COLUMN updated_at DROP NOT NULL")
+    test.exec("ALTER TABLE ai_quota_usage ALTER COLUMN updated_at DROP NOT NULL")
         .await;
-    test.exec("UPDATE tapp_quota_usage SET updated_at = NULL WHERE user_id = -1")
+    test.exec("UPDATE ai_quota_usage SET updated_at = NULL WHERE user_id = -1")
         .await;
     assert!(
         reserve(&test.db, buckets(-1, "ip", 20, 2000), 10)
@@ -233,14 +240,14 @@ async fn rejections_and_sql_failures_are_atomic() {
             .is_err()
     );
     assert_eq!(test.used().await, before);
-    test.exec("UPDATE tapp_quota_usage SET updated_at = NOW() WHERE updated_at IS NULL")
+    test.exec("UPDATE ai_quota_usage SET updated_at = NOW() WHERE updated_at IS NULL")
         .await;
     let limit: i32 = test.db.query_one_raw(Statement::from_string(DbBackend::Postgres,
-        "SELECT \"limit\" FROM tapp_quota_usage WHERE user_id = -1 AND quota_type LIKE 'ai_calls%'"))
+        "SELECT \"limit\" FROM ai_quota_usage WHERE user_id = -1 AND quota_type LIKE 'ai_calls%'"))
         .await.unwrap().unwrap().try_get("", "limit").unwrap();
     assert_eq!(limit, 10);
     // Continuations bypass cooldown but still charge and advance only the subject clock.
-    test.exec("UPDATE tapp_quota_usage SET updated_at = NOW() - interval '10 seconds'")
+    test.exec("UPDATE ai_quota_usage SET updated_at = NOW() - interval '10 seconds'")
         .await;
     let continuation = reserve_buckets(
         &test.db,
@@ -254,14 +261,14 @@ async fn rejections_and_sql_failures_are_atomic() {
     .await
     .unwrap();
     let touched: i64 = test.db.query_one_raw(Statement::from_string(DbBackend::Postgres,
-        "SELECT count(*) AS count FROM tapp_quota_usage WHERE updated_at > NOW() - interval '5 seconds'"))
+        "SELECT count(*) AS count FROM ai_quota_usage WHERE updated_at > NOW() - interval '5 seconds'"))
         .await.unwrap().unwrap().try_get("", "count").unwrap();
     assert_eq!(touched, 1);
     rollback_ai_quota_reservation(&test.db, &continuation)
         .await
         .unwrap();
     // Missing one target must undo updates to the other targets on every finalizer.
-    test.exec("DELETE FROM tapp_quota_usage WHERE tapp_id = '__anonymous_ai_site__' AND quota_type LIKE 'ai_tokens%'").await;
+    test.exec("DELETE FROM ai_quota_usage WHERE scope = 'site:anonymous' AND quota_type LIKE 'ai_tokens%'").await;
     let before = test.used().await;
     assert!(settle_ai_quota(&test.db, &first, 50).await.is_err());
     assert_eq!(test.used().await, before);
@@ -287,7 +294,7 @@ async fn finalizers_keep_the_reserved_period_and_reject_underflow() {
     let mut old = reserve(&test.db, buckets(-1, "ip", 10, 1000), 100)
         .await
         .unwrap();
-    test.exec("UPDATE tapp_quota_usage SET period_start = period_start - interval '1 day', period_end = period_end - interval '1 day'").await;
+    test.exec("UPDATE ai_quota_usage SET period_start = period_start - interval '1 day', period_end = period_end - interval '1 day'").await;
     for bucket in &mut old.buckets {
         bucket.period_start -= chrono::Duration::days(1);
     }
@@ -319,7 +326,7 @@ async fn concurrent_shared_buckets_never_overspend_or_deadlock() {
     let test = TestDb::new().await;
     // Contend on the same subject, same IP across subjects, and site across IPs.
     for (scope, token_limited) in (0..3).flat_map(|scope| [(scope, false), (scope, true)]) {
-        test.exec("TRUNCATE tapp_quota_usage").await;
+        test.exec("TRUNCATE ai_quota_usage").await;
         let mut tasks = tokio::task::JoinSet::new();
         for i in 0..12 {
             let db = test.db.clone();
@@ -387,7 +394,7 @@ async fn concurrent_shared_buckets_never_overspend_or_deadlock() {
         .await
         .expect("mixed quota operations deadlocked");
         let rows = test.db.query_all_raw(Statement::from_string(DbBackend::Postgres,
-            "SELECT used FROM tapp_quota_usage WHERE tapp_id = '__anonymous_ai_site__' ORDER BY quota_type"))
+            "SELECT used FROM ai_quota_usage WHERE scope = 'site:anonymous' ORDER BY quota_type"))
             .await.unwrap();
         assert_eq!(rows[0].try_get::<i32>("", "used").unwrap(), 3);
         assert_eq!(rows[1].try_get::<i32>("", "used").unwrap(), 10);

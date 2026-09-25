@@ -26,9 +26,15 @@ mod local_music;
 #[path = "008_local_music_playlists.rs"]
 mod local_music_playlists;
 
+mod ai_cost_ledger_rename;
+mod ai_quota_usage_rename;
 mod phantasi_legacy_rename;
+mod runtime_registry_rename;
 
+pub use ai_cost_ledger_rename::rename_ai_cost_ledger_if_needed;
+pub use ai_quota_usage_rename::rename_ai_quota_usage_if_needed;
 pub use phantasi_legacy_rename::rename_brew_to_phantasi_if_needed;
+pub use runtime_registry_rename::rename_runtime_registry_if_needed;
 
 /// Channel on which every change to a room membership row is announced, so
 /// live room sockets can re-check whether their member still belongs.
@@ -65,6 +71,9 @@ impl Migrator {
     {
         let executor = db.into_database_executor();
         rename_brew_to_phantasi_if_needed(&executor).await?;
+        rename_runtime_registry_if_needed(&executor).await?;
+        rename_ai_cost_ledger_if_needed(&executor).await?;
+        rename_ai_quota_usage_if_needed(&executor).await?;
         discard_unknown_migration_history(&executor).await?;
         <Self as MigratorTrait>::up(executor, steps).await
     }

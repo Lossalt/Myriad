@@ -1,7 +1,7 @@
 //! Declared inbound `/tapi/{tappId}/{path}` verification (HMAC + nonce ledger).
 
 use crate::services::tapp_hmac;
-use crate::services::tapp_registry::{self, RegistryIdentity};
+use crate::services::runtime_registry::{self, RegistryIdentity};
 use axum::http::{HeaderMap, Method};
 use myriad_tapp_contract::contract_rules::ROUTE_MAX_BODY_BYTES;
 use myriad_tapp_contract::manifest::{
@@ -301,7 +301,7 @@ pub async fn consume_nonce(
 ) -> Result<(), InboundRouteError> {
     let record_id = nonce_record_id(owner_id, tapp_id, credential_key, nonce);
     let expires_at = nonce_expires_at(now, timestamp, max_skew_secs);
-    let inserted = tapp_registry::put_if_absent(
+    let inserted = runtime_registry::put_if_absent(
         db,
         ROUTE_NONCE_NAMESPACE,
         &record_id,

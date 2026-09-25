@@ -21,7 +21,7 @@ members = [
     "crates/myriad-process-info",
     "crates/myriad-prompt-security",
     "crates/myriad-psn-auth",
-    "crates/myriad-tapp-registry",
+    "crates/myriad-runtime-registry",
     "crates/myriad-phantasi-notes",
     "crates/myriad-agent-rules",
     "crates/myriad-tapp-rules",

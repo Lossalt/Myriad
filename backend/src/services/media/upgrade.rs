@@ -38,7 +38,7 @@ const PHASES: &[(&str, &str, &str)] = &[
         "status IN ('pending', 'delivering', 'failed')",
     ),
     (
-        "tapp_runtime_registry",
+        "runtime_registry",
         "record_id",
         "namespace = 'ai_task' AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
     ),
@@ -931,7 +931,7 @@ async fn bind_row(
                 [serde_json::json!(rewritten).into()])).await?;
             Ok(())
         }
-        "tapp_runtime_registry" => {
+        "runtime_registry" => {
             let task: crate::services::ai_task_registry::PersistedAiTask =
                 serde_json::from_value(payload["payload"].clone())
                     .map_err(|_| MediaError::StoreFailed)?;

@@ -183,57 +183,57 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
         },
         // shared runtime state 索引
         IndexDef {
-            name: "idx_tapp_runtime_registry_subject".into(),
-            table: "tapp_runtime_registry".into(),
+            name: "idx_runtime_registry_subject".into(),
+            table: "runtime_registry".into(),
             columns: vec!["namespace".into(), "subject_id".into(), "expires_at".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_runtime_registry_tapp".into(),
-            table: "tapp_runtime_registry".into(),
+            name: "idx_runtime_registry_tapp".into(),
+            table: "runtime_registry".into(),
             columns: vec!["namespace".into(), "tapp_id".into(), "expires_at".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_runtime_registry_runtime".into(),
-            table: "tapp_runtime_registry".into(),
+            name: "idx_runtime_registry_runtime".into(),
+            table: "runtime_registry".into(),
             columns: vec!["namespace".into(), "runtime_id".into(), "expires_at".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_runtime_mailbox_recipient".into(),
-            table: "tapp_runtime_mailbox".into(),
+            name: "idx_runtime_mailbox_recipient".into(),
+            table: "runtime_mailbox".into(),
             columns: vec!["channel".into(), "runtime_id".into(), "message_id".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_runtime_mailbox_expiry".into(),
-            table: "tapp_runtime_mailbox".into(),
+            name: "idx_runtime_mailbox_expiry".into(),
+            table: "runtime_mailbox".into(),
             columns: vec!["expires_at".into()],
             is_unique: false,
         },
-        // tapp_quota_usage 索引
+        // ai_quota_usage 索引
         IndexDef {
-            name: "idx_tapp_quota_unique".into(),
-            table: "tapp_quota_usage".into(),
+            name: "idx_ai_quota_unique".into(),
+            table: "ai_quota_usage".into(),
             columns: vec![
                 "user_id".into(),
-                "tapp_id".into(),
+                "scope".into(),
                 "quota_type".into(),
                 "period_start".into(),
             ],
             is_unique: true,
         },
-        // tapp_ai_cost_ledger 索引
+        // ai_cost_ledger 索引
         IndexDef {
-            name: "idx_tapp_ai_cost_subject_time".into(),
-            table: "tapp_ai_cost_ledger".into(),
+            name: "idx_ai_cost_subject_time".into(),
+            table: "ai_cost_ledger".into(),
             columns: vec!["subject_id".into(), "occurred_at".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_ai_cost_tapp_time".into(),
-            table: "tapp_ai_cost_ledger".into(),
+            name: "idx_ai_cost_tapp_time".into(),
+            table: "ai_cost_ledger".into(),
             columns: vec!["tapp_id".into(), "occurred_at".into()],
             is_unique: false,
         },

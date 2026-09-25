@@ -105,7 +105,7 @@ impl PrivateText for FeishuText {
 
 /// Worker entry: interactive-card button. Always start Work after pairing.
 pub async fn handle_callback(event: FeishuCardCallback) {
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         warn!("Feishu callback skipped: database is not connected");
         return;
     };

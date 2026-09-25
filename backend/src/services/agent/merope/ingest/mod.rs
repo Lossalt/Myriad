@@ -39,7 +39,7 @@ pub async fn is_enabled() -> bool {
 }
 
 pub async fn latest_session_id_for(user_id: i32) -> Option<String> {
-    let db = crate::services::tapp_registry::database().ok()?;
+    let db = crate::services::process_db::database().ok()?;
     latest_open_session(&db, user_id)
         .await
         .ok()

@@ -318,7 +318,7 @@
     },
     "aiUsage": {
       "what": "Full-site AI usage (including admins/owner): daily trend, by user/model/source ranks, with filters.",
-      "chain": "1) Every provider call (text, image, speech) writes tapp_ai_cost_ledger. Tapp / scheduled jobs still settle quota on the governed path; Agent, reports, Agent persona, playground, and speech are labeled; unlabeled calls land as internal.\n2) Admin GET /api/analytics/ai-usage aggregates by the server local calendar day and does not exclude staff.\n3) Bars = calls (left axis), line = tokens (right axis, independent scale); lists by user, model, and source.\n4) Independent of the visitor-stats collection switch.",
+      "chain": "1) Every provider call (text, image, speech) writes ai_cost_ledger. Tapp / scheduled jobs still settle quota on the governed path; Agent, reports, Agent persona, playground, and speech are labeled; unlabeled calls land as internal.\n2) Admin GET /api/analytics/ai-usage aggregates by the server local calendar day and does not exclude staff.\n3) Bars = calls (left axis), line = tokens (right axis, independent scale); lists by user, model, and source.\n4) Independent of the visitor-stats collection switch.",
       "frontend": "Settings → Data & stats → “AI usage stats” (KPIs, chart, by user / model / source).",
       "notes": "Tokens are often estimates (images by resolution, speech by text/audio length). Panel is admin-only."
     },

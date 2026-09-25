@@ -400,7 +400,7 @@ async fn uninstall_install(
         })?;
         txn.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            r#"DELETE FROM tapp_runtime_registry AS registry
+            r#"DELETE FROM runtime_registry AS registry
                WHERE registry.tapp_id = $1
                  AND NOT EXISTS (
                    SELECT 1 FROM tapps AS remaining
@@ -414,7 +414,7 @@ async fn uninstall_install(
         ))
         .await
         .map_err(|error| {
-            tracing::error!(tapp_id, user_id, %error, "Failed to clean tapp_runtime_registry rows on uninstall");
+            tracing::error!(tapp_id, user_id, %error, "Failed to clean runtime_registry rows on uninstall");
             HttpError(AppError::internal("Database error"))
         })?;
         Ok(())
@@ -599,7 +599,7 @@ mod tests {
             "registry cleanup must keep rows for remaining installs"
         );
         assert!(
-            !src.contains("DELETE FROM tapp_runtime_registry WHERE tapp_id = $1"),
+            !src.contains("DELETE FROM runtime_registry WHERE tapp_id = $1"),
             "unscoped tapp_id registry delete would wipe other owners"
         );
     }

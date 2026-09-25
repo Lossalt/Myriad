@@ -890,7 +890,7 @@ impl TappApiService {
         system_prompt: &str,
         prompt: &str,
     ) -> Result<String, String> {
-        let db = crate::services::tapp_registry::database().map_err(|error| {
+        let db = crate::services::process_db::database().map_err(|error| {
             tracing::error!(%error, "AI task registry unavailable");
             "AI task registry unavailable".to_string()
         })?;

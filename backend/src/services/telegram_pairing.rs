@@ -91,7 +91,7 @@ pub async fn handle_callback(event: TelegramPrivateCallback, token: &str) {
     {
         warn!(?error, "Telegram callback ack failed");
     }
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         warn!("Telegram callback skipped: database is not connected");
         return;
     };

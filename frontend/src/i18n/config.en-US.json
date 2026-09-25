@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "Source",
     "aiUsageFilterAll": "All",
     "aiUsageFiltersAria": "Filter AI usage by user, model, and source",
-    "aiUsageNote": "Full-site cost ledger (tapp_ai_cost_ledger): includes admins and regular users. Text, image, and speech calls are recorded. Tokens are often estimates.",
+    "aiUsageNote": "Full-site cost ledger (ai_cost_ledger): includes admins and regular users. Text, image, and speech calls are recorded. Tokens are often estimates.",
     "pageLabels": {
       "/": "Home",
       "/library": "Library",

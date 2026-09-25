@@ -224,7 +224,7 @@ async fn wonder_and_find_out(
     if !has_budget(user_id, today) {
         return;
     }
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return;
     };
     // Only someone who may search can set her searching on the site's key.

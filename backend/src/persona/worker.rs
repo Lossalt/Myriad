@@ -56,7 +56,7 @@ pub async fn run() -> anyhow::Result<()> {
         drift.summary()
     );
     crate::SCHEMA_READY.store(true, Ordering::Release);
-    crate::services::tapp_registry::set_process_database(db.clone());
+    crate::services::process_db::set_process_database(db.clone());
     *crate::GLOBAL_DYNAMIC_CONFIG.write().await =
         ConfigService::new(db.clone()).load_config().await?;
     crate::services::agent::notifications::init_notifications(db.clone()).await;

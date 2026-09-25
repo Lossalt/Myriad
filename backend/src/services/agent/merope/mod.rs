@@ -82,7 +82,7 @@ pub async fn resolve_speaking_soul() -> Option<String> {
         .await
         .merope_enabled_resolved();
     if enabled {
-        if let Ok(db) = crate::services::tapp_registry::database() {
+        if let Ok(db) = crate::services::process_db::database() {
             if let Ok(Some(persona)) = get_persona(&db).await {
                 if let Some(text) = format_persona(&persona) {
                     return Some(text);
@@ -391,7 +391,7 @@ async fn speaking_prompt_for_turn(
     if !is_logged_in_addressee(user_id) {
         return Vec::new();
     }
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return vec![addressee_speaking_section(&format_addressee_label(
             user_id, None, None,
         ))];

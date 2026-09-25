@@ -15,7 +15,17 @@ export interface MouthMorphState {
   wide: number
   round: number
   narrow: number
+  /**
+   * The speaking materials' own opening. A closed mouth is a lip line with no
+   * gap, so here it counts as a slit rather than its drawn curve's box: an
+   * opening mouth grows from that slit instead of appearing at full height.
+   */
+  openCenterY: number
+  openHeight: number
 }
+
+/** A just-parted mouth, as a share of the closed lip line's drawn height. */
+const PARTED_LIP_SLIT = 0.2
 
 export interface Anime25DMouthMorphSources {
   closed?: Anime25DPlaybackLayer
@@ -44,6 +54,10 @@ export interface Anime25DOpacityFrame {
   lovestruckHeartR: number
   activeMouthMaterial: SpeechMouthMaterial
   mouthUnderlay: SpeechMouthMaterial
+  /** The closed line still showing over lips that have only just parted. */
+  closedLinger: number
+  /** How far the parting slit has come in over that line. */
+  partingReveal: number
 }
 
 export function compileAnime25DMouthMorphSources(
@@ -114,6 +128,8 @@ export function resolveMouthMorph(
     output.centerY = fallback.cy
     output.width = Math.max(1, fallback.x1 - fallback.x0)
     output.height = Math.max(1, fallback.y1 - fallback.y0)
+    output.openCenterY = output.centerY
+    output.openHeight = output.height
     return
   }
   output.centerX /= total
@@ -132,6 +148,19 @@ export function resolveMouthMorph(
       neutralBottom + (blendedBottom - neutralBottom) * lowerRelease
     output.centerY = (anchoredTop + releasedBottom) / 2
     output.height = Math.max(1, releasedBottom - anchoredTop)
+  }
+  if (closed) {
+    // Parted lips first, the full drawn opening once the mouth is open.
+    const slit = Math.max(1, closed.h * PARTED_LIP_SLIT)
+    const partedTop = closed.y + (closed.h - slit) / 2
+    const aperture = output.openMix
+    const openTop =
+      partedTop + (output.centerY - output.height / 2 - partedTop) * aperture
+    output.openHeight = slit + (output.height - slit) * aperture
+    output.openCenterY = openTop + output.openHeight / 2
+  } else {
+    output.openCenterY = output.centerY
+    output.openHeight = output.height
   }
   if (maniac > 0) {
     // An extreme mouth must still fit the character's lower face.
@@ -182,8 +211,10 @@ export function applyMouthTransitionBridge(
 ): void {
   output.width = Math.max(1, output.width * transition.widthScale)
   output.height = Math.max(1, output.height * transition.heightScale)
+  output.openHeight = Math.max(1, output.openHeight * transition.heightScale)
   output.centerX += transition.centerOffsetX
   output.centerY += transition.centerOffsetY
+  output.openCenterY += transition.centerOffsetY
   const retainedShape = 1 - transition.shapeNeutralization
   output.wide *= retainedShape
   output.round *= retainedShape
@@ -264,6 +295,8 @@ export function fadeOpacity(
         layer.fade,
         maniac,
         regularMouthMaterial(driver, activeMouthMaterial),
+        closedLinger(driver),
+        partingReveal(driver),
       ) *
       (1 - mouthCry) *
       (1 - sillyMouth)
@@ -291,6 +324,8 @@ export function createAnime25DOpacityFrame(): Anime25DOpacityFrame {
     lovestruckHeartR: 0,
     activeMouthMaterial: 'mouthClose',
     mouthUnderlay: 'mouthClose',
+    closedLinger: 0,
+    partingReveal: 1,
   }
 }
 
@@ -347,6 +382,8 @@ export function writeAnime25DOpacityFrame(
     lovestruck * smoothstep((driver.eyeOpenR - 0.12) / 0.28)
   output.activeMouthMaterial = activeMouthMaterial
   output.mouthUnderlay = regularMouthMaterial(driver, activeMouthMaterial)
+  output.closedLinger = closedLinger(driver)
+  output.partingReveal = partingReveal(driver)
 }
 
 export function fadeOpacityFromFrame(
@@ -404,7 +441,13 @@ export function fadeOpacityFromFrame(
     fade === 'mouthManiac'
   ) {
     return (
-      mouthLayerMix(fade, frame.maniac, frame.mouthUnderlay) *
+      mouthLayerMix(
+        fade,
+        frame.maniac,
+        frame.mouthUnderlay,
+        frame.closedLinger,
+        frame.partingReveal,
+      ) *
       (1 - frame.mouthCry) *
       (1 - frame.sillyMouth)
     )
@@ -424,9 +467,31 @@ function mouthLayerMix(
   fade: string,
   maniac: number,
   underlay: SpeechMouthMaterial,
+  linger: number,
+  reveal: number,
 ): number {
   if (fade === 'mouthManiac') return maniac
-  return fade === underlay ? 1 - maniac : 0
+  if (fade === underlay) {
+    // A parting slit comes in over the lip line rather than cutting to it.
+    return (fade === 'mouthClose' ? 1 : reveal) * (1 - maniac)
+  }
+  if (fade === 'mouthClose' && underlay !== 'mouthManiac') {
+    return linger * (1 - maniac)
+  }
+  return 0
+}
+
+/** Opening over which the closed line fades out above a parting mouth. */
+const CLOSED_LINGER_OPENING = 0.3
+/** Opening over which the parting slit fades in over that line. */
+const PARTING_REVEAL_OPENING = 0.08
+
+function closedLinger(driver: Readonly<Anime25DDriver>): number {
+  return 1 - smoothstep(mouthOpenMix(driver) / CLOSED_LINGER_OPENING)
+}
+
+function partingReveal(driver: Readonly<Anime25DDriver>): number {
+  return smoothstep(mouthOpenMix(driver) / PARTING_REVEAL_OPENING)
 }
 
 function smoothstep(value: number): number {

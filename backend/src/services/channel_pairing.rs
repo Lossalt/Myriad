@@ -16,7 +16,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 
 const CODE_TTL_SECS: i64 = 10 * 60;
 
@@ -276,7 +276,7 @@ async fn live_code_expiry(
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT expires_at FROM tapp_runtime_registry \
+            "SELECT expires_at FROM runtime_registry \
              WHERE namespace = $1 AND subject_id = $2 \
                AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT \
              ORDER BY updated_at DESC LIMIT 1",
@@ -311,7 +311,7 @@ pub async fn mint_code(
     .await?;
     txn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2",
+        "DELETE FROM runtime_registry WHERE namespace = $1 AND subject_id = $2",
         vec![
             SeaValue::String(Some(channel.code_namespace.to_string())),
             SeaValue::Int(Some(user_id)),
@@ -373,7 +373,7 @@ pub async fn unpair(
     // Revoke first; running observers must fail their binding check even if cleanup fails.
     txn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE subject_id = $1 AND namespace = $2",
+        "DELETE FROM runtime_registry WHERE subject_id = $1 AND namespace = $2",
         [user_id.into(), channel.code_namespace.into()],
     ))
     .await?;

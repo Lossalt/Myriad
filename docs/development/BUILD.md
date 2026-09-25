@@ -40,7 +40,7 @@ dependencies (see [Cargo Workspaces](https://doc.rust-lang.org/book/ch14-03-carg
 | `crates/myriad-process-info/` | `myriad-process-info` (memory/uptime/version) |
 | `crates/myriad-prompt-security/` | `myriad-prompt-security` (prompt injection heuristics) |
 | `crates/myriad-psn-auth/` | `myriad-psn-auth` (PSN NPSSO→token) |
-| `crates/myriad-tapp-registry/` | `myriad-tapp-registry` (runtime registry/mailbox) |
+| `crates/myriad-runtime-registry/` | `myriad-runtime-registry` (runtime registry/mailbox) |
 | `crates/tapp-contract/` | `myriad-tapp-contract` |
 | `crates/myriad-agent-rules/` | `myriad-agent-rules` (pure Agent caps and projections) |
 | `crates/myriad-tapp-rules/` | `myriad-tapp-rules` (HMAC, transform, package plan, feed) |

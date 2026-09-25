@@ -1,4 +1,4 @@
-//! Admin AI usage summary from `tapp_ai_cost_ledger`.
+//! Admin AI usage summary from `ai_cost_ledger`.
 //!
 //! Breaks down site-wide AI calls (text, image, speech) by calendar day, user
 //! (`subject_id`), model, and source. Complements the per-user journal at
@@ -96,7 +96,7 @@ WITH scoped AS (
     SELECT occurred_at::date AS day, subject_id, model, provider,
            {SOURCE_EXPR} AS source, input_tokens, output_tokens,
            occurred_at::date >= ${cur} AS cur
-    FROM tapp_ai_cost_ledger
+    FROM ai_cost_ledger
     {where_scan}
 ), grouped AS (
     SELECT CASE
@@ -255,7 +255,7 @@ async fn ai_usage_summary(db: &DatabaseConnection, q: AiUsageSummaryQuery) -> Re
         summary_params(&window, subject_filter, model_ref, source_ref),
     );
     let model_picker = picker_statement(
-        "SELECT DISTINCT l.model FROM tapp_ai_cost_ledger l",
+        "SELECT DISTINCT l.model FROM ai_cost_ledger l",
         "ORDER BY l.model ASC LIMIT 100",
         from,
         to_day,
@@ -265,7 +265,7 @@ async fn ai_usage_summary(db: &DatabaseConnection, q: AiUsageSummaryQuery) -> Re
     );
     let user_picker = picker_statement(
         "SELECT DISTINCT l.subject_id, u.username, u.display_name \
-         FROM tapp_ai_cost_ledger l LEFT JOIN users u ON u.id = l.subject_id",
+         FROM ai_cost_ledger l LEFT JOIN users u ON u.id = l.subject_id",
         "ORDER BY l.subject_id ASC LIMIT 100",
         from,
         to_day,
@@ -275,7 +275,7 @@ async fn ai_usage_summary(db: &DatabaseConnection, q: AiUsageSummaryQuery) -> Re
     );
     let source_picker = picker_statement(
         "SELECT DISTINCT COALESCE(NULLIF(TRIM(l.source), ''), 'unknown') AS source \
-         FROM tapp_ai_cost_ledger l",
+         FROM ai_cost_ledger l",
         "ORDER BY source ASC LIMIT 50",
         from,
         to_day,
@@ -438,10 +438,10 @@ async fn ai_usage_summary(db: &DatabaseConnection, q: AiUsageSummaryQuery) -> Re
             "source": source_filter,
             "model": model_filter,
         },
-        "source": "tapp_ai_cost_ledger",
+        "source": "ai_cost_ledger",
         // Explicit: unlike visitor analytics, staff (admin/owner) are INCLUDED.
         "staff_included": true,
-        "notes": "Full-site AI usage from tapp_ai_cost_ledger: all users including admin/owner; text, image, and speech calls are recorded. Tokens may be estimates.",
+        "notes": "Full-site AI usage from ai_cost_ledger: all users including admin/owner; text, image, and speech calls are recorded. Tokens may be estimates.",
     }))
 }
 
@@ -497,7 +497,7 @@ mod tests {
         db.execute_unprepared(
             r#"
 INSERT INTO users (id, username) VALUES (1, 'u1');
-INSERT INTO tapp_ai_cost_ledger
+INSERT INTO ai_cost_ledger
     (occurred_at, subject_id, owner_id, tapp_id, task_id, source, operation, provider, model,
      input_tokens, output_tokens, status)
 VALUES (NOW(), 1, 1, 't', 'k', 'agent', 'chat', 'p', 'm1', 10, 5, 'ok'),

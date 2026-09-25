@@ -82,12 +82,12 @@ BEGIN
        OR scheduled_task_id IN (SELECT id FROM tapp_scheduled_tasks WHERE user_id = OLD.id);
     DELETE FROM tapp_scheduled_tasks WHERE user_id = OLD.id;
     DELETE FROM tapp_user_activities WHERE user_id = OLD.id;
-    DELETE FROM tapp_quota_usage WHERE user_id = OLD.id;
+    DELETE FROM ai_quota_usage WHERE user_id = OLD.id;
     DELETE FROM tapp_storage WHERE user_id = OLD.id;
     DELETE FROM tapp_widgets WHERE user_id = OLD.id;
     DELETE FROM tapps WHERE user_id = OLD.id;
-    DELETE FROM tapp_runtime_registry WHERE subject_id = OLD.id OR owner_id = OLD.id;
-    DELETE FROM tapp_ai_cost_ledger WHERE subject_id = OLD.id OR owner_id = OLD.id;
+    DELETE FROM runtime_registry WHERE subject_id = OLD.id OR owner_id = OLD.id;
+    DELETE FROM ai_cost_ledger WHERE subject_id = OLD.id OR owner_id = OLD.id;
     DELETE FROM phantasi_user_states WHERE user_id = OLD.id;
     -- Items (and their states/comments) cascade from their source.
     DELETE FROM phantasi_sources WHERE user_id = OLD.id;
@@ -135,12 +135,12 @@ BEGIN
             ('tapp_task_executions', ARRAY['user_id']),
             ('tapp_scheduled_tasks', ARRAY['user_id']),
             ('tapp_user_activities', ARRAY['user_id']),
-            ('tapp_quota_usage', ARRAY['user_id']),
+            ('ai_quota_usage', ARRAY['user_id']),
             ('tapp_storage', ARRAY['user_id']),
             ('tapp_widgets', ARRAY['user_id']),
             ('tapps', ARRAY['user_id']),
-            ('tapp_runtime_registry', ARRAY['subject_id', 'owner_id']),
-            ('tapp_ai_cost_ledger', ARRAY['subject_id', 'owner_id']),
+            ('runtime_registry', ARRAY['subject_id', 'owner_id']),
+            ('ai_cost_ledger', ARRAY['subject_id', 'owner_id']),
             ('phantasi_user_states', ARRAY['user_id']),
             ('phantasi_sources', ARRAY['user_id'])
         ) AS t(tbl, cols)

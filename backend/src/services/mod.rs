@@ -54,8 +54,10 @@ pub mod platform_id; // PlatformId registry: ids, aliases, credentials/enabled r
 pub mod platform_items; // Cache → uniform items[] projection
 pub mod platform_refresh; // Platform fetch/cache (profile HTTP + scheduler)
 pub mod principal; // 当前角色、站长、安装是否已认领：唯一来源
+pub mod process_db; // The process database connection (platform infrastructure)
 pub mod profile_text; // 名称/简介文案来源（与 avatar 独立）
 pub mod retired_configuration; // Backup denylist for retired configuration keys
+pub mod runtime_registry; // Platform runtime registry/mailbox shared by replicas (workspace crate)
 pub mod see_through; // Remote See-through layered-PSD decomposition
 pub mod server_location; // Egress location dual-source probe
 pub mod site_owner;
@@ -90,7 +92,6 @@ pub mod tapp_package_read; // Installed package resource path plans
 pub mod tapp_playground_knowledge; // Playground Agent read-only contract retrieval
 pub mod tapp_prepared_package; // Prepared package validate + resource overrides
 pub mod tapp_rate_limit;
-pub mod tapp_registry; // Runtime registry/mailbox (workspace crate + DB adapter)
 pub mod tapp_reports; // Platform report catalog + payload projection
 pub mod tapp_runtime_grant;
 pub mod tapp_scheduler;

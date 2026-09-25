@@ -1124,8 +1124,8 @@ async fn generate_ai_report(
     let schema = crate::api::reports::prompt_data::platform_report_schema();
 
     // 6. 调用 AI（全站费用账本：source=reports，主体记在站长；含管理员触发）
-    let admin_id = match crate::services::tapp_registry::database() {
-        Ok(db) => crate::services::tapp_ownership::get_admin_user_id(&db)
+    let admin_id = match crate::services::process_db::database() {
+        Ok(db) => crate::services::site_owner::site_owner_user_id(&db)
             .await
             .unwrap_or(1),
         _ => 1,
@@ -1135,7 +1135,7 @@ async fn generate_ai_report(
         owner_id: admin_id,
         source: "reports".into(),
         operation: "report".into(),
-        tapp_id: "__reports__".into(),
+        tapp_id: None,
         task_id: format!("report:{platform}"),
     };
     let ai_result = crate::services::ai_cost_ledger::with_ai_ledger_attribution(attr, async {

@@ -60,7 +60,7 @@ pub(crate) trait PrivateText: Send + Sync {
 
 pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
     let platform = T::PLATFORM;
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         warn!(%platform, "channel inbound skipped: database is not connected");
         return;
     };
