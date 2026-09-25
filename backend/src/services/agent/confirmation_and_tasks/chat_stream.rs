@@ -248,6 +248,15 @@ fn spawn_model_outfit_overlay(
     });
 }
 
+/// The images attached to this chat message (none in a group turn).
+fn images_of(request: &UserRequest) -> &[crate::services::analyzer::ImageInput] {
+    request
+        .context
+        .as_ref()
+        .map(|context| context.images.as_slice())
+        .unwrap_or(&[])
+}
+
 impl Agent {
     /// Chat 模式的唯一模型入口。严格 Lite 不可用时直接失败，绝不借用
     /// Standard / Pro，否则“只聊天”会悄悄变成另一条 Work 费用路径。
@@ -272,10 +281,15 @@ impl Agent {
             .await
             .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())?;
         let prompt = self.chat_response_prompt(request).await;
-        let response = analyzer
-            .analyze(&prompt)
-            .await
-            .map_err(|error| error.to_string())?;
+        let images = images_of(request);
+        let response = if images.is_empty() {
+            analyzer.analyze(&prompt).await
+        } else {
+            analyzer
+                .analyze_stream_parts_with_images(&prompt, images, |_| async { true })
+                .await
+        }
+        .map_err(|error| error.to_string())?;
         let response = response.trim();
         if response.is_empty() {
             Err("Chat model returned an empty response".to_string())
@@ -380,11 +394,22 @@ impl Agent {
             .context
             .as_ref()
             .and_then(|context| context.custom_data.as_ref());
-        let perception = crate::services::agent::chat_prompt::format_chat_scene(
+        let mut perception = crate::services::agent::chat_prompt::format_chat_scene(
             custom.and_then(|data| data.get("perception")),
             custom.and_then(|data| data.get("pageContent")),
             &request.raw_input,
         );
+        let attached = crate::services::agent::chat_attachments::format_attached(
+            custom,
+            images_of(request).len(),
+        );
+        if !attached.is_empty() {
+            perception = if perception.trim().is_empty() {
+                attached
+            } else {
+                format!("{perception}\n\n{attached}")
+            };
+        }
         crate::services::agent::chat_prompt::build_chat_lite_prompt_with_perception(
             &soul,
             &merope_block,
@@ -414,7 +439,7 @@ impl Agent {
             .as_ref()
             .and_then(|context| context.session_id.clone());
         match analyzer
-            .analyze_stream_parts(&prompt, |delta| {
+            .analyze_stream_parts_with_images(&prompt, images_of(request), |delta| {
                 let tx = tx.clone();
                 let speech_delivery = speech_delivery.clone();
                 let wear = wear.clone();

@@ -79,6 +79,10 @@ pub struct RequestContext {
     /// request: it decides whose memories may be said aloud.
     #[serde(default)]
     pub venue: Option<String>,
+    /// Images attached to this message, for the model this turn only. Taken
+    /// out of `custom_data` by the server; never serialized, so never stored.
+    #[serde(skip)]
+    pub images: Vec<crate::services::analyzer::ImageInput>,
 }
 
 /// 对话消息

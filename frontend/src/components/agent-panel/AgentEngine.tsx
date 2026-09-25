@@ -91,7 +91,7 @@ import {
   errorCode,
   generationFailureMessage,
 } from '../agent/onboarding/generationError'
-import { attachmentsForRequest } from './agentAttachments'
+import { attachmentsForDisplay, attachmentsForRequest } from './agentAttachments'
 import { getAgentContextConsent } from './agentContextConsent'
 import { setAgentSessionId } from './agentMessages'
 import {
@@ -1315,7 +1315,7 @@ export const AgentEngine: React.FC = () => {
           role: 'user',
           ...userBody,
           createdAt: new Date(),
-          ...(attachments.length ? { attachments: Iterator.from(attachments).toArray() } : {}),
+          ...(attachments.length ? { attachments: attachmentsForDisplay(attachments) } : {}),
         }
         setMessages((prev) => [...prev, userMessage], mode)
         try {
@@ -1363,7 +1363,7 @@ export const AgentEngine: React.FC = () => {
         role: 'user',
         ...userBody,
         createdAt: new Date(),
-        ...(attachments.length ? { attachments: Iterator.from(attachments).toArray() } : {}),
+        ...(attachments.length ? { attachments: attachmentsForDisplay(attachments) } : {}),
       }
 
       const assistantMsgId = nextAgentMessageId('assistant')

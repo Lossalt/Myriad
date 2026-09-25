@@ -99,6 +99,26 @@ pub(super) struct OpenAIMessage {
     pub(super) content: String,
 }
 
+/// An image sent to the model with a prompt: a small, already-validated
+/// image carried only for this call, never stored.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImageInput {
+    /// `image/png`, `image/jpeg`, `image/webp` or `image/gif`.
+    pub mime: String,
+    /// Standard base64 of the bytes.
+    pub base64: String,
+}
+
+impl std::fmt::Debug for ImageInput {
+    // Never dump image data into logs.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageInput")
+            .field("mime", &self.mime)
+            .field("base64_len", &self.base64.len())
+            .finish()
+    }
+}
+
 /// OpenAI-compatible chat role/content pair for multi-turn analysis.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {

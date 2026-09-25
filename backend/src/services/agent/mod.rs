@@ -1,5 +1,6 @@
 pub mod ai_process_pure;
 pub mod capability;
+pub mod chat_attachments;
 pub mod chat_music;
 pub mod chat_prompt;
 pub mod consciousness;

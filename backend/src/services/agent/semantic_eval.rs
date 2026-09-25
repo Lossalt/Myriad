@@ -140,6 +140,9 @@ struct Case {
     /// Raw search results for a digest case (fenced as production does).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     search_results: Option<String>,
+    /// Images attached to the message, files under `tests/merope/images/`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -174,6 +177,29 @@ fn is_mind_case(case: &Case) -> bool {
         || !case.brought_to_mind.is_empty()
         || case.inner.is_some()
         || case.gap.is_some()
+        || !case.images.is_empty()
+}
+
+/// A case's attached images, checked as production checks an upload.
+fn case_images(case: &Case) -> Vec<crate::services::analyzer::ImageInput> {
+    use base64::Engine as _;
+    case.images
+        .iter()
+        .map(|name| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/merope/images")
+                .join(name);
+            let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("missing image {name}"));
+            let url = format!(
+                "data:image/*;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            );
+            let mut data = json!({ "attachments": [{ "image": url }] });
+            super::chat_attachments::take_images(Some(&mut data))
+                .pop()
+                .unwrap_or_else(|| panic!("{name} is not an accepted image"))
+        })
+        .collect()
 }
 
 fn mind_chat_prompt(case: &Case) -> String {
@@ -220,7 +246,7 @@ fn mind_chat_prompt(case: &Case) -> String {
         &sections.join("\n\n"),
         &history,
         &case.input,
-        "",
+        &super::chat_attachments::format_attached(None, case.images.len()),
     )
 }
 
@@ -358,7 +384,11 @@ fn request(case: &Case) -> Value {
             contract
         }
         "chat" if is_mind_case(case) => {
-            json!({"input":mind_chat_prompt(case),"schema":null,"schemaName":null,"system":null})
+            let mut request = json!({"input":mind_chat_prompt(case),"schema":null,"schemaName":null,"system":null});
+            if !case.images.is_empty() {
+                request["images"] = json!(case.images);
+            }
+            request
         }
         "wonder" => {
             let (system, schema) =
@@ -682,6 +712,8 @@ async fn run_semantic_suite() {
         .open(path)
         .expect("report must not exist");
     let filter = std::env::var("MEROPE_SEMANTIC_KIND").ok();
+    // Optional: only cases whose id starts with this.
+    let id_prefix = std::env::var("MEROPE_SEMANTIC_ID").ok();
     let repeats = std::env::var("MEROPE_SEMANTIC_REPEAT")
         .unwrap_or_else(|_| "1".into())
         .parse::<usize>()
@@ -697,6 +729,11 @@ async fn run_semantic_suite() {
                     &c.kind == kind
                 }
             })
+        })
+        .filter(|c| {
+            id_prefix
+                .as_ref()
+                .is_none_or(|prefix| c.id.starts_with(prefix.as_str()))
         })
         .flat_map(|c| {
             (0..repeats).map(move |i| {
@@ -836,7 +873,24 @@ async fn run_semantic_suite() {
                     },
                 )),
                 async {
-                    if case.kind == "chat" {
+                    if case.kind == "chat" && !case.images.is_empty() {
+                        let first_text_ms = &mut first_text_ms;
+                        analyzer
+                            .analyze_stream_parts_with_images(
+                                request["input"].as_str().unwrap(),
+                                &case_images(&case),
+                                |delta| {
+                                    if let crate::services::analyzer::StreamDelta::Text(text) =
+                                        &delta
+                                        && !text.trim().is_empty()
+                                    {
+                                        first_text_ms.get_or_insert(start.elapsed().as_millis());
+                                    }
+                                    async { true }
+                                },
+                            )
+                            .await
+                    } else if case.kind == "chat" {
                         analyzer
                             .analyze_stream(request["input"].as_str().unwrap(), |text| {
                                 if !text.trim().is_empty() {
@@ -1143,7 +1197,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 12;
+const MIND_CASES: usize = 13;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1175,6 +1229,14 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .unwrap()
             .contains("## Inside you right now")
     );
+    let seen = request(by_id("mind-sees-image"));
+    assert!(
+        seen["input"]
+            .as_str()
+            .unwrap()
+            .contains("They attached 1 image to this message; you can see it.")
+    );
+    assert_eq!(case_images(by_id("mind-sees-image"))[0].mime, "image/jpeg");
     let digest = request(by_id("mind-found-out-injection"));
     assert!(
         digest["input"]

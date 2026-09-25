@@ -18,7 +18,8 @@ use super::text_protocol;
 use super::transport;
 use super::types::{
     AiProvider, ChatMessage, Gateway, GeminiContent, GeminiPart, GeminiRequest, GeminiResponse,
-    OpenAIMessage, OpenAIRequest, OpenAIResponse, OutputBudget, StreamDelta, gateway_of,
+    ImageInput, OpenAIMessage, OpenAIRequest, OpenAIResponse, OutputBudget, StreamDelta,
+    gateway_of,
 };
 
 pub struct AiAnalyzer {
@@ -1131,6 +1132,95 @@ impl AiAnalyzer {
         result
     }
 
+    /// [`Self::analyze_stream_parts`] with images the model sees alongside
+    /// the prompt. Gemini gets `inlineData` parts and OpenAI-compatible
+    /// endpoints a content array with data-URL `image_url`s; other protocols
+    /// get the text alone. No images: exactly the text path.
+    pub async fn analyze_stream_parts_with_images<F, Fut>(
+        &self,
+        prompt: &str,
+        images: &[ImageInput],
+        on_delta: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamDelta) -> Fut + Send,
+        Fut: Future<Output = bool> + Send,
+    {
+        if images.is_empty() || !matches!(self.provider, AiProvider::Gemini | AiProvider::OpenAI) {
+            if !images.is_empty() {
+                tracing::info!(
+                    provider = ?self.provider,
+                    "images not supported on this protocol; sending text only"
+                );
+            }
+            return self.analyze_stream_parts(prompt, on_delta).await;
+        }
+        // The ledger counts characters (about four per token); an image of
+        // this size costs roughly a thousand input tokens.
+        const IMAGE_INPUT_CHARS: usize = 4_000;
+        let input_chars = prompt.len() + images.len() * IMAGE_INPUT_CHARS;
+        let result = self.analyze_stream_images(prompt, images, on_delta).await;
+        self.note_ledger(input_chars, &result, "stream").await;
+        result
+    }
+
+    async fn analyze_stream_images<F, Fut>(
+        &self,
+        prompt: &str,
+        images: &[ImageInput],
+        on_delta: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamDelta) -> Fut + Send,
+        Fut: Future<Output = bool> + Send,
+    {
+        if self.provider == AiProvider::Gemini {
+            let body = gemini_image_request(prompt, images);
+            let url = self.gemini_url(true).await;
+            let response = self
+                .authenticate(self.client.post(&url))
+                .json(&super::request_budget::prepare(&body, self.provider)?)
+                .send()
+                .await
+                .context("Failed to send streaming image request to Gemini API")?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = Self::read_limited_error_text(response).await;
+                return Err(anyhow::anyhow!(
+                    "Gemini streaming API error {}: {}",
+                    status,
+                    error_text
+                ));
+            }
+            return super::sse::consume_text_sse(response, on_delta, gemini_stream_deltas).await;
+        }
+        let body = openai_image_request(&self.model, prompt, images);
+        let url = openai_chat_completions_url(self.base_url.as_deref());
+        let response = self
+            .authenticate(self.client.post(&url))
+            .header("Content-Type", "application/json")
+            .json(&super::request_budget::prepare(&body, self.provider)?)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to send streaming image request to OpenAI-compatible API (endpoint: {url}, model: {})",
+                    self.model
+                )
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = Self::read_limited_error_text(response).await;
+            return Err(anyhow::anyhow!(format_openai_compatible_http_error(
+                status,
+                &url,
+                &self.model,
+                &error_text,
+            )));
+        }
+        consume_openai_sse(response, on_delta).await
+    }
+
     async fn analyze_stream_inner<F, Fut>(&self, prompt: &str, on_delta: F) -> Result<String>
     where
         F: FnMut(StreamDelta) -> Fut + Send,
@@ -1245,6 +1335,63 @@ impl AiAnalyzer {
                     .await
             }
         }
+    }
+}
+
+fn gemini_image_request(prompt: &str, images: &[ImageInput]) -> serde_json::Value {
+    let mut parts = vec![serde_json::json!({ "text": prompt })];
+    parts.extend(images.iter().map(|image| {
+        serde_json::json!({ "inlineData": { "mimeType": image.mime, "data": image.base64 } })
+    }));
+    serde_json::json!({ "contents": [{ "parts": parts }] })
+}
+
+fn openai_image_request(model: &str, prompt: &str, images: &[ImageInput]) -> serde_json::Value {
+    let mut content = vec![serde_json::json!({ "type": "text", "text": prompt })];
+    content.extend(images.iter().map(|image| {
+        serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,{}", image.mime, image.base64) }
+        })
+    }));
+    serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": content }],
+        "stream": true,
+    })
+}
+
+#[cfg(test)]
+mod image_request_tests {
+    use super::*;
+
+    fn image() -> ImageInput {
+        ImageInput {
+            mime: "image/webp".into(),
+            base64: "AAAA".into(),
+        }
+    }
+
+    #[test]
+    fn images_ride_beside_the_prompt_in_each_protocol() {
+        let gemini = gemini_image_request("看看这个", &[image()]);
+        assert_eq!(gemini["contents"][0]["parts"][0]["text"], "看看这个");
+        assert_eq!(
+            gemini["contents"][0]["parts"][1]["inlineData"]["mimeType"],
+            "image/webp"
+        );
+        let openai = openai_image_request("m", "看看这个", &[image()]);
+        let content = &openai["messages"][0]["content"];
+        assert_eq!(content[0]["text"], "看看这个");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/webp;base64,AAAA"
+        );
+        assert_eq!(openai["stream"], true);
+        assert!(
+            !format!("{:?}", image()).contains("AAAA"),
+            "no image data in logs"
+        );
     }
 }
 
