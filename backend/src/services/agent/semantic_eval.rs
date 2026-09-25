@@ -412,16 +412,25 @@ fn request(case: &Case) -> Value {
                 "input":json!({"day":"Wed","dayFacts":case.myself,"earlierEntries":case.own_days}).to_string()})
         }
         "inner" => {
-            let (system, schema) = super::merope::inner::probe_contract(&contract_soul());
+            // With her reply: the state compiled after the exchange.
+            let (system, schema) = if case.reply.is_empty() {
+                super::merope::inner::probe_contract(&contract_soul())
+            } else {
+                super::merope::inner::probe_after_contract(&contract_soul())
+            };
             let history: Vec<Value> = case
                 .history
                 .iter()
                 .map(|line| json!({"role":line.role,"text":line.text}))
                 .collect();
+            let mut input = json!({"userText":case.input,"history":history,
+                "feelingTowardThem":super::merope::mood_tone_instruction(case.mood.unwrap_or(70.0), case.arousal.unwrap_or(48.0)),
+                "myself":case.myself,"remembered":case.remembered});
+            if !case.reply.is_empty() {
+                input["yourReply"] = json!(case.reply);
+            }
             json!({"system":system,"schema":schema,"schemaName":"merope_inner",
-                "input":json!({"userText":case.input,"history":history,
-                    "feelingTowardThem":super::merope::mood_tone_instruction(case.mood.unwrap_or(70.0), case.arousal.unwrap_or(48.0)),
-                    "myself":case.myself,"remembered":case.remembered}).to_string()})
+                "input":input.to_string()})
         }
         "chat" => {
             let mut items = vec![];
@@ -1204,7 +1213,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 13;
+const MIND_CASES: usize = 14;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1244,6 +1253,14 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .contains("They attached 1 image to this message; you can see it.")
     );
     assert_eq!(case_images(by_id("mind-sees-image"))[0].mime, "image/jpeg");
+    let after = request(by_id("mind-inner-after"));
+    assert!(
+        after["system"]
+            .as_str()
+            .unwrap()
+            .contains("You have just answered them (yourReply)")
+    );
+    assert!(after["input"].as_str().unwrap().contains("yourReply"));
     let digest = request(by_id("mind-found-out-injection"));
     assert!(
         digest["input"]

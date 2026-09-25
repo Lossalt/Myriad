@@ -166,12 +166,13 @@ pub fn format_inner_section(inner: &str) -> Option<String> {
     )
 }
 
-/// Her inner state from the turn before, when this turn's was not ready: a
-/// state lasts a while, but it was about their previous words.
+/// Her inner state from a moment ago: what the last exchange left her in, or
+/// a compile too late for its own turn. A state lasts a while, but it has not
+/// heard their latest words.
 pub fn format_inner_moment_ago_section(inner: &str) -> Option<String> {
     inner_section(
         inner,
-        "## Inside you a moment ago\nThis was you a moment ago, before their latest words; you are still much like this.",
+        "## Inside you a moment ago\nThis was you a moment ago, before their latest words; you are still much like this, unless their words move you.",
     )
 }
 

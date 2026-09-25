@@ -191,6 +191,18 @@ pub async fn note_user_turn(
     Some((transition, saved.last_user_message_at?))
 }
 
+/// After a chat reply, let her state catch up with the exchange; the next
+/// turn starts from it without waiting.
+pub fn spawn_inner_after(
+    db: sea_orm::DatabaseConnection,
+    request: &crate::services::agent::UserRequest,
+    reply: &str,
+) {
+    if is_logged_in_addressee(request.user_id) {
+        inner::spawn_after(db, request, reply);
+    }
+}
+
 /// Chat writes this before the model; Work writes after `plan_for`.
 pub async fn note_chat_diary(db: &sea_orm::DatabaseConnection, user_id: i32, text: &str) {
     if !is_logged_in_addressee(user_id) {
@@ -353,7 +365,7 @@ async fn speaking_prompt_for_turn(
             // A chat turn answers from how these words landed, if that is
             // known soon enough.
             if wait_for_appraisal {
-                tokio::join!(appraisal::settle(user_id), inner::settle(user_id));
+                tokio::join!(appraisal::settle(user_id), inner::settle(user_id, present));
             }
             Turn::Chat(words)
         }
@@ -558,7 +570,7 @@ async fn speaking_prompt_from_db(
     // Her inner state, compiled for this utterance, already weighs how the
     // words landed and how her day has been; the raw facts would say it twice.
     let compiled = match turn {
-        Turn::Chat(_) => inner::current(user_id, state.last_user_message_at),
+        Turn::Chat(_) => inner::current(user_id, present, state.last_user_message_at),
         _ => None,
     };
     // Her inner state goes last, nearest their words, so it is what she

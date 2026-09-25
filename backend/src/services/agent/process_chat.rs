@@ -36,6 +36,7 @@ impl Agent {
             memory_input_at,
             crate::services::agent::merope::audience_for(&request),
         );
+        crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),
@@ -151,6 +152,7 @@ impl Agent {
             memory_input_at,
             crate::services::agent::merope::audience_for(&request),
         );
+        crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),
