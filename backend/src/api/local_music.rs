@@ -251,33 +251,36 @@ async fn serve_media_bytes(
     match crate::services::media::resolve_guest_media_bytes(db, media_id).await {
         Ok((mime, bytes)) => {
             let total = bytes.len() as u64;
-            let range = headers
+            if let Some(spec) = headers
                 .get(header::RANGE)
                 .and_then(|v| v.to_str().ok())
                 .and_then(parse_single_byte_range)
-                .and_then(|range| resolve_byte_range(range, total));
-            if let Some((start, end)) = range {
-                if start > end || total == 0 {
-                    return Response::builder()
-                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                        .header(header::CONTENT_RANGE, format!("bytes */{total}"))
-                        .body(axum::body::Body::empty())
-                        .unwrap_or_else(|_| StatusCode::RANGE_NOT_SATISFIABLE.into_response());
+            {
+                match resolve_byte_range(spec, total) {
+                    ResolvedByteRange::Unsatisfiable => {
+                        return Response::builder()
+                            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                            .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                            .body(axum::body::Body::empty())
+                            .unwrap_or_else(|_| StatusCode::RANGE_NOT_SATISFIABLE.into_response());
+                    }
+                    ResolvedByteRange::Ok { start, end } => {
+                        let slice = bytes[start as usize..=end as usize].to_vec();
+                        let len = slice.len() as u64;
+                        return Response::builder()
+                            .status(StatusCode::PARTIAL_CONTENT)
+                            .header(header::CONTENT_TYPE, mime)
+                            .header(header::ACCEPT_RANGES, "bytes")
+                            .header(
+                                header::CONTENT_RANGE,
+                                format!("bytes {start}-{end}/{total}"),
+                            )
+                            .header(header::CONTENT_LENGTH, len.to_string())
+                            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                            .body(axum::body::Body::from(slice))
+                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                    }
                 }
-                let slice = bytes[start as usize..=end as usize].to_vec();
-                let len = slice.len() as u64;
-                return Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header(header::CONTENT_TYPE, mime)
-                    .header(header::ACCEPT_RANGES, "bytes")
-                    .header(
-                        header::CONTENT_RANGE,
-                        format!("bytes {start}-{end}/{total}"),
-                    )
-                    .header(header::CONTENT_LENGTH, len.to_string())
-                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                    .body(axum::body::Body::from(slice))
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
             Response::builder()
                 .status(StatusCode::OK)
@@ -303,8 +306,13 @@ enum ByteRangeSpec {
 }
 
 /// Parse one `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range.
+/// Invalid specs (including `end < start` and `bytes=-0`) return `None` so the
+/// Range header is ignored and the full body is served (RFC 7233 §3.1).
 fn parse_single_byte_range(raw: &str) -> Option<ByteRangeSpec> {
     let spec = raw.trim().strip_prefix("bytes=")?;
+    // Multi-range (`bytes=0-10,20-30`): only the first unit is served. RFC 7233
+    // allows a server to ignore multi-range entirely (200); we answer 206 for
+    // the first unit, which simple media clients use as a single range.
     let first = spec.split(',').next()?.trim();
     let (start_s, end_s) = first.split_once('-')?;
     let start_s = start_s.trim();
@@ -324,28 +332,46 @@ fn parse_single_byte_range(raw: &str) -> Option<ByteRangeSpec> {
         });
     }
     let end: u64 = end_s.parse().ok()?;
+    // last-byte-pos < first-byte-pos is an invalid byte-range-spec.
+    if end < start {
+        return None;
+    }
     Some(ByteRangeSpec::Absolute { start, end })
 }
 
+/// Outcome of mapping a [`ByteRangeSpec`] onto a representation of `total` bytes.
+/// Invalid Range headers never reach this function — `parse_single_byte_range`
+/// returns `None` and the full body is served (200).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedByteRange {
+    /// Syntactically valid but unsatisfiable — MUST answer 416 (RFC 7233 §4.4).
+    Unsatisfiable,
+    /// Inclusive absolute offsets inside `[0, total)`.
+    Ok { start: u64, end: u64 },
+}
+
 /// Map a parsed range onto `[0, total)` using RFC 7233 suffix semantics.
-fn resolve_byte_range(range: ByteRangeSpec, total: u64) -> Option<(u64, u64)> {
+fn resolve_byte_range(range: ByteRangeSpec, total: u64) -> ResolvedByteRange {
     if total == 0 {
-        return None;
+        // A valid range over an empty representation is unsatisfiable.
+        return ResolvedByteRange::Unsatisfiable;
     }
     match range {
         ByteRangeSpec::Suffix(suffix) => {
             let take = suffix.min(total);
-            Some((total - take, total - 1))
+            ResolvedByteRange::Ok {
+                start: total - take,
+                end: total - 1,
+            }
         }
         ByteRangeSpec::Absolute { start, end } => {
             if start >= total {
-                return None;
+                return ResolvedByteRange::Unsatisfiable;
             }
             let end = end.min(total - 1);
-            if start > end {
-                return None;
-            }
-            Some((start, end))
+            // parse rejects end < start for closed ranges; open-ended ones
+            // clamp above, so start > end cannot occur here.
+            ResolvedByteRange::Ok { start, end }
         }
     }
 }
@@ -576,16 +602,30 @@ pub async fn upload_local_track(
 
 #[cfg(test)]
 mod tests {
-    use super::{ByteRangeSpec, parse_single_byte_range, resolve_byte_range};
+    use super::{
+        ByteRangeSpec, ResolvedByteRange, parse_single_byte_range, resolve_byte_range,
+    };
 
     #[test]
     fn suffix_range_targets_the_tail() {
         // RFC 7233: bytes=-500 is the last 500 bytes, not the first 500.
         let spec = parse_single_byte_range("bytes=-500").unwrap();
         assert_eq!(spec, ByteRangeSpec::Suffix(500));
-        assert_eq!(resolve_byte_range(spec, 1000), Some((500, 999)));
+        assert_eq!(
+            resolve_byte_range(spec, 1000),
+            ResolvedByteRange::Ok {
+                start: 500,
+                end: 999
+            }
+        );
         // Suffix longer than the representation clamps to the whole body.
-        assert_eq!(resolve_byte_range(spec, 200), Some((0, 199)));
+        assert_eq!(
+            resolve_byte_range(spec, 200),
+            ResolvedByteRange::Ok {
+                start: 0,
+                end: 199
+            }
+        );
     }
 
     #[test]
@@ -603,7 +643,10 @@ mod tests {
         );
         assert_eq!(
             resolve_byte_range(ByteRangeSpec::Absolute { start: 0, end: 499 }, 1000),
-            Some((0, 499))
+            ResolvedByteRange::Ok {
+                start: 0,
+                end: 499
+            }
         );
         assert_eq!(
             resolve_byte_range(
@@ -613,28 +656,48 @@ mod tests {
                 },
                 1000
             ),
-            Some((500, 999))
+            ResolvedByteRange::Ok {
+                start: 500,
+                end: 999
+            }
         );
     }
 
     #[test]
-    fn unsatisfiable_and_invalid_specs() {
-        assert_eq!(parse_single_byte_range("bytes=-0"), None);
-        assert_eq!(resolve_byte_range(ByteRangeSpec::Suffix(10), 0), None);
+    fn unsatisfiable_ranges_must_416_not_200() {
+        // Empty representation: any valid range is unsatisfiable → 416.
         assert_eq!(
-            resolve_byte_range(ByteRangeSpec::Absolute { start: 10, end: 5 }, 100),
-            None
+            resolve_byte_range(ByteRangeSpec::Suffix(10), 0),
+            ResolvedByteRange::Unsatisfiable
         );
+        // start past EOF → 416 (not a silent 200 full-body).
         assert_eq!(
             resolve_byte_range(ByteRangeSpec::Absolute { start: 100, end: 200 }, 100),
-            None
+            ResolvedByteRange::Unsatisfiable
         );
-        // Multi-range takes the first unit only; garbage is rejected.
+        assert_eq!(
+            resolve_byte_range(
+                ByteRangeSpec::Absolute {
+                    start: 999,
+                    end: u64::MAX
+                },
+                100
+            ),
+            ResolvedByteRange::Unsatisfiable
+        );
+    }
+
+    #[test]
+    fn invalid_specs_are_ignored_not_416() {
+        // bytes=-0 and end<start are invalid byte-range-specs → ignore → 200.
+        assert_eq!(parse_single_byte_range("bytes=-0"), None);
+        assert_eq!(parse_single_byte_range("bytes=10-5"), None);
+        assert_eq!(parse_single_byte_range("bytes=abc-def"), None);
+        assert_eq!(parse_single_byte_range("items=0-1"), None);
+        // Multi-range takes the first unit only.
         assert_eq!(
             parse_single_byte_range("bytes=0-10,20-30"),
             Some(ByteRangeSpec::Absolute { start: 0, end: 10 })
         );
-        assert_eq!(parse_single_byte_range("bytes=abc-def"), None);
-        assert_eq!(parse_single_byte_range("items=0-1"), None);
     }
 }
