@@ -139,6 +139,8 @@ pub async fn note_user_turn(
     let after = store::affect_from_state(&saved);
     if !praised && !scolded && !text.trim().is_empty() {
         appraisal::spawn(db.clone(), request, &saved);
+    } else {
+        appraisal::skip(user_id);
     }
     if !is_extremely_low(previous.mood) && is_extremely_low(after.mood) {
         spawn_ingest(
@@ -279,6 +281,11 @@ pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Ve
             user_id, None, None,
         ))];
     };
+    if query.is_some_and(|query| !query.trim().is_empty()) {
+        // A chat turn answers from how these words landed, if that is known
+        // soon enough.
+        appraisal::settle(user_id).await;
+    }
     speaking_prompt_from_db(&db, user_id, query).await
 }
 
