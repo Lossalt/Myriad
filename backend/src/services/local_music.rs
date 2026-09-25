@@ -434,6 +434,10 @@ pub async fn update_playlist(
 }
 
 pub async fn delete_playlist(db: &DatabaseConnection, id: i32) -> Result<()> {
+    local_music_playlist_tracks::Entity::delete_many()
+        .filter(local_music_playlist_tracks::Column::PlaylistId.eq(id))
+        .exec(db)
+        .await?;
     local_music_playlists::Entity::delete_by_id(id).exec(db).await?;
     Ok(())
 }
