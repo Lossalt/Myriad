@@ -304,13 +304,6 @@ impl Agent {
             .await
             .unwrap_or_default();
         let soul: String = soul.chars().take(2000).collect();
-        let on_call = request
-            .context
-            .as_ref()
-            .and_then(|context| context.custom_data.as_ref())
-            .and_then(|data| data.get("voice"))
-            .and_then(|voice| voice.as_str())
-            == Some("realtime");
         let venue = request
             .context
             .as_ref()
@@ -320,12 +313,6 @@ impl Agent {
                 request.user_id,
                 request.raw_input.as_str(),
                 venue,
-            )
-            .await
-        } else if on_call {
-            crate::services::agent::merope::speaking_prompt_on_call(
-                request.user_id,
-                Some(request.raw_input.as_str()),
             )
             .await
         } else {

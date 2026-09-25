@@ -145,24 +145,6 @@ pub async fn note_user_turn(
     let after = store::affect_from_state(&saved);
     if !praised && !scolded && !text.trim().is_empty() {
         appraisal::spawn(db.clone(), request, &saved);
-    } else {
-        appraisal::skip(user_id);
-    }
-    // A chat turn compiles her inner state beside the appraisal. A live call
-    // does not wait for it, so it would only cost; Work does not speak as her.
-    let chat = request.context.as_ref().is_some_and(|context| {
-        context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
-            && context
-                .custom_data
-                .as_ref()
-                .and_then(|data| data.get("voice"))
-                .and_then(|voice| voice.as_str())
-                != Some("realtime")
-    });
-    if chat {
-        if let Some(input_at) = saved.last_user_message_at {
-            inner::spawn(db.clone(), request, input_at);
-        }
     }
     if !is_extremely_low(previous.mood) && is_extremely_low(after.mood) {
         spawn_ingest(
@@ -292,7 +274,7 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_brought_to_mind_section,
     format_curious_section, format_emotion_section, format_found_out_section,
-    format_inner_moment_ago_section, format_inner_section, format_mood_section,
+    format_inner_moment_ago_section, format_mood_section,
     format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
     format_remembered_section, group_speaking_section, guest_speaking_section,
     mood_tone_instruction,
@@ -305,7 +287,7 @@ pub async fn speaking_prompt(user_id: i32) -> Vec<String> {
 
 pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Vec<String> {
     let present = crate::services::agent::memory::unified::Audience::private(user_id);
-    speaking_prompt_for_turn(user_id, query, true, &present).await
+    speaking_prompt_for_turn(user_id, query, &present).await
 }
 
 /// A turn in a group chat (`venue` such as `telegram:-100123`), answering
@@ -313,7 +295,7 @@ pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Ve
 /// group heard is said, never anyone's private matters.
 pub async fn speaking_prompt_in_group(user_id: i32, query: &str, venue: &str) -> Vec<String> {
     let present = crate::services::agent::memory::unified::Audience::group(venue, user_id);
-    speaking_prompt_for_turn(user_id, Some(query), true, &present).await
+    speaking_prompt_for_turn(user_id, Some(query), &present).await
 }
 
 /// Who is present for this request: a group when the server placed the turn
@@ -333,17 +315,11 @@ pub fn audience_for(
     }
 }
 
-/// A live call: silence is loud, so the reply does not wait for this turn's
-/// appraisal. The appraisal still lands, for the next turn.
-pub async fn speaking_prompt_on_call(user_id: i32, query: Option<&str>) -> Vec<String> {
-    let present = crate::services::agent::memory::unified::Audience::private(user_id);
-    speaking_prompt_for_turn(user_id, query, false, &present).await
-}
-
+/// Nothing waits here: this turn's appraisal and her state after it land
+/// for the turns that follow, and the speaking model hears the words itself.
 async fn speaking_prompt_for_turn(
     user_id: i32,
     query: Option<&str>,
-    wait_for_appraisal: bool,
     present: &crate::services::agent::memory::unified::Audience,
 ) -> Vec<String> {
     if !is_enabled().await {
@@ -361,14 +337,7 @@ async fn speaking_prompt_for_turn(
         ))];
     };
     let turn = match query.filter(|query| !query.trim().is_empty()) {
-        Some(words) => {
-            // A chat turn answers from how these words landed, if that is
-            // known soon enough.
-            if wait_for_appraisal {
-                tokio::join!(appraisal::settle(user_id), inner::settle(user_id, present));
-            }
-            Turn::Chat(words)
-        }
+        Some(words) => Turn::Chat(words),
         None => Turn::Plain,
     };
     speaking_prompt_from_db(&db, user_id, turn, present).await
@@ -567,19 +536,17 @@ async fn speaking_prompt_from_db(
         sections.push(block);
     }
     sections.push(format_mood_section(state.mood, state.arousal));
-    // Her inner state, compiled for this utterance, already weighs how the
-    // words landed and how her day has been; the raw facts would say it twice.
+    // Her state after the last exchange already weighs how she has been and
+    // how her day went; the raw facts would say it twice.
     let compiled = match turn {
-        Turn::Chat(_) => inner::current(user_id, present, state.last_user_message_at),
+        Turn::Chat(_) => inner::current(user_id, present),
         _ => None,
     };
     // Her inner state goes last, nearest their words, so it is what she
     // answers from; without it, how the words landed stands here instead.
-    let inner_block = match &compiled {
-        Some(inner::Compiled::Now(text)) => format_inner_section(text),
-        Some(inner::Compiled::MomentAgo(text)) => format_inner_moment_ago_section(text),
-        None => None,
-    };
+    let inner_block = compiled
+        .as_deref()
+        .and_then(format_inner_moment_ago_section);
     if inner_block.is_none() {
         if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
             sections.push(block);

@@ -247,7 +247,7 @@ fn mind_chat_prompt(case: &Case) -> String {
         super::merope::format_own_days_section(&case.own_days),
         case.inner
             .as_deref()
-            .and_then(super::merope::format_inner_section),
+            .and_then(super::merope::format_inner_moment_ago_section),
     ]
     .into_iter()
     .flatten()
@@ -423,12 +423,8 @@ fn request(case: &Case) -> Value {
                 "input":json!({"day":"Wed","dayFacts":case.myself,"earlierEntries":case.own_days}).to_string()})
         }
         "inner" => {
-            // With her reply: the state compiled after the exchange.
-            let (system, schema) = if case.reply.is_empty() {
-                super::merope::inner::probe_contract(&contract_soul())
-            } else {
-                super::merope::inner::probe_after_contract(&contract_soul())
-            };
+            // Written after she answered, as production does.
+            let (system, schema) = super::merope::inner::probe_contract(&contract_soul());
             let history: Vec<Value> = case
                 .history
                 .iter()
@@ -1254,7 +1250,7 @@ fn mind_cases_run_through_production_sections_and_contracts() {
         inner["input"]
             .as_str()
             .unwrap()
-            .contains("## Inside you right now")
+            .contains("## Inside you a moment ago")
     );
     let seen = request(by_id("mind-sees-image"));
     assert!(
