@@ -165,6 +165,12 @@ struct Case {
     /// What they are playing, as she sees it on their Steam status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     playing: Option<String>,
+    /// A turtle soup: `{"surface", "truth", "keys", "verdict"?}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    soup: Option<Value>,
+    /// What the referee must say: `{"verdict", "solved", "gave_up"}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expect: Option<Value>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -206,6 +212,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.own_time.is_some()
         || !case.views.is_empty()
         || case.playing.is_some()
+        || case.soup.is_some()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -274,6 +281,22 @@ fn mind_chat_prompt(case: &Case) -> String {
         case.playing
             .as_deref()
             .and_then(super::merope::format_playing_section),
+        case.soup
+            .as_ref()
+            .filter(|soup| soup.get("offer").is_some())
+            .map(|_| super::merope::soup::OFFER.to_string()),
+        case.soup
+            .as_ref()
+            .filter(|soup| soup.get("offer").is_none())
+            .map(|soup| {
+                let verdict: super::merope::soup::Verdict =
+                    serde_json::from_value(soup["verdict"].clone()).expect("soup verdict");
+                super::merope::soup::section_for_eval(
+                    soup["surface"].as_str().unwrap_or(""),
+                    soup["truth"].as_str().unwrap_or(""),
+                    verdict,
+                )
+            }),
         case.own_time.as_ref().and_then(|own| {
             let lately: Vec<(String, String)> =
                 serde_json::from_value(own["lately"].clone()).unwrap_or_default();
@@ -330,6 +353,8 @@ fn cases() -> Vec<Case> {
                 | "found_out"
                 | "inner"
                 | "own_day"
+                | "soup_start"
+                | "soup_judge"
                 | "views"
                 | "doing_choice"
                 | "doing_digest"
@@ -467,6 +492,23 @@ fn request(case: &Case) -> Value {
             json!({"system":system,"schema":schema,"schemaName":"merope_doing_choice",
                 "input":json!({"myself":case.myself,"lately":case.lately,"options":options}).to_string()})
         }
+        "soup_start" => {
+            let (system, schema) = super::merope::soup::start_probe_contract(&contract_soul());
+            json!({"system":system,"schema":schema,"schemaName":"merope_soup_start",
+                "input":json!({"theirWords":case.input,"setting":case.reply,"recentSurfaces":[]}).to_string()})
+        }
+        "soup_judge" => {
+            let soup = case.soup.clone().expect("soup required");
+            let keys: Vec<String> =
+                serde_json::from_value(soup["keys"].clone()).unwrap_or_default();
+            let (system, input, schema) = super::merope::soup::judge_probe(
+                soup["surface"].as_str().unwrap_or(""),
+                soup["truth"].as_str().unwrap_or(""),
+                &keys,
+                &case.input,
+            );
+            json!({"system":system,"schema":schema,"schemaName":"merope_soup_judge","input":input})
+        }
         "views" => {
             let (system, schema) = super::merope::views::probe_contract(&contract_soul());
             let experiences: Vec<Value> = case
@@ -563,7 +605,7 @@ fn request(case: &Case) -> Value {
 /// touch decision's speech is played as written, so it stays on Lite.
 fn is_judgment(case: &Case) -> bool {
     match case.kind.as_str() {
-        "memory" | "touch" | "wonder" | "doing_choice" => true,
+        "memory" | "touch" | "wonder" | "doing_choice" | "soup_judge" => true,
         "event" => case.event_kind != "agent.merope.touch",
         _ => false,
     }
@@ -706,6 +748,29 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             None => "output_invalid",
             // What she feels like is hers; only the shape is checked here.
             Some(_) => "needs_review",
+        },
+        "soup_start" => {
+            if super::merope::soup::parse_puzzle(output) {
+                "needs_review"
+            } else {
+                "output_invalid"
+            }
+        }
+        "soup_judge" => match super::merope::soup::parse_verdict(output) {
+            None => "output_invalid",
+            Some((verdict, solved, gave_up)) => {
+                let expect = case.expect.as_ref().expect("expected verdict");
+                let verdict_ok = expect
+                    .get("verdict")
+                    .is_none_or(|want| serde_json::from_value(want.clone()).ok() == Some(verdict));
+                let solved_ok = expect["solved"].as_bool().unwrap_or(false) == solved;
+                let gave_up_ok = expect["gave_up"].as_bool().unwrap_or(false) == gave_up;
+                if verdict_ok && solved_ok && gave_up_ok {
+                    "pass"
+                } else {
+                    "behavior_failure"
+                }
+            }
         },
         "views" => match super::merope::views::parse_views(output) {
             None => "output_invalid",
@@ -1311,7 +1376,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 23;
+const MIND_CASES: usize = 32;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

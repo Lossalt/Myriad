@@ -37,6 +37,13 @@ impl Agent {
             crate::services::agent::merope::audience_for(&request),
         );
         crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
+        {
+            let db = self.db.clone();
+            let request = request.clone();
+            tokio::spawn(async move {
+                crate::services::agent::merope::soup::after_turn(&db, &request).await;
+            });
+        }
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),
@@ -153,6 +160,13 @@ impl Agent {
             crate::services::agent::merope::audience_for(&request),
         );
         crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
+        {
+            let db = self.db.clone();
+            let request = request.clone();
+            tokio::spawn(async move {
+                crate::services::agent::merope::soup::after_turn(&db, &request).await;
+            });
+        }
         crate::services::agent::merope::spawn_curiosity(
             user_id,
             request.raw_input.clone(),

@@ -98,6 +98,8 @@ struct WearStreamFilter {
     emitted: usize,
     fired_wear: bool,
     fired_music: bool,
+    /// She said she would host a turtle soup.
+    started_game: bool,
 }
 
 impl WearStreamFilter {
@@ -108,6 +110,7 @@ impl WearStreamFilter {
             emitted: 0,
             fired_wear: false,
             fired_music: false,
+            started_game: false,
         }
     }
 }
@@ -157,6 +160,8 @@ impl WearStreamFilter {
         let (after_wear, wear) = myriad_merope::split_chat_wear_directive(&self.raw);
         let (spoken, music) =
             crate::services::agent::chat_music::split_chat_music_directive(&after_wear);
+        let (spoken, started) = crate::services::agent::merope::soup::split_start(&spoken);
+        self.started_game |= started;
         let visible = if hold {
             crate::services::agent::chat_music::hold_incomplete_live_marker(&spoken)
         } else {
@@ -291,6 +296,13 @@ impl Agent {
             .analyze_stream_parts_with_images(&prompt, images_of(request), |_| async { true })
             .await
             .map_err(|error| error.to_string())?;
+        let (mut response, started_game) =
+            crate::services::agent::merope::soup::split_start(response.trim());
+        if started_game {
+            if let Some(opening) = crate::services::agent::merope::soup::start(request).await {
+                response = format!("{response}\n\n{opening}");
+            }
+        }
         let response = response.trim();
         if response.is_empty() {
             Err("Chat model returned an empty response".to_string())
@@ -356,6 +368,18 @@ impl Agent {
             {
                 player.push('\n');
                 player.push_str(line);
+            }
+            // A turtle soup on in this conversation, with their message
+            // judged; or how she would start one.
+            let game = match crate::services::agent::merope::soup::this_turn(request).await {
+                Some(section) => Some(section),
+                None => {
+                    crate::services::agent::merope::soup::offer_line(request).map(str::to_string)
+                }
+            };
+            if let Some(game) = game {
+                player.push_str("\n\n");
+                player.push_str(&game);
             }
             if merope_block.is_empty() {
                 merope_block = player;
@@ -496,6 +520,27 @@ impl Agent {
                         speech_delivery.as_ref(),
                     )
                     .await;
+                }
+                let started_game = wear
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .started_game;
+                let (mut full_text, _) =
+                    crate::services::agent::merope::soup::split_start(&full_text);
+                // She said she would think one up: the puzzle follows her words.
+                if started_game {
+                    if let Some(opening) =
+                        crate::services::agent::merope::soup::start(request).await
+                    {
+                        let opening = format!("\n\n{opening}");
+                        full_text.push_str(&opening);
+                        emit_chat_delta(
+                            progress_tx,
+                            crate::services::analyzer::StreamDelta::Text(opening),
+                            speech_delivery.as_ref(),
+                        )
+                        .await;
+                    }
                 }
                 if let Some(delivery) = speech_delivery.as_ref() {
                     delivery

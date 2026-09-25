@@ -18,6 +18,7 @@ pub mod playing;
 mod priming;
 pub mod report_dna;
 pub mod self_state;
+pub mod soup;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
