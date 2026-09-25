@@ -737,10 +737,22 @@ export function detectStrands(
   }
   positions.sort((left, right) => left - right)
   const strands: UpstreamHairStrand[] = []
-  for (const x of positions) {
-    if (top[x] < 0) continue
+  const used = new Set<number>()
+  for (const position of positions) {
+    // Smoothing can move a peak off the painted columns; snap to the nearest one.
+    let x = position
+    for (let radius = 0; top[x] < 0 && radius < width; radius += 1) {
+      if (position - radius >= 0 && top[position - radius] >= 0) {
+        x = position - radius
+      } else if (position + radius < width && top[position + radius] >= 0) {
+        x = position + radius
+      }
+    }
+    if (top[x] < 0 || used.has(x)) continue
+    used.add(x)
     strands.push({ x, tipY: bottom[x], rootY: top[x] })
   }
+  strands.sort((left, right) => left.x - right.x)
   return strands
 }
 
