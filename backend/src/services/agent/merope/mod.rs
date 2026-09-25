@@ -5,6 +5,7 @@ pub mod chat_remember;
 pub mod curiosity;
 pub mod gates;
 pub mod ingest;
+mod inner;
 pub mod life;
 pub mod motion;
 pub mod motion_local;
@@ -147,6 +148,22 @@ pub async fn note_user_turn(
     } else {
         appraisal::skip(user_id);
     }
+    // A chat turn compiles her inner state beside the appraisal. A live call
+    // does not wait for it, so it would only cost; Work does not speak as her.
+    let chat = request.context.as_ref().is_some_and(|context| {
+        context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
+            && context
+                .custom_data
+                .as_ref()
+                .and_then(|data| data.get("voice"))
+                .and_then(|voice| voice.as_str())
+                != Some("realtime")
+    });
+    if chat {
+        if let Some(input_at) = saved.last_user_message_at {
+            inner::spawn(db.clone(), request, input_at);
+        }
+    }
     if !is_extremely_low(previous.mood) && is_extremely_low(after.mood) {
         spawn_ingest(
             user_id,
@@ -262,7 +279,7 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_curious_section,
-    format_emotion_section, format_found_out_section, format_mood_section,
+    format_emotion_section, format_found_out_section, format_inner_section, format_mood_section,
     format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
     format_remembered_section, guest_speaking_section, mood_tone_instruction,
 };
@@ -306,7 +323,7 @@ async fn speaking_prompt_for_turn(
             // A chat turn answers from how these words landed, if that is
             // known soon enough.
             if wait_for_appraisal {
-                appraisal::settle(user_id).await;
+                tokio::join!(appraisal::settle(user_id), inner::settle(user_id));
             }
             Turn::Chat(words)
         }
@@ -479,10 +496,18 @@ async fn speaking_prompt_from_db(
         sections.push(block);
     }
     sections.push(format_mood_section(state.mood, state.arousal));
-    if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
+    // Her inner state, compiled for this utterance, already weighs how the
+    // words landed and how her day has been; the raw facts would say it twice.
+    let compiled = match turn {
+        Turn::Chat(_) => inner::current(user_id, state.last_user_message_at),
+        _ => None,
+    };
+    if let Some(block) = compiled.as_deref().and_then(format_inner_section) {
+        sections.push(block);
+    } else if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
         sections.push(block);
     }
-    if !matches!(turn, Turn::Plain) {
+    if !matches!(turn, Turn::Plain) && compiled.is_none() {
         sections.push(self_state::format_day_section(&myself.facts));
     }
     if let Turn::Chat(words) | Turn::Event(words) = turn {
