@@ -825,6 +825,12 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     not_null: false,
                 },
                 ColumnDef {
+                    name: "concepts".into(),
+                    data_type: "jsonb".into(),
+                    default_value: Some("'[]'::jsonb".into()),
+                    not_null: false,
+                },
+                ColumnDef {
                     name: "importance".into(),
                     data_type: "double precision".into(),
                     default_value: Some("0.5".into()),

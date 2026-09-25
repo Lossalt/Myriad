@@ -19,6 +19,7 @@ async fn seed_fact_at(
         source: Set("chat".into()),
         venue: Set("private".into()),
         audience: Set(json!([user_id])),
+        concepts: Set(json!([])),
         importance: Set(0.5),
         access_count: Set(0),
         last_accessed_at: Set(None),
@@ -206,6 +207,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("现在不喝咖啡".into()),
         supersedes: vec!["喜欢咖啡".into()],
         evidence: Some("我不喝咖啡了".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &correction)
@@ -255,6 +257,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("喜欢茶".into()),
         supersedes: vec![],
         evidence: Some("我也喜欢茶".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &addition)
@@ -273,6 +276,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("不应写入".into()),
         supersedes: vec!["喜欢茶".into(), "不存在的事实".into()],
         evidence: Some("更正".into()),
+        concepts: vec![],
     };
     assert!(
         !apply_chat_memory_update(&db, user_id, input_at, &invalid)
@@ -292,6 +296,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: None,
         supersedes: vec!["喜欢茶".into()],
         evidence: Some("茶的偏好记错了".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &withdrawal)

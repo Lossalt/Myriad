@@ -16,6 +16,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DbErr, EntityTrait,
     ExprTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::models::entities::agent_memories;
@@ -26,6 +27,10 @@ pub const MAX_ACTIVE_PER_USER: u64 = 1000;
 /// Stored text is a single fact, not a transcript.
 pub const MAX_CONTENT_CHARS: usize = 400;
 const MAX_EVIDENCE_CHARS: usize = 400;
+/// A memory is about a few things, not a topic list.
+pub const MAX_CONCEPTS: usize = 5;
+pub const MAX_ALIASES: usize = 5;
+const MAX_CONCEPT_CHARS: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
@@ -102,6 +107,75 @@ pub fn audience_admits(original: &[i32], present: &Audience) -> bool {
     !present.members.is_empty() && present.members.iter().all(|id| original.contains(id))
 }
 
+/// Something a memory is about, with the other names people use for it, so
+/// "喵" finds the memory about the cat. Written by the same model call that
+/// wrote the memory; the aliases are that model's knowledge, not the person's
+/// words, and are used only to match, never shown as something they said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Concept {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+impl Concept {
+    /// Every name this concept answers to, the canonical one first.
+    pub fn surface_forms(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
+}
+
+fn clean_name(text: &str) -> Option<String> {
+    let text: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_CONCEPT_CHARS)
+        .collect();
+    // A lone Latin letter or digit would match inside almost anything.
+    let meaningful = text.chars().filter(|ch| ch.is_alphanumeric()).count() >= 2
+        || text
+            .chars()
+            .any(|ch| ch.is_alphanumeric() && !ch.is_ascii());
+    meaningful.then_some(text)
+}
+
+/// Trim, cap and de-duplicate model-written concepts. Order is kept.
+pub fn clean_concepts(raw: Vec<Concept>) -> Vec<Concept> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for concept in raw {
+        let Some(name) = clean_name(&concept.name) else {
+            continue;
+        };
+        if !seen.insert(name.to_lowercase()) {
+            continue;
+        }
+        let mut aliases: Vec<String> = Vec::new();
+        for alias in concept.aliases.iter().filter_map(|alias| clean_name(alias)) {
+            let key = alias.to_lowercase();
+            if key != name.to_lowercase() && !aliases.iter().any(|kept| kept.to_lowercase() == key)
+            {
+                aliases.push(alias);
+            }
+            if aliases.len() == MAX_ALIASES {
+                break;
+            }
+        }
+        out.push(Concept { name, aliases });
+        if out.len() == MAX_CONCEPTS {
+            break;
+        }
+    }
+    out
+}
+
+fn concepts_of(model: &agent_memories::Model) -> Vec<Concept> {
+    serde_json::from_value(model.concepts.clone()).unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub struct NewMemory {
     pub user_id: i32,
@@ -113,6 +187,7 @@ pub struct NewMemory {
     pub source: &'static str,
     pub audience: Audience,
     pub importance: f64,
+    pub concepts: Vec<Concept>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +300,7 @@ pub async fn remember<C: ConnectionTrait>(
         source: Set(memory.source.into()),
         venue: Set(memory.audience.venue().into()),
         audience: Set(json!(memory.audience.members())),
+        concepts: Set(json!(clean_concepts(memory.concepts))),
         importance: Set(memory.importance.clamp(0.0, 1.0)),
         access_count: Set(0),
         last_accessed_at: Set(None),
@@ -375,7 +451,15 @@ fn rank(
             !content.is_empty() && seen.insert(content)
         })
         .collect();
-    let documents: Vec<&str> = rows.iter().map(|row| row.content.as_str()).collect();
+    let concepts: Vec<Vec<Concept>> = rows.iter().map(concepts_of).collect();
+    let documents: Vec<super::lexical::Document> = rows
+        .iter()
+        .zip(&concepts)
+        .map(|(row, concepts)| super::lexical::Document {
+            text: &row.content,
+            concepts,
+        })
+        .collect();
     let scores = super::lexical::score_all(query.unwrap_or(""), &documents);
     let mut scored: Vec<(super::lexical::Score, agent_memories::Model)> =
         scores.into_iter().zip(rows).collect();
@@ -459,6 +543,7 @@ pub async fn import<C: ConnectionTrait>(db: &C, memory: ImportedMemory) -> Resul
         source: Set("import".into()),
         venue: Set("private".into()),
         audience: Set(json!([memory.user_id])),
+        concepts: Set(json!([])),
         importance: Set(memory.importance.clamp(0.0, 1.0)),
         access_count: Set(std::cmp::Ord::max(memory.access_count, 0)),
         last_accessed_at: Set(memory.last_accessed_at),
@@ -495,6 +580,7 @@ mod tests {
             source: "chat".into(),
             venue: "private".into(),
             audience: json!([]),
+            concepts: json!([]),
             importance,
             access_count: 0,
             last_accessed_at: None,
@@ -654,6 +740,7 @@ mod db_tests {
             source: "chat",
             audience: Audience::private(user_id),
             importance: 0.5,
+            concepts: Vec::new(),
         }
     }
 

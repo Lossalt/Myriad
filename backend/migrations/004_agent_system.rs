@@ -551,6 +551,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     source VARCHAR(16) NOT NULL,
     venue VARCHAR(16) NOT NULL DEFAULT 'private',
     audience JSONB NOT NULL DEFAULT '[]'::jsonb,
+    concepts JSONB NOT NULL DEFAULT '[]'::jsonb,
     importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,

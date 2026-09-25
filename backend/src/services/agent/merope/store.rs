@@ -897,6 +897,7 @@ pub(crate) async fn insert_remembered_if_new(
             source: "event",
             audience: unified::Audience::private(user_id),
             importance: 0.5,
+            concepts: Vec::new(),
         },
     )
     .await?
@@ -971,6 +972,7 @@ pub(crate) async fn apply_chat_memory_update(
                 source: "chat",
                 audience: unified::Audience::private(user_id),
                 importance: 0.6,
+                concepts: update.concepts.clone(),
             },
         )
         .await?;

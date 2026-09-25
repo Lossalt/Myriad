@@ -21,6 +21,10 @@ pub struct Model {
     /// User ids present when it was learned (the original audience).
     #[sea_orm(column_type = "JsonBinary")]
     pub audience: Json,
+    /// What it is about, each with the other names people use for it
+    /// (`[{"name": "猫", "aliases": ["喵"]}]`). Recall matches these.
+    #[sea_orm(column_type = "JsonBinary")]
+    pub concepts: Json,
     #[sea_orm(column_type = "Double")]
     pub importance: f64,
     pub access_count: i32,

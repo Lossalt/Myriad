@@ -7,8 +7,14 @@
 //! found, but inside a longer run they only count as weak evidence.
 //!
 //! Repeating a word is not extra evidence: query terms are counted once.
+//!
+//! A memory's concepts are terms too. When the query names a concept by any
+//! of its names (猫, 喵, cat), every memory about that concept shares one
+//! term with it, even with no word in common.
 
 use std::collections::{HashMap, HashSet};
+
+use super::unified::Concept;
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
@@ -80,9 +86,57 @@ fn flush_run(run: &mut Vec<char>, out: &mut Vec<Term>) {
     run.clear();
 }
 
+/// One memory as recall sees it.
+pub struct Document<'a> {
+    pub text: &'a str,
+    pub concepts: &'a [Concept],
+}
+
+/// Concept terms cannot collide with words: text never yields a control char.
+fn concept_term(name: &str) -> String {
+    format!("\u{1}{}", name.to_lowercase())
+}
+
+/// Whether `form` is mentioned in `text` (both lowercase). CJK has no word
+/// boundaries, so any occurrence counts; elsewhere the form must stand as its
+/// own word ("cat" is not in "category").
+fn mentions(text: &str, form: &str) -> bool {
+    if form.is_empty() {
+        return false;
+    }
+    if form.chars().any(is_cjk) {
+        return text.contains(form);
+    }
+    text.match_indices(form).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + form.len()..].chars().next();
+        let boundary = |ch: Option<char>| ch.is_none_or(|ch| !ch.is_alphanumeric() || is_cjk(ch));
+        boundary(before) && boundary(after)
+    })
+}
+
+fn document_terms(document: &Document) -> Vec<Term> {
+    let mut out = terms(document.text);
+    out.extend(document.concepts.iter().map(|concept| Term {
+        text: concept_term(&concept.name),
+        weight: 1.0,
+    }));
+    out
+}
+
 /// Distinct query terms, keeping the strongest weight a term was seen with.
-fn query_terms(text: &str) -> Vec<Term> {
+/// A concept of any document counts when the query names it.
+fn query_terms(text: &str, documents: &[Document]) -> Vec<Term> {
     let mut best: HashMap<String, f64> = HashMap::new();
+    let lower = text.to_lowercase();
+    for concept in documents.iter().flat_map(|document| document.concepts) {
+        if concept
+            .surface_forms()
+            .any(|form| mentions(&lower, &form.to_lowercase()))
+        {
+            best.insert(concept_term(&concept.name), 1.0);
+        }
+    }
     for term in terms(text) {
         let weight = best.entry(term.text).or_insert(0.0);
         *weight = weight.max(term.weight);
@@ -107,8 +161,8 @@ pub struct Score {
 
 /// BM25 of every document against `query`, in document order. The corpus is
 /// the documents themselves, so a term most memories share counts for little.
-pub fn score_all(query: &str, documents: &[&str]) -> Vec<Score> {
-    let query = query_terms(query);
+pub fn score_all(query: &str, documents: &[Document]) -> Vec<Score> {
+    let query = query_terms(query, documents);
     if query.is_empty() || documents.is_empty() {
         return vec![
             Score {
@@ -121,7 +175,7 @@ pub fn score_all(query: &str, documents: &[&str]) -> Vec<Score> {
     let indexed: Vec<(HashMap<String, u32>, usize)> = documents
         .iter()
         .map(|document| {
-            let terms = terms(document);
+            let terms = document_terms(document);
             let mut counts = HashMap::new();
             for term in &terms {
                 *counts.entry(term.text.clone()).or_insert(0) += 1;
@@ -166,6 +220,17 @@ pub fn score_all(query: &str, documents: &[&str]) -> Vec<Score> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn score_all(query: &str, texts: &[&str]) -> Vec<Score> {
+        let documents: Vec<Document> = texts
+            .iter()
+            .map(|text| Document {
+                text,
+                concepts: &[],
+            })
+            .collect();
+        super::score_all(query, &documents)
+    }
 
     fn texts(text: &str) -> Vec<(String, f64)> {
         terms(text)
@@ -246,5 +311,44 @@ mod tests {
         assert_eq!(scores[0].value, 0.0);
         assert!(!scores[0].strong);
         assert!(score_all("tea", &[]).is_empty());
+    }
+
+    fn concept(name: &str, aliases: &[&str]) -> Concept {
+        Concept {
+            name: name.into(),
+            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn naming_a_concept_by_any_name_finds_its_memories() {
+        let cat = [concept("猫", &["喵", "猫咪", "cat"])];
+        let documents = [
+            Document {
+                text: "年糕最近不爱动",
+                concepts: &cat,
+            },
+            Document {
+                text: "今天吐了好几次",
+                concepts: &[],
+            },
+        ];
+        let scores = super::score_all("喵喵吃饭了吗", &documents);
+        assert!(scores[0].strong, "喵 names the cat");
+        assert!(scores[0].value > scores[1].value);
+        assert!(super::score_all("My CAT is sick", &documents)[0].strong);
+        assert!(
+            !super::score_all("category theory", &documents)[0].strong,
+            "cat inside a longer word is not the cat"
+        );
+    }
+
+    #[test]
+    fn latin_forms_need_word_boundaries_but_cjk_forms_do_not() {
+        assert!(mentions("my cat.", "cat"));
+        assert!(mentions("养了cat", "cat"));
+        assert!(!mentions("concatenate", "cat"));
+        assert!(mentions("喵喵叫", "喵"));
+        assert!(!mentions("anything", ""));
     }
 }
