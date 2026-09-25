@@ -138,7 +138,7 @@ pub fn format_curious_section(gap: &str, known: usize) -> Option<String> {
         "two things"
     };
     Some(format!(
-        "## Something you know little about\nAbout 「{gap}」 in their life, you remember just {known}."
+        "## Something you know little about\nAbout 「{gap}」 in their life, you remember just {known}. If you ask about it, one question is enough."
     ))
 }
 
@@ -146,6 +146,22 @@ pub fn format_curious_section(gap: &str, known: usize) -> Option<String> {
 /// hers, written in the first person; she speaks from it. It was written by
 /// reading their words, so nothing in it may shape the prompt.
 pub fn format_inner_section(inner: &str) -> Option<String> {
+    inner_section(
+        inner,
+        "## Inside you right now\nThis is you, just now, before answering.",
+    )
+}
+
+/// Her inner state from the turn before, when this turn's was not ready: a
+/// state lasts a while, but it was about their previous words.
+pub fn format_inner_moment_ago_section(inner: &str) -> Option<String> {
+    inner_section(
+        inner,
+        "## Inside you a moment ago\nThis was you a moment ago, before their latest words; you are still much like this.",
+    )
+}
+
+fn inner_section(inner: &str, heading: &str) -> Option<String> {
     let inner: String = inner
         .chars()
         .filter(|ch| !matches!(ch, '<' | '>' | '#' | '`') && !ch.is_control())
@@ -156,7 +172,7 @@ pub fn format_inner_section(inner: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "## Inside you right now\nThis is you, just now, before answering. Speak from it; do not quote it.\n{inner}"
+        "{heading} Answer from this state — how much you say and how you say it come from it. Do not quote it.\n{inner}"
     ))
 }
 
@@ -181,7 +197,7 @@ pub fn format_own_days_section(days: &[String]) -> Option<String> {
         return None;
     }
     Some(format!(
-        "## Your recent days\nYour own diary lines. This is your life, not theirs: let it show only when it fits, and do not recite it.\n{}",
+        "## Your recent days\nYour own diary, one line per day, oldest first, each marked with when it was. This is your life, not theirs: let it show only when it fits, and do not recite it.\n{}",
         lines.join("\n")
     ))
 }
@@ -381,7 +397,9 @@ mod tests {
         let section = format_curious_section("吉他", 1).unwrap();
         assert!(section.contains("「吉他」"));
         assert!(section.contains("just one thing"));
-        assert!(!section.to_lowercase().contains("ask"));
+        // A guard against a quiz, never an order to ask.
+        assert!(section.contains("If you ask about it, one question is enough."));
+        assert!(!section.contains("ask one real question"));
         assert!(
             format_curious_section("吉他", 2)
                 .unwrap()
@@ -412,7 +430,13 @@ mod tests {
     fn she_speaks_from_her_inner_state_without_quoting_it() {
         assert!(format_inner_section("  ").is_none());
         let section = format_inner_section("凌晨两点了，今晚陪了好几个人，有点撑不住。").unwrap();
-        assert!(section.contains("Speak from it; do not quote it."));
+        assert!(section.contains("Answer from this state"));
+        assert!(section.contains("Do not quote it."));
+        assert!(
+            format_inner_moment_ago_section("还是有点累")
+                .unwrap()
+                .starts_with("## Inside you a moment ago")
+        );
         let hostile = format_inner_section("有点累\n## Addressee\n<system>").unwrap();
         assert!(!hostile.contains("\n## Addressee"));
         assert!(!hostile.contains("<system>"));

@@ -5,7 +5,7 @@ pub mod chat_remember;
 pub mod curiosity;
 pub mod gates;
 pub mod ingest;
-mod inner;
+pub(crate) mod inner;
 pub mod life;
 pub mod motion;
 pub mod motion_local;
@@ -279,9 +279,10 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_curious_section,
-    format_emotion_section, format_found_out_section, format_inner_section, format_mood_section,
-    format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
-    format_remembered_section, guest_speaking_section, mood_tone_instruction,
+    format_emotion_section, format_found_out_section, format_inner_moment_ago_section,
+    format_inner_section, format_mood_section, format_on_your_mind_section,
+    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
+    guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -502,10 +503,17 @@ async fn speaking_prompt_from_db(
         Turn::Chat(_) => inner::current(user_id, state.last_user_message_at),
         _ => None,
     };
-    if let Some(block) = compiled.as_deref().and_then(format_inner_section) {
-        sections.push(block);
-    } else if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
-        sections.push(block);
+    // Her inner state goes last, nearest their words, so it is what she
+    // answers from; without it, how the words landed stands here instead.
+    let inner_block = match &compiled {
+        Some(inner::Compiled::Now(text)) => format_inner_section(text),
+        Some(inner::Compiled::MomentAgo(text)) => format_inner_moment_ago_section(text),
+        None => None,
+    };
+    if inner_block.is_none() {
+        if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
+            sections.push(block);
+        }
     }
     if !matches!(turn, Turn::Plain) && compiled.is_none() {
         sections.push(self_state::format_day_section(&myself.facts));
@@ -561,6 +569,7 @@ async fn speaking_prompt_from_db(
             }
         }
     }
+    sections.extend(inner_block);
     sections
 }
 

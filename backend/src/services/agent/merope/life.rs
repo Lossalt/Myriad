@@ -265,15 +265,29 @@ async fn fill_old_concepts(db: &DatabaseConnection, owner: i32) {
 }
 
 /// Her latest days for the speaking prompt, oldest first.
+/// Each line says which day it was: undated lines read as one blur, and in
+/// testing the model told an older day as the latest.
 pub async fn recent_days(db: &DatabaseConnection, limit: u64) -> Vec<String> {
+    let today = chrono::Local::now().date_naive();
     let mut days: Vec<String> = unified::own_days(db, limit)
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|day| day.content)
+        .map(|day| {
+            let ago = (today - day.created_at.date_naive()).num_days();
+            format!("{}: {}", day_label(ago), day.content)
+        })
         .collect();
     days.reverse();
     days
+}
+
+fn day_label(days_ago: i64) -> String {
+    match days_ago {
+        i64::MIN..=0 => "Today".into(),
+        1 => "Yesterday".into(),
+        n => format!("{n} days ago"),
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +320,13 @@ mod tests {
         assert!(serde_json::from_str::<Filled>(ok).is_ok());
         let extra = r#"{"memories":[{"id":"mem_1","concepts":[],"note":"x"}]}"#;
         assert!(serde_json::from_str::<Filled>(extra).is_err());
+    }
+
+    #[test]
+    fn each_day_says_when_it_was() {
+        assert_eq!(day_label(0), "Today");
+        assert_eq!(day_label(1), "Yesterday");
+        assert_eq!(day_label(3), "3 days ago");
     }
 
     #[test]
