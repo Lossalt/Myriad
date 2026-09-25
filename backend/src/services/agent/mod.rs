@@ -43,6 +43,8 @@ pub(crate) mod work_loop;
 mod behavior_contract;
 
 #[cfg(test)]
+mod self_audit;
+#[cfg(test)]
 mod semantic_eval;
 
 // 重新导出核心类型
