@@ -250,7 +250,15 @@ fn cases() -> Vec<Case> {
         assert!(!case.rubric.trim().is_empty());
         assert!(matches!(
             case.kind.as_str(),
-            "chat" | "memory" | "event" | "motion" | "touch" | "wonder" | "found_out" | "inner"
+            "chat"
+                | "memory"
+                | "event"
+                | "motion"
+                | "touch"
+                | "wonder"
+                | "found_out"
+                | "inner"
+                | "own_day"
         ));
     }
     cases
@@ -367,6 +375,11 @@ fn request(case: &Case) -> Value {
                 .expect("search results required");
             json!({"system":system,"schema":schema,"schemaName":"merope_found_out",
                 "input":myriad_agent_rules::untrusted_block("search_results", &results)})
+        }
+        "own_day" => {
+            let system = super::merope::life::own_day_probe_contract(&contract_soul());
+            json!({"system":system,"schema":null,"schemaName":null,
+                "input":json!({"day":"Wed","dayFacts":case.myself,"earlierEntries":case.own_days}).to_string()})
         }
         "inner" => {
             let (system, schema) = super::merope::inner::probe_contract(&contract_soul());
@@ -566,6 +579,13 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
                 "needs_review"
             } else {
                 "output_invalid"
+            }
+        }
+        "own_day" => {
+            if output.trim().is_empty() {
+                "output_invalid"
+            } else {
+                "needs_review"
             }
         }
         "inner" => {
@@ -824,6 +844,14 @@ async fn run_semantic_suite() {
                                 }
                                 true
                             })
+                            .await
+                    } else if request["schema"].is_null() {
+                        // Plain text in her voice (her diary): no schema.
+                        analyzer
+                            .analyze_with_system(
+                                request["system"].as_str().unwrap(),
+                                request["input"].as_str().unwrap(),
+                            )
                             .await
                     } else if let Some(probe) = &probe {
                         use crate::services::analyzer::probe::{Policy, Reasoning};
@@ -1115,7 +1143,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 11;
+const MIND_CASES: usize = 12;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

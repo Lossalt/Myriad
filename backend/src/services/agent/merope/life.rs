@@ -107,6 +107,8 @@ fn own_day_prompt(soul: &str) -> String {
 You are writing a few lines in your own diary about your day, in your own voice and language.\n\
 dayFacts is everything that happened, counted. Write two or three sentences in the first person about how the day went and how it felt to you, as this personality would.\n\
 Do not invent events, places, names, or anything anyone said. Do not mention any person in particular. Do not give the numbers as a report; a diary says \"a lot of people\" or \"a quiet day\".\n\
+earlierEntries are your last few days, so this one reads as a new day: do not reuse their phrases or the stock phrases of your personality description.\n\
+If something made you wonder today, about yourself (what you are, living on a screen) or about the world, you may note it in one sentence; if nothing did, leave it out.\n\
 Output only the diary lines."
     )
 }
@@ -136,7 +138,20 @@ async fn write_yesterday(db: &DatabaseConnection, owner: i32, day: NaiveDate) {
         .await
         .unwrap_or_default();
     let soul: String = soul.chars().take(2000).collect();
-    let input = json!({ "day": day.weekday().to_string(), "dayFacts": facts }).to_string();
+    // Oldest first, as she would reread them.
+    let earlier: Vec<String> = unified::own_days(db, 3)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .rev()
+        .map(|entry| entry.content)
+        .collect();
+    let input = json!({
+        "day": day.weekday().to_string(),
+        "dayFacts": facts,
+        "earlierEntries": earlier,
+    })
+    .to_string();
     let written = crate::services::ai_cost_ledger::with_site_ai_ledger(
         owner,
         "merope",
@@ -264,6 +279,12 @@ async fn fill_old_concepts(db: &DatabaseConnection, owner: i32) {
     }
 }
 
+/// The diary call as production sends it, for the semantic suite.
+#[cfg(test)]
+pub(crate) fn own_day_probe_contract(soul: &str) -> String {
+    own_day_prompt(soul)
+}
+
 /// Her latest days for the speaking prompt, oldest first.
 /// Each line says which day it was: undated lines read as one blur, and in
 /// testing the model told an older day as the latest.
@@ -299,6 +320,11 @@ mod tests {
         let prompt = own_day_prompt("你是瞳。");
         assert!(prompt.contains("Do not mention any person in particular"));
         assert!(prompt.contains("Do not invent events"));
+        assert!(prompt.contains("do not reuse their phrases"));
+        assert!(
+            prompt.contains("you may note it"),
+            "wondering is hers to judge"
+        );
         let facts = DayFacts {
             people_talked_with: 3,
             work_done: 1,
