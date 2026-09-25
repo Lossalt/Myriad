@@ -87,6 +87,13 @@ consecutive frames. Import tests check both the standalone
 reference and the production atlas path. These tests do not claim GPU pixel or
 live visual acceptance. The demo's alternate long-blink policy is not adopted.
 
+Sleeves rotate about a shoulder joint instead of the upstream vertical
+translation and shear (`armY`/`armPos` moved the bottom of the drawing while
+pinning its top). Each side is a damped pendulum driven by its intent and by
+its shoulder's acceleration; the old torso-yaw follower is subsumed by that
+acceleration. The swing stays inside the contract's ±15°, and a cropped sleeve
+slides along the frame line (see `README.md`).
+
 The next selective batches add Worker-owned PSD import: signature/RGB8/dimension
 checks and metadata bounds precede pixel expansion; buffers are transferred and
 workers terminate on success, failure, timeout or cancellation. The existing

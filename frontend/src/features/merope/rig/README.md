@@ -17,6 +17,17 @@ pose chains. `handwear` is the shared semantic parent; optional
 hand drawings. They may lag or swing within ±15 degrees but never deform into
 an articulated limb.
 
+At bind time each split sleeve gets one shoulder joint, found on its own
+opaque pixels nearest the anatomical shoulder (never above the neck), and the
+rotation fades in across the joint so the sleeve bends into the shoulder rather
+than tearing from it. At runtime the sleeve is a damped pendulum: `armY` opens
+both arms, `armPos` swings both one way, the shoulder's actual acceleration
+after all primary motion makes the hand trail, and half of a body roll is given
+back to gravity. The swing saturates softly into the contract's
+`maxRigidArmRotationDegrees`. A sleeve that runs into the portrait crop keeps
+its cut edge on the frame line and slides along it instead of lifting off.
+A drawing whose hand is raised above its shoulder swings at 30%.
+
 This boundary is shared by
 `shared/merope_rig_contract.json`, the Rust compiler, TypeScript
 validation, the PSD importer, and diagnostics. Do not add a frontend-only

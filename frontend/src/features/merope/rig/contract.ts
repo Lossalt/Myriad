@@ -6,6 +6,8 @@ export const MIN_SUPPORTED_RIG_IR_VERSION = contract.minSupportedRigIrVersion
 export const CHARACTER_ASSET_CONTRACT_VERSION =
   contract.characterAsset.contractVersion
 export const PORTRAIT_CANVAS = contract.characterAsset.portrait.canvas
+export const MAX_RIGID_ARM_ROTATION_DEGREES =
+  contract.characterAsset.rig.maxRigidArmRotationDegrees
 export const CHARACTER_ASSET_REQUIRED_CAPABILITIES =
   contract.characterAsset.rig.requiredCapabilities
 export const RIG_SEMANTIC_BONE_ROLES =

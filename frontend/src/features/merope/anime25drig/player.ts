@@ -55,7 +55,7 @@ import { resolveAnime25DFaceFrame } from '../rig/faceFrame'
 import { SingingGrooveController } from '../singing/singingGroove'
 import { noteTurnTraceFrame } from '../turnTrace'
 import { AmbientMotionController } from './ambientMotion'
-import { ArmFollowController } from './armFollow'
+import { ArmPendulum } from './armPendulum'
 import { Anime25DBehaviorMotionController } from './behaviorMotion'
 import {
   buildChestWeightField,
@@ -318,10 +318,10 @@ export class Anime25DPlayer {
 
   private readonly torsoYaw: Anime25DTorsoYawState = { value: 0, velocity: 0 }
 
-  /** Passive sleeve response to the torso, derived rather than authored. */
-  private readonly armFollow = new ArmFollowController()
+  /** Each sleeve hangs from its shoulder; its swing is simulated, not authored. */
+  private readonly armPendulums = { L: new ArmPendulum(1), R: new ArmPendulum(-1) } as const
 
-  private armSwing = 0
+  private readonly armJoint = { x: 0, y: 0, reach: 0 }
 
   private readonly torsoShellRotation: Anime25DTorsoShellRotation = {
     active: false,
@@ -640,7 +640,8 @@ export class Anime25DPlayer {
       specialHeadOffset: 0,
       highCollar: this.motionEnvelopeProfile.highCollar,
       breath: 0,
-      armSwing: 0,
+      armAngleL: 0,
+      armAngleR: 0,
       chestCenterX: this.chestRegion.centerX,
       chestRegionCenterY: this.chestRegion.centerY,
       chestMotionCenterY: this.chestRegion.centerY,
@@ -1094,13 +1095,6 @@ export class Anime25DPlayer {
       tgt,
       smoothAnime25DUnit(stylizedTargets.silly) * this.sillyMouthShare,
     )
-    const armFollow = this.armFollow.step(
-      this.torsoYaw.value,
-      dt,
-      this.motionEnvelopeProfile.rigidArm.limit,
-    )
-    tgt.armY += armFollow.lift
-    this.armSwing = armFollow.swing
     projectAnime25DMotionEnvelope(
       tgt,
       this.motionEnvelopeProfile,
@@ -1216,6 +1210,42 @@ export class Anime25DPlayer {
     }
     hairSpringFrame.time = this.time
     stepAnime25DHairLayerSprings(this.layers, hairSpringFrame, dt)
+    this.stepArms(dt)
+  }
+
+  private stepArms(dt: number): void {
+    const e = this.current
+    const frame = this.secondaryDeformationFrame
+    if (!e.phys) this.prepareHeadDeformationFrame()
+    const input = { open: e.armY, sway: e.armPos, bodyRoll: e.body * 0.028, dynamic: e.phys }
+    for (const side of ['L', 'R'] as const) {
+      const joint = this.writeArmJoint(side) ? this.armJoint : null
+      const angle = this.armPendulums[side].step(input, joint, dt)
+      if (side === 'L') frame.armAngleL = angle
+      else frame.armAngleR = angle
+    }
+  }
+
+  /** The shoulder joint after all primary motion, including the shader's body roll. */
+  private writeArmJoint(side: 'L' | 'R'): boolean {
+    const layer = this.layers.find((candidate) =>
+      candidate.secondaryDeformation.arm && candidate.secondaryDeformation.handwearSide === side)
+    const binding = layer?.secondaryDeformation
+    if (!layer || !binding?.arm || !binding.armMesh) return false
+    const vertex = binding.armMesh.jointVertex
+    const restX = layer.rest[vertex * 2]
+    const restY = layer.rest[vertex * 2 + 1]
+    const point = this.deformationPoint
+    point.x = restX
+    point.y = restY
+    deformAnime25DSecondaryPoint(point, restX, restY, vertex, binding, this.secondaryDeformationFrame)
+    const x = binding.arm.pivotX + point.x - restX
+    const y = binding.arm.pivotY + point.y - restY
+    const { bodyPivotX, bodyPivotY, bodyRotationCosine: c, bodyRotationSine: s } = this.renderFrame
+    this.armJoint.x = bodyPivotX + (x - bodyPivotX) * c - (y - bodyPivotY) * s
+    this.armJoint.y = bodyPivotY + (x - bodyPivotX) * s + (y - bodyPivotY) * c
+    this.armJoint.reach = binding.arm.reach
+    return true
   }
 
   /** Shared primary pose for physics substeps and the final visible mesh. */
@@ -1303,7 +1333,6 @@ export class Anime25DPlayer {
     deformationFrame.stylizedMotion = this.stylizedMotion
     const deformationPoint = this.deformationPoint
     const secondaryDeformationFrame = this.secondaryDeformationFrame
-    secondaryDeformationFrame.armSwing = this.armSwing
     secondaryDeformationFrame.chestMotionCenterY = chestCenterY
     if (secondaryDeformationFrame.torsoChestShape) {
       secondaryDeformationFrame.torsoChestShape.centerY = chestCenterY

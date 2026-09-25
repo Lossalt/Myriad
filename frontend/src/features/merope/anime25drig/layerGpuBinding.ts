@@ -19,6 +19,7 @@ import type { AtlasPixelPatch, CroppedLayerPixels } from './webglRuntime'
 import { isAnime25DRigidAttachment } from '../rig/anime25dLayerSemantics'
 import { removeDuplicatedNeckComponents, splitPairedEarwear } from './accessoryComponents'
 import { duplicateAccessoryLayers } from './accessoryDuplicate'
+import { bindArmRig, bindArmRigMesh } from './armRig'
 import { sampleChestWeight } from './chestPhysics'
 import { buildFrontCollarContactModel } from './collarContact'
 import { createCollarClipMesh, disposeCollarClipMesh } from './collarRuntime'
@@ -115,6 +116,12 @@ export function compileAnime25DGpuLayers(
       if (!bindingPixels.has(source))
         bindingPixels.set(source, readLayerPixels(atlasImage, source))
       return bindingPixels.get(source) ?? null
+    }
+    const contentBottom = Math.max(...playback.layers.map((layer) => layer.y + layer.h))
+    const armBinding = (source: Anime25DPlayback['layers'][number], rest: Float32Array) => {
+      const arm = source.role === 'handwear'
+        ? bindArmRig(source, readBindingPixels(source), playback.anchors, contentBottom) : null
+      return { arm, armMesh: arm ? bindArmRigMesh(arm, rest) : null }
     }
     const atlasPatches: AtlasPixelPatch[] = []
     const neckOrnaments = playback.layers.filter((l) => l.role === 'neckwear')
@@ -330,6 +337,7 @@ export function compileAnime25DGpuLayers(
         shellMode,
         hairlinePinWeights,
         torsoShellMode,
+        ...armBinding(source, rest),
       })
       const layerTransform = new Float32Array(9)
       writeIdentityLayerTransform(layerTransform)
