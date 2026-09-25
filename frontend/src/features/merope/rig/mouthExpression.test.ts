@@ -69,6 +69,36 @@ test('the narrow mouth is the open mouth drawn flatter, tongue included', () => 
   assert.ok(tongue(open.data) > 30)
 })
 
+test('a tiny painted mouth still speaks at a size its face can read', () => {
+  const face = { width: 377, height: 457, mouthToChin: 70 }
+  const tiny = mouthExpressionGeneratedSizes({ width: 25, height: 13 }, face)
+  for (const kind of ['open', 'wide', 'round', 'narrow'] as const) {
+    assert.ok(tiny[kind].width >= face.width * 0.12 * 0.75, `${kind} ${tiny[kind].width}`)
+  }
+  // A mouth already drawn at a readable size keeps its own proportions.
+  const drawn = { width: 59, height: 17 }
+  assert.deepEqual(
+    mouthExpressionGeneratedSizes(drawn, { width: 407, height: 519, mouthToChin: 70 }).open,
+    mouthExpressionGeneratedSizes(drawn).open,
+  )
+})
+
+test('the wide mouth is drawn level and symmetric', () => {
+  const palette = sampleMouthExpressionPalette(undefined)
+  const wide = createMouthExpressionBitmap('wide', { width: 80, height: 30 }, palette)
+  let difference = 0
+  let total = 0
+  for (let y = 0; y < wide.height; y++) {
+    for (let x = 0; x < wide.width; x++) {
+      const alpha = wide.data[(y * wide.width + x) * 4 + 3]
+      const mirrored = wide.data[(y * wide.width + wide.width - 1 - x) * 4 + 3]
+      difference += Math.abs(alpha - mirrored)
+      total += alpha
+    }
+  }
+  assert.ok(difference / total < 0.02, `${difference / total}`)
+})
+
 function visibleColors(data: Uint8ClampedArray): Set<string> {
   const colors = new Set<string>()
   for (let index = 0; index < data.length; index += 4) {

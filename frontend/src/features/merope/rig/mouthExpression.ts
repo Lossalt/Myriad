@@ -23,6 +23,8 @@ type Point = readonly [x: number, y: number]
 const FALLBACK_LINE = { red: 104, green: 57, blue: 75 }
 const FALLBACK_CAVITY = { red: 91, green: 45, blue: 65 }
 const FALLBACK_FILL = { red: 232, green: 139, blue: 151 }
+/** Speaking mouths are sized as if the painted one were at least this wide. */
+const SPEAKING_MOUTH_FACE_SHARE = 0.12
 const MANIAC_TONGUE_HIGHLIGHT_RAIL: readonly Point[] = [
   [-0.49, 0.68],
   [-0.43, 0.79],
@@ -39,12 +41,16 @@ export function mouthExpressionGeneratedSizes(
 ): Record<MouthExpressionKind, MouthExpressionSize> {
   const sourceWidth = Math.max(1, source.width - 4)
   const sourceHeight = Math.max(1, source.height - 4)
-  const openWidth = clampInt(Math.round(sourceWidth * 0.96), 24, 128)
-  const wideWidth = clampInt(Math.round(sourceWidth * 1.24), 28, 152)
-  const roundWidth = clampInt(Math.round(sourceWidth * 0.76), 20, 112)
-  const narrowWidth = clampInt(Math.round(sourceWidth * 1.08), 24, 136)
-  const cryWidth = clampInt(Math.round(sourceWidth * 1.3), 30, 160)
   const faceWidth = Math.max(1, face?.width ?? 1)
+  // A tiny painted mouth still has to read as speaking on its face.
+  const speakingWidth = face
+    ? Math.max(sourceWidth, faceWidth * SPEAKING_MOUTH_FACE_SHARE)
+    : sourceWidth
+  const openWidth = clampInt(Math.round(speakingWidth * 0.96), 24, 128)
+  const wideWidth = clampInt(Math.round(speakingWidth * 1.24), 28, 152)
+  const roundWidth = clampInt(Math.round(speakingWidth * 0.76), 20, 112)
+  const narrowWidth = clampInt(Math.round(speakingWidth * 1.08), 24, 136)
+  const cryWidth = clampInt(Math.round(speakingWidth * 1.3), 30, 160)
   const sillyWidth = clampInt(
     Math.round(Math.max(sourceWidth * 1.1, faceWidth * 0.115)),
     26,
@@ -457,19 +463,18 @@ function openOuterPath(): Point[] {
 
 function wideOuterPath(): Point[] {
   return [
-    [-0.91, -0.2],
-    [-0.7, -0.45],
-    [-0.34, -0.57],
-    [0.08, -0.54],
-    [0.46, -0.49],
-    [0.82, -0.27],
-    [0.94, 0.02],
-    [0.78, 0.3],
-    [0.39, 0.48],
-    [-0.02, 0.5],
-    [-0.43, 0.43],
-    [-0.79, 0.23],
-    [-0.93, -0.02],
+    [-0.93, -0.06],
+    [-0.76, -0.36],
+    [-0.4, -0.53],
+    [0, -0.55],
+    [0.4, -0.53],
+    [0.76, -0.36],
+    [0.93, -0.06],
+    [0.8, 0.26],
+    [0.4, 0.46],
+    [0, 0.5],
+    [-0.4, 0.46],
+    [-0.8, 0.26],
   ]
 }
 
