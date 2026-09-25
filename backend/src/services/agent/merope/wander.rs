@@ -91,13 +91,19 @@ fn note_thought(user_id: i32, memory_id: String, now: DateTime<Utc>) {
     }
 }
 
-/// What the thought is, for the event decision. A thought that lands where
-/// she knows only a little becomes a wish to know more.
+/// What the thought is, for the event decision. Where it lands on something
+/// she knows only a little about, that fact comes with it; whether it makes
+/// her want to know more is the decision's to judge.
 fn thought_summary(wandered: &unified::Wandered) -> String {
     match &wandered.gap {
-        Some(gap) => format!(
-            "你忽然想起关于对方的一件事：{}。关于「{gap}」你只知道这么一点，想知道更多。",
-            wandered.memory.content
+        Some((gap, known)) => format!(
+            "你忽然想起关于对方的一件事：{}。关于「{gap}」，你只记得{}。",
+            wandered.memory.content,
+            if *known <= 1 {
+                "这一件事"
+            } else {
+                "两件事"
+            }
         ),
         None => format!("你忽然想起关于对方的一件事：{}", wandered.memory.content),
     }

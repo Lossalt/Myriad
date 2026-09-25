@@ -394,8 +394,8 @@ async fn speaking_prompt_from_db(
     if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
         sections.push(block);
     }
-    if let Some(block) = self_state::format_self_section(&myself) {
-        sections.push(block);
+    if !matches!(turn, Turn::Plain) {
+        sections.push(self_state::format_day_section(&myself.facts));
     }
     if !matches!(turn, Turn::Plain) {
         if let Some(block) = format_own_days_section(&life::recent_days(db, OWN_DAYS_LIMIT).await) {
@@ -419,23 +419,21 @@ async fn speaking_prompt_from_db(
             }
         }
         if let Turn::Chat(words) = turn {
-            // Curiosity: something they just named that she knows only a
-            // little about, while she wants to know things.
-            if myself.curious() {
-                let gap = crate::services::agent::memory::unified::curiosity_gap(
-                    db,
-                    user_id,
-                    &crate::services::agent::memory::unified::Audience::private(user_id),
-                    words,
-                )
-                .await;
-                if let Some(block) = gap
-                    .ok()
-                    .flatten()
-                    .and_then(|gap| format_curious_section(&gap))
-                {
-                    sections.push(block);
-                }
+            // Something they just named that she knows only a little about.
+            // Whether she wants to know more is hers to judge.
+            let gap = crate::services::agent::memory::unified::curiosity_gap(
+                db,
+                user_id,
+                &crate::services::agent::memory::unified::Audience::private(user_id),
+                words,
+            )
+            .await;
+            if let Some(block) = gap
+                .ok()
+                .flatten()
+                .and_then(|(gap, known)| format_curious_section(&gap, known))
+            {
+                sections.push(block);
             }
         }
         if let Some(segment) = crate::services::agent::consciousness::last_attention(user_id) {
@@ -621,11 +619,11 @@ mod tests {
         assert!(
             super::speaking_prompts::PERSONA_SPEAKING_CONTRACT.contains("Do not name the mood")
         );
-        assert!(super::mood_tone_instruction(8.0, 48.0).contains("Very low"));
-        assert!(super::mood_tone_instruction(30.0, 40.0).contains("A bit low"));
-        assert!(super::mood_tone_instruction(30.0, 70.0).contains("Irritable"));
-        assert!(super::mood_tone_instruction(90.0, 48.0).contains("ordinary tone"));
-        assert!(super::mood_tone_instruction(90.0, 70.0).contains("lighter"));
+        assert!(super::mood_tone_instruction(8.0, 48.0).contains("very low"));
+        assert!(super::mood_tone_instruction(30.0, 40.0).contains("a bit low"));
+        assert!(super::mood_tone_instruction(30.0, 70.0).contains("on edge"));
+        assert!(super::mood_tone_instruction(90.0, 48.0).contains("at ease"));
+        assert!(super::mood_tone_instruction(90.0, 70.0).contains("bright"));
         let section = super::format_mood_section(72.4, 48.0);
         assert!(!section.contains("72/100"));
         assert!(!section.contains("72.4"));

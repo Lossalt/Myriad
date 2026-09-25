@@ -53,7 +53,7 @@ pub use speak_intent::{
 pub use store::IntentStore;
 pub use types::{
     AcceptSource, ConsciousnessAction, ConsciousnessDecision, ConsciousnessEvent, EventUrgency,
-    IntentRecord, IntentStatus, RecentIntent, SelfBands, SelfLivePresence, SelfSnapshot,
+    IntentRecord, IntentStatus, RecentIntent, SelfFacts, SelfLivePresence, SelfSnapshot,
     WorkProposal,
 };
 

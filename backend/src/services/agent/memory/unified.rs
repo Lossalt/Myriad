@@ -713,8 +713,9 @@ pub async fn wander<C: ConnectionTrait>(
 #[derive(Debug, Clone)]
 pub struct Wandered {
     pub memory: MemoryRecord,
-    /// Something in it she knows only a little about, if anything.
-    pub gap: Option<String>,
+    /// Something in it she knows only a little about, and how many memories
+    /// she has of it, if anything.
+    pub gap: Option<(String, usize)>,
 }
 
 /// How many memories each concept (by lowercased name) appears in.
@@ -726,11 +727,12 @@ fn concept_counts(concepts: &[Vec<Concept>]) -> std::collections::HashMap<String
     counts
 }
 
-/// The concept of a memory she knows least about, if she knows only a little.
+/// The concept of a memory she knows least about, if she knows only a little,
+/// with how many memories she has of it.
 fn thinly_known(
     concepts: &[Concept],
     counts: &std::collections::HashMap<String, usize>,
-) -> Option<String> {
+) -> Option<(String, usize)> {
     concepts
         .iter()
         .filter_map(|concept| {
@@ -738,7 +740,7 @@ fn thinly_known(
             (known <= THINLY_KNOWN).then_some((known, concept.name.clone()))
         })
         .min_by_key(|(known, _)| *known)
-        .map(|(_, name)| name)
+        .map(|(known, name)| (name, known))
 }
 
 /// Something this person just brought up that she knows only a little about
@@ -748,7 +750,7 @@ pub async fn curiosity_gap<C: ConnectionTrait>(
     user_id: i32,
     present: &Audience,
     query: &str,
-) -> Result<Option<String>, DbErr> {
+) -> Result<Option<(String, usize)>, DbErr> {
     if user_id <= 0 || query.trim().is_empty() {
         return Ok(None);
     }
@@ -760,7 +762,7 @@ pub async fn curiosity_gap<C: ConnectionTrait>(
     Ok(gap_in(&rows, query))
 }
 
-fn gap_in(rows: &[agent_memories::Model], query: &str) -> Option<String> {
+fn gap_in(rows: &[agent_memories::Model], query: &str) -> Option<(String, usize)> {
     let concepts: Vec<Vec<Concept>> = rows.iter().map(concepts_of).collect();
     let documents: Vec<super::lexical::Document> = rows
         .iter()
@@ -1267,7 +1269,10 @@ mod tests {
             about(row("cat3", "年糕怕吸尘器", 0.5, 3 * DAY), &["猫", "年糕"]),
             about(row("cat4", "年糕喜欢晒太阳", 0.5, 4 * DAY), &["猫", "年糕"]),
         ];
-        assert_eq!(gap_in(&rows, "今天吉他弹了一小时"), Some("吉他".into()));
+        assert_eq!(
+            gap_in(&rows, "今天吉他弹了一小时"),
+            Some(("吉他".into(), 1))
+        );
         assert_eq!(
             gap_in(&rows, "猫今天好乖"),
             None,
