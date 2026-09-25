@@ -8,176 +8,80 @@ use super::agent_header::*;
 use super::types::*;
 use super::{capability, executor, mcp, memory, skill, types};
 
-/// 记录执行记忆的通用参数
+/// 一次办事结束后交给记忆抽取的材料。
 pub(crate) struct MemoryRecordParams<'a> {
+    pub(crate) db: &'a DatabaseConnection,
     pub(crate) user_id: i32,
     pub(crate) user_input: &'a str,
     pub(crate) recipe: &'a Recipe,
-    pub(crate) planner_steps_len: usize,
     pub(crate) success: bool,
-    pub(crate) error_msg: Option<&'a str>,
-    /// 日志前缀（"" / "saved:" / "confirmed:" / "resume:"）
-    pub(crate) log_prefix: &'a str,
-    /// 对话上下文：供记忆提取；满 4 条才归档
-    pub(crate) conversation_context: Option<&'a [ConversationMessage]>,
     /// 实际步骤执行结果（用于丰富记忆提取的上下文）
     pub(crate) step_results: Option<&'a std::collections::HashMap<String, StepResult>>,
 }
 
-/// 统一的执行后记忆记录
+/// 办事结束后的记忆抽取，写入统一记忆表。
+///
+/// 抽取是一次完整的 Standard 往返，`tokio::spawn` 到响应路径之外。归属需要
+/// 显式带进去：detached task 的 task-local 是空的，不带就会从成本账里消失。
+/// 用量计量器**不**带——它属于本回合的配额预留，这份工作在预留结算之后才跑完。
 pub(crate) async fn record_execution_memory(params: MemoryRecordParams<'_>) {
-    let Some(mem) = memory::get_memory() else {
-        return;
-    };
-
-    let ok = params.success;
-    let step_caps: Vec<String> = params
-        .recipe
-        .steps
-        .iter()
-        .map(|s| s.capability_id.clone())
-        .collect();
-
-    // 1. AI 提取多维度记忆
-    let exec_results: std::collections::HashMap<String, serde_json::Value> = params
+    let step_outputs: Vec<(String, Value)> = params
         .recipe
         .steps
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            let step_key = format!("step_{}", i + 1);
-            // 从实际 step_results 中查找对应输出摘要
-            let output_summary = params
+        .map(|(index, step)| {
+            let result = params
                 .step_results
-                .and_then(|sr| sr.get(&s.id))
-                .and_then(|r| r.output.as_ref())
-                .map(memory::summarize_value_for_memory);
-            let step_success = params
-                .step_results
-                .and_then(|sr| sr.get(&s.id))
-                .map(|r| r.success)
-                .unwrap_or(ok);
-            let mut val = serde_json::json!({
-                "action": s.action,
-                "capability": s.capability_id,
-                "success": step_success,
+                .and_then(|results| results.get(&step.id));
+            let mut value = json!({
+                "action": step.action,
+                "capability": step.capability_id,
+                "success": result.map(|r| r.success).unwrap_or(params.success),
             });
-            if let Some(summary) = output_summary {
-                val["output_summary"] = serde_json::Value::String(summary);
-            }
-            if let Some(err) = params
-                .step_results
-                .and_then(|sr| sr.get(&s.id))
-                .and_then(|r| r.error.as_ref())
+            if let Some(summary) = result
+                .and_then(|r| r.output.as_ref())
+                .map(memory::work_memory::summarize_value_for_memory)
             {
-                val["error"] = serde_json::Value::String(err.clone());
+                value["output_summary"] = Value::String(summary);
             }
-            (step_key, val)
+            if let Some(error) = result.and_then(|r| r.error.as_ref()) {
+                value["error"] = Value::String(error.clone());
+            }
+            (format!("step_{}", index + 1), value)
         })
         .collect();
-    // 将会话上下文转换为 Value 格式供记忆提取 AI 使用
-    let conversation_values: Option<Vec<serde_json::Value>> =
-        params.conversation_context.map(|msgs| {
-            msgs.iter()
-                .filter_map(|m| serde_json::to_value(m).ok())
-                .collect()
-        });
-    // AI 提取整轮记忆是一次完整的 Standard 往返，`tokio::spawn` 到响应路径之外。
-    //
-    // 归属需要显式带进去：detached task 的 task-local 是空的，不带就会从成本账里
-    // 消失。用量计量器**不**带——它属于本回合的配额预留，而这份工作在预留结算之后
-    // 才跑完；后台整理也不该记在用户的额度上。
-    {
-        let mem = mem.clone();
-        let attribution = crate::services::ai_cost_ledger::current_ai_attribution();
-        let user_input = params.user_input.to_string();
-        let exec_results = exec_results.clone();
-        let step_caps_for_extraction = step_caps.clone();
-        let user_id = params.user_id;
-        tokio::spawn(async move {
-            let extract = async {
-                mem.extract_memories_from_execution(
-                    &user_input,
-                    conversation_values.as_deref(),
-                    &exec_results,
-                    ok,
-                    &step_caps_for_extraction,
-                    user_id,
+    let run = memory::work_memory::WorkRun {
+        user_id: params.user_id,
+        user_input: params.user_input.to_string(),
+        conversation: Vec::new(),
+        step_outputs,
+        capabilities: params
+            .recipe
+            .steps
+            .iter()
+            .map(|step| step.capability_id.clone())
+            .collect(),
+        success: params.success,
+    };
+    let db = params.db.clone();
+    let attribution = crate::services::ai_cost_ledger::current_ai_attribution();
+    tokio::spawn(async move {
+        let learn = memory::work_memory::learn_from_run(&db, run);
+        match attribution {
+            Some(attribution) => {
+                crate::services::ai_cost_ledger::with_ai_ledger_attribution(
+                    crate::services::ai_cost_ledger::AiLedgerAttribution {
+                        operation: "agent.memory".to_string(),
+                        ..attribution
+                    },
+                    learn,
                 )
-                .await;
-            };
-            match attribution {
-                Some(attribution) => {
-                    crate::services::ai_cost_ledger::with_ai_ledger_attribution(
-                        crate::services::ai_cost_ledger::AiLedgerAttribution {
-                            operation: "agent.memory".to_string(),
-                            ..attribution
-                        },
-                        extract,
-                    )
-                    .await
-                }
-                None => extract.await,
+                .await
             }
-        });
-    }
-
-    // 2. 失败教训
-    if !ok {
-        let error = params.error_msg.unwrap_or("unknown");
-        let lesson = format!(
-            "{}执行失败教训：{} → 步骤 [{}] 失败: {}",
-            params.log_prefix,
-            params.user_input.chars().take(40).collect::<String>(),
-            step_caps.join(", "),
-            error
-        );
-        mem.remember_full(
-            &lesson,
-            memory::MemoryType::ExecutionLesson,
-            memory::MemoryTier::MediumTerm,
-            0.8,
-            Vec::new(),
-            step_caps.clone(),
-            params.user_id,
-        )
-        .await;
-    }
-
-    // 3. 日志
-    let first_cap = params
-        .recipe
-        .steps
-        .first()
-        .map(|s| s.capability_id.as_str())
-        .unwrap_or("?");
-    let summary = format!(
-        "{}{} | {} 步 ({}, ...) → {}",
-        params.log_prefix,
-        params.user_input.chars().take(30).collect::<String>(),
-        params.planner_steps_len,
-        first_cap,
-        if ok { "✓" } else { "✗" }
-    );
-    mem.log_daily(params.user_id, &summary).await;
-
-    // 4. 会话摘要归档
-    if let Some(history) = params.conversation_context {
-        if history.len() >= 4 {
-            let session_summary = format!(
-                "会话主题：{} | 执行了 {} 步骤 | 结果：{}",
-                params.user_input.chars().take(50).collect::<String>(),
-                params.planner_steps_len,
-                if ok { "成功" } else { "失败" }
-            );
-            mem.consolidate_session(&session_summary, params.user_id)
-                .await;
+            None => learn.await,
         }
-    }
-
-    // 5. 提升 + 清理
-    mem.promote_memories().await;
-    mem.cleanup_short_term().await;
+    });
 }
 
 /// 一次 Agent 回合的 AI 预算：先按估算预留，结束后按实际消耗结算。

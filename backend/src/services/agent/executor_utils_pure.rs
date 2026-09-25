@@ -304,7 +304,7 @@ mod step_timeout_tests {
     #[test]
     fn json_extraction_is_not_rehand_rolled() {
         for (label, source) in [
-            ("记忆提取", include_str!("memory/manager.rs")),
+            ("记忆提取", include_str!("memory/work_memory.rs")),
             ("报告 DNA", include_str!("merope/report_dna.rs")),
         ] {
             assert!(

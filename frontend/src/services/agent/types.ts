@@ -679,23 +679,13 @@ export interface ExecutionTrace {
 
 export interface MemoryEntry {
   id: string
-  memoryType:
-    | 'preference'
-    | 'fact'
-    | 'interaction'
-    | 'decision'
-    | 'entity_knowledge'
-    | 'execution_lesson'
-    | 'effective_pattern'
-    | 'session_insight'
-    | 'session_summary'
+  /** Unified memory kind. Chat and Work share one store. */
+  memoryType: 'fact' | 'preference' | 'lesson' | 'pattern'
   content: string
+  /** Where it was learned: chat, event, work or import. */
   source?: string
   createdAt: string
-  tier?: string
   importance?: number
-  entities?: string[]
-  relatedCapabilities?: string[]
 }
 
 export interface SkillInfo {

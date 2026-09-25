@@ -33,6 +33,10 @@ pub enum MemoryKind {
     Fact,
     /// What the person likes or wants done a certain way.
     Preference,
+    /// How a kind of task went wrong and what to do instead.
+    Lesson,
+    /// A way of doing a task that worked.
+    Pattern,
 }
 
 impl MemoryKind {
@@ -40,17 +44,23 @@ impl MemoryKind {
         match self {
             Self::Fact => "fact",
             Self::Preference => "preference",
+            Self::Lesson => "lesson",
+            Self::Pattern => "pattern",
         }
     }
 
     /// Everything a person told us about themselves.
     pub const ABOUT_PERSON: [Self; 2] = [Self::Fact, Self::Preference];
+    /// How Work should go about things for this person.
+    pub const FOR_WORK: [Self; 4] = [Self::Preference, Self::Fact, Self::Lesson, Self::Pattern];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Speaker {
     User,
     Agent,
+    /// Carried over from the pre-unified stores; who said it is unknown.
+    Import,
 }
 
 impl Speaker {
@@ -58,6 +68,7 @@ impl Speaker {
         match self {
             Self::User => "user",
             Self::Agent => "agent",
+            Self::Import => "import",
         }
     }
 }
@@ -383,6 +394,98 @@ fn rank(
     scored.into_iter().take(limit).map(|(_, row)| row).collect()
 }
 
+/// A person's active memories, newest first, for the memory panel.
+pub async fn list<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    limit: u64,
+) -> Result<Vec<MemoryRecord>, DbErr> {
+    Ok(agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .order_by_desc(agent_memories::Column::CreatedAt)
+        .limit(limit)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(MemoryRecord::from)
+        .collect())
+}
+
+/// Edit one active memory of the person. Returns whether a row changed.
+pub async fn update_content<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    id: &str,
+    content: &str,
+) -> Result<bool, DbErr> {
+    let content = normalize_content(content);
+    if content.is_empty() {
+        return Ok(false);
+    }
+    let result = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            content: Set(content),
+            updated_at: Set(Utc::now().fixed_offset()),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Id.eq(id))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected == 1)
+}
+
+/// One row carried over from a pre-unified store, keeping its identity and
+/// history. An id seen before is skipped, so importing twice is harmless.
+pub struct ImportedMemory {
+    pub id: String,
+    pub user_id: i32,
+    pub kind: MemoryKind,
+    pub content: String,
+    pub importance: f64,
+    pub access_count: i32,
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    pub last_accessed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+/// Returns whether the row was new.
+pub async fn import<C: ConnectionTrait>(db: &C, memory: ImportedMemory) -> Result<bool, DbErr> {
+    let content = normalize_content(&memory.content);
+    if memory.user_id <= 0 || content.is_empty() {
+        return Ok(false);
+    }
+    let row = agent_memories::ActiveModel {
+        id: Set(memory.id),
+        user_id: Set(Some(memory.user_id)),
+        kind: Set(memory.kind.as_str().into()),
+        content: Set(content),
+        evidence: Set(None),
+        speaker: Set(Speaker::Import.as_str().into()),
+        source: Set("import".into()),
+        venue: Set("private".into()),
+        audience: Set(json!([memory.user_id])),
+        importance: Set(memory.importance.clamp(0.0, 1.0)),
+        access_count: Set(std::cmp::Ord::max(memory.access_count, 0)),
+        last_accessed_at: Set(memory.last_accessed_at),
+        valid_from: Set(memory.created_at),
+        invalid_at: Set(None),
+        invalid_reason: Set(None),
+        created_at: Set(memory.created_at),
+        updated_at: Set(memory.created_at),
+    };
+    let inserted = agent_memories::Entity::insert(row)
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::column(agent_memories::Column::Id)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(inserted > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +718,28 @@ mod db_tests {
                 .is_some(),
             "a retired fact may be learned again"
         );
+    }
+
+    #[tokio::test]
+    async fn importing_the_same_legacy_row_twice_writes_it_once() {
+        let Some(db) = temp_db().await else {
+            return;
+        };
+        let legacy = || ImportedMemory {
+            id: "json_abc".into(),
+            user_id: 7,
+            kind: MemoryKind::Lesson,
+            content: "动漫角色图 category=anime 效果好".into(),
+            importance: 0.7,
+            access_count: 2,
+            created_at: (Utc::now() - chrono::Duration::days(30)).fixed_offset(),
+            last_accessed_at: None,
+        };
+        assert!(import(&db, legacy()).await.unwrap());
+        assert!(!import(&db, legacy()).await.unwrap());
+        let rows = active(&db, 7, &[MemoryKind::Lesson]).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].access_count, 2);
+        assert_eq!(rows[0].source, "import");
     }
 }

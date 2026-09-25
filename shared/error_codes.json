@@ -330,7 +330,7 @@
     "Invalid payload": "bad_request",
     "Heartbeat not initialized": "agent_subsystem_unavailable",
     "MCP manager not initialized": "agent_subsystem_unavailable",
-    "Memory not initialized": "agent_subsystem_unavailable",
+    "Failed to access memory": "agent_subsystem_unavailable",
     "Skill evolution not initialized": "agent_subsystem_unavailable",
     "Skill registry not initialized": "agent_subsystem_unavailable",
     "Missing 'input' field": "agent_field_missing",

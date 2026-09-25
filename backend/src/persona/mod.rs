@@ -32,9 +32,8 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
     agent::skill_evolution::init_skill_evolution(agent_data_dir.join("skills")).await;
     tracing::info!("✅ Agent skill evolution system initialized");
 
-    // Initialize Agent memory system
-    agent::memory::init_memory(agent_data_dir.join("memory")).await;
-    tracing::info!("✅ Agent memory system initialized");
+    // Carry the pre-unified JSON memory into the database (idempotent)
+    agent::memory::import_legacy_json(&db, &agent_data_dir.join("memory")).await;
 
     // Initialize MCP (Model Context Protocol) client
     agent::mcp::init_mcp(&agent_data_dir.join("mcp_servers.json")).await;
@@ -127,9 +126,6 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
                     );
                 }
             }
-            if let Some(memory) = agent::memory::get_memory() {
-                memory.cleanup_old_logs(30).await;
-            }
         },
     );
     *runtime = Some(drivers.supervise(FAILURE.clone(), Duration::from_secs(30)));
@@ -161,9 +157,6 @@ pub async fn shutdown() {
         // Stop admission before draining. Previously the tick/heartbeat loops
         // kept spawning work while the process waited for inflight execution.
         runtime.shutdown().await;
-    }
-    if let Some(memory) = agent::memory::get_memory() {
-        memory.force_flush().await;
     }
     if let Some(evolution) = agent::skill_evolution::get_skill_evolution() {
         evolution.flush().await;

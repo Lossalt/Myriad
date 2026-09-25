@@ -1,10 +1,9 @@
-//! Agent long-term memory: entries, TF-IDF index, and persistence manager.
+//! Agent long-term memory: one table (`agent_memories`) for Chat and Work.
 //!
-//! Real submodules: [`types_index`] (types + TF-IDF) and [`manager`] (`AgentMemory` impl).
+//! [`unified`] owns storage, audience and retrieval; [`work_memory`] turns a
+//! finished Work run into memories and imports the pre-unified JSON store.
 
-mod manager;
-mod types_index;
 pub mod unified;
+pub(crate) mod work_memory;
 
-pub use manager::{get_memory, init_memory, summarize_value_for_memory};
-pub use types_index::{MemoryTier, MemoryType, RecallQuery};
+pub(crate) use work_memory::import_legacy_json;
