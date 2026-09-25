@@ -228,10 +228,8 @@ fn roughly(hours: f64) -> String {
 /// Her own day as plain facts. What it does to her — tired, restless,
 /// curious, glad of company — is left to the model and the personality.
 pub fn format_day_section(facts: &SelfFacts) -> String {
-    let mut lines = vec![format!(
-        "It is {:02}:{:02} for you.",
-        facts.local_hour, facts.local_minute
-    )];
+    // The clock is in the Now section, on every turn.
+    let mut lines = Vec::new();
     lines.push(match facts.people_recently {
         0 => "Nobody else has talked with you in the last few hours.".to_string(),
         1 => "One person has talked with you in the last few hours.".to_string(),
@@ -244,11 +242,8 @@ pub fn format_day_section(facts: &SelfFacts) -> String {
         ));
     }
     lines.push(match facts.hours_since_learned {
-        Some(hours) => format!(
-            "You last learned something new about anyone {}.",
-            roughly(hours)
-        ),
-        None => "You have not learned anything new about anyone yet.".to_string(),
+        Some(hours) => format!("You last learned something new {}.", roughly(hours)),
+        None => "You have not learned anything new yet.".to_string(),
     });
     format!("## Your day\n{}", lines.join(" "))
 }
@@ -320,7 +315,9 @@ mod tests {
     fn the_model_is_told_facts_not_how_to_feel() {
         let night = derive(2, &[0.2, 0.5, 1.0, 3.0, 7.0]).with_last_learned(Some(9.2));
         let day = format_day_section(&night.facts);
-        assert!(day.starts_with("## Your day\nIt is 02:00 for you."));
+        // The clock is in the Now section, on every turn.
+        assert!(day.starts_with("## Your day\n"));
+        assert!(!day.contains("02:00"));
         assert!(day.contains("4 different people have talked with you"));
         assert!(day.contains("about 9 hours ago"));
         for verdict in ["tired", "energy", "shorter", "lonely", "curious", "glad"] {

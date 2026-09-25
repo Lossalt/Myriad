@@ -112,6 +112,12 @@ pub struct SelfSnapshot {
     /// feel is the decision model's judgment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub myself: Option<SelfFacts>,
+    /// Who they are to her, as she calls them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressee_name: Option<String>,
+    /// How she was after her last exchange with them, if a moment ago.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<String>,
 }
 
 /// The persona's own day, as plain facts.

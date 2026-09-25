@@ -97,6 +97,11 @@ pub(super) fn forget() {
     }
 }
 
+/// Whether a game is on in this conversation.
+pub fn in_game(request: &UserRequest) -> bool {
+    key_of(request).is_some_and(|key| GAMES.lock().is_ok_and(|games| games.contains_key(&key)))
+}
+
 /// Take her start marker out of a reply: the text without it, and whether
 /// she started a game.
 pub fn split_start(raw: &str) -> (String, bool) {

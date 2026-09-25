@@ -324,9 +324,18 @@ async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> S
     let soul = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_else(|| "You are Agent.".to_string());
-    let mind = crate::services::agent::merope::speaking_prompt_plain(
-        &crate::services::agent::merope::speaking_prompt_for_event(db, user_id, summary).await,
+    let mut sections =
+        crate::services::agent::merope::speaking_prompt_for_event(db, user_id, summary).await;
+    // How the last exchange left her, if it was a moment ago.
+    sections.extend(
+        super::super::inner::current(
+            user_id,
+            &crate::services::agent::memory::unified::Audience::private(user_id),
+        )
+        .as_deref()
+        .and_then(crate::services::agent::merope::format_inner_moment_ago_section),
     );
+    let mind = crate::services::agent::merope::speaking_prompt_plain(&sections);
     let recent = recent_proactive(db, user_id, 6)
         .await
         .unwrap_or_default()

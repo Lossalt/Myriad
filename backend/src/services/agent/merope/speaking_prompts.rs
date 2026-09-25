@@ -246,6 +246,29 @@ pub fn format_playing_section(line: &str) -> Option<String> {
     ))
 }
 
+/// The date and time where she is: the day of the week and the date as well
+/// as the clock, so "tomorrow" and "last weekend" mean something.
+pub fn format_now_section(now: chrono::DateTime<chrono::Local>) -> String {
+    format!(
+        "## Now\nIt is {}, {}, where you are.",
+        now.format("%A"),
+        now.format("%Y-%m-%d %H:%M")
+    )
+}
+
+/// How long it has been since their previous message, when that was a while.
+pub fn format_since_section(minutes: i64) -> Option<String> {
+    let gap = match minutes {
+        ..30 => return None,
+        30..90 => format!("about {minutes} minutes"),
+        90..2880 => format!("about {} hours", (minutes + 30) / 60),
+        _ => format!("about {} days", (minutes + 720) / 1440),
+    };
+    Some(format!(
+        "## Since they last wrote\nTheir previous message came {gap} before this one."
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {
@@ -543,5 +566,25 @@ mod tests {
         assert!(recent.contains("## Recently"));
         assert!(recent.contains("scene you are performing"));
         assert!(!recent.contains("About this person"));
+    }
+
+    #[test]
+    fn she_knows_the_day_and_how_long_they_were_away() {
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 25, 21, 10, 0)
+            .unwrap();
+        assert_eq!(
+            format_now_section(now),
+            "## Now\nIt is Friday, 2026-09-25 21:10, where you are."
+        );
+        assert!(format_since_section(12).is_none(), "a flowing conversation");
+        assert!(
+            format_since_section(45)
+                .unwrap()
+                .contains("about 45 minutes")
+        );
+        assert!(format_since_section(200).unwrap().contains("about 3 hours"));
+        assert!(format_since_section(4000).unwrap().contains("about 3 days"));
     }
 }

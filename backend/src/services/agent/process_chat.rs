@@ -35,6 +35,7 @@ impl Agent {
             reply.clone(),
             memory_input_at,
             crate::services::agent::merope::audience_for(&request),
+            crate::services::agent::merope::turn_context(&request),
         );
         crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
         {
@@ -49,6 +50,7 @@ impl Agent {
             request.raw_input.clone(),
             reply.clone(),
             crate::services::agent::merope::audience_for(&request),
+            crate::services::agent::merope::turn_context(&request),
         );
         return attach_motion_to_result(
             Ok(AgentResponse {
@@ -158,6 +160,7 @@ impl Agent {
             reply.clone(),
             memory_input_at,
             crate::services::agent::merope::audience_for(&request),
+            crate::services::agent::merope::turn_context(&request),
         );
         crate::services::agent::merope::spawn_inner_after(self.db.clone(), &request, &reply);
         {
@@ -172,6 +175,7 @@ impl Agent {
             request.raw_input.clone(),
             reply.clone(),
             crate::services::agent::merope::audience_for(&request),
+            crate::services::agent::merope::turn_context(&request),
         );
         let performance = None;
 

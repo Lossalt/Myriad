@@ -253,6 +253,17 @@ fn spawn_model_outfit_overlay(
     });
 }
 
+/// This turn is a live voice call.
+fn on_call(request: &UserRequest) -> bool {
+    request
+        .context
+        .as_ref()
+        .and_then(|context| context.custom_data.as_ref())
+        .and_then(|data| data.get("voice"))
+        .and_then(|voice| voice.as_str())
+        == Some("realtime")
+}
+
 /// Her voice in chat. It thinks little: measured on the chat suite, the first
 /// word came in about 1.9 s instead of 6 s with replies of the same kind.
 async fn chat_analyzer() -> Result<crate::services::analyzer::AiAnalyzer, String> {
@@ -411,6 +422,29 @@ impl Agent {
             supplied,
         )
         .await;
+        // How long they were away, when it was a while.
+        if let Some(block) = supplied
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .and_then(|message| message.created_at.as_deref())
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .and_then(|at| {
+                crate::services::agent::merope::format_since_section(
+                    request
+                        .timestamp
+                        .signed_duration_since(at.with_timezone(&chrono::Utc))
+                        .num_minutes(),
+                )
+            })
+        {
+            merope_block = format!("{merope_block}\n\n{block}");
+        }
+        if on_call(request) {
+            merope_block = format!(
+                "{merope_block}\n\n## On a call\nThis reply is spoken aloud on a live voice call: talk, do not write. No lists, no markup, short sentences."
+            );
+        }
 
         let custom = request
             .context
@@ -421,6 +455,21 @@ impl Agent {
             custom.and_then(|data| data.get("pageContent")),
             &request.raw_input,
         );
+        // Which part of the site they are on, even without the page itself.
+        if let Some(route) = request
+            .context
+            .as_ref()
+            .and_then(|context| context.current_route.as_deref())
+            .map(str::trim)
+            .filter(|route| !route.is_empty() && route.len() <= 200)
+        {
+            let line = format!("They are on the page {route} of this site.");
+            perception = if perception.trim().is_empty() {
+                line
+            } else {
+                format!("{perception}\n{line}")
+            };
+        }
         let attached = crate::services::agent::chat_attachments::format_attached(
             custom,
             images_of(request).len(),

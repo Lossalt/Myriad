@@ -177,6 +177,48 @@ pub async fn note_user_turn(
     Some((transition, saved.last_user_message_at?))
 }
 
+/// What surrounded a chat turn, for the calls that follow it: what she said
+/// just before, what was on their screen or playing, whether it was a move in
+/// a game, and how many images came with it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnContext {
+    pub before: Option<String>,
+    pub scene: Option<String>,
+    pub in_game: bool,
+    pub images: usize,
+}
+
+pub fn turn_context(request: &crate::services::agent::UserRequest) -> TurnContext {
+    let context = request.context.as_ref();
+    let before = context
+        .and_then(|context| context.conversation_history.as_ref())
+        .and_then(|history| {
+            history
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant")
+        })
+        .map(|message| {
+            crate::services::agent::chat_prompt::chat_safe_content(&message.content)
+                .chars()
+                .take(300)
+                .collect::<String>()
+        })
+        .filter(|line| !line.trim().is_empty());
+    let custom = context.and_then(|context| context.custom_data.as_ref());
+    let scene = crate::services::agent::chat_prompt::format_chat_scene(
+        custom.and_then(|data| data.get("perception")),
+        None,
+        &request.raw_input,
+    );
+    TurnContext {
+        before,
+        scene: (!scene.trim().is_empty()).then(|| scene.chars().take(600).collect()),
+        in_game: soup::in_game(request),
+        images: context.map(|context| context.images.len()).unwrap_or(0),
+    }
+}
+
 /// After the persona is deleted: nothing of her stays in memory either, so
 /// the next one does not carry on her song, game, state or thoughts.
 pub fn forget_in_memory() {
@@ -291,7 +333,7 @@ pub use speaking_prompts::{
     format_curious_section, format_doing_section, format_emotion_section, format_found_out_section,
     format_inner_moment_ago_section, format_mood_section, format_on_your_mind_section,
     format_own_days_section, format_persona, format_playing_section, format_recent_section,
-    format_remembered_section, format_views_section, group_speaking_section,
+    format_remembered_section, format_since_section, format_views_section, group_speaking_section,
     guest_speaking_section, mood_tone_instruction,
 };
 
@@ -579,6 +621,9 @@ async fn speaking_prompt_from_db(
         if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
             sections.push(block);
         }
+    }
+    if !matches!(turn, Turn::Plain) {
+        sections.push(speaking_prompts::format_now_section(chrono::Local::now()));
     }
     if !matches!(turn, Turn::Plain) && compiled.is_none() {
         sections.push(self_state::format_day_section(&myself.facts));

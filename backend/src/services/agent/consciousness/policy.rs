@@ -114,6 +114,8 @@ mod tests {
             live: Default::default(),
             attention: None,
             myself: None,
+            addressee_name: None,
+            inner: None,
         }
     }
 

@@ -418,6 +418,7 @@ async fn configured_lite_appraises_synthetic_scenarios_without_state_writes() {
             mood_band: super::super::mood_band(mood, arousal).into(),
             persona: persona.clone(),
             remembered: vec![],
+            sent_images: 0,
         };
         let started = Instant::now();
         let input_hash = hex::encode(Sha256::digest(serde_json::to_vec(&input).unwrap()));

@@ -414,6 +414,8 @@ fn event_context(case: &Case) -> (event::ConsciousnessEvent, event::SelfSnapshot
             event_ids: vec![case.id.clone()],
         }),
         myself: None,
+        addressee_name: None,
+        inner: None,
     };
     (event, snapshot)
 }
@@ -587,7 +589,17 @@ fn request(case: &Case) -> Value {
         }
         "memory" => {
             let (system, schema) = memory::live_probe_contract(&case.remembered);
-            json!({"system":system,"schema":schema,"schemaName":"merope_chat_remember","input":json!({"userText":case.input,"reply":case.reply}).to_string()})
+            let turn = super::merope::TurnContext {
+                before: case
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|line| line.role == "assistant")
+                    .map(|line| line.text.clone()),
+                in_game: case.soup.is_some(),
+                ..Default::default()
+            };
+            json!({"system":system,"schema":schema,"schemaName":"merope_chat_remember","input":memory::probe_input(&case.input, &case.reply, &turn)})
         }
         "event" => {
             let (event, snapshot) = event_context(case);
@@ -1376,7 +1388,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 32;
+const MIND_CASES: usize = 34;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
