@@ -522,6 +522,7 @@ pub(crate) async fn start_process_run(
             ctx.conversation_history = Some(history);
         }
         ctx.venue = group.as_ref().map(|group| group.venue.clone());
+        ctx.chime = group.as_ref().and_then(|group| group.chime.clone());
         ctx.channel_chat = channel_chat.clone();
     } else {
         let mut new_ctx = RequestContext {

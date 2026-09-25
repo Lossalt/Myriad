@@ -87,6 +87,10 @@ pub struct RequestContext {
     /// only by the server for channel turns; never serialized.
     #[serde(skip)]
     pub channel_chat: Option<ChannelChat>,
+    /// In a group, nobody addressed her: she chose to chime in, and why.
+    /// Server-set only; never serialized.
+    #[serde(skip)]
+    pub chime: Option<String>,
 }
 
 /// A private IM chat turn: she talks as herself and may hand work off.

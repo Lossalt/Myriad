@@ -239,6 +239,13 @@ async fn run_session(
                         for line in group_lines {
                             crate::services::telegram_group::record(&line);
                             if !line.addressed {
+                                // Nobody asked her; now and then she joins in.
+                                if crate::services::telegram_group::worth_a_look(&line) {
+                                    tokio::spawn(crate::services::telegram_group::consider(
+                                        line,
+                                        token.to_string(),
+                                    ));
+                                }
                                 continue;
                             }
                             let permit = tokio::select! {

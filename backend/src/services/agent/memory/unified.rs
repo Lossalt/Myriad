@@ -148,6 +148,14 @@ impl Audience {
         matches!(self.venue, Venue::Group(_))
     }
 
+    /// The group chat's id (`telegram:-100123`), in a group.
+    pub fn group_id(&self) -> Option<&str> {
+        match &self.venue {
+            Venue::Private => None,
+            Venue::Group(id) => Some(id),
+        }
+    }
+
     /// The stored form: `private`, or `group:<id>`.
     pub fn venue(&self) -> String {
         match &self.venue {
@@ -1202,27 +1210,33 @@ pub async fn find_active<C: ConnectionTrait>(
     source: &str,
     needle: &str,
 ) -> Result<Option<agent_memories::Model>, DbErr> {
-    Ok(agent_memories::Entity::find()
+    agent_memories::Entity::find()
         .filter(agent_memories::Column::UserId.eq(user_id))
         .filter(agent_memories::Column::Source.eq(source))
         .filter(agent_memories::Column::InvalidAt.is_null())
         .filter(agent_memories::Column::Content.contains(needle))
         .order_by_desc(agent_memories::Column::CreatedAt)
         .one(db)
-        .await?)
+        .await
 }
 
-/// A person's active rows from one source, freshest first.
-pub async fn source_rows<C: ConnectionTrait>(
+/// Rows of one source kept in one venue (`private`, `group:<id>`), freshest
+/// first: one person's, or everyone's there when `user_id` is `None`.
+pub async fn venue_source_rows<C: ConnectionTrait>(
     db: &C,
-    user_id: i32,
+    user_id: Option<i32>,
+    venue: &str,
     source: &str,
     limit: u64,
 ) -> Result<Vec<agent_memories::Model>, DbErr> {
-    agent_memories::Entity::find()
-        .filter(agent_memories::Column::UserId.eq(user_id))
+    let mut query = agent_memories::Entity::find()
+        .filter(agent_memories::Column::Venue.eq(venue))
         .filter(agent_memories::Column::Source.eq(source))
-        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::InvalidAt.is_null());
+    if let Some(user_id) = user_id {
+        query = query.filter(agent_memories::Column::UserId.eq(user_id));
+    }
+    query
         .order_by_desc(agent_memories::Column::UpdatedAt)
         .limit(limit)
         .all(db)

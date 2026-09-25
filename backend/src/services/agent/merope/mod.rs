@@ -663,12 +663,14 @@ async fn speaking_prompt_from_db(
         if let Some(block) = format_doing_section(now.as_deref(), &lately) {
             sections.push(block);
         }
-        // What only she and this person share: private, never in a group.
-        if !group {
-            if let Some(block) = format_bits_section(&bits::between(db, user_id, BITS_LIMIT).await)
-            {
-                sections.push(block);
-            }
+        // What only she and this person share, or she and this group: each
+        // heard only where it grew.
+        let shared = match present.group_id() {
+            Some(venue) => bits::in_group(db, venue, BITS_LIMIT).await,
+            None => bits::between(db, user_id, BITS_LIMIT).await,
+        };
+        if let Some(block) = format_bits_section(&shared, group) {
+            sections.push(block);
         }
         // What she thinks of what their words touch: hers, the same whoever asks.
         if let Some(words) = words {

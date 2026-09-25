@@ -51,6 +51,8 @@ pub struct GroupTurn {
     pub venue: String,
     /// Recent group lines, oldest first; others' lines are `name：text`.
     pub transcript: Vec<crate::services::agent::types::ConversationMessage>,
+    /// Nobody addressed her: she is chiming in, and why.
+    pub chime: Option<String>,
 }
 
 /// 对话消息（API 格式）

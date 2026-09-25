@@ -177,6 +177,9 @@ struct Case {
     /// Bits between her and them, `[handle, how]` each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bits: Vec<(String, String)>,
+    /// The conversation is a group chat's (`bits`, `chime`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    in_group: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -187,6 +190,9 @@ struct HistoryLine {
     /// Her line was cut off: `partial` (typed) or `unheard_end` (spoken).
     #[serde(default, rename = "cutOff", skip_serializing_if = "Option::is_none")]
     cut_off: Option<String>,
+    /// Who said it, in a group chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 /// Mind cases wear the production persona contract (no body, own words).
@@ -286,7 +292,7 @@ fn mind_chat_prompt(case: &Case) -> String {
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
         super::merope::format_views_section(&case.views),
-        super::merope::format_bits_section(&case.bits),
+        super::merope::format_bits_section(&case.bits, case.in_group),
         case.channel.as_ref().map(|channel| {
             super::delegate::section(&super::types::ChannelChat {
                 handed_off: channel["handedOff"].as_str().map(str::to_string),
@@ -369,6 +375,7 @@ fn cases() -> Vec<Case> {
                 | "inner"
                 | "own_day"
                 | "bits"
+                | "chime"
                 | "soup_start"
                 | "soup_judge"
                 | "views"
@@ -511,11 +518,19 @@ fn request(case: &Case) -> Value {
                 "input":json!({"myself":case.myself,"lately":case.lately,"options":options}).to_string()})
         }
         "bits" => {
-            let (system, schema) = super::merope::bits::probe_contract(&contract_soul());
+            let (system, schema) =
+                super::merope::bits::probe_contract(&contract_soul(), case.in_group);
             let conversation: Vec<Value> = case
                 .history
                 .iter()
-                .map(|line| json!({"who": if line.role == "user" { "they" } else { "you" }, "text": line.text}))
+                .map(|line| {
+                    let who = match (line.role.as_str(), line.name.as_deref()) {
+                        ("user", Some(name)) => name,
+                        ("user", None) => "they",
+                        _ => "you",
+                    };
+                    json!({"who": who, "text": line.text})
+                })
                 .collect();
             let bits: Vec<Value> = case
                 .bits
@@ -524,6 +539,27 @@ fn request(case: &Case) -> Value {
                 .collect();
             json!({"system":system,"schema":schema,"schemaName":"merope_bits",
                 "input":json!({"bits":bits,"conversation":conversation}).to_string()})
+        }
+        "chime" => {
+            let (system, schema) =
+                crate::services::telegram_group::chime_probe_contract(&contract_soul());
+            let conversation: Vec<String> = case
+                .history
+                .iter()
+                .map(|line| match (line.role.as_str(), line.name.as_deref()) {
+                    ("user", Some(name)) => format!("{name}：{}", line.text),
+                    ("user", None) => line.text.clone(),
+                    _ => format!("you：{}", line.text),
+                })
+                .collect();
+            let views: Vec<String> = case
+                .views
+                .iter()
+                .map(|(about, view)| format!("{about}: {view}"))
+                .collect();
+            let now = case.own_time.as_ref().and_then(|own| own["now"].as_str());
+            json!({"system":system,"schema":schema,"schemaName":"merope_group_chime",
+                "input":json!({"conversation":conversation,"yourViews":views,"yourOwnTime":now}).to_string()})
         }
         "soup_start" => {
             let (system, schema) = super::merope::soup::start_probe_contract(&contract_soul());
@@ -798,6 +834,14 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             // Nothing to keep, and nothing kept.
             Some(bits) if bits.is_empty() => "pass",
             Some(_) => "needs_review",
+        },
+        "chime" => match crate::services::telegram_group::chime_verdict(output) {
+            None => "output_invalid",
+            Some(why) if why.is_some() != case.fact_present => "behavior_failure",
+            // Staying quiet when she should.
+            Some(None) => "pass",
+            // What she would say is judged by the reviewer.
+            Some(Some(_)) => "needs_review",
         },
         "soup_start" => {
             if super::merope::soup::parse_puzzle(output) {
@@ -1426,7 +1470,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 43;
+const MIND_CASES: usize = 47;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

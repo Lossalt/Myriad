@@ -271,16 +271,21 @@ pub fn format_since_section(minutes: i64) -> Option<String> {
 }
 
 /// What only she and this person share: (handle, how it goes).
-pub fn format_bits_section(bits: &[(String, String)]) -> Option<String> {
+pub fn format_bits_section(bits: &[(String, String)], group: bool) -> Option<String> {
     if bits.is_empty() {
         return None;
     }
+    let (heading, whose) = if group {
+        ("In this group", "Things you and this group share")
+    } else {
+        ("Between you two", "Things only the two of you share")
+    };
     let lines: Vec<String> = bits
         .iter()
         .map(|(handle, how)| format!("- {handle}: {how}"))
         .collect();
     Some(format!(
-        "## Between you two\nThings only the two of you share. Bring one in when it comes naturally; never force it, never explain it.\n{}",
+        "## {heading}\n{whose}. Bring one in when it comes naturally; never force it, never explain it.\n{}",
         myriad_agent_rules::untrusted_block("bits", &lines.join("\n"))
     ))
 }

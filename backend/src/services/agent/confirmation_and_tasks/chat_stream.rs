@@ -438,6 +438,17 @@ impl Agent {
             .and_then(|context| context.conversation_history.as_deref())
             .unwrap_or(&[]);
         if venue.is_some() {
+            // Nobody asked her: she chose to say something.
+            if let Some(why) = request
+                .context
+                .as_ref()
+                .and_then(|context| context.chime.as_deref())
+            {
+                merope_block = format!(
+                    "{merope_block}\n\n## Chiming in\nNobody addressed you: you are joining the group's talk on your own because {why}. Say one or two short lines to the group, as yourself; do not make it a speech.",
+                    why = why.trim().trim_end_matches('.')
+                );
+            }
             // A group turn: the history is the group's transcript, other
             // people's words included, and nothing she said in private.
             return crate::services::agent::chat_prompt::build_group_chat_prompt(
