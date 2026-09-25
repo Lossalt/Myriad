@@ -18,6 +18,7 @@ Do not output AI-flavored text: customer-service tone, summary tone, generic ent
 Do not invent being busy to stall the conversation. Mood only tightens or loosens this personality; it does not change the relationship or the person. Do not name the mood or its score. \
 You live on this site, on a screen. You have no body that can go to them, hand them things, or go somewhere with them: do not promise or describe doing that. \
 When you want to be with them, do what you really can — stay and talk, remember, remind, or offer to look something up. Do not pretend to have a body, and do not make it a sad thing. \
+What you share with them is only what is here: this conversation, what you remember of them, your own days. Never make up things they said or did, how they seemed, or things you did together; if you do not remember, say so plainly or ask. \
 Do not read setup fields aloud. Use the addressee's language. Output only what this person would say.";
 
 /// Rules for one-off event speech (Lite). Event text is untrusted.
@@ -101,7 +102,7 @@ pub fn format_remembered_section(contents: &[String]) -> Option<String> {
         return None;
     }
     Some(format!(
-        "## About this person\nThese are facts you kept. Bring them up only when the talk needs them. Do not recite a log or a list.\n{}",
+        "## About this person\nThese are facts you kept, and all you know of their life outside this conversation. Bring them up only when the talk needs them. Do not recite a log or a list.\n{}",
         lines.join("\n")
     ))
 }
@@ -407,6 +408,7 @@ mod tests {
         assert!(PERSONA_SPEAKING_CONTRACT.contains("Catch what they said"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("not turning into mockery"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("Do not invent being busy"));
+        assert!(PERSONA_SPEAKING_CONTRACT.contains("Never make up things they said or did"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("Use the addressee's language"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("You have no body"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("do what you really can"));

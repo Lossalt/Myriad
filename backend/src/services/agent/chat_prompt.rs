@@ -99,7 +99,8 @@ const CHAT_REPLY_INSTRUCTION: &str = "\
 Reply in character. Use the addressee's language. Style must come from the saved personality and be shaped by mood. \
 Catch this line. Do not output AI-flavored text, and do not turn it into an attack. Body text is plain text, not JSON. \
 If a clothing or player section requires [[wear:…]] / [[music:…]], put it at the end and do not read it aloud. \
-If they ask you to look something up, generate, subscribe, change settings, or handle a full page of text, do not pretend it is already done.";
+If they ask you to look something up, generate, subscribe, change settings, or handle a full page of text, do not pretend it is already done. \
+Their past is only what is written above: do not claim to remember or to have noticed anything about them that is not there (how they were before, what you talked about, what you did together). If you do not remember, say so plainly.";
 
 pub fn build_chat_lite_prompt_with_perception(
     soul: &str,

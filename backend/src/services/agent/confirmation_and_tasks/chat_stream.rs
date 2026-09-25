@@ -255,6 +255,8 @@ fn spawn_model_outfit_overlay(
     });
 }
 
+const EMPTY_REPLY: &str = "Chat model returned an empty response";
+
 /// This turn is a live voice call.
 fn on_call(request: &UserRequest) -> bool {
     request
@@ -293,6 +295,24 @@ impl Agent {
         progress_tx: &tokio::sync::mpsc::Sender<AgentProgressEvent>,
         speech_delivery: Option<ChatDelivery>,
     ) -> Result<String, String> {
+        let analyzer = chat_analyzer().await?;
+        let first = self
+            .stream_chat_response_with_analyzer(
+                request,
+                progress_tx,
+                analyzer,
+                speech_delivery.clone(),
+            )
+            .await;
+        // The model now and then answers with nothing at all. Nothing reached
+        // them, so asking once more is safe.
+        if !matches!(&first, Err(error) if error == EMPTY_REPLY) {
+            return first;
+        }
+        tracing::warn!(
+            user_id = request.user_id,
+            "[Chat] empty reply; asking once more"
+        );
         let analyzer = chat_analyzer().await?;
         self.stream_chat_response_with_analyzer(request, progress_tx, analyzer, speech_delivery)
             .await
@@ -613,7 +633,7 @@ impl Agent {
                 }
                 Ok(full_text.trim().to_owned())
             }
-            Ok(_) => Err("Chat model returned an empty response".to_string()),
+            Ok(_) => Err(EMPTY_REPLY.to_string()),
             Err(error) => Err(error.to_string()),
         }
     }
