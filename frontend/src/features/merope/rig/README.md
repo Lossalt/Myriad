@@ -136,6 +136,23 @@ their drawn orientation. A portrait with no mouth drawing gets a mouth anchor on
 the face midline instead of the frozen rigger's fixed-pixel guess. All of this is
 baked at import; stored rigs change only when re-imported.
 
+When the square source illustration is available, import reconciles the split
+against it (`psdReconciliation.ts`). The layers visible at rest are composited
+in draw order and compared with the illustration they were decomposed from.
+Each disagreeing region is classified by cause: `buried` when a lower layer
+holds matching art that a later layer covers (an ordering fault), `missing`
+when the illustration shows art that no layer carries (e.g. a dropped earring),
+`spurious` when a layer paints over open backdrop, and `mismatch` when the
+visible layer differs and nothing beneath fits. Backdrop is flood-filled from
+the open edges, so pale skin or white hair enclosed by line art is not mistaken
+for it. See-through re-renders colours, so thresholds allow ~15–18 RGB of drift.
+Below 80% agreement the PSD is treated as split from another illustration and
+not judged. Scenic backdrops disable the backdrop-dependent verdicts. This is
+diagnosis only: preflight shows the verdicts and a difference map but edits
+nothing and blocks nothing. It judges the import-time composite, so faults that
+the runtime corrects later (for example lifting `neckwear` over recovered skin)
+still show as `buried`.
+
 The `lovestruck` expression keeps the character's authored irises and overlays
 one independently anchored, character-tinted heart pupil per eye. A single
 face-local atlas rectangle carries the broad blush, cheek hatching, and three

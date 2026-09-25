@@ -9,6 +9,7 @@ import type {
   RasterLayer,
   RigCanvasFrame,
 } from './anime25dImportTypes'
+import type { Anime25DPsdReconciliation } from './psdReconciliation'
 import type { MeropeRigImportSource, RigPoint } from './types'
 import { analyzeAnime25DMouthProfile } from '../anime25drig/mouthProfile'
 import {
@@ -18,7 +19,10 @@ import {
 import { genericParts as GenericParts } from '../anime25drig/upstream/genericParts'
 import { rigger as Rigger } from '../anime25drig/upstream/rigger'
 import { validateAnime25DCharacterLayers } from './anime25dAssetValidation'
-import { packAnime25DAtlas } from './anime25dAtlasCompiler'
+import {
+  packAnime25DAtlas,
+  visibleInAnalysisReference,
+} from './anime25dAtlasCompiler'
 import { splitHighCollarOcclusion } from './anime25dCollarCompiler'
 import { compileAnime25DExpressionLayers } from './anime25dExpressionCompiler'
 import {
@@ -48,6 +52,7 @@ import {
 } from './faceFrame'
 import { formatTemplate } from './formatTemplate'
 import { inferOutfitProfileFromPartIds } from './outfit'
+import { reconcileAnime25DPsd } from './psdReconciliation'
 
 function genericCloseParts() {
   if (!GenericParts) return undefined
@@ -68,6 +73,8 @@ export interface PreparedAnime25DRigImport {
   analysisReference: Blob
   source: MeropeRigImportSource
   partCount: number
+  /** Diagnosis against the source illustration; absent without one. */
+  reconciliation: Anime25DPsdReconciliation | null
 }
 
 const UPPER_BODY_IGNORED_LAYERS = new Set(['legwear', 'footwear'])
@@ -146,6 +153,12 @@ export async function prepareAnime25DRigPsd(
   })
   assignCrossfadeSlots(layers)
   validateAnime25DCharacterLayers(layers, copy)
+  const reconciliation = sourceReference
+    ? reconcileAnime25DPsd(
+        layers.filter(visibleInAnalysisReference),
+        sourceReference,
+      )
+    : null
   const faceCenter = {
     x: rig.anchors.face.cx,
     y: rig.anchors.face.cy,
@@ -206,6 +219,7 @@ export async function prepareAnime25DRigPsd(
     atlas,
     analysisReference,
     partCount: prepared.length,
+    reconciliation,
     source: {
       rigIrVersion: RIG_IR_VERSION,
       characterAssetContractVersion: CHARACTER_ASSET_CONTRACT_VERSION,
