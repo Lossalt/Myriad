@@ -18,8 +18,8 @@ use crate::services::permission_service::{
     TappPermission, TappPermissionService, UnknownTappPermission, UserRole,
     tapp_permission_replacement_hint,
 };
+use crate::services::runtime_registry as shared_registry;
 use crate::services::tapp_ownership;
-use crate::services::tapp_registry as shared_registry;
 
 pub const RUNTIME_GRANT_HEADER: &str = "x-tapp-runtime-grant";
 const RUNTIME_GRANT_TTL: Duration = Duration::from_secs(5 * 60);
@@ -400,7 +400,7 @@ pub async fn issue_runtime_grant(
     .map_err(map_db_err)?;
     txn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND (expires_at <= $2 OR (subject_id = $3 AND tapp_id = $4 AND payload->>'instance_id' = $5))",
+        "DELETE FROM runtime_registry WHERE namespace = $1 AND (expires_at <= $2 OR (subject_id = $3 AND tapp_id = $4 AND payload->>'instance_id' = $5))",
         vec![
             RUNTIME_GRANT_NAMESPACE.into(),
             now.into(),
@@ -417,7 +417,7 @@ pub async fn issue_runtime_grant(
     }
     let count = CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "SELECT COUNT(*)::BIGINT AS count FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at > $3",
+        "SELECT COUNT(*)::BIGINT AS count FROM runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at > $3",
         vec![RUNTIME_GRANT_NAMESPACE.into(), subject_id.into(), now.into()],
     ))
     .one(&txn)
@@ -431,7 +431,7 @@ pub async fn issue_runtime_grant(
     let payload = serde_json::to_value(&grant).map_err(map_db_err)?;
     txn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"INSERT INTO tapp_runtime_registry
+        r#"INSERT INTO runtime_registry
             (namespace, record_id, subject_id, owner_id, tapp_id, runtime_id, payload, expires_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())"#,
         vec![

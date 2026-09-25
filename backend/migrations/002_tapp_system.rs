@@ -833,46 +833,12 @@ ALTER TABLE tapp_storage
             .await?;
 
         // ==================== 9. TAPP RUNTIME SHARED STATE ====================
-        // tapp_runtime_registry、tapp_runtime_mailbox、tapp_ai_cost_ledger，
-        // 以及 tapp_storage 8388608 字节 INSERT/UPDATE 触发器。
+        // tapp_ai_cost_ledger，以及 tapp_storage 8388608 字节 INSERT/UPDATE
+        // 触发器。跨副本的运行时注册表与邮箱是平台设施，在 001 创建。
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
-CREATE TABLE IF NOT EXISTS tapp_runtime_registry (
-    namespace VARCHAR(64) NOT NULL,
-    record_id VARCHAR(160) NOT NULL,
-    subject_id INTEGER,
-    owner_id INTEGER,
-    tapp_id VARCHAR(255),
-    runtime_id VARCHAR(160),
-    payload JSONB NOT NULL,
-    expires_at BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (namespace, record_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_subject
-    ON tapp_runtime_registry (namespace, subject_id, expires_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_tapp
-    ON tapp_runtime_registry (namespace, tapp_id, expires_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_registry_runtime
-    ON tapp_runtime_registry (namespace, runtime_id, expires_at);
-
-CREATE TABLE IF NOT EXISTS tapp_runtime_mailbox (
-    message_id BIGSERIAL PRIMARY KEY,
-    channel VARCHAR(64) NOT NULL,
-    runtime_id VARCHAR(160) NOT NULL,
-    payload JSONB NOT NULL,
-    expires_at BIGINT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_mailbox_recipient
-    ON tapp_runtime_mailbox (channel, runtime_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_tapp_runtime_mailbox_expiry
-    ON tapp_runtime_mailbox (expires_at);
-
 -- 独立 AI 费用账本：逐次调用的 append-only 流水，与按日聚合的
 -- tapp_quota_usage 配额计数相互独立，不随每日重置。
 CREATE TABLE IF NOT EXISTS tapp_ai_cost_ledger (
@@ -960,7 +926,7 @@ FOR EACH ROW EXECUTE FUNCTION enforce_tapp_storage_quota();
         manager
             .get_connection()
             .execute_unprepared(
-                "DROP TRIGGER IF EXISTS trg_tapp_storage_quota ON tapp_storage; DROP FUNCTION IF EXISTS enforce_tapp_storage_quota(); DROP TABLE IF EXISTS tapp_runtime_mailbox; DROP TABLE IF EXISTS tapp_runtime_registry;",
+                "DROP TRIGGER IF EXISTS trg_tapp_storage_quota ON tapp_storage; DROP FUNCTION IF EXISTS enforce_tapp_storage_quota();",
             )
             .await?;
         manager

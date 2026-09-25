@@ -37,7 +37,7 @@ use crate::services::ai_task_runtime::{
 use crate::services::analyzer::AiProvider;
 use crate::services::json_schema_subset::validate_inline_data_schema;
 use crate::services::permission_service::UserRole;
-use crate::services::tapp_registry as shared_registry;
+use crate::services::runtime_registry as shared_registry;
 use myriad_tapp_contract::manifest::{TappAiManifest, TappAiOperation, TappAiOutputFormat};
 
 /// Must cover image generation (`get_long_running_client` is 15 min).

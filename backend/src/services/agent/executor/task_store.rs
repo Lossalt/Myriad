@@ -73,11 +73,11 @@ pub async fn enqueue_steering(
     // One shared record per instruction prevents concurrent writers on
     // different replicas from overwriting each other.
     let record_id = format!("steer_{}", uuid::Uuid::new_v4().simple());
-    crate::services::tapp_registry::put(
+    crate::services::runtime_registry::put(
         db,
         STEERING_REGISTRY_NAMESPACE,
         &record_id,
-        crate::services::tapp_registry::RegistryIdentity {
+        crate::services::runtime_registry::RegistryIdentity {
             subject_id: None,
             owner_id: None,
             tapp_id: None,
@@ -95,7 +95,7 @@ pub async fn enqueue_steering(
 }
 
 pub async fn take_steering(db: &DatabaseConnection, task_id: &str) -> Vec<String> {
-    match crate::services::tapp_registry::take_all_for_runtime::<String>(
+    match crate::services::runtime_registry::take_all_for_runtime::<String>(
         db,
         STEERING_REGISTRY_NAMESPACE,
         task_id,

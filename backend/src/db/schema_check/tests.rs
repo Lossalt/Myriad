@@ -2144,3 +2144,79 @@ async fn diary_facts_move_into_unified_memory_once() {
         .unwrap();
     assert_eq!(diary_left, 3, "the original rows stay for rollback");
 }
+
+/// A database from before the runtime registry was platform infrastructure
+/// comes up with the platform names, its rows, indexes and user guard kept;
+/// running the rename again changes nothing.
+#[tokio::test]
+async fn tapp_named_runtime_registry_is_renamed_in_place() {
+    use sea_orm::{ConnectionTrait, Statement};
+    // An isolated schema: safe on the shared test database.
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    let schema = crate::db::IsolatedSchema::migrated(&url, "registry_rename").await;
+    let db = &schema.db;
+    // Back to how an older database looks.
+    db.execute_unprepared(
+        "ALTER TABLE runtime_registry RENAME TO tapp_runtime_registry;
+         ALTER TABLE runtime_mailbox RENAME TO tapp_runtime_mailbox;
+         ALTER INDEX runtime_registry_pkey RENAME TO tapp_runtime_registry_pkey;
+         ALTER INDEX idx_runtime_registry_subject RENAME TO idx_tapp_runtime_registry_subject;
+         ALTER INDEX idx_runtime_registry_tapp RENAME TO idx_tapp_runtime_registry_tapp;
+         ALTER INDEX idx_runtime_registry_runtime RENAME TO idx_tapp_runtime_registry_runtime;
+         ALTER INDEX runtime_mailbox_pkey RENAME TO tapp_runtime_mailbox_pkey;
+         ALTER INDEX idx_runtime_mailbox_recipient RENAME TO idx_tapp_runtime_mailbox_recipient;
+         ALTER INDEX idx_runtime_mailbox_expiry RENAME TO idx_tapp_runtime_mailbox_expiry;
+         ALTER SEQUENCE runtime_mailbox_message_id_seq RENAME TO tapp_runtime_mailbox_message_id_seq;
+         ALTER TRIGGER trg_runtime_registry_subject_user ON tapp_runtime_registry
+             RENAME TO trg_tapp_runtime_registry_subject_user;
+         INSERT INTO tapp_runtime_registry (namespace, record_id, payload, expires_at)
+             VALUES ('telegram_dm_session', 'k', '{\"kept\":true}', 9999999999);
+         INSERT INTO tapp_runtime_mailbox (channel, runtime_id, payload, expires_at)
+             VALUES ('ai_task', 'r', '{}', 9999999999);",
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        migration::rename_runtime_registry_if_needed(db).await.unwrap();
+    }
+    let names = |sql: &'static str| async move {
+        db.query_all_raw(Statement::from_string(db.get_database_backend(), sql))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get::<String>("", "name").unwrap())
+            .collect::<Vec<_>>()
+    };
+    let tables = names(
+        "SELECT table_name::text AS name FROM information_schema.tables \
+         WHERE table_schema = current_schema() AND table_name LIKE '%runtime_%' ORDER BY 1",
+    )
+    .await;
+    assert_eq!(tables, ["runtime_mailbox", "runtime_registry"]);
+    let indexes = names(
+        "SELECT indexname::text AS name FROM pg_indexes \
+         WHERE schemaname = current_schema() AND indexname LIKE '%runtime_%' ORDER BY 1",
+    )
+    .await;
+    assert!(indexes.iter().all(|name| !name.contains("tapp_runtime")), "{indexes:?}");
+    assert_eq!(indexes.len(), 7, "{indexes:?}");
+    let triggers = names(
+        "SELECT tgname::text AS name FROM pg_trigger \
+         WHERE tgrelid = to_regclass('runtime_registry') AND NOT tgisinternal",
+    )
+    .await;
+    assert_eq!(triggers, ["trg_runtime_registry_subject_user"]);
+    let kept = names(
+        "SELECT payload->>'kept' AS name FROM runtime_registry WHERE record_id = 'k'",
+    )
+    .await;
+    assert_eq!(kept, ["true"]);
+    db.execute_unprepared(
+        "INSERT INTO runtime_mailbox (channel, runtime_id, payload, expires_at) VALUES ('ai_task', 'r', '{}', 1)",
+    )
+    .await
+    .unwrap();
+    schema.drop().await;
+}

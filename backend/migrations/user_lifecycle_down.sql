@@ -34,7 +34,7 @@ BEGIN
 
     FOREACH tbl IN ARRAY ARRAY[
         'agent_tasks', 'tapp_task_executions', 'tapp_scheduled_tasks', 'tapp_user_activities',
-        'tapp_quota_usage', 'tapp_storage', 'tapp_widgets', 'tapps', 'tapp_runtime_registry',
+        'tapp_quota_usage', 'tapp_storage', 'tapp_widgets', 'tapps', 'runtime_registry',
         'tapp_ai_cost_ledger', 'phantasi_user_states', 'phantasi_sources'
     ] LOOP
         CONTINUE WHEN to_regclass(tbl) IS NULL;

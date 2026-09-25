@@ -31,7 +31,7 @@ pub async fn maybe_cleanup(db: &impl ConnectionTrait) {
         .is_multiple_of(256)
         && let Err(error) = cleanup(db).await
     {
-        tracing::warn!(%error, "[TAPP] Shared registry cleanup failed");
+        tracing::warn!(%error, "[Registry] Runtime registry cleanup failed");
     }
 }
 
@@ -55,7 +55,7 @@ pub async fn put<T: Serialize>(
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, tapp_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -104,7 +104,7 @@ pub async fn put_if_absent<T: Serialize>(
     let inserted = InsertedRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, tapp_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -115,7 +115,7 @@ ON CONFLICT (namespace, record_id) DO UPDATE SET
     payload = EXCLUDED.payload,
     expires_at = EXCLUDED.expires_at,
     updated_at = NOW()
-WHERE tapp_runtime_registry.expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT
+WHERE runtime_registry.expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT
 RETURNING record_id
 "#,
         vec![
@@ -152,7 +152,7 @@ pub async fn put_with_subject_limit_on<T: Serialize>(
         .subject_id
         .ok_or_else(|| DbErr::Custom("subject_id is required for a registry limit".to_string()))?;
     let payload = serde_json::to_value(payload).map_err(|error| DbErr::Json(error.to_string()))?;
-    let lock_key = format!("tapp_registry:{namespace}:{subject_id}");
+    let lock_key = format!("runtime_registry:{namespace}:{subject_id}");
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -161,7 +161,7 @@ pub async fn put_with_subject_limit_on<T: Serialize>(
     .await?;
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "DELETE FROM runtime_registry WHERE namespace = $1 AND subject_id = $2 AND expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![namespace.into(), subject_id.into()],
     ))
     .await?;
@@ -172,7 +172,7 @@ pub async fn put_with_subject_limit_on<T: Serialize>(
     }
     let count = CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "SELECT COUNT(*)::BIGINT AS count FROM tapp_runtime_registry WHERE namespace = $1 AND subject_id = $2 AND record_id <> $3 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "SELECT COUNT(*)::BIGINT AS count FROM runtime_registry WHERE namespace = $1 AND subject_id = $2 AND record_id <> $3 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![namespace.into(), subject_id.into(), record_id.into()],
     ))
     .one(db)
@@ -185,7 +185,7 @@ pub async fn put_with_subject_limit_on<T: Serialize>(
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, tapp_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -255,7 +255,7 @@ pub async fn touch_live(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-UPDATE tapp_runtime_registry
+UPDATE runtime_registry
 SET expires_at = $4, updated_at = NOW()
 WHERE namespace = $1
   AND record_id = $2
@@ -284,7 +284,7 @@ pub async fn get<T: DeserializeOwned>(
     }
     let row = PayloadRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "SELECT payload FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "SELECT payload FROM runtime_registry WHERE namespace = $1 AND record_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![namespace.into(), record_id.into()],
     ))
     .one(db)
@@ -305,7 +305,7 @@ pub async fn list(
         DatabaseBackend::Postgres,
         r#"
 SELECT record_id, runtime_id, payload
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1
   AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
   AND ($2::INTEGER IS NULL OR subject_id = $2)
@@ -339,7 +339,7 @@ pub async fn list_subject_ids(
         DatabaseBackend::Postgres,
         r#"
 SELECT DISTINCT subject_id
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1
   AND subject_id IS NOT NULL
   AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -367,7 +367,7 @@ pub async fn list_subject_endpoints(
         DatabaseBackend::Postgres,
         r#"
 SELECT record_id, subject_id
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1
   AND subject_id IS NOT NULL
   AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -387,7 +387,7 @@ pub async fn count_namespace(db: &impl ConnectionTrait, namespace: &str) -> Resu
 
     Ok(CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "SELECT COUNT(*)::BIGINT AS count FROM tapp_runtime_registry WHERE namespace = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "SELECT COUNT(*)::BIGINT AS count FROM runtime_registry WHERE namespace = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![namespace.into()],
     ))
     .one(db)
@@ -408,7 +408,7 @@ pub async fn count_distinct_subjects(
         DatabaseBackend::Postgres,
         r#"
 SELECT COUNT(DISTINCT subject_id)::BIGINT AS count
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1
   AND subject_id IS NOT NULL
   AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -428,7 +428,7 @@ pub async fn mailbox_depth(db: &impl ConnectionTrait, channel: &str) -> Result<i
 
     Ok(CountRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "SELECT COUNT(*)::BIGINT AS count FROM tapp_runtime_mailbox WHERE channel = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "SELECT COUNT(*)::BIGINT AS count FROM runtime_mailbox WHERE channel = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![channel.into()],
     ))
     .one(db)
@@ -444,7 +444,7 @@ pub async fn delete(
     let result = db
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2",
+            "DELETE FROM runtime_registry WHERE namespace = $1 AND record_id = $2",
             vec![namespace.into(), record_id.into()],
         ))
         .await?;
@@ -462,7 +462,7 @@ pub async fn take<T: DeserializeOwned>(
     }
     let row = PayloadRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload",
+        "DELETE FROM runtime_registry WHERE namespace = $1 AND record_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload",
         vec![namespace.into(), record_id.into()],
     ))
     .one(db)
@@ -486,7 +486,7 @@ pub async fn take_for_subject<T: DeserializeOwned>(
     }
     let row = PayloadRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2 AND subject_id = $3 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload",
+        "DELETE FROM runtime_registry WHERE namespace = $1 AND record_id = $2 AND subject_id = $3 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload",
         vec![namespace.into(), record_id.into(), subject_id.into()],
     ))
     .one(db)
@@ -509,7 +509,7 @@ pub async fn take_all_for_runtime<T: DeserializeOwned>(
     }
     let rows = PayloadRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "WITH deleted AS (DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND runtime_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload, updated_at) SELECT payload FROM deleted ORDER BY updated_at ASC",
+        "WITH deleted AS (DELETE FROM runtime_registry WHERE namespace = $1 AND runtime_id = $2 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT RETURNING payload, updated_at) SELECT payload FROM deleted ORDER BY updated_at ASC",
         vec![namespace.into(), runtime_id.into()],
     ))
     .all(db)
@@ -533,7 +533,7 @@ pub async fn delete_matching(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-DELETE FROM tapp_runtime_registry
+DELETE FROM runtime_registry
 WHERE namespace = $1
   AND ($2::INTEGER IS NULL OR subject_id = $2)
   AND ($3::INTEGER IS NULL OR owner_id = $3)
@@ -567,7 +567,7 @@ pub async fn delete_matching_payload_text(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-DELETE FROM tapp_runtime_registry
+DELETE FROM runtime_registry
 WHERE namespace = $1
   AND ($2::INTEGER IS NULL OR subject_id = $2)
   AND ($3::INTEGER IS NULL OR owner_id = $3)
@@ -599,7 +599,7 @@ pub async fn enqueue<T: Serialize>(
     let payload = serde_json::to_value(payload).map_err(|error| DbErr::Json(error.to_string()))?;
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "INSERT INTO tapp_runtime_mailbox (channel, runtime_id, payload, expires_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO runtime_mailbox (channel, runtime_id, payload, expires_at) VALUES ($1, $2, $3, $4)",
         vec![channel.into(), runtime_id.into(), payload.into(), expires_at.into()],
     ))
     .await?;
@@ -609,7 +609,7 @@ pub async fn enqueue<T: Serialize>(
     if let Err(error) = db
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT pg_notify('tapp_runtime_mailbox', $1)",
+            "SELECT pg_notify('runtime_mailbox', $1)",
             vec![runtime_id.into()],
         ))
         .await
@@ -635,14 +635,14 @@ pub async fn drain<T: DeserializeOwned>(
         r#"
 WITH claimed AS (
     SELECT message_id
-    FROM tapp_runtime_mailbox
+    FROM runtime_mailbox
     WHERE channel = $1 AND runtime_id = $2
       AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
     ORDER BY message_id
     LIMIT $3
     FOR UPDATE SKIP LOCKED
 )
-DELETE FROM tapp_runtime_mailbox AS mailbox
+DELETE FROM runtime_mailbox AS mailbox
 USING claimed
 WHERE mailbox.message_id = claimed.message_id
 RETURNING mailbox.payload
@@ -661,13 +661,13 @@ RETURNING mailbox.payload
 pub async fn cleanup(db: &impl ConnectionTrait) -> Result<(), DbErr> {
     db.execute_raw(Statement::from_string(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_registry WHERE expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT"
+        "DELETE FROM runtime_registry WHERE expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT"
             .to_string(),
     ))
     .await?;
     db.execute_raw(Statement::from_string(
         DatabaseBackend::Postgres,
-        "DELETE FROM tapp_runtime_mailbox WHERE expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT"
+        "DELETE FROM runtime_mailbox WHERE expires_at <= EXTRACT(EPOCH FROM NOW())::BIGINT"
             .to_string(),
     ))
     .await?;

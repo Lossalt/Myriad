@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
-use crate::services::tapp_registry as shared_registry;
+use crate::services::runtime_registry as shared_registry;
 
 use super::AgentProgressEvent;
 use super::notifications::get_notification_manager;
@@ -244,7 +244,7 @@ impl AgentRun {
 SELECT payload
 FROM (
     SELECT record_id, payload
-    FROM tapp_runtime_registry
+    FROM runtime_registry
     WHERE namespace = $1
       AND runtime_id = $2
       AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -354,7 +354,7 @@ ORDER BY record_id ASC
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, runtime_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $3, $4, $5, $6, NOW())
 ON CONFLICT (namespace, record_id) DO NOTHING
@@ -373,7 +373,7 @@ ON CONFLICT (namespace, record_id) DO NOTHING
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, owner_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $3, $4, $5, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -382,7 +382,7 @@ ON CONFLICT (namespace, record_id) DO UPDATE SET
     payload = EXCLUDED.payload,
     expires_at = EXCLUDED.expires_at,
     updated_at = NOW()
-WHERE COALESCE((tapp_runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
+WHERE COALESCE((runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
       <= (EXCLUDED.payload ->> 'next_sequence')::BIGINT
 "#,
                     vec![
@@ -398,11 +398,11 @@ WHERE COALESCE((tapp_runtime_registry.payload ->> 'next_sequence')::BIGINT, 0)
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
                     r#"
-DELETE FROM tapp_runtime_registry
+DELETE FROM runtime_registry
 WHERE namespace = $1 AND runtime_id = $2
   AND record_id NOT IN (
       SELECT record_id
-      FROM tapp_runtime_registry
+      FROM runtime_registry
       WHERE namespace = $1 AND runtime_id = $2
       ORDER BY record_id DESC
       LIMIT $3

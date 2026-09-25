@@ -18,7 +18,7 @@ use crate::services::ai_task_registry::{
     AI_CANCEL_NAMESPACE, AI_TASK_MAILBOX_CHANNEL, AI_TASK_NAMESPACE, AiTaskSnapshot, AiTaskStatus,
     PersistedAiTask, TASK_RETENTION_SECONDS, persist_ai_task,
 };
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 use myriad_tapp_contract::manifest::TappAiOperation;
 
 /// Process-local task handle (includes cancel channel).

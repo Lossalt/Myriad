@@ -181,7 +181,7 @@ async fn destroy_session(
         }
         cancel_session_tasks(db, user_id, &session.session_id).await;
         if let Err(error) = db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-            "DELETE FROM tapp_runtime_registry WHERE subject_id = $1 AND \
+            "DELETE FROM runtime_registry WHERE subject_id = $1 AND \
              ((namespace IN ($2, $3, $4) AND record_id = $5) OR (namespace = $6 AND starts_with(record_id, $5 || ':')))",
             [user_id.into(), platform.session_ns().into(), platform.pending_ns().into(), platform.outbound_ns().into(), key.into(), platform.inbound_ns().into()])).await {
             warn!(%error, "revoked channel projection cleanup failed");

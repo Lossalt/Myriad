@@ -16,7 +16,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 
 const MAX_EVENT_TOPIC_BYTES: usize = 128;
 const MAX_INSTANCE_PAYLOAD_BYTES: usize = 64 * 1024;
@@ -721,12 +721,12 @@ mod delivery_db_tests {
         });
         let db = Database::connect(options).await.unwrap();
         db.execute_unprepared(
-            "CREATE TABLE tapp_runtime_registry (namespace VARCHAR(64) NOT NULL, \
+            "CREATE TABLE runtime_registry (namespace VARCHAR(64) NOT NULL, \
              record_id VARCHAR(160) NOT NULL, subject_id INTEGER, owner_id INTEGER, \
              tapp_id VARCHAR(255), runtime_id VARCHAR(160), payload JSONB NOT NULL, \
              expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
              PRIMARY KEY (namespace, record_id)); \
-             CREATE TABLE tapp_runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
+             CREATE TABLE runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
              channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, \
              expires_at BIGINT NOT NULL); \
              CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN); \
@@ -775,7 +775,7 @@ mod delivery_db_tests {
         let rows = db
             .query_all_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
-                "SELECT runtime_id FROM tapp_runtime_mailbox WHERE channel = 'event' ORDER BY runtime_id",
+                "SELECT runtime_id FROM runtime_mailbox WHERE channel = 'event' ORDER BY runtime_id",
             ))
             .await
             .unwrap();
@@ -844,7 +844,7 @@ mod delivery_db_tests {
     async fn instance_delivery_surfaces_presence_errors() {
         let (admin, db, schema_name) = isolated_db("events_err").await;
         db.execute_unprepared(&format!(
-            "INSERT INTO tapp_runtime_registry (namespace, record_id, subject_id, payload, expires_at)
+            "INSERT INTO runtime_registry (namespace, record_id, subject_id, payload, expires_at)
              VALUES ('{EVENT_PRESENCE_NAMESPACE}', 'rt_bad', 7, '\"garbage\"'::jsonb, {})",
             Utc::now().timestamp() + 600
         ))
@@ -861,7 +861,7 @@ mod delivery_db_tests {
             }
         ));
 
-        db.execute_unprepared("DROP TABLE tapp_runtime_registry")
+        db.execute_unprepared("DROP TABLE runtime_registry")
             .await
             .unwrap();
         let error = deliver_event(&db, &rt, &event(EventScope::Instance, "tapp.x.y", &rt))

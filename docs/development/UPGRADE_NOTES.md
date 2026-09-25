@@ -1,5 +1,14 @@
 # 升级说明
 
+## 运行时注册表改为平台设施
+
+跨副本共享的租约、邮箱和带过期的记录原名 `tapp_runtime_registry` / `tapp_runtime_mailbox`，
+实际上智能体运行、工作检查点、AI 任务、IM 通道、限流和 Tapp 运行时都在用。现在改名为
+`runtime_registry` / `runtime_mailbox`（crate `myriad-runtime-registry`，模块
+`services::runtime_registry`）。绿场由 `001` 创建。已有库在 `Migrator::up` 里原地改名，
+行、主键、索引、序列和用户守卫触发器都保留；新旧两张表同时存在会启动失败。Tapp 的行仍靠
+`tapp_id` 区分。多副本部署需要一起升级：旧版本副本找不到旧表名。
+
 ## 出站代理与 API 镜像不再写 `.env`
 
 管理台保存不再把 `PROXY_ENABLED` / `PROXY_URL` / `PROXY_BYPASS` /
@@ -29,7 +38,7 @@ Brew 内部名改为 Phantasi，用户界面改为 **手帐**（en: Journal）�
 
 - 运行时不签发、不校验 runtime grant（fail-closed），`start` 也拒绝；
 - 已是 `Running` 的安装会被打回 `Installed`，不能继续当活实例；
-- 已签发的 runtime grant 会按安装 `tapp_id` 从 `tapp_runtime_registry` 删除（与 `revoke_all_tapp_runtime_grants` 同一条过滤），飞在路上、已经过校验的请求仍可能走完，下一次 rebind / 新签发失败关闭；
+- 已签发的 runtime grant 会按安装 `tapp_id` 从 `runtime_registry` 删除（与 `revoke_all_tapp_runtime_grants` 同一条过滤），飞在路上、已经过校验的请求仍可能走完，下一次 rebind / 新签发失败关闭；
 - `/tapi` 入站与调度器出站同样拒绝，不会按清理后剩下的批准权限继续跑；
 - Agent 探权（`permission.check`）与详情里的授予权限投影在标记为真时为空，不会把批准列剩余名字报成仍已授予；
 - 目录列表/详情中该应用呈现为需重新授权状态，详情的授予权限投影为空，可发起更新/重新授权。

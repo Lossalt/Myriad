@@ -299,8 +299,8 @@ pub(super) async fn test_database() -> sea_orm::DatabaseConnection {
     .await
     .unwrap();
     for sql in [
-        "CREATE TABLE IF NOT EXISTS tapp_runtime_registry (namespace TEXT NOT NULL, record_id TEXT NOT NULL, subject_id INTEGER, owner_id INTEGER, tapp_id TEXT, runtime_id TEXT, payload JSONB NOT NULL, expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(namespace,record_id))",
-        "CREATE TABLE IF NOT EXISTS tapp_runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, expires_at BIGINT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS runtime_registry (namespace TEXT NOT NULL, record_id TEXT NOT NULL, subject_id INTEGER, owner_id INTEGER, tapp_id TEXT, runtime_id TEXT, payload JSONB NOT NULL, expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(namespace,record_id))",
+        "CREATE TABLE IF NOT EXISTS runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, expires_at BIGINT NOT NULL)",
     ] {
         db.execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
             .await
@@ -514,7 +514,7 @@ async fn postgres_fencing_recovery_and_observation_driven_execution() {
         },
     };
     db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-        "INSERT INTO tapp_runtime_registry(namespace,record_id,payload,expires_at) VALUES ('agent_interaction',$1,$2,EXTRACT(EPOCH FROM NOW())::bigint+900)",
+        "INSERT INTO runtime_registry(namespace,record_id,payload,expires_at) VALUES ('agent_interaction',$1,$2,EXTRACT(EPOCH FROM NOW())::bigint+900)",
         [interaction_id.clone().into(), json!({"subject_id":0,"snapshot":snapshot}).into()])).await.unwrap();
     let matches_result = |rows: Vec<Value>| {
         rows.iter()

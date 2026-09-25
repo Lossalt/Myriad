@@ -125,7 +125,7 @@ async fn postgres_result_references_and_mailbox_rollback_together() {
             .is_err()
     );
     let counts = f.db.query_one_raw(Statement::from_string(DatabaseBackend::Postgres,
-        "SELECT (SELECT COUNT(*) FROM tapp_runtime_registry)::bigint AS tasks, (SELECT COUNT(*) FROM tapp_runtime_mailbox)::bigint AS messages")).await.unwrap().unwrap();
+        "SELECT (SELECT COUNT(*) FROM runtime_registry)::bigint AS tasks, (SELECT COUNT(*) FROM runtime_mailbox)::bigint AS messages")).await.unwrap().unwrap();
     assert_eq!(counts.try_get::<i64>("", "tasks").unwrap(), 0);
     assert_eq!(counts.try_get::<i64>("", "messages").unwrap(), 0);
     f.db.execute_unprepared("DROP TRIGGER fail_media_ref ON media_references")

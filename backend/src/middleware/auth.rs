@@ -1078,7 +1078,7 @@ fn verify_guest_session(secret: &[u8], token: &str) -> Option<String> {
 /// Stable negative subject id for a browser guest session.
 ///
 /// ## Capacity / collision bound
-/// Postgres `tapp_runtime_registry.subject_id` (and related columns) are
+/// Postgres `runtime_registry.subject_id` (and related columns) are
 /// `INTEGER`, so the id must fit in signed 32-bit. We use the full negative
 /// `i32` range `i32::MIN ..= -1` (~2³¹ values). Birthday bound for ~50%
 /// collision probability among *distinct concurrent guest sessions* is on the

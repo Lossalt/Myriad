@@ -23,8 +23,8 @@ use crate::services::data_paths::paths;
 use crate::services::json_schema_subset::{
     validate_inline_data_schema, validate_inline_json_value,
 };
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 use crate::services::tapp_ownership;
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
 
 const INTERACTION_TTL_SECONDS: i64 = 5 * 60;
 const TERMINAL_RETENTION_SECONDS: i64 = 15 * 60;
@@ -309,7 +309,7 @@ async fn expire_interaction_if_due(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-UPDATE tapp_runtime_registry
+UPDATE runtime_registry
 SET payload = $1, expires_at = $2, updated_at = NOW()
 WHERE namespace = $3 AND record_id = $4
   AND payload #>> '{snapshot,state}' IN ('pending', 'accepted')
@@ -354,7 +354,7 @@ pub(crate) async fn expire_due_interactions(
         DatabaseBackend::Postgres,
         r#"
 SELECT record_id, runtime_id, payload
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1
   AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
   AND payload #>> '{snapshot,state}' IN ('pending', 'accepted')
@@ -395,7 +395,7 @@ async fn conditional_save_interaction(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-UPDATE tapp_runtime_registry
+UPDATE runtime_registry
 SET payload = $1, runtime_id = $2, expires_at = $3, updated_at = NOW()
 WHERE namespace = $4 AND record_id = $5
   AND subject_id = $6 AND owner_id = $7 AND tapp_id = $8
@@ -437,7 +437,7 @@ async fn cancel_disconnected_interaction(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-UPDATE tapp_runtime_registry
+UPDATE runtime_registry
 SET payload = $1, expires_at = $2, updated_at = NOW()
 WHERE namespace = $3 AND record_id = $4
   AND payload #>> '{snapshot,state}' = 'accepted'
@@ -981,7 +981,7 @@ pub(super) async fn waiting_work_result_payloads(
         payload: Value,
     }
     let rows = ResultRow::find_by_statement(Statement::from_string(DatabaseBackend::Postgres,
-        format!("SELECT r.payload FROM tapp_runtime_registry r JOIN agent_tasks t ON t.id = r.payload #>> '{{snapshot,source,taskId}}' AND t.user_id = (r.payload->>'subject_id')::integer WHERE r.namespace='agent_interaction' AND r.expires_at > EXTRACT(EPOCH FROM NOW())::bigint AND r.payload #>> '{{snapshot,state}}' IN ('completed','rejected','expired','cancelled') AND t.status='waiting_for_input' AND t.{} AND t.pending_question->>'question_id' = 'tapp_interaction:' || (r.payload #>> '{{snapshot,interactionId}}') LIMIT 64", crate::services::agent::types::AgentEngine::WORK_LOOP_SQL)))
+        format!("SELECT r.payload FROM runtime_registry r JOIN agent_tasks t ON t.id = r.payload #>> '{{snapshot,source,taskId}}' AND t.user_id = (r.payload->>'subject_id')::integer WHERE r.namespace='agent_interaction' AND r.expires_at > EXTRACT(EPOCH FROM NOW())::bigint AND r.payload #>> '{{snapshot,state}}' IN ('completed','rejected','expired','cancelled') AND t.status='waiting_for_input' AND t.{} AND t.pending_question->>'question_id' = 'tapp_interaction:' || (r.payload #>> '{{snapshot,interactionId}}') LIMIT 64", crate::services::agent::types::AgentEngine::WORK_LOOP_SQL)))
         .all(db).await.map_err(|_| "Unable to redeliver Work interaction results")?;
     Ok(rows.into_iter().map(|row| row.payload).collect())
 }

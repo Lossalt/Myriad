@@ -2706,8 +2706,8 @@ dependencies = [
  "myriad-process-info",
  "myriad-prompt-security",
  "myriad-psn-auth",
+ "myriad-runtime-registry",
  "myriad-tapp-contract",
- "myriad-tapp-registry",
  "myriad-tapp-rules",
  "oauth2",
  "oauth2-reqwest",
@@ -2880,6 +2880,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "myriad-runtime-registry"
+version = "0.1.0"
+dependencies = [
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "myriad-tapp-contract"
 version = "0.1.0"
 dependencies = [
@@ -2897,16 +2907,6 @@ version = "0.1.0"
 dependencies = [
  "myriad-tapp-contract",
  "serde_json",
-]
-
-[[package]]
-name = "myriad-tapp-registry"
-version = "0.1.0"
-dependencies = [
- "sea-orm",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]

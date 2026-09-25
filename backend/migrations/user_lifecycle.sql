@@ -86,7 +86,7 @@ BEGIN
     DELETE FROM tapp_storage WHERE user_id = OLD.id;
     DELETE FROM tapp_widgets WHERE user_id = OLD.id;
     DELETE FROM tapps WHERE user_id = OLD.id;
-    DELETE FROM tapp_runtime_registry WHERE subject_id = OLD.id OR owner_id = OLD.id;
+    DELETE FROM runtime_registry WHERE subject_id = OLD.id OR owner_id = OLD.id;
     DELETE FROM tapp_ai_cost_ledger WHERE subject_id = OLD.id OR owner_id = OLD.id;
     DELETE FROM phantasi_user_states WHERE user_id = OLD.id;
     -- Items (and their states/comments) cascade from their source.
@@ -139,7 +139,7 @@ BEGIN
             ('tapp_storage', ARRAY['user_id']),
             ('tapp_widgets', ARRAY['user_id']),
             ('tapps', ARRAY['user_id']),
-            ('tapp_runtime_registry', ARRAY['subject_id', 'owner_id']),
+            ('runtime_registry', ARRAY['subject_id', 'owner_id']),
             ('tapp_ai_cost_ledger', ARRAY['subject_id', 'owner_id']),
             ('phantasi_user_states', ARRAY['user_id']),
             ('phantasi_sources', ARRAY['user_id'])

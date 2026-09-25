@@ -322,7 +322,7 @@ Page、Widget 和 headless 每个实例启动时由宿主申请 5 分钟 Runtime
 父页面内存，Bridge 调用运行时后端时附加 `X-Tapp-Runtime-Grant`，不会写入 iframe HTML
 或 `postMessage`。服务端只保存令牌 SHA-256，校验当前 Claims subject、Tapp、owner、
 runtime ID 和最终权限；停止、更新、卸载或 Bridge 销毁会撤销对应 Grant。Grant 的哈希与
-租约保存在 PostgreSQL `tapp_runtime_registry`，签发上限与同实例替换在事务锁内完成，因此
+租约保存在 PostgreSQL `runtime_registry`，签发上限与同实例替换在事务锁内完成，因此
 后端重启或请求切换副本不会使有效 Grant 丢失。
 
 所有携带 Grant 的宿主通道（普通请求、声明 API、scheduler 和 SSE）遇到一次

@@ -708,6 +708,49 @@ CREATE INDEX IF NOT EXISTS idx_analytics_country_visitor_day
             )
             .await?;
 
+        // 平台运行时注册表与邮箱：所有后端副本共享的租约、邮箱和带过期的记录。
+        // 智能体运行、AI 任务、IM 通道、限流和 Tapp 运行时都是它的租户。
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS runtime_registry (
+    namespace VARCHAR(64) NOT NULL,
+    record_id VARCHAR(160) NOT NULL,
+    subject_id INTEGER,
+    owner_id INTEGER,
+    tapp_id VARCHAR(255),
+    runtime_id VARCHAR(160),
+    payload JSONB NOT NULL,
+    expires_at BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (namespace, record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_registry_subject
+    ON runtime_registry (namespace, subject_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_registry_tapp
+    ON runtime_registry (namespace, tapp_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_registry_runtime
+    ON runtime_registry (namespace, runtime_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS runtime_mailbox (
+    message_id BIGSERIAL PRIMARY KEY,
+    channel VARCHAR(64) NOT NULL,
+    runtime_id VARCHAR(160) NOT NULL,
+    payload JSONB NOT NULL,
+    expires_at BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_recipient
+    ON runtime_mailbox (channel, runtime_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_expiry
+    ON runtime_mailbox (expires_at);
+"#,
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -717,6 +760,8 @@ CREATE INDEX IF NOT EXISTS idx_analytics_country_visitor_day
             .get_connection()
             .execute_unprepared(
                 r#"
+DROP TABLE IF EXISTS runtime_mailbox;
+DROP TABLE IF EXISTS runtime_registry;
 DROP TABLE IF EXISTS analytics_country_visitor;
 DROP TABLE IF EXISTS analytics_country_daily;
 DROP TABLE IF EXISTS analytics_referrer_daily;

@@ -1,4 +1,4 @@
-//! Tapp shared rate limiter (tapp_runtime_registry namespace `rate_limit`).
+//! Tapp shared rate limiter (runtime_registry namespace `rate_limit`).
 //!
 //! Domain implementation lives in services so host-attribution middleware, AI
 //! tasks, events, declared-API, and metrics do not own the registry SQL / config
@@ -12,7 +12,7 @@ use sea_orm::{
 use sha2::{Digest, Sha256};
 
 use crate::services::permission_service::TappPermission;
-use crate::services::tapp_registry as shared_registry;
+use crate::services::runtime_registry as shared_registry;
 
 const RATE_LIMIT_NAMESPACE: &str = "rate_limit";
 
@@ -167,7 +167,7 @@ async fn load_rate_limit_row(
 SELECT
     COALESCE((payload ->> 'count')::BIGINT, 0) AS count,
     expires_at
-FROM tapp_runtime_registry
+FROM runtime_registry
 WHERE namespace = $1 AND record_id = $2
 "#,
         vec![RATE_LIMIT_NAMESPACE.into(), record_id.into()],
@@ -299,7 +299,7 @@ async fn check_rate_limit_key(
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"
-INSERT INTO tapp_runtime_registry
+INSERT INTO runtime_registry
     (namespace, record_id, subject_id, tapp_id, payload, expires_at, updated_at)
 VALUES ($1, $2, $3, $4, jsonb_build_object('count', $5::BIGINT), $6, NOW())
 ON CONFLICT (namespace, record_id) DO UPDATE SET
@@ -386,7 +386,7 @@ pub async fn get_rate_limiter_active_count(
 ) -> Result<usize, RateLimitError> {
     let row = CountRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT COUNT(*)::BIGINT AS count FROM tapp_runtime_registry WHERE namespace = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
+        "SELECT COUNT(*)::BIGINT AS count FROM runtime_registry WHERE namespace = $1 AND expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT",
         vec![RATE_LIMIT_NAMESPACE.into()],
     ))
     .one(db)

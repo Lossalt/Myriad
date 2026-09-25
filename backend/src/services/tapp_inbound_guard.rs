@@ -3,10 +3,10 @@
 //! Raw client addresses are never stored. Auto-blocks trip after repeated
 //! verify failures; owners can pause a Tapp's inbound surface or clear a block.
 
+use crate::services::runtime_registry::{self, RegistryIdentity};
 use crate::services::tapp_rate_limit::{
     RateLimitError, anonymous_subject_fingerprint, increment_named_limit,
 };
-use crate::services::tapp_registry::{self, RegistryIdentity};
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -105,10 +105,14 @@ pub async fn check_site_inbound_block(
     client_ip: Option<&str>,
 ) -> Result<Option<InboundDenial>, InboundGuardError> {
     let fingerprint = client_fingerprint(client_ip);
-    if tapp_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &site_block_id(&fingerprint))
-        .await
-        .map_err(|_| InboundGuardError::Database)?
-        .is_some()
+    if runtime_registry::get::<InboundBlockRecord>(
+        db,
+        BLOCK_NAMESPACE,
+        &site_block_id(&fingerprint),
+    )
+    .await
+    .map_err(|_| InboundGuardError::Database)?
+    .is_some()
     {
         return Ok(Some(InboundDenial::Blocked {
             retry_after: AUTO_BLOCK_SECS as u64,
@@ -129,8 +133,8 @@ pub async fn check_tapp_inbound_access(
     let pause_record = pause_id(owner_id, tapp_id);
     let block_record = tapp_block_id(owner_id, tapp_id, &fingerprint);
     let (paused, blocked) = tokio::try_join!(
-        tapp_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &pause_record),
-        tapp_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &block_record),
+        runtime_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &pause_record),
+        runtime_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &block_record),
     )
     .map_err(|_| InboundGuardError::Database)?;
     if paused.is_some() {
@@ -154,7 +158,7 @@ async fn write_block(
     ttl_secs: i64,
 ) -> Result<(), InboundGuardError> {
     let now = chrono::Utc::now().timestamp();
-    tapp_registry::put(
+    runtime_registry::put(
         db,
         BLOCK_NAMESPACE,
         record_id,
@@ -238,7 +242,7 @@ pub async fn pause_inbound(
     tapp_id: &str,
 ) -> Result<(), InboundGuardError> {
     let now = chrono::Utc::now().timestamp();
-    tapp_registry::put(
+    runtime_registry::put(
         db,
         BLOCK_NAMESPACE,
         &pause_id(owner_id, tapp_id),
@@ -265,7 +269,7 @@ pub async fn resume_inbound(
     owner_id: i32,
     tapp_id: &str,
 ) -> Result<(), InboundGuardError> {
-    tapp_registry::delete(db, BLOCK_NAMESPACE, &pause_id(owner_id, tapp_id))
+    runtime_registry::delete(db, BLOCK_NAMESPACE, &pause_id(owner_id, tapp_id))
         .await
         .map(|_| ())
         .map_err(|_| InboundGuardError::Database)
@@ -283,7 +287,7 @@ pub async fn unblock_fingerprint(
     // Owners may only lift their own install's block. Site-wide auto-blocks
     // expire on their own so one Tapp manager cannot unban an attacker for
     // every inbound route on the host.
-    let removed = tapp_registry::delete(
+    let removed = runtime_registry::delete(
         db,
         BLOCK_NAMESPACE,
         &tapp_block_id(owner_id, tapp_id, fingerprint),
@@ -323,12 +327,15 @@ pub async fn guard_status(
     owner_id: i32,
     tapp_id: &str,
 ) -> Result<InboundGuardStatus, InboundGuardError> {
-    let paused =
-        tapp_registry::get::<InboundBlockRecord>(db, BLOCK_NAMESPACE, &pause_id(owner_id, tapp_id))
-            .await
-            .map_err(|_| InboundGuardError::Database)?
-            .is_some();
-    let rows = tapp_registry::list(db, BLOCK_NAMESPACE, None, Some(tapp_id))
+    let paused = runtime_registry::get::<InboundBlockRecord>(
+        db,
+        BLOCK_NAMESPACE,
+        &pause_id(owner_id, tapp_id),
+    )
+    .await
+    .map_err(|_| InboundGuardError::Database)?
+    .is_some();
+    let rows = runtime_registry::list(db, BLOCK_NAMESPACE, None, Some(tapp_id))
         .await
         .map_err(|_| InboundGuardError::Database)?;
     let mut blocks = Vec::new();

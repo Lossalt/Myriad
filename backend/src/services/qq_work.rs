@@ -16,7 +16,7 @@ use tracing::warn;
 use crate::GLOBAL_DYNAMIC_CONFIG;
 use crate::services::channel_work::{self, ChannelTransport};
 use crate::services::http_client;
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 
 const API_BASE: &str = "https://api.bot.qq.com";
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);

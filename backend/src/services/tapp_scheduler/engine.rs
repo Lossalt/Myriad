@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 
 use crate::services::agent::ai_process_pure::USER_TEXT_MAX_CHARS;
-use crate::services::tapp_registry::{self as shared_registry};
+use crate::services::runtime_registry::{self as shared_registry};
 use crate::services::tapp_storage::{
     read_storage_value, validate_sandbox_storage_key, validate_storage_value_size,
     write_storage_value,
@@ -693,7 +693,7 @@ impl TappSchedulerEngine {
         let sql = format!(
             r#"
 SELECT r.record_id
-FROM tapp_runtime_registry r
+FROM runtime_registry r
 WHERE r.namespace = $1
   AND r.subject_id IS NOT NULL
   AND r.expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -2188,12 +2188,12 @@ mod frontend_recipient_db_tests {
         });
         let db = Database::connect(options).await.unwrap();
         db.execute_unprepared(
-            "CREATE TABLE tapp_runtime_registry (namespace VARCHAR(64) NOT NULL, \
+            "CREATE TABLE runtime_registry (namespace VARCHAR(64) NOT NULL, \
              record_id VARCHAR(160) NOT NULL, subject_id INTEGER, owner_id INTEGER, \
              tapp_id VARCHAR(255), runtime_id VARCHAR(160), payload JSONB NOT NULL, \
              expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
              PRIMARY KEY (namespace, record_id)); \
-             CREATE TABLE tapp_runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
+             CREATE TABLE runtime_mailbox (message_id BIGSERIAL PRIMARY KEY, \
              channel TEXT NOT NULL, runtime_id TEXT NOT NULL, payload JSONB NOT NULL, \
              expires_at BIGINT NOT NULL); \
              CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, \
@@ -2283,7 +2283,7 @@ mod frontend_recipient_db_tests {
         ] {
             db.execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                "INSERT INTO tapp_runtime_registry (namespace, record_id, subject_id, payload, expires_at)
+                "INSERT INTO runtime_registry (namespace, record_id, subject_id, payload, expires_at)
                  VALUES ($1, $2, $3, '{}'::jsonb, $4)",
                 [
                     namespace.into(),

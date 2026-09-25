@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::services::tapp_registry::{self as shared_registry, RegistryIdentity};
+use crate::services::runtime_registry::{self as shared_registry, RegistryIdentity};
 use myriad_tapp_contract::manifest::{
     TappAiManifest, TappAiModelTier, TappAiOperation, TappAiOutputFormat,
 };

@@ -138,7 +138,7 @@ async fn acknowledge_item(
     sent: &StoredOutbound,
 ) -> Result<bool, DbErr> {
     let result = db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-        "UPDATE tapp_runtime_registry SET payload = jsonb_set(payload, '{next_index}', to_jsonb($4::bigint)), updated_at = NOW() \
+        "UPDATE runtime_registry SET payload = jsonb_set(payload, '{next_index}', to_jsonb($4::bigint)), updated_at = NOW() \
          WHERE namespace = $1 AND record_id = $2 AND payload->>'run_id' = $3 AND (payload->>'next_index')::bigint = $5",
         [platform.outbound_ns().into(), key.into(), sent.run_id.as_str().into(), ((sent.next_index + 1) as i64).into(), (sent.next_index as i64).into()])).await?;
     Ok(result.rows_affected() == 1)
@@ -195,7 +195,7 @@ async fn project_delivery(
         } else {
             txn.execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                "DELETE FROM tapp_runtime_registry WHERE namespace = $1 AND record_id = $2",
+                "DELETE FROM runtime_registry WHERE namespace = $1 AND record_id = $2",
                 [sink.platform().pending_ns().into(), key.into()],
             ))
             .await?;
@@ -295,7 +295,7 @@ mod postgres_tests {
                 .ends_with("_channel_test")
         );
         let db = sea_orm::Database::connect(&url).await.unwrap();
-        db.execute_unprepared("CREATE TABLE IF NOT EXISTS tapp_runtime_registry (namespace TEXT, record_id TEXT, subject_id INTEGER, owner_id INTEGER, tapp_id TEXT, runtime_id TEXT, payload JSONB NOT NULL, expires_at BIGINT, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(namespace, record_id)); CREATE TABLE IF NOT EXISTS tapp_runtime_mailbox (expires_at BIGINT);").await.unwrap();
+        db.execute_unprepared("CREATE TABLE IF NOT EXISTS runtime_registry (namespace TEXT, record_id TEXT, subject_id INTEGER, owner_id INTEGER, tapp_id TEXT, runtime_id TEXT, payload JSONB NOT NULL, expires_at BIGINT, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(namespace, record_id)); CREATE TABLE IF NOT EXISTS runtime_mailbox (expires_at BIGINT);").await.unwrap();
         let key = format!("ack-test-{}", uuid::Uuid::new_v4());
         let sent = StoredOutbound::prepare("first", &["/image.png".into()], 100, None, "first-run");
         let expiry = Utc::now().timestamp() + 600;
