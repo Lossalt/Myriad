@@ -540,6 +540,30 @@ CREATE TABLE IF NOT EXISTS agent_autonomy_grants (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent_memories (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    kind VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    evidence TEXT,
+    speaker VARCHAR(16) NOT NULL DEFAULT 'user',
+    source VARCHAR(16) NOT NULL,
+    venue VARCHAR(16) NOT NULL DEFAULT 'private',
+    audience JSONB NOT NULL DEFAULT '[]'::jsonb,
+    importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed_at TIMESTAMPTZ,
+    valid_from TIMESTAMPTZ NOT NULL,
+    invalid_at TIMESTAMPTZ,
+    invalid_reason VARCHAR(16),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_user_created
+    ON agent_memories (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_user_kind
+    ON agent_memories (user_id, kind);
 "#,
             )
             .await?;
@@ -552,6 +576,7 @@ CREATE TABLE IF NOT EXISTS agent_autonomy_grants (
             .get_connection()
             .execute_unprepared(
                 r#"
+DROP TABLE IF EXISTS agent_memories;
 DROP TABLE IF EXISTS agent_autonomy_grants;
 DROP TABLE IF EXISTS agent_proactive_messages;
 DROP TABLE IF EXISTS agent_intentions;

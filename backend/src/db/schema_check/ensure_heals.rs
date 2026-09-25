@@ -208,6 +208,68 @@ CREATE TABLE IF NOT EXISTS agent_autonomy_grants (
     Ok(())
 }
 
+/// 统一记忆表（`migrations/004` 已 CREATE）。与 004 的 DDL 必须一字不差。
+pub(crate) async fn ensure_agent_memories_table(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(AGENT_MEMORIES_DDL).await?;
+    Ok(())
+}
+
+/// Merope 记住的事实原先存在 `agent_diary`（source `remember`；被更正的是
+/// `remember_retired`）。复制进统一记忆表：id 由原行推出，重复运行什么也不做；
+/// 原行保留，回退到旧版本时数据仍在。
+pub(crate) async fn migrate_diary_facts_to_memories(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let copied = db
+        .execute_unprepared(
+            r#"
+INSERT INTO agent_memories (
+    id, user_id, kind, content, evidence, speaker, source, venue, audience,
+    importance, access_count, last_accessed_at, valid_from, invalid_at,
+    invalid_reason, created_at, updated_at
+)
+SELECT 'diary_' || d.id, d.user_id, 'fact', d.content, NULL, 'import', 'chat', 'private',
+       jsonb_build_array(d.user_id), 0.5, 0, NULL, d.created_at,
+       CASE WHEN d.source = 'remember_retired' THEN d.created_at END,
+       CASE WHEN d.source = 'remember_retired' THEN 'superseded' END,
+       d.created_at, d.created_at
+FROM agent_diary d
+WHERE d.source IN ('remember', 'remember_retired')
+ON CONFLICT (id) DO NOTHING
+"#,
+        )
+        .await?
+        .rows_affected();
+    if copied > 0 {
+        tracing::info!("Copied {copied} remembered fact(s) from agent_diary into agent_memories");
+    }
+    Ok(())
+}
+
+pub(crate) const AGENT_MEMORIES_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_memories (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    kind VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    evidence TEXT,
+    speaker VARCHAR(16) NOT NULL DEFAULT 'user',
+    source VARCHAR(16) NOT NULL,
+    venue VARCHAR(16) NOT NULL DEFAULT 'private',
+    audience JSONB NOT NULL DEFAULT '[]'::jsonb,
+    importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed_at TIMESTAMPTZ,
+    valid_from TIMESTAMPTZ NOT NULL,
+    invalid_at TIMESTAMPTZ,
+    invalid_reason VARCHAR(16),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_user_created
+    ON agent_memories (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_user_kind
+    ON agent_memories (user_id, kind);
+"#;
+
 /// `02c8d2ddc` 之前，面板开关发来的空列表被当成「当前全部授予权限」，管理员的
 /// 自治授权因此带上了 `system:admin` 这类管理员专属权限。
 pub(crate) const AUTONOMY_EMPTY_GRANT_FIX_AT: &str = "2026-09-24T20:14:25+09:00";

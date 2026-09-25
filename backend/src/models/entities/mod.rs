@@ -41,6 +41,7 @@ pub mod agent_addressee_state;
 pub mod agent_autonomy_grants;
 pub mod agent_diary;
 pub mod agent_intentions;
+pub mod agent_memories;
 pub mod agent_messages;
 pub mod agent_notifications;
 pub mod agent_persona;

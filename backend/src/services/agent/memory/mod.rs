@@ -4,6 +4,7 @@
 
 mod manager;
 mod types_index;
+pub mod unified;
 
 pub use manager::{get_memory, init_memory, summarize_value_for_memory};
 pub use types_index::{MemoryTier, MemoryType, RecallQuery};

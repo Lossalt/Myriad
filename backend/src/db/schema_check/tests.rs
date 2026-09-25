@@ -2068,3 +2068,79 @@ async fn legacy_autonomy_grants_lose_admin_only_permissions_once() {
         .unwrap();
     assert_eq!(read(1).await, narrowed, "a second run changes nothing");
 }
+
+/// 旧日记里的事实复制进统一记忆：被更正的保持失效，原行保留，重复运行不重复写。
+#[tokio::test]
+async fn diary_facts_move_into_unified_memory_once() {
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let mut options = sea_orm::ConnectOptions::new(url);
+    options.max_connections(1).sqlx_logging(false);
+    let db = sea_orm::Database::connect(options).await.unwrap();
+    db.execute_unprepared(
+        &super::ensure_heals::AGENT_MEMORIES_DDL
+            .replace("CREATE TABLE IF NOT EXISTS", "CREATE TEMP TABLE")
+            .replace("REFERENCES users(id) ON DELETE CASCADE", ""),
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        r#"CREATE TEMP TABLE agent_diary (id VARCHAR(64) PRIMARY KEY, user_id INTEGER NOT NULL,
+            content TEXT NOT NULL, source VARCHAR(16) NOT NULL, created_at TIMESTAMPTZ NOT NULL);
+        INSERT INTO agent_diary VALUES
+            ('a', 7, 'likes tea', 'remember', NOW() - INTERVAL '1 day'),
+            ('b', 7, 'likes coffee', 'remember_retired', NOW() - INTERVAL '2 days'),
+            ('c', 7, 'said hello', 'chat', NOW());"#,
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        super::ensure_heals::migrate_diary_facts_to_memories(&db)
+            .await
+            .unwrap();
+    }
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT id, content, invalid_reason, audience::text AS audience FROM agent_memories ORDER BY id"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let summary: Vec<(String, String, Option<String>, String)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.try_get("", "id").unwrap(),
+                row.try_get("", "content").unwrap(),
+                row.try_get("", "invalid_reason").unwrap(),
+                row.try_get("", "audience").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("diary_a".into(), "likes tea".into(), None, "[7]".into()),
+            (
+                "diary_b".into(),
+                "likes coffee".into(),
+                Some("superseded".into()),
+                "[7]".into()
+            ),
+        ]
+    );
+    let diary_left = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT COUNT(*)::int AS n FROM agent_diary".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i32>("", "n")
+        .unwrap();
+    assert_eq!(diary_left, 3, "the original rows stay for rollback");
+}

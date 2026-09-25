@@ -62,6 +62,7 @@ Recent tables:
 | agent_intentions | `004` | `ensure_agent_intentions_table` + TableDef |
 | agent_intentions unique source event | `004` | `ensure_agent_intentions_table` unique index |
 | agent_autonomy_grants | `004` | `ensure_agent_autonomy_grants_table` + TableDef |
+| agent_memories（统一记忆；旧 `agent_diary` 事实由 `migrate_diary_facts_to_memories` 复制） | `004` | `ensure_agent_memories_table` + TableDef |
 | inbox_receipts | `005` | `ensure_federation_inbox_receipts_table` + TableDef |
 | phantasi_note_docs | `003` | `ensure_phantasi_note_docs_table` + TableDef |
 | phantasi_note_authors | `003` | `ensure_phantasi_note_authors_table` + TableDef |
