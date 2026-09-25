@@ -1049,15 +1049,21 @@ pub async fn last_learned_at<C: ConnectionTrait>(
 /// Venue of what belongs to her alone: her days and what she did on her own.
 pub const OWN_VENUE: &str = "own";
 
-/// Something she did on her own (a song, something she read) and what stayed
-/// with her, in her words. Belongs to no one and names no one; `evidence`
-/// says what it was. Nothing personal is in it, so any conversation may hear
-/// it.
+/// Source of what she did on her own and what stayed with her.
+pub const OWN_EXPERIENCE: &str = "doing";
+/// Source of a view of her own, grown out of those experiences.
+pub const OWN_VIEW: &str = "view";
+
+/// Something of her own: what she did (a song, something she read) and what
+/// stayed with her, or a view that grew out of such things, in her words.
+/// Belongs to no one and names no one; `evidence` says what it was about.
+/// Nothing personal is in it, so any conversation may hear it.
 pub async fn remember_own<C: ConnectionTrait>(
     db: &C,
     content: &str,
     evidence: &str,
     concepts: Vec<Concept>,
+    source: &'static str,
 ) -> Result<Option<String>, DbErr> {
     let content = normalize_content(content);
     if content.is_empty() {
@@ -1072,7 +1078,7 @@ pub async fn remember_own<C: ConnectionTrait>(
         content: Set(content),
         evidence: Set(Some(evidence.chars().take(MAX_CONTENT_CHARS).collect())),
         speaker: Set(Speaker::Agent.as_str().into()),
-        source: Set("doing".into()),
+        source: Set(source.into()),
         venue: Set(OWN_VENUE.into()),
         audience: Set(json!([])),
         concepts: Set(json!(clean_concepts(concepts))),
@@ -1096,15 +1102,52 @@ pub async fn own_experiences<C: ConnectionTrait>(
     db: &C,
     limit: u64,
 ) -> Result<Vec<agent_memories::Model>, DbErr> {
+    own_rows(db, OWN_EXPERIENCE, limit).await
+}
+
+/// The views she holds now, most recent first.
+pub async fn own_views<C: ConnectionTrait>(
+    db: &C,
+    limit: u64,
+) -> Result<Vec<agent_memories::Model>, DbErr> {
+    own_rows(db, OWN_VIEW, limit).await
+}
+
+async fn own_rows<C: ConnectionTrait>(
+    db: &C,
+    source: &str,
+    limit: u64,
+) -> Result<Vec<agent_memories::Model>, DbErr> {
     agent_memories::Entity::find()
         .filter(agent_memories::Column::UserId.is_null())
         .filter(agent_memories::Column::Kind.eq(MemoryKind::Knowledge.as_str()))
         .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::Source.eq(source))
         .filter(agent_memories::Column::InvalidAt.is_null())
         .order_by_desc(agent_memories::Column::CreatedAt)
         .limit(limit)
         .all(db)
         .await
+}
+
+/// Retire something of her own (a view she no longer holds). Kept, not
+/// deleted: what she used to think is part of her.
+pub async fn retire_own<C: ConnectionTrait>(db: &C, id: &str, reason: &str) -> Result<bool, DbErr> {
+    let now = Utc::now().fixed_offset();
+    let result = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            invalid_at: Set(Some(now)),
+            invalid_reason: Set(Some(reason.chars().take(16).collect())),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Id.eq(id))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected > 0)
 }
 
 /// Her latest days, most recent first.

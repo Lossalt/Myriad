@@ -6,6 +6,8 @@
 //!   own memory, shared by every conversation, so her life has a past that
 //!   grew out of what actually happened rather than a backstory. Because
 //!   every audience hears it, nothing about any one person goes in.
+//! - **Her views.** She goes over what she did on her own lately and lets
+//!   views of her own grow or change (see `views`).
 //! - **Filling in old memories.** Memories kept before concepts existed get
 //!   their concepts, one person at a time, so association can reach them.
 //!   One person's memories never share a model call with another's.
@@ -52,6 +54,7 @@ pub async fn tick(db: DatabaseConnection) {
     if let Some(yesterday) = now.date_naive().pred_opt() {
         write_yesterday(&db, owner, yesterday).await;
     }
+    super::views::go_over(&db, owner).await;
     fill_old_concepts(&db, owner).await;
 }
 

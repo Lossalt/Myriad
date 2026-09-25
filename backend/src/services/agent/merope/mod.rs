@@ -20,6 +20,7 @@ pub mod self_state;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
+pub mod views;
 pub mod wander;
 
 pub use chat_remember::spawn_chat_remember;
@@ -277,7 +278,7 @@ pub use speaking_prompts::{
     format_curious_section, format_doing_section, format_emotion_section, format_found_out_section,
     format_inner_moment_ago_section, format_mood_section, format_on_your_mind_section,
     format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    group_speaking_section, guest_speaking_section, mood_tone_instruction,
+    format_views_section, group_speaking_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -382,6 +383,8 @@ const OWN_DAYS_LIMIT: u64 = 3;
 /// What she did on her own in the last day, and older things their words touch.
 const DOING_RECENT: usize = 3;
 const DOING_RELATED: usize = 2;
+/// Views of her own their words touch.
+const VIEWS_LIMIT: usize = 2;
 /// Her own unprompted lines a chat turn should know it said.
 const SAID_UNPROMPTED_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
@@ -589,6 +592,13 @@ async fn speaking_prompt_from_db(
         let now = doing::current().map(|doing| doing::now_line(&doing, chrono::Utc::now()));
         if let Some(block) = format_doing_section(now.as_deref(), &lately) {
             sections.push(block);
+        }
+        // What she thinks of what their words touch: hers, the same whoever asks.
+        if let Some(words) = words {
+            let views = views::touched(db, words, VIEWS_LIMIT).await;
+            if let Some(block) = format_views_section(&views) {
+                sections.push(block);
+            }
         }
     }
     if matches!(turn, Turn::Chat(_)) {

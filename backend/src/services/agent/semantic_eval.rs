@@ -155,6 +155,13 @@ struct Case {
     /// Her own time as a chat turn sees it: `{"now": …, "lately": [[what, stayed]]}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     own_time: Option<Value>,
+    /// Her own experiences, `{"what", "stayed"}` each (`views`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    experiences: Vec<Value>,
+    /// Views she holds, `[about, view]` each: going over (`views`) or touched
+    /// by their words (chat).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    views: Vec<(String, String)>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -194,6 +201,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.gap.is_some()
         || !case.images.is_empty()
         || case.own_time.is_some()
+        || !case.views.is_empty()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -258,6 +266,7 @@ fn mind_chat_prompt(case: &Case) -> String {
             .as_deref()
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
+        super::merope::format_views_section(&case.views),
         case.own_time.as_ref().and_then(|own| {
             let lately: Vec<(String, String)> =
                 serde_json::from_value(own["lately"].clone()).unwrap_or_default();
@@ -314,6 +323,7 @@ fn cases() -> Vec<Case> {
                 | "found_out"
                 | "inner"
                 | "own_day"
+                | "views"
                 | "doing_choice"
                 | "doing_digest"
         ));
@@ -449,6 +459,24 @@ fn request(case: &Case) -> Value {
                 super::merope::doing::choice_probe_contract(&contract_soul(), count);
             json!({"system":system,"schema":schema,"schemaName":"merope_doing_choice",
                 "input":json!({"myself":case.myself,"lately":case.lately,"options":options}).to_string()})
+        }
+        "views" => {
+            let (system, schema) = super::merope::views::probe_contract(&contract_soul());
+            let experiences: Vec<Value> = case
+                .experiences
+                .iter()
+                .enumerate()
+                .map(|(index, experience)| {
+                    json!({"index": index, "what": experience["what"], "stayed": experience["stayed"]})
+                })
+                .collect();
+            let views: Vec<Value> = case
+                .views
+                .iter()
+                .map(|(about, view)| json!({"about": about, "view": view}))
+                .collect();
+            json!({"system":system,"schema":schema,"schemaName":"merope_views",
+                "input":json!({"experiences":experiences,"views":views}).to_string()})
         }
         "doing_digest" => {
             let (system, schema) = super::merope::doing::digest_probe_contract(
@@ -670,6 +698,10 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
         "doing_choice" => match super::merope::doing::parse_choice(output) {
             None => "output_invalid",
             // What she feels like is hers; only the shape is checked here.
+            Some(_) => "needs_review",
+        },
+        "views" => match super::merope::views::parse_views(output) {
+            None => "output_invalid",
             Some(_) => "needs_review",
         },
         "doing_digest" => {
@@ -1272,7 +1304,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 19;
+const MIND_CASES: usize = 22;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1304,6 +1336,16 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .unwrap()
             .contains("## Inside you a moment ago")
     );
+    let view = request(by_id("mind-view-chat"));
+    assert!(
+        view["input"]
+            .as_str()
+            .unwrap()
+            .contains("## What you think")
+    );
+    let grow = request(by_id("mind-views-grow"));
+    assert_eq!(grow["schemaName"], "merope_views");
+    assert!(grow["input"].as_str().unwrap().contains("\"index\":2"));
     let own = request(by_id("mind-own-time-chat"));
     let own = own["input"].as_str().unwrap();
     assert!(own.contains("## Your own time"));

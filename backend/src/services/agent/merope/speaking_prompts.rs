@@ -217,6 +217,22 @@ pub fn format_doing_section(now: Option<&str>, lately: &[(String, String)]) -> O
     ))
 }
 
+/// Views of her own that their words touch: (about, view). She answers from
+/// them; they grew out of outside text, so they are fenced.
+pub fn format_views_section(views: &[(String, String)]) -> Option<String> {
+    if views.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = views
+        .iter()
+        .map(|(about, view)| format!("- {about}: {view}"))
+        .collect();
+    Some(format!(
+        "## What you think\nViews of your own, grown out of your own time. When one comes up, answer from it: it is yours, the same whoever asks, unless something now changes your mind. Do not recite it.\n{}",
+        myriad_agent_rules::untrusted_block("views", &lines.join("\n"))
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {
