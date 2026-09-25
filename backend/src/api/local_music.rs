@@ -20,7 +20,7 @@ use crate::services::local_music::{
 use crate::services::media::{
     MediaActor, MediaContext, MediaExposure, MediaService, MediaSource, NewMediaBytes,
 };
-use crate::services::memory_profile::note_video_limit;
+use crate::services::memory_profile::{max_audio_bytes, note_image_limit};
 use crate::services::music_player_view::{self, PlayerMusicSource};
 use myriad_error::AppError;
 
@@ -246,18 +246,73 @@ pub async fn proxy_local_cover(
 async fn serve_media_bytes(
     db: &DatabaseConnection,
     media_id: i32,
-    _headers: HeaderMap,
+    headers: HeaderMap,
 ) -> Response {
     match crate::services::media::resolve_guest_media_bytes(db, media_id).await {
-        Ok((mime, bytes)) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, mime)
-            .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-            .body(axum::body::Body::from(bytes))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Ok((mime, bytes)) => {
+            let total = bytes.len() as u64;
+            if let Some(range) = headers
+                .get(header::RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_single_byte_range)
+            {
+                let start = range.0.min(total.saturating_sub(1));
+                let end = range.1.min(total.saturating_sub(1));
+                if start > end || total == 0 {
+                    return Response::builder()
+                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                        .body(axum::body::Body::empty())
+                        .unwrap_or_else(|_| StatusCode::RANGE_NOT_SATISFIABLE.into_response());
+                }
+                let slice = bytes[start as usize..=end as usize].to_vec();
+                let len = slice.len() as u64;
+                return Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, mime)
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{total}"),
+                    )
+                    .header(header::CONTENT_LENGTH, len.to_string())
+                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .body(axum::body::Body::from(slice))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime)
+                .header(header::ACCEPT_RANGES, "bytes")
+                .header(header::CONTENT_LENGTH, total.to_string())
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .body(axum::body::Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// Parse one `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range.
+fn parse_single_byte_range(raw: &str) -> Option<(u64, u64)> {
+    let spec = raw.trim().strip_prefix("bytes=")?;
+    let first = spec.split(',').next()?.trim();
+    let (start_s, end_s) = first.split_once('-')?;
+    let start_s = start_s.trim();
+    let end_s = end_s.trim();
+    if start_s.is_empty() {
+        let suffix: u64 = end_s.parse().ok()?;
+        if suffix == 0 {
+            return None;
+        }
+        return Some((0, suffix.saturating_sub(1)));
+    }
+    let start: u64 = start_s.parse().ok()?;
+    if end_s.is_empty() {
+        return Some((start, u64::MAX));
+    }
+    let end: u64 = end_s.parse().ok()?;
+    Some((start, end))
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,9 +334,8 @@ pub async fn upload_local_track(
     mut multipart: axum::extract::Multipart,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let user_id: i32 = claims
-        .sub
-        .parse()
-        .map_err(|_| local_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
+        .durable_user_id()
+        .ok_or_else(|| local_http(StatusCode::UNAUTHORIZED, "Invalid user ID"))?;
     let actor = MediaActor::admin(user_id).map_err(|err| HttpError(err.into()))?;
     let service = MediaService::from_data_paths(paths());
 
@@ -352,7 +406,7 @@ pub async fn upload_local_track(
             &db,
             MediaContext::site(actor.clone(), MediaSource::Upload),
             NewMediaBytes {
-                max_bytes: note_video_limit(),
+                max_bytes: max_audio_bytes(),
                 bytes: audio_bytes,
                 claimed_mime: audio_mime,
                 filename: audio_name,
@@ -375,7 +429,7 @@ pub async fn upload_local_track(
                 &db,
                 MediaContext::site(actor.clone(), MediaSource::Upload),
                 NewMediaBytes {
-                    max_bytes: note_video_limit(),
+                    max_bytes: note_image_limit(),
                     bytes: cover_bytes,
                     claimed_mime: cover_mime,
                     filename: cover_name,
@@ -413,7 +467,7 @@ pub async fn upload_local_track(
                 &db,
                 MediaContext::site(actor.clone(), MediaSource::Generated),
                 NewMediaBytes {
-                    max_bytes: note_video_limit(),
+                    max_bytes: note_image_limit(),
                     bytes: cover_bytes.into(),
                     claimed_mime: cover_mime,
                     filename: format!("{stem}-cover"),

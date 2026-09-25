@@ -512,6 +512,8 @@ mod tests {
 
     #[test]
     fn allowed_mimes_keep_current_upload_surface() {
+        // Product intent: the shared media catalog accepts images, video, and
+        // local-music audio (mp3/flac/ogg) through the same upload surface.
         let mimes: Vec<_> = allowed_media_mimes().collect();
         assert_eq!(
             mimes,
@@ -523,6 +525,12 @@ mod tests {
                 "video/mp4",
                 "video/webm",
                 "video/quicktime",
+                "audio/mpeg",
+                "audio/mp4",
+                "audio/flac",
+                "audio/wav",
+                "audio/ogg",
+                "audio/aac",
             ]
         );
     }

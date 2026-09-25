@@ -148,7 +148,11 @@ pub(super) fn build_authenticated_router(
         .route(
             "/api/local-music/upload",
             post(api::local_music::upload_local_track)
-                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    // Audio + optional cover in one multipart body.
+                    crate::services::memory_profile::max_audio_bytes()
+                        .saturating_add(crate::services::memory_profile::note_image_limit()),
+                ))
                 .route_layer(from_fn_with_state(
                     app_state.clone(),
                     middleware::auth::admin_middleware,

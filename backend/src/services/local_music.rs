@@ -158,10 +158,10 @@ pub async fn create_track(
     if input.title.trim().is_empty() {
         return Err(anyhow!("title is required"));
     }
-    // Reject dangling media references so the player never 404s on day one.
-    ensure_media_exists(db, input.audio_media_id, "audio").await?;
+    // Reject dangling or wrong-class media so the player never 404s on day one.
+    ensure_media_mime_prefix(db, input.audio_media_id, "audio", "audio/").await?;
     if let Some(cover_id) = input.cover_media_id {
-        ensure_media_exists(db, cover_id, "cover").await?;
+        ensure_media_mime_prefix(db, cover_id, "cover", "image/").await?;
     }
     let row = local_music_tracks::ActiveModel {
         title: Set(input.title.trim().to_string()),
@@ -194,9 +194,9 @@ pub async fn update_track(
     if input.title.trim().is_empty() {
         return Err(anyhow!("title is required"));
     }
-    ensure_media_exists(db, input.audio_media_id, "audio").await?;
+    ensure_media_mime_prefix(db, input.audio_media_id, "audio", "audio/").await?;
     if let Some(cover_id) = input.cover_media_id {
-        ensure_media_exists(db, cover_id, "cover").await?;
+        ensure_media_mime_prefix(db, cover_id, "cover", "image/").await?;
     }
     let mut active: local_music_tracks::ActiveModel = existing.into();
     active.title = Set(input.title.trim().to_string());
@@ -236,8 +236,17 @@ pub async fn track_audio_media_id(db: &DatabaseConnection, id: i32) -> Result<i3
     Ok(row.audio_media_id)
 }
 
+/// Cover bytes are only public when some local track actually references this media as cover.
 pub async fn cover_media_id(db: &DatabaseConnection, media_id: i32) -> Result<i32> {
-    ensure_media_exists(db, media_id, "cover").await?;
+    ensure_media_mime_prefix(db, media_id, "cover", "image/").await?;
+    let referenced = local_music_tracks::Entity::find()
+        .filter(local_music_tracks::Column::CoverMediaId.eq(media_id))
+        .one(db)
+        .await?
+        .is_some();
+    if !referenced {
+        return Err(anyhow!("cover not referenced by any track"));
+    }
     Ok(media_id)
 }
 
@@ -445,10 +454,19 @@ fn normalize_lyrics(lyrics: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-async fn ensure_media_exists(db: &DatabaseConnection, media_id: i32, role: &str) -> Result<()> {
+async fn ensure_media_mime_prefix(
+    db: &DatabaseConnection,
+    media_id: i32,
+    role: &str,
+    prefix: &str,
+) -> Result<()> {
     let found = media_assets::Entity::find_by_id(media_id).one(db).await?;
-    if found.is_none() {
-        return Err(anyhow!("{role} media {media_id} not found"));
+    let row = found.ok_or_else(|| anyhow!("{role} media {media_id} not found"))?;
+    if !row.mime.to_ascii_lowercase().starts_with(prefix) {
+        return Err(anyhow!(
+            "{role} media {media_id} is not an {} asset",
+            prefix.trim_end_matches('/')
+        ));
     }
     Ok(())
 }
