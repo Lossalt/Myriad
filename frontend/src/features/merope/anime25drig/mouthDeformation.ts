@@ -16,6 +16,12 @@ type MouthStylizedMotion = Pick<
 export interface Anime25DMouthDeformationFrame {
   mouth: Readonly<Anime25DPlayback['anchors']['mouth']>
   face: Readonly<Anime25DPlayback['anchors']['face']>
+  /**
+   * The drawn face's eye-line axes. Mouth art is tilted with the face, so its
+   * shape morph runs along these axes; screen axes would shear a tilted mouth
+   * and each material would settle at a different angle.
+   */
+  faceAxes?: Readonly<{ cos: number; sin: number }>
   faceScale: number
   morph: Readonly<MouthMorphState>
   expression: Readonly<MouthDeformationExpression>
@@ -72,10 +78,17 @@ export function deformAnime25DMouthPoint(
   const { expression, morph, mouth, stylizedMotion } = frame
   const continuous = kind === 'continuous'
   if (continuous) {
-    const localX =
-      (restX - (source.x + source.w / 2)) / Math.max(1, source.w / 2)
-    const localY =
-      (restY - (source.y + source.h / 2)) / Math.max(1, source.h / 2)
+    const axes = frame.faceAxes
+    const tilted = axes !== undefined && axes.sin !== 0
+    let offsetX = restX - (source.x + source.w / 2)
+    let offsetY = restY - (source.y + source.h / 2)
+    if (tilted) {
+      const along = offsetX * axes.cos + offsetY * axes.sin
+      offsetY = offsetY * axes.cos - offsetX * axes.sin
+      offsetX = along
+    }
+    const localX = offsetX / Math.max(1, source.w / 2)
+    const localY = offsetY / Math.max(1, source.h / 2)
     const xMagnitude = Math.min(1, Math.abs(localX))
     const yMagnitude = Math.min(1, Math.abs(localY))
     const ovalPinch =
@@ -109,6 +122,12 @@ export function deformAnime25DMouthPoint(
     const restingY = morph.centerY + localY * (morph.height / 2)
     const railInfluence = smoothstep(morph.openMix)
     point.y = restingY + (trackedY - restingY) * railInfluence
+    if (tilted) {
+      const alongX = point.x - morph.centerX
+      const downY = point.y - morph.centerY
+      point.x = morph.centerX + alongX * axes.cos - downY * axes.sin
+      point.y = morph.centerY + alongX * axes.sin + downY * axes.cos
+    }
   }
   if (
     (continuous || source.fade === 'mouthCry') &&
