@@ -1620,6 +1620,186 @@ async fn postgres_upgrade_backfills_existing_wallpaper_reference() {
     f.close().await;
 }
 
+/// Tapp AI results saved to app storage by v0.5.5/v0.5.6 cite a private
+/// asset at the login-only `/api/media/{id}/content`: the sandbox can never
+/// load it, and nothing references it once the task expires.
+#[tokio::test]
+async fn postgres_upgrade_publishes_and_protects_tapp_ai_results_in_storage() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let paths = LegacyPaths {
+        federation_root: f.service.store().root().join("old"),
+        cache_images: f.service.store().root().join("cache"),
+    };
+    migration::record_job(
+        &f.db,
+        "upgrade",
+        "platform_media_v2",
+        None,
+        "copied",
+        "verified",
+        "switched",
+        None,
+        Some(
+            &serde_json::to_string(&upgrade::UpgradeProgress {
+                revision: 3,
+                complete: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    let generated = |task: &'static str| {
+        let service = &f.service;
+        let db = &f.db;
+        async move {
+            let ctx = MediaContext::user(MediaActor::user(1).unwrap(), MediaSource::Generated)
+                .unwrap()
+                .with_producer_key(format!("ai-task:{task}:image"));
+            service
+                .create_from_bytes(
+                    db,
+                    ctx,
+                    NewMediaBytes {
+                        bytes: png().into(),
+                        claimed_mime: "image/png".into(),
+                        filename: "generated".into(),
+                        max_bytes: 1024 * 1024,
+                        derived_from_id: None,
+                        exposure: MediaExposure::Private,
+                    },
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let born_private = generated("t1").await;
+    let withdrawn = generated("t2").await;
+    f.service.publish(&f.db, withdrawn.id).await.unwrap();
+    f.service.unpublish(&f.db, withdrawn.id).await.unwrap();
+    let upload = f.image().await;
+    f.db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO tapp_storage (tapp_id, user_id, key, value, created_at, updated_at)
+         VALUES ('app', 1, 'gallery', $1, NOW(), NOW())",
+        [json!({
+            "images": [content_path(born_private.id), content_path(withdrawn.id)],
+            "cover": content_path(upload.id),
+        })
+        .into()],
+    ))
+    .await
+    .unwrap();
+
+    let progress = drive_upgrade(&f, &paths, chrono::Utc::now().timestamp()).await;
+    assert!(progress.complete, "{:?}", progress.error);
+
+    let exposure = |id: i32| {
+        let db = &f.db;
+        async move {
+            assets::find_by_id(db, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .exposure
+                .unwrap()
+        }
+    };
+    assert_eq!(exposure(born_private.id).await, "public");
+    // Deliberately withdrawn, or not an AI task result: left as they are.
+    assert_eq!(exposure(withdrawn.id).await, "private");
+    assert_eq!(exposure(upload.id).await, "private");
+    let row =
+        f.db.query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT value FROM tapp_storage WHERE key = 'gallery'",
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let value: serde_json::Value = row.try_get("", "value").unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "images": [born_private.url, withdrawn.url],
+            "cover": content_path(upload.id),
+        })
+    );
+    // The user's own media is protected; the site upload is not theirs to pin.
+    assert!(matches!(
+        f.service.delete(&f.db, born_private.id).await,
+        Err(MediaError::InUse)
+    ));
+    assert!(matches!(
+        f.service.delete(&f.db, withdrawn.id).await,
+        Err(MediaError::InUse)
+    ));
+    assert_eq!(references::active_count(&f.db, upload.id).await.unwrap(), 0);
+    f.close().await;
+}
+
+/// Installation-shared storage lives under the owner, but a member writes it
+/// with the image they generated: that image is theirs to protect.
+#[tokio::test]
+async fn postgres_storage_binds_media_as_its_writer() {
+    use crate::services::tapp_storage::{record_storage_media, write_storage_value_as};
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    f.db.execute_unprepared("INSERT INTO users (id, username) VALUES (2, 'media-member')")
+        .await
+        .unwrap();
+    let image = f
+        .service
+        .create_from_bytes(
+            &f.db,
+            MediaContext::user(MediaActor::user(2).unwrap(), MediaSource::Generated).unwrap(),
+            NewMediaBytes {
+                bytes: png().into(),
+                claimed_mime: "image/png".into(),
+                filename: "generated".into(),
+                max_bytes: 1024 * 1024,
+                derived_from_id: None,
+                exposure: MediaExposure::Public,
+            },
+        )
+        .await
+        .unwrap();
+    let value = json!({ "image": image.url });
+    write_storage_value_as(&f.db, 1, Some(1), "app", "_shared.a", value.clone())
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 0);
+    write_storage_value_as(&f.db, 1, Some(2), "app", "_shared.b", value.clone())
+        .await
+        .unwrap();
+    assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 1);
+
+    // Direct writers record what the row holds when they call, not a copy.
+    f.db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO tapp_storage (tapp_id, user_id, key, value, created_at, updated_at)
+         VALUES ('app', 2, 'report', $1, NOW(), NOW())",
+        [value.into()],
+    ))
+    .await
+    .unwrap();
+    let row =
+        f.db.query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT id FROM tapp_storage WHERE key = 'report'",
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    record_storage_media(&f.db, row.try_get("", "id").unwrap(), Some(2)).await;
+    assert_eq!(references::active_count(&f.db, image.id).await.unwrap(), 2);
+    f.close().await;
+}
+
 #[tokio::test]
 async fn postgres_upgrade_imports_legacy_wallpaper_saved_under_previous_origin() {
     let Some(f) = Fixture::new().await else {

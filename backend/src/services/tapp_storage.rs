@@ -388,6 +388,20 @@ pub async fn write_storage_value(
     key: &str,
     value: Value,
 ) -> Result<(), TappStorageError> {
+    write_storage_value_as(db, user_id, Some(user_id), tapp_id, key, value).await
+}
+
+/// [`write_storage_value`] into `user_id`'s namespace on behalf of `writer`,
+/// whose media the value may cite. Installation-shared and private areas live
+/// under the owner, but any member may write them with images they generated.
+pub async fn write_storage_value_as(
+    db: &DatabaseConnection,
+    user_id: i32,
+    writer: Option<i32>,
+    tapp_id: &str,
+    key: &str,
+    value: Value,
+) -> Result<(), TappStorageError> {
     use sea_orm::TransactionTrait;
     // One transaction: the upsert's row lock orders concurrent writes of a
     // key, so the recorded references always match the stored value.
@@ -419,20 +433,46 @@ RETURNING id
             }
         })?;
     if let Some(id) = row.and_then(|row| row.try_get::<i32>("", "id").ok()) {
-        bind_storage_media(&txn, id, user_id, &value).await;
+        bind_storage_media(&txn, id, writer, &value).await;
     }
     txn.commit().await.map_err(|_| TappStorageError::Database)
 }
 
+/// [`bind_storage_media`] for writers that insert or update rows themselves
+/// (reports, components, Agent-created resources). Binds the value as stored
+/// under the row lock, so a racing write never leaves stale references.
+pub async fn record_storage_media(db: &DatabaseConnection, row_id: i32, writer: Option<i32>) {
+    use sea_orm::TransactionTrait;
+    let result = async {
+        let txn = db.begin().await?;
+        let row = txn
+            .query_one_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "SELECT value FROM tapp_storage WHERE id = $1 FOR UPDATE",
+                [row_id.into()],
+            ))
+            .await?;
+        if let Some(row) = row {
+            let value: Value = row.try_get("", "value")?;
+            bind_storage_media(&txn, row_id, writer, &value).await;
+        }
+        txn.commit().await
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, row_id, "tapp storage media references not recorded");
+    }
+}
+
 /// Apps keep generated results (and any media URL) in storage long after the
 /// task that produced them expired. Protect what the stored value shows, as
-/// the namespace's user: an app cannot pin someone else's media and guest
-/// namespaces bind nothing. Never fails the write. Deleted rows are pruned by
-/// media maintenance, so the many delete paths need no hook.
+/// its writer: an app cannot pin someone else's media and guests bind
+/// nothing. Never fails the write. Deleted rows are pruned by media
+/// maintenance, so the many delete paths need no hook.
 async fn bind_storage_media(
     txn: &sea_orm::DatabaseTransaction,
     row_id: i32,
-    user_id: i32,
+    writer: Option<i32>,
     value: &Value,
 ) {
     use crate::services::media::{Authority, Citations, Consumer, MediaActor, Unresolved, bind};
@@ -440,7 +480,7 @@ async fn bind_storage_media(
     let origins = crate::services::media::upgrade::configured_origins().await;
     let citations = Citations::strings(&origins, value, |i| format!("value:{i}"));
     let consumer = Consumer::tapp_storage(row_id);
-    let actor = MediaActor::user(user_id).ok();
+    let actor = writer.and_then(|id| MediaActor::user(id).ok());
     let authority = actor
         .as_ref()
         .map_or(Authority::Anonymous, Authority::Actor);
@@ -537,10 +577,10 @@ mod tests {
     fn write_storage_value_lets_the_trigger_own_quota() {
         let src = include_str!("tapp_storage.rs");
         let write = src
-            .split("pub async fn write_storage_value")
+            .split("pub async fn write_storage_value_as")
             .nth(1)
             .and_then(|rest| rest.split("#[cfg(test)]").next())
-            .expect("write_storage_value");
+            .expect("write_storage_value_as");
         assert!(
             !write.contains("pg_advisory_xact_lock"),
             "app-layer lock duplicates the quota trigger"

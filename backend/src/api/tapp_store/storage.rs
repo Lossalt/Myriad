@@ -77,7 +77,19 @@ pub(crate) async fn write_storage_value(
     key: &str,
     value: serde_json::Value,
 ) -> Result<(), HttpError> {
-    storage_svc::write_storage_value(db, user_id, tapp_id, key, value)
+    write_storage_value_as(db, user_id, Some(user_id), tapp_id, key, value).await
+}
+
+/// Write into `user_id`'s namespace, binding cited media as `writer`.
+async fn write_storage_value_as(
+    db: &DatabaseConnection,
+    user_id: i32,
+    writer: Option<i32>,
+    tapp_id: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), HttpError> {
+    storage_svc::write_storage_value_as(db, user_id, writer, tapp_id, key, value)
         .await
         .map_err(|e| HttpError::from(storage_status(e)))
 }
@@ -442,9 +454,10 @@ pub(super) async fn set_shared(
     validate_storage_value_size(&value)?;
     let access = authorize_tapp_shared_write(&db, &claims, &tapp_id).await?;
     require_shared_write(&db, &claims, access).await?;
-    write_storage_value(
+    write_storage_value_as(
         &db,
         access.installation_namespace(),
+        claims.subject_id(),
         &tapp_id,
         &storage_key,
         value,
@@ -589,9 +602,10 @@ pub(super) async fn set_private(
     let access = authorize_tapp_private(&db, &claims, &tapp_id).await?;
     let storage_key = private_storage_key(&key)?;
     validate_storage_value_size(&value)?;
-    write_storage_value(
+    write_storage_value_as(
         &db,
         access.installation_namespace(),
+        claims.subject_id(),
         &tapp_id,
         &storage_key,
         value,
