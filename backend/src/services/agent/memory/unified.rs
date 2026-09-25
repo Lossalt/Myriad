@@ -31,6 +31,11 @@ const MAX_EVIDENCE_CHARS: usize = 400;
 pub const MAX_CONCEPTS: usize = 5;
 pub const MAX_ALIASES: usize = 5;
 const MAX_CONCEPT_CHARS: usize = 24;
+/// Share of a recalled memory's rank that comes from being named directly;
+/// the rest is its activation after spreading.
+const DIRECT_WEIGHT: f64 = 0.6;
+/// Activation an unnamed memory needs before it comes to mind at all.
+const ASSOCIATED_MIN: f64 = 0.15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
@@ -399,9 +404,10 @@ fn fade_order(left: &agent_memories::Model, right: &agent_memories::Model) -> st
 }
 
 /// Relevant active memories of `user_id` that may be said in front of
-/// `present`. With a query, rows ranked by BM25 against it (see
-/// `lexical`); when any row truly matches, only matching rows are
-/// returned. Ties keep recency. Recalled rows count as used.
+/// `present`. With a query, rows it truly names (BM25, see `lexical`) come to
+/// mind first, then what they bring along by association (see
+/// `association`). When nothing is named, recency. Recalled rows count as
+/// used.
 pub async fn recall<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
@@ -461,14 +467,67 @@ fn rank(
         })
         .collect();
     let scores = super::lexical::score_all(query.unwrap_or(""), &documents);
-    let mut scored: Vec<(super::lexical::Score, agent_memories::Model)> =
-        scores.into_iter().zip(rows).collect();
-    if scored.iter().any(|(score, _)| score.strong) {
-        scored.retain(|(score, _)| score.strong);
+    let strongest = scores
+        .iter()
+        .filter(|score| score.strong)
+        .map(|score| score.value)
+        .fold(0.0, f64::max);
+    if strongest <= 0.0 {
+        // Nothing truly named: weak evidence, then recency. No association
+        // starts from a guess.
+        let mut scored: Vec<(f64, agent_memories::Model)> =
+            scores.iter().map(|score| score.value).zip(rows).collect();
+        // Stable: equal scores keep newest-first order from the query.
+        scored.sort_by(|left, right| right.0.total_cmp(&left.0));
+        return scored.into_iter().take(limit).map(|(_, row)| row).collect();
     }
-    // Stable: equal scores keep newest-first order from the query.
-    scored.sort_by(|left, right| right.0.value.total_cmp(&left.0.value));
-    scored.into_iter().take(limit).map(|(_, row)| row).collect()
+    let seeds: Vec<f64> = scores
+        .iter()
+        .map(|score| {
+            if score.strong {
+                score.value / strongest
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let nodes: Vec<super::association::Node> = rows
+        .iter()
+        .zip(&concepts)
+        .map(|(row, concepts)| super::association::Node {
+            concepts,
+            at: row.created_at,
+        })
+        .collect();
+    let activation = super::association::spread(&seeds, &nodes);
+    let mut scored: Vec<(f64, bool, agent_memories::Model)> = seeds
+        .iter()
+        .zip(&activation)
+        .zip(rows)
+        .filter(|((seed, activation), _)| **seed > 0.0 || **activation >= ASSOCIATED_MIN)
+        .map(|((seed, activation), row)| {
+            (
+                DIRECT_WEIGHT * seed + (1.0 - DIRECT_WEIGHT) * activation,
+                *seed > 0.0,
+                row,
+            )
+        })
+        .collect();
+    scored.sort_by(|left, right| right.0.total_cmp(&left.0));
+    // What the query named comes first in number; association fills in.
+    let mut associated_left = (limit / 2).max(1);
+    scored
+        .into_iter()
+        .filter(|(_, direct, _)| {
+            *direct
+                || (associated_left > 0 && {
+                    associated_left -= 1;
+                    true
+                })
+        })
+        .take(limit)
+        .map(|(_, _, row)| row)
+        .collect()
 }
 
 /// A person's active memories, newest first, for the memory panel.
@@ -615,12 +674,14 @@ mod tests {
         assert_eq!(audience_of(&shared), vec![7, 8]);
     }
 
+    const DAY: i64 = 86_400;
+
     #[test]
     fn matching_rows_rank_first_and_ties_keep_recency() {
         let rows = vec![
             row("new", "likes jasmine tea", 0.5, 0),
-            row("mid", "works night shifts", 0.5, 10),
-            row("old", "prefers saffron tea", 0.5, 20),
+            row("mid", "works night shifts", 0.5, 10 * DAY),
+            row("old", "prefers saffron tea", 0.5, 20 * DAY),
         ];
         let ranked: Vec<String> = rank(rows.clone(), Some("tea"), 8)
             .into_iter()
@@ -640,10 +701,11 @@ mod tests {
     }
 
     fn ranked(facts: &[&str], query: Option<&str>, limit: usize) -> Vec<String> {
+        // A day apart each, so nothing is linked by having been learned together.
         let rows = facts
             .iter()
             .enumerate()
-            .map(|(age, text)| row(&age.to_string(), text, 0.5, age as i64))
+            .map(|(age, text)| row(&age.to_string(), text, 0.5, age as i64 * DAY))
             .collect();
         rank(rows, query, limit)
             .into_iter()
@@ -685,6 +747,52 @@ mod tests {
             ranked(&["天气好就去跑步", "今天要加班"], Some("今天几点下班"), 2),
             vec!["今天要加班"],
             "sharing 天 alone is not a match"
+        );
+    }
+
+    fn about(mut row: agent_memories::Model, concepts: &[&str]) -> agent_memories::Model {
+        row.concepts = json!(
+            concepts
+                .iter()
+                .map(|name| Concept {
+                    name: name.to_string(),
+                    aliases: Vec::new(),
+                })
+                .collect::<Vec<_>>()
+        );
+        row
+    }
+
+    #[test]
+    fn what_is_named_brings_its_associations_along() {
+        let rows = vec![
+            about(row("cat", "养了一只猫叫年糕", 0.5, 0), &["猫", "年糕"]),
+            about(row("vet", "年糕上周打了疫苗", 0.5, 30 * DAY), &["年糕"]),
+            row("same-chat", "那天刚搬完家", 0.5, 60 + 40 * DAY),
+            about(row("tea", "喜欢茉莉花茶", 0.5, 40 * DAY), &["茶"]),
+            row("shift", "上夜班", 0.5, 50 * DAY),
+        ];
+        let ids = |query: &str, limit: usize| -> Vec<String> {
+            rank(rows.clone(), Some(query), limit)
+                .into_iter()
+                .map(|row| row.id)
+                .collect()
+        };
+        assert_eq!(
+            ids("猫最近怎么样", 8),
+            vec!["cat", "vet"],
+            "年糕 links the vaccine to the cat"
+        );
+        assert_eq!(
+            ids("茉莉花茶", 8),
+            vec!["tea", "same-chat"],
+            "learned a minute apart"
+        );
+        assert_eq!(ids("猫最近怎么样", 1), vec!["cat"]);
+        assert_eq!(
+            ids("明日预报", 2),
+            vec!["cat", "vet"],
+            "nothing named: recency, no association"
         );
     }
 
@@ -771,9 +879,15 @@ mod db_tests {
         )
         .await
         .unwrap();
-        assert_eq!(tea.len(), 1);
-        assert_eq!(tea[0].content, "prefers saffron tea");
-        assert_eq!(tea[0].user_id, Some(7));
+        // Learned moments apart, the night shifts come along by association;
+        // user 8's identical fact is never in the graph at all.
+        assert_eq!(
+            tea.iter()
+                .map(|memory| memory.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["prefers saffron tea", "works night shifts"]
+        );
+        assert!(tea.iter().all(|memory| memory.user_id == Some(7)));
 
         assert!(
             recall(&db, 7, &Audience::private(8), None, &[], 8)
