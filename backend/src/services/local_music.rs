@@ -5,7 +5,8 @@
 
 use anyhow::{Result, anyhow};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 
@@ -198,6 +199,8 @@ pub async fn update_track(
     if let Some(cover_id) = input.cover_media_id {
         ensure_media_mime_prefix(db, cover_id, "cover", "image/").await?;
     }
+    let old_audio_media_id = existing.audio_media_id;
+    let old_cover_media_id = existing.cover_media_id;
     let mut active: local_music_tracks::ActiveModel = existing.into();
     active.title = Set(input.title.trim().to_string());
     active.artist = Set(input.artist.trim().to_string());
@@ -210,14 +213,66 @@ pub async fn update_track(
     active.enabled = Set(input.enabled);
     active.updated_at = Set(chrono::Utc::now().into());
     let row = active.update(db).await?;
+    if old_audio_media_id != row.audio_media_id {
+        release_media_if_unused(db, Some(old_audio_media_id)).await;
+    }
+    if old_cover_media_id != row.cover_media_id {
+        release_media_if_unused(db, old_cover_media_id).await;
+    }
     let media_id = row.audio_media_id;
     let media = load_media_map(db, &[media_id]).await?;
     Ok(to_view(row, media.get(&media_id)))
 }
 
 pub async fn delete_track(db: &DatabaseConnection, id: i32) -> Result<()> {
+    let Some(row) = local_music_tracks::Entity::find_by_id(id).one(db).await? else {
+        return Ok(());
+    };
+    let audio_media_id = row.audio_media_id;
+    let cover_media_id = row.cover_media_id;
+    local_music_playlist_tracks::Entity::delete_many()
+        .filter(local_music_playlist_tracks::Column::TrackId.eq(id))
+        .exec(db)
+        .await?;
     local_music_tracks::Entity::delete_by_id(id).exec(db).await?;
+    release_media_if_unused(db, Some(audio_media_id)).await;
+    release_media_if_unused(db, cover_media_id).await;
     Ok(())
+}
+
+/// Delete the stored media file once no local track still points at it.
+/// Best-effort: a pending unlink is retried by media recovery; an in-use
+/// asset (e.g. also cited by a note) is left alone and logged.
+async fn release_media_if_unused(db: &DatabaseConnection, media_id: Option<i32>) {
+    let Some(media_id) = media_id else {
+        return;
+    };
+    let still_used = local_music_tracks::Entity::find()
+        .filter(
+            Condition::any()
+                .add(local_music_tracks::Column::AudioMediaId.eq(media_id))
+                .add(local_music_tracks::Column::CoverMediaId.eq(media_id)),
+        )
+        .one(db)
+        .await;
+    match still_used {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!(%err, media_id, "local music media ref check");
+            return;
+        }
+    }
+    let service =
+        crate::services::media::MediaService::from_data_paths(&crate::services::data_paths::paths());
+    match service.delete(db, media_id).await {
+        Ok(crate::services::media::DeleteOutcome::Deleted) => {}
+        Ok(crate::services::media::DeleteOutcome::PendingRetry) => {
+            tracing::warn!(media_id, "local music media delete pending retry");
+        }
+        Err(crate::services::media::MediaError::Missing) => {}
+        Err(err) => tracing::warn!(%err, media_id, "local music media delete"),
+    }
 }
 
 pub async fn track_lyrics(db: &DatabaseConnection, id: i32) -> Result<Option<String>> {
@@ -484,5 +539,46 @@ mod tests {
     fn empty_lyrics_are_dropped() {
         assert_eq!(normalize_lyrics(Some("  \n".into())), None);
         assert_eq!(normalize_lyrics(Some("[00:01.00] hi ".into())).as_deref(), Some("[00:01.00] hi"));
+    }
+
+    #[test]
+    fn delete_track_releases_audio_and_cover_media() {
+        let src = include_str!("local_music.rs");
+        let body = src
+            .split("pub async fn delete_track(")
+            .nth(1)
+            .and_then(|rest| rest.split("\npub async fn ").next())
+            .expect("delete_track");
+        assert!(body.contains("release_media_if_unused"));
+        assert!(body.contains("audio_media_id"));
+        assert!(body.contains("cover_media_id"));
+        assert!(body.contains("local_music_playlist_tracks"));
+    }
+
+    #[test]
+    fn update_track_releases_replaced_media() {
+        let src = include_str!("local_music.rs");
+        let body = src
+            .split("pub async fn update_track(")
+            .nth(1)
+            .and_then(|rest| rest.split("\npub async fn ").next())
+            .expect("update_track");
+        assert!(body.contains("old_audio_media_id"));
+        assert!(body.contains("old_cover_media_id"));
+        assert!(body.contains("release_media_if_unused"));
+    }
+
+    #[test]
+    fn release_skips_media_still_bound_to_a_track() {
+        let src = include_str!("local_music.rs");
+        let body = src
+            .split("async fn release_media_if_unused(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("release_media_if_unused");
+        assert!(body.contains("AudioMediaId.eq"));
+        assert!(body.contains("CoverMediaId.eq"));
+        assert!(body.contains("MediaService::from_data_paths"));
+        assert!(body.contains("service.delete"));
     }
 }

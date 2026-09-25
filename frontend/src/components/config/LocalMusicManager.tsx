@@ -4,12 +4,14 @@ import { useConfigI18n } from '../../contexts/I18nContext'
 import { updateConfig } from '../../services/configApi'
 import {
   deleteLocalTrack,
+  fetchLocalLyrics,
   formatBytes,
   formatDuration,
   listLocalTracks,
   updateLocalTrack,
   uploadLocalTrack,
 } from '../../services/localMusicApi'
+import { uploadMedia } from '../../services/mediaApi'
 import { emitAppEvent } from '../../utils/appEvents'
 import { clearPlaylistCache } from '../../utils/musicPlayer'
 import { userFacingError } from '../../utils/userFacingError'
@@ -17,6 +19,12 @@ import { SettingsButton } from '../settings'
 
 const EXT_FILTERS = ['all', 'mp3', 'flac', 'ogg'] as const
 const ACCEPT = '.mp3,.flac,.ogg,audio/mpeg,audio/flac,audio/ogg'
+const COVER_ACCEPT = 'image/jpeg,image/png,image/webp'
+
+type CoverDraft =
+  | { mode: 'keep' }
+  | { mode: 'clear' }
+  | { mode: 'replace'; file: File; previewUrl: string }
 
 async function readAudioDurationMs(file: File): Promise<number> {
   return new Promise((resolve) => {
@@ -44,7 +52,44 @@ export function LocalMusicManager() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [editingTrack, setEditingTrack] = useState<LocalTrack | null>(null)
+  const [coverDraft, setCoverDraft] = useState<CoverDraft>({ mode: 'keep' })
+  const [lyricsDraft, setLyricsDraft] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
+  const coverPreviewRef = useRef<string | null>(null)
+
+  const releaseCoverPreview = useCallback(() => {
+    if (coverPreviewRef.current) {
+      URL.revokeObjectURL(coverPreviewRef.current)
+      coverPreviewRef.current = null
+    }
+  }, [])
+
+  const closeEditor = useCallback(() => {
+    releaseCoverPreview()
+    setEditingTrack(null)
+    setCoverDraft({ mode: 'keep' })
+    setLyricsDraft('')
+  }, [releaseCoverPreview])
+
+  const openEditor = useCallback((track: LocalTrack) => {
+    releaseCoverPreview()
+    setEditingTrack({ ...track })
+    setCoverDraft({ mode: 'keep' })
+    setLyricsDraft('')
+    void fetchLocalLyrics(track.id)
+      .then((lrc) => setLyricsDraft(lrc))
+      .catch(() => setLyricsDraft(''))
+  }, [releaseCoverPreview])
+
+  const coverPreviewUrl = useMemo(() => {
+    if (coverDraft.mode === 'replace') return coverDraft.previewUrl
+    if (coverDraft.mode === 'clear') return null
+    return editingTrack?.coverUrl ?? null
+  }, [coverDraft, editingTrack])
+
+  const hasCover = Boolean(coverPreviewUrl)
 
   const refresh = useCallback(async () => {
     setBusy(true)
@@ -103,17 +148,25 @@ export function LocalMusicManager() {
     setBusy(true)
     setError('')
     try {
+      let coverMediaId: number | null = editingTrack.coverMediaId
+      if (coverDraft.mode === 'clear') {
+        coverMediaId = null
+      } else if (coverDraft.mode === 'replace') {
+        const asset = await uploadMedia(coverDraft.file)
+        coverMediaId = asset.id
+      }
       await updateLocalTrack(editingTrack.id, {
         title: editingTrack.title,
         artist: editingTrack.artist,
         album: editingTrack.album,
         durationMs: editingTrack.durationMs,
         audioMediaId: editingTrack.audioMediaId,
-        coverMediaId: editingTrack.coverMediaId,
+        coverMediaId,
+        lyrics: lyricsDraft,
         sortOrder: editingTrack.sortOrder,
         enabled: editingTrack.enabled,
       })
-      setEditingTrack(null)
+      closeEditor()
       await refresh()
     } catch (err) {
       setError(userFacingError(err, t.errors.operationFailed))
@@ -222,11 +275,77 @@ export function LocalMusicManager() {
                   placeholder={t.config.localMusicArtist}
                   onChange={e => setEditingTrack({ ...editingTrack, artist: e.target.value })}
                 />
+
+                {/* Cover */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs opacity-70 w-10 shrink-0">{t.config.localMusicCover}</span>
+                  <div className="relative group">
+                    {hasCover && coverPreviewUrl ? (
+                      <img
+                        src={coverPreviewUrl}
+                        alt=""
+                        className="w-14 h-14 rounded-lg object-cover border border-black/10 dark:border-white/10"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-lg border border-dashed border-black/20 dark:border-white/20 flex items-center justify-center text-[10px] opacity-50">
+                        {t.config.localMusicCoverEmpty}
+                      </div>
+                    )}
+                    {hasCover && (
+                      <button
+                        type="button"
+                        aria-label={t.config.localMusicCoverClear}
+                        title={t.config.localMusicCoverClear}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => {
+                          releaseCoverPreview()
+                          setCoverDraft({ mode: 'clear' })
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  <SettingsButton
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => coverInputRef.current?.click()}
+                  >
+                    {hasCover ? t.config.localMusicCoverReplace : t.config.localMusicCoverUpload}
+                  </SettingsButton>
+                  <input
+                    ref={coverInputRef}
+                    type="file"
+                    accept={COVER_ACCEPT}
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      e.target.value = ''
+                      if (!file) return
+                      releaseCoverPreview()
+                      const previewUrl = URL.createObjectURL(file)
+                      coverPreviewRef.current = previewUrl
+                      setCoverDraft({ mode: 'replace', file, previewUrl })
+                    }}
+                  />
+                </div>
+
+                {/* Lyrics */}
+                <div className="space-y-1">
+                  <div className="text-xs opacity-70">{t.config.localMusicLyrics}</div>
+                  <textarea
+                    className="w-full min-h-20 px-2 py-1.5 rounded bg-black/5 dark:bg-white/10 text-xs font-mono leading-4 resize-y"
+                    value={lyricsDraft}
+                    placeholder={t.config.localMusicLyricsEmpty}
+                    onChange={e => setLyricsDraft(e.target.value)}
+                  />
+                </div>
+
                 <div className="flex gap-2">
                   <SettingsButton size="sm" variant="primary" onClick={() => void saveTrack()}>
                     {t.common.save}
                   </SettingsButton>
-                  <SettingsButton size="sm" variant="ghost" onClick={() => setEditingTrack(null)}>
+                  <SettingsButton size="sm" variant="ghost" onClick={closeEditor}>
                     {t.common.cancel}
                   </SettingsButton>
                 </div>
@@ -257,19 +376,43 @@ export function LocalMusicManager() {
                   <div className="text-[11px] opacity-50 tabular-nums">
                     {formatBytes(track.sizeBytes)}
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    <SettingsButton size="sm" variant="ghost" onClick={() => setEditingTrack({ ...track })}>
-                      {t.common.edit}
-                    </SettingsButton>
-                    <SettingsButton
-                      size="sm"
-                      variant="danger"
-                      confirm={t.config.localMusicDeleteConfirm}
-                      onClick={() => void deleteLocalTrack(track.id).then(refresh)}
-                    >
-                      {t.common.delete}
-                    </SettingsButton>
-                  </div>
+                  {confirmDeleteId === track.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs opacity-80">{t.config.localMusicDeleteConfirm}</span>
+                      <SettingsButton
+                        size="sm"
+                        variant="danger"
+                        onClick={() => {
+                          void deleteLocalTrack(track.id).then(() => {
+                            setConfirmDeleteId(null)
+                            return refresh()
+                          })
+                        }}
+                      >
+                        {t.common.delete}
+                      </SettingsButton>
+                      <SettingsButton
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        {t.common.cancel}
+                      </SettingsButton>
+                    </div>
+                  ) : (
+                    <div className="flex gap-1 shrink-0">
+                      <SettingsButton size="sm" variant="ghost" onClick={() => openEditor(track)}>
+                        {t.common.edit}
+                      </SettingsButton>
+                      <SettingsButton
+                        size="sm"
+                        variant="danger"
+                        onClick={() => setConfirmDeleteId(track.id)}
+                      >
+                        {t.common.delete}
+                      </SettingsButton>
+                    </div>
+                  )}
                 </div>
               </>
             )}

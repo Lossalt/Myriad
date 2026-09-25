@@ -68,6 +68,14 @@ export async function uploadLocalTrack(form: FormData): Promise<LocalTrack> {
   })
 }
 
+/** Guest LRC endpoint; used by the admin editor to preview lyrics. */
+export async function fetchLocalLyrics(id: number): Promise<string> {
+  const body = await apiService.get<{ lrc?: string }>(
+    `/proxy/music/local/lyrics/${id}`,
+  )
+  return body.lrc ?? ''
+}
+
 export async function listLocalPlaylists(): Promise<LocalPlaylist[]> {
   const body = await apiService.get<{ playlists: LocalPlaylist[] }>(
     '/local-music/playlists',
