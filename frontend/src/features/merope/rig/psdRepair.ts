@@ -22,8 +22,13 @@ export interface Anime25DPsdRepair {
 
 type Group = RasterLayer['group']
 
-/** Covering line art left around a revealed area is erased this far out. */
-const REVEAL_FRINGE = 5
+/**
+ * A reveal grows past the verdict threshold to the covering art's real edge,
+ * which keeps its own line art; this caps runaway growth in flat colour.
+ */
+const REVEAL_MAX_GROWTH = 4
+const REVEAL_SOFT_EDGE = 2
+const REVEAL_SOFT_EDGE_ALPHA = 160
 /**
  * A covered layer that only matches pixel by pixel is not the same art: pale
  * skin under pale hair does. Faithful reveals measured 7-23; false ones 31-37.
@@ -128,20 +133,36 @@ export function repairAnime25DPsd(
     for (const target of region.members) {
       targets.set(target, before.covered[target])
     }
-    for (const [target, below] of fringe(
-      region.members,
-      bounds.width,
-      bounds.height,
-      REVEAL_FRINGE,
-    )) {
-      if (targets.has(target)) continue
-      const matched = before.covered[below]
-      if (
-        revealsBetter(before, visible[matched], target, at(target), reference)
-      ) {
-        targets.set(target, matched)
+    // Grow while the covered art keeps beating the composite, so the reveal
+    // ends at the covering drawing's own outline, not at a threshold contour.
+    const queue = [...region.members]
+    const limit = region.members.length * REVEAL_MAX_GROWTH
+    while (queue.length > 0 && targets.size < limit) {
+      const target = queue.pop()!
+      const x = target % bounds.width
+      const y = Math.floor(target / bounds.width)
+      for (const next of [
+        x > 0 ? target - 1 : -1,
+        x < bounds.width - 1 ? target + 1 : -1,
+        y > 0 ? target - bounds.width : -1,
+        y < bounds.height - 1 ? target + bounds.width : -1,
+      ]) {
+        if (next < 0 || targets.has(next)) continue
+        // A covering strand may span several layers underneath it.
+        const matched = revealableBelow(
+          before,
+          visible,
+          next,
+          at(next),
+          reference,
+        )
+        if (matched >= 0) {
+          targets.set(next, matched)
+          queue.push(next)
+        }
       }
     }
+    const erased = new Map<number, Array<{ x: number; y: number }>>()
     for (const [target, below] of targets) {
       const { x, y } = at(target)
       for (let index = below + 1; index < visible.length; index += 1) {
@@ -152,6 +173,25 @@ export function repairAnime25DPsd(
         const copy = writable(index)
         copy.data[((y - copy.top) * copy.width + (x - copy.left)) * 4 + 3] = 0
         repaired[y * reference.width + x] = 1
+        const points = erased.get(index) ?? []
+        points.push({ x, y })
+        erased.set(index, points)
+      }
+    }
+    // The removed drawing's anti-aliased rim would linger as a ghost outline.
+    for (const [index, points] of erased) {
+      const copy = writable(index)
+      for (const { x, y } of points) {
+        for (let dy = -REVEAL_SOFT_EDGE; dy <= REVEAL_SOFT_EDGE; dy += 1) {
+          for (let dx = -REVEAL_SOFT_EDGE; dx <= REVEAL_SOFT_EDGE; dx += 1) {
+            const alpha = alphaAt(copy, x + dx, y + dy)
+            if (alpha === 0 || alpha >= REVEAL_SOFT_EDGE_ALPHA) continue
+            copy.data[
+              ((y + dy - copy.top) * copy.width + (x + dx - copy.left)) * 4 + 3
+            ] = 0
+            repaired[(y + dy) * reference.width + x + dx] = 1
+          }
+        }
       }
     }
     revealed += 1
@@ -312,6 +352,22 @@ function revealsBetter(
     analysis.color[target * 3 + 2] - reference.data[referenceOffset + 2],
   )
   return compositeDistance > belowDistance + 10
+}
+
+/** The highest covered layer whose art beats the composite at a pixel. */
+function revealableBelow(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  visible: readonly RasterLayer[],
+  target: number,
+  position: { x: number; y: number },
+  reference: Readonly<Anime25DSourceReference>,
+): number {
+  for (let index = analysis.top[target] - 1; index >= 0; index -= 1) {
+    if (revealsBetter(analysis, visible[index], target, position, reference)) {
+      return index
+    }
+  }
+  return -1
 }
 
 /** The body part a recovered region belongs to, by the layers around it. */

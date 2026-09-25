@@ -153,7 +153,10 @@ untouched. Scenic backdrops disable the backdrop-dependent verdicts.
 Repair then acts on those verdicts. A `buried` region whose covered layer
 matches the illustration as a whole (mean distance ≤ 26; faithful reveals
 measured 7–23, coincidental ones 31–37) is revealed by erasing the covering
-pixels, including a few pixels of leftover line art around it. Anything else
+pixels. The reveal grows past the verdict threshold for as long as some covered
+layer still beats the composite, so it stops at the covering drawing's own
+outline instead of a jagged threshold contour, and the removed drawing's
+translucent rim is cleared so no ghost outline remains. Anything else
 the illustration shows (`missing`, `mismatch`, weak `buried`) is lifted from
 the illustration itself into a rigid `objects` layer per body group, placed
 just above the layers it overrides. A morphological closing plus small-hole

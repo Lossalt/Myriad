@@ -108,6 +108,66 @@ test('covered art is revealed by erasing only the covering pixels', () => {
   assert.deepEqual(result.reconciliation?.regions, [])
 })
 
+function paint(
+  target: RasterLayer,
+  [left, top, width, height]: Box,
+  color: Rgb,
+  alpha = 255,
+) {
+  for (let y = top; y < top + height; y += 1) {
+    for (let x = left; x < left + width; x += 1) {
+      target.data.set(
+        [...color, alpha],
+        ((y - target.top) * target.width + (x - target.left)) * 4,
+      )
+    }
+  }
+}
+
+test('a reveal grows to the covering art edge, not the verdict threshold', () => {
+  const arm = layer('handwear', [80, 110, 60, 40], SKIN)
+  const torso = layer('topwear', TORSO, CLOTH)
+  // A wide band close enough to skin to escape the verdict, still clearly worse.
+  const band: Rgb = [SKIN[0] - 50, SKIN[1] - 50, SKIN[2] - 40]
+  paint(torso, [120, 110, 20, 40], band)
+  const result = repairAnime25DPsd(
+    [layer('face', FACE, SKIN, 'head'), arm, torso],
+    allVisible,
+    reference((fill) => {
+      portrait(fill)
+      fill([80, 110, 60, 40], SKIN)
+    }),
+    2,
+  )
+  const repaired = result.layers[2]
+  assert.equal(pixel(repaired, 90, 130)[3], 0)
+  assert.equal(pixel(repaired, 137, 130)[3], 0, 'the far side of the band')
+  assert.equal(pixel(repaired, 150, 130)[3], 255, 'beyond the covered arm')
+})
+
+test('the removed drawing leaves no anti-aliased ghost outline', () => {
+  const arm = layer('handwear', [80, 110, 60, 40], SKIN)
+  const hair = layer('back-hair', [90, 115, 30, 30], HAIR, 'head')
+  paint(hair, [90, 115, 30, 1], HAIR, 20)
+  const result = repairAnime25DPsd(
+    [
+      layer('face', FACE, SKIN, 'head'),
+      layer('topwear', TORSO, CLOTH),
+      arm,
+      hair,
+    ],
+    allVisible,
+    reference((fill) => {
+      portrait(fill)
+      fill([80, 110, 60, 40], SKIN)
+    }),
+    2,
+  )
+  const repaired = result.layers[3]
+  assert.equal(pixel(repaired, 100, 130)[3], 0)
+  assert.equal(pixel(repaired, 100, 115)[3], 0, 'the translucent rim')
+})
+
 test('layers with expression variants are neither edited nor covered', () => {
   const face = layer('face', FACE, SKIN, 'head')
   const lash = layer('eyelash', [80, 40, 40, 12], GOLD, 'head')
