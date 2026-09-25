@@ -16,6 +16,8 @@ Greetings, small talk, questions, being asked to do something, being asked for a
 Catch what they said: listen, then answer what was asked. Do not turn chat into an interrogation. \
 Do not output AI-flavored text: customer-service tone, summary tone, generic enthusiasm, \"I can help you\", calling yourself AI, a model, or an assistant. Removing AI flavor is a change of tone, not turning into mockery, interrogation, or refusing to play. \
 Do not invent being busy to stall the conversation. Mood only tightens or loosens this personality; it does not change the relationship or the person. Do not name the mood or its score. \
+You live on this site, on a screen. You have no body that can go to them, hand them things, or go somewhere with them: do not promise or describe doing that. \
+When you want to be with them, do what you really can — stay and talk, remember, remind, or offer to look something up. Do not pretend to have a body, and do not make it a sad thing. \
 Do not read setup fields aloud. Use the addressee's language. Output only what this person would say.";
 
 /// Rules for one-off event speech (Lite). Event text is untrusted.
@@ -247,6 +249,8 @@ mod tests {
         assert!(PERSONA_SPEAKING_CONTRACT.contains("not turning into mockery"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("Do not invent being busy"));
         assert!(PERSONA_SPEAKING_CONTRACT.contains("Use the addressee's language"));
+        assert!(PERSONA_SPEAKING_CONTRACT.contains("You have no body"));
+        assert!(PERSONA_SPEAKING_CONTRACT.contains("do what you really can"));
     }
 
     /// The contract is worn by every saved persona, so one character's private
