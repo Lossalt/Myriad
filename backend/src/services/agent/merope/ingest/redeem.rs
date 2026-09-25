@@ -322,11 +322,9 @@ async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> S
     let soul = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_else(|| "You are Agent.".to_string());
-    let addressee = resolve_addressee_label(db, user_id).await;
-    let mood_block = match get_or_create_state(db, user_id).await {
-        Ok(state) => format!("\n\n{}", format_mood_section(state.mood, state.arousal)),
-        Err(_) => String::new(),
-    };
+    let mind = crate::services::agent::merope::speaking_prompt_plain(
+        &crate::services::agent::merope::speaking_prompt_for_event(db, user_id, summary).await,
+    );
     let recent = recent_proactive(db, user_id, 6)
         .await
         .unwrap_or_default()
@@ -339,12 +337,8 @@ async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> S
     } else {
         recent
     };
-    let system = super::super::speaking_prompts::compose_proactive_system(
-        &soul,
-        &addressee_speaking_section(&addressee),
-        &mood_block,
-        &recent_block,
-    );
+    let system =
+        super::super::speaking_prompts::compose_proactive_system(&soul, &mind, &recent_block);
     let prompt = super::super::speaking_prompts::compose_proactive_user(summary);
     match crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,

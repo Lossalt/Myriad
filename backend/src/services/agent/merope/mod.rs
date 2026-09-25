@@ -258,8 +258,9 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_emotion_section,
-    format_mood_section, format_persona, format_recent_section, format_remembered_section,
-    guest_speaking_section, mood_tone_instruction,
+    format_mood_section, format_on_your_mind_section, format_persona, format_recent_section,
+    format_remembered_section, format_said_unprompted_section, guest_speaking_section,
+    mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -282,12 +283,42 @@ pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Ve
             user_id, None, None,
         ))];
     };
-    if query.is_some_and(|query| !query.trim().is_empty()) {
-        // A chat turn answers from how these words landed, if that is known
-        // soon enough.
-        appraisal::settle(user_id).await;
+    let turn = match query.filter(|query| !query.trim().is_empty()) {
+        Some(words) => {
+            // A chat turn answers from how these words landed, if that is
+            // known soon enough.
+            appraisal::settle(user_id).await;
+            Turn::Chat(words)
+        }
+        None => Turn::Plain,
+    };
+    speaking_prompt_from_db(&db, user_id, turn).await
+}
+
+/// Sections for speaking up unprompted about `summary`. The same mind as a
+/// chat turn: what she knows about them (recalled against what happened), how
+/// she feels, how she is. It reads the conversation's train of thought but
+/// does not move it; only the person's own words do.
+pub async fn speaking_prompt_for_event(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    summary: &str,
+) -> Vec<String> {
+    if user_id <= 0 || !is_logged_in_addressee(user_id) || !is_enabled().await {
+        return Vec::new();
     }
-    speaking_prompt_from_db(&db, user_id, query).await
+    speaking_prompt_from_db(db, user_id, Turn::Event(summary)).await
+}
+
+/// Why she is about to speak.
+#[derive(Clone, Copy)]
+enum Turn<'a> {
+    /// Answering the person's words.
+    Chat(&'a str),
+    /// Speaking up about something that happened (untrusted summary).
+    Event(&'a str),
+    /// Anything else that wears the persona, such as Work.
+    Plain,
 }
 
 const REMEMBERED_PROMPT_LIMIT: usize = 8;
@@ -295,10 +326,14 @@ const RECENT_LEDGER_LIMIT: u64 = 4;
 /// Chat diary only. Event diary reaches speaking via Remember, not this ledger.
 const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_CHAT];
 
+/// Her own unprompted lines a chat turn should know it said.
+const SAID_UNPROMPTED_LIMIT: u64 = 3;
+const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
+
 async fn speaking_prompt_from_db(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
-    query: Option<&str>,
+    turn: Turn<'_>,
 ) -> Vec<String> {
     let addressee = resolve_addressee_label(db, user_id).await;
     let mut sections = vec![addressee_speaking_section(&addressee)];
@@ -308,21 +343,23 @@ async fn speaking_prompt_from_db(
     let myself = self_state::current(db).await;
     // Only a chat turn (it has the person's words) carries its train of
     // thought to the next turn; other readers see memory without moving it.
-    let remembered = match query.filter(|query| !query.trim().is_empty()) {
-        Some(query) => store::recall_remembered_primed(
+    let remembered = match turn {
+        Turn::Chat(words) | Turn::Event(words) => store::recall_remembered_primed(
             db,
             user_id,
-            Some(query),
+            Some(words),
             REMEMBERED_PROMPT_LIMIT,
             &priming::current(user_id),
             myself.recall_breadth(),
         )
         .await
         .map(|(ranked, next)| {
-            priming::keep(user_id, next);
+            if matches!(turn, Turn::Chat(_)) {
+                priming::keep(user_id, next);
+            }
             ranked
         }),
-        None => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT).await,
+        Turn::Plain => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT).await,
     };
     if let Ok(ranked) = remembered {
         if let Some(block) = format_remembered_section(&ranked) {
@@ -355,6 +392,28 @@ async fn speaking_prompt_from_db(
     }
     if let Some(block) = self_state::format_self_section(&myself) {
         sections.push(block);
+    }
+    if matches!(turn, Turn::Chat(_)) {
+        // One mouth: what she said on her own and what was on her mind
+        // belong to the same conversation she is now answering in.
+        let since = chrono::Utc::now() - chrono::Duration::hours(SAID_UNPROMPTED_WITHIN_HOURS);
+        if let Ok(lines) = store::recent_proactive(db, user_id, SAID_UNPROMPTED_LIMIT).await {
+            let lines: Vec<String> = lines
+                .into_iter()
+                .filter(|line| line.created_at.with_timezone(&chrono::Utc) >= since)
+                .rev()
+                .map(|line| ingest::compact_summary(&line.content))
+                .filter(|line| !line.is_empty())
+                .collect();
+            if let Some(block) = format_said_unprompted_section(&lines) {
+                sections.push(block);
+            }
+        }
+        if let Some(segment) = crate::services::agent::consciousness::last_attention(user_id) {
+            if let Some(block) = format_on_your_mind_section(&segment.inner) {
+                sections.push(block);
+            }
+        }
     }
     sections
 }
