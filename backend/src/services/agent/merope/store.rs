@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::models::entities::{
     agent_addressee_state, agent_diary, agent_persona, agent_proactive_messages, agent_sessions,
 };
+use crate::services::agent::memory::unified::Priming;
 
 use super::state::{
     Affect, AffectBaseline, apply_music_listening, clamp, persona_affect_baseline, settle,
@@ -1004,10 +1005,9 @@ pub async fn recall_remembered(
     query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<String>, anyhow::Error> {
-    use crate::services::agent::memory::unified::Priming;
-    Ok(recall_remembered_primed(db, user_id, query, limit, &Priming::default())
-        .await?
-        .0)
+    let priming = Priming::default();
+    let (recalled, _) = recall_remembered_primed(db, user_id, query, limit, &priming).await?;
+    Ok(recalled)
 }
 
 /// [`recall_remembered`] for a chat turn: also starts from what the previous
@@ -1017,8 +1017,8 @@ pub async fn recall_remembered_primed(
     user_id: i32,
     query: Option<&str>,
     limit: usize,
-    priming: &crate::services::agent::memory::unified::Priming,
-) -> Result<(Vec<String>, crate::services::agent::memory::unified::Priming), anyhow::Error> {
+    priming: &Priming,
+) -> Result<(Vec<String>, Priming), anyhow::Error> {
     use crate::services::agent::memory::unified;
     let (recalled, next) = unified::recall_primed(
         db,
@@ -1298,7 +1298,9 @@ mod tests {
                 .await
                 .is_err()
         );
-        let locked = super::get_or_create_state(&transaction, 7001).await.unwrap();
+        let locked = super::get_or_create_state(&transaction, 7001)
+            .await
+            .unwrap();
         let second = super::save_affect_on(
             &transaction,
             locked,
