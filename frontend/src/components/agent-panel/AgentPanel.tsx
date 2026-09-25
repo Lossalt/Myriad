@@ -26,10 +26,10 @@ import {
   AGENT_PANEL_OPEN_EVENT,
   agentPanelOpenView,
   attachAgentPanelOpenQueue,
-  dispatchAgentPanelAction,
   dispatchAgentPanelSubmit,
 } from './agentPanelEvents'
 import { AgentPanelFull, AgentPanelSessionChrome } from './AgentPanelFull'
+import { AgentPanelHerTime } from './AgentPanelHerTime'
 import { AgentPanelIntention } from './AgentPanelIntention'
 import {
   cycleAgentPanelMode,
@@ -37,7 +37,6 @@ import {
   shouldCaptureModeTab,
   useAgentPanelMode,
 } from './agentPanelMode'
-import { AgentPanelOverlay } from './AgentPanelOverlay'
 import {
   agentPanelIsOpen,
   agentPanelSettleTimeoutMs,
@@ -51,7 +50,6 @@ import { agentStatusForLane } from './agentStatus'
 import {
   clearAgentUndoOffer,
   useAgentLaneLoading,
-  useAgentPendingAction,
   useAgentStatus,
   useAgentUndoOffer,
 } from './agentStatusStore'
@@ -126,7 +124,6 @@ export const AgentPanel: React.FC = () => {
     getNavLayoutSnapshot,
     getServerNavLayoutSnapshot,
   )
-  const pendingAction = useAgentPendingAction()
   const undoOffer = useAgentUndoOffer()
   const mode = useAgentPanelMode()
   const [fullView, setFullView] = useState<AgentPanelFullView>('messages')
@@ -135,7 +132,7 @@ export const AgentPanel: React.FC = () => {
     if (!showsFull) setFullView('messages')
   }, [showsFull])
 
-  const showsComposer = !pendingAction && !(showsFull && fullView === 'manage')
+  const showsComposer = !(showsFull && fullView === 'manage')
 
   useEffect(() => {
     const { queued, detach } = attachAgentPanelOpenQueue()
@@ -159,10 +156,6 @@ export const AgentPanel: React.FC = () => {
     window.addEventListener(AGENT_PANEL_CLOSE_EVENT, onClose)
     return () => window.removeEventListener(AGENT_PANEL_CLOSE_EVENT, onClose)
   }, [])
-
-  useEffect(() => {
-    if (pendingAction) dispatch({ type: 'open', stage: 'overlay' })
-  }, [pendingAction])
 
   useImmersiveChrome('agent-panel-overlay', navLayout === 'mobile' && open)
 
@@ -285,15 +278,6 @@ export const AgentPanel: React.FC = () => {
     void executeFrontendAction(undoOffer.inverse)
   }, [undoOffer])
 
-  const decide = useCallback(
-    (approved: boolean) => {
-      if (!pendingAction) return
-      dispatchAgentPanelAction(pendingAction.id, approved)
-      dispatch({ type: 'close' })
-    },
-    [pendingAction],
-  )
-
   return (
     <>
       {(showsOverlay || showsFull) && (
@@ -315,14 +299,9 @@ export const AgentPanel: React.FC = () => {
                 onWorkOffer={(input) => submit(input, undefined, 'work')}
                 showChrome={fullView === 'manage'}
               />
-            ) : (
-              <AgentPanelOverlay
-                pendingAction={pendingAction}
-                onDecide={decide}
-              />
-            )}
+            ) : null}
 
-            {!pendingAction && (!showsFull || fullView === 'messages') ? (
+            {!showsFull || fullView === 'messages' ? (
               <AgentPanelIntention
                 enabled={open && stage.phase === 'settled'}
                 onAccept={acceptIntention}
@@ -335,6 +314,9 @@ export const AgentPanel: React.FC = () => {
                 autoFocus={fullView !== 'sessions' && stage.phase === 'settled'}
                 leading={
                   <>
+                    <AgentPanelHerTime
+                      open={open && stage.phase === 'settled' && !undoOffer}
+                    />
                     <AgentPresence open={!!undoOffer} kind="chip" from="self">
                       {undoOffer ? (
                         <span className="agent-panel-tag" data-tone="primary">

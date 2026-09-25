@@ -262,10 +262,11 @@ pub async fn create_tapp_report(
         updated_at: Set(now),
     };
 
-    storage.insert(db).await.map_err(|error| {
+    let stored = storage.insert(db).await.map_err(|error| {
         tracing::error!(%error, "[TAPP] Failed to create report");
         TappReportCrudError::CreateFailed
     })?;
+    crate::services::tapp_storage::record_storage_media(db, stored.id, Some(user_id)).await;
 
     Ok(CreatedTappReport {
         id: report_id,
@@ -355,10 +356,11 @@ pub async fn update_tapp_report(
     let mut active: tapp_storage::ActiveModel = item.into();
     active.value = Set(report_data.clone());
     active.updated_at = Set(now);
-    active
+    let stored = active
         .update(db)
         .await
         .map_err(|_| TappReportCrudError::UpdateFailed)?;
+    crate::services::tapp_storage::record_storage_media(db, stored.id, Some(user_id)).await;
     Ok(report_data)
 }
 

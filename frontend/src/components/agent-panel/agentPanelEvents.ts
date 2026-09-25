@@ -55,30 +55,6 @@ export function agentPanelSubmitDetail(
   }
 }
 
-export const AGENT_PANEL_ACTION_EVENT = 'agent-panel-action-decision'
-
-export interface AgentPanelActionDetail {
-  id: string
-  approved: boolean
-}
-
-export function dispatchAgentPanelAction(id: string, approved: boolean): void {
-  if (!id) return
-  window.dispatchEvent(
-    new CustomEvent<AgentPanelActionDetail>(AGENT_PANEL_ACTION_EVENT, {
-      detail: { id, approved },
-    }),
-  )
-}
-
-export function agentPanelActionDetail(
-  event: Event,
-): AgentPanelActionDetail | null {
-  const detail = (event as CustomEvent<AgentPanelActionDetail>).detail
-  if (!detail || typeof detail.id !== 'string' || !detail.id) return null
-  return { id: detail.id, approved: detail.approved === true }
-}
-
 export const AGENT_PANEL_OPEN_SESSION_EVENT = 'agent-panel-open-session'
 
 export function dispatchAgentPanelOpenSession(sessionId: string, messageCount = 0): void {

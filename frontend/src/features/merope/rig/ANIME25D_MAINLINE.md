@@ -64,14 +64,35 @@ visible face pixels even though the standalone reference permits a fallback.
 Source/ancestor opacity is baked once into copied import pixels, not multiplied
 again during playback. Existing stored assets are not recompiled automatically.
 
-The renderer builds left/right eye masks before painting using independent
-stencil bits; collar reconstruction has a separate bit and cannot erase or
-satisfy an eye mask. Invisible ordinary eye whites remain valid masks during
-expression fades; inactive alternate whites do not contribute stale geometry.
-`renderer.test.ts` executes this against a small software stencil buffer across
-paint orders and consecutive frames. Import tests check both the standalone
+Two import fixes from `7ddbd9943e` (v2.0) are adopted. A strand whose peak box
+smoothing moved off the painted columns snaps to the nearest painted column
+instead of being dropped, so thin hair parts keep their spring. A plain `hair`
+layer is front hair when painted above the face and back hair below it. That
+release's flat-top peak centring is not adopted: on flat-bottomed parts it
+leaves too little room for the second strand and loses a spring. Its webcam
+tracking, OBS relay, recording, anchor editor, jewellery/tail sway, new side
+hair/ahoge slots, and settings format are editor features outside this
+integration. Its smooth iris mask is adopted in the renderer (below).
+
+The renderer builds left/right eye masks before painting: every eye white
+paints its own alpha into a canvas-sized mask texture, the left eye in red and
+the right in green, and an iris multiplies by its eye's channel. Soft coverage
+replaced the earlier alpha-tested stencil bits, whose clip stair-stepped along
+the white's edge (upstream `7ddbd9943e`). Collar reconstruction and crown replay
+keep their stencil bits and cannot erase or satisfy an eye mask. Invisible
+ordinary eye whites remain valid masks during expression fades; inactive
+alternate whites do not contribute stale geometry. `renderer.test.ts` executes
+this against a small software mask and stencil across paint orders and
+consecutive frames. Import tests check both the standalone
 reference and the production atlas path. These tests do not claim GPU pixel or
 live visual acceptance. The demo's alternate long-blink policy is not adopted.
+
+Sleeves rotate about a shoulder joint instead of the upstream vertical
+translation and shear (`armY`/`armPos` moved the bottom of the drawing while
+pinning its top). Each side is a damped pendulum driven by its intent and by
+its shoulder's acceleration; the old torso-yaw follower is subsumed by that
+acceleration. The swing stays inside the contract's ±15°, and a cropped sleeve
+slides along the frame line (see `README.md`).
 
 The next selective batches add Worker-owned PSD import: signature/RGB8/dimension
 checks and metadata bounds precede pixel expansion; buffers are transferred and

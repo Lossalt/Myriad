@@ -8,13 +8,13 @@ test('Work interrupt cannot abort Chat SSE, and session ids stay per mode', () =
     'utf8',
   )
   assert.match(engine, /abortCurrentRequest\(current\)/)
-  assert.match(engine, /findMessageWhere/)
+  assert.match(engine, /findMessage\(/)
   assert.match(engine, /setSessionId\(event\.sessionId, mode\)/)
   assert.match(
     engine,
     /loadingByModeRef\.current\.work \|\| loadingByModeRef\.current\.chat/,
   )
-  assert.match(engine, /restorePendingActionFromMessages/)
+  assert.match(engine, /restoreFollowUpQuestion/)
   assert.match(engine, /restoreSessionMessage/)
   assert.match(readFileSync(new URL('./sessionHistoryMessage.ts', import.meta.url), 'utf8'), /pendingQuestionFromMetadata/)
 

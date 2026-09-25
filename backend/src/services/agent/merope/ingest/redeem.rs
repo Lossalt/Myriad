@@ -89,7 +89,10 @@ async fn redeem_speak_intent(
     let last_proactive = state
         .last_proactive_at
         .map(|value| value.with_timezone(&Utc));
-    if within_proactive_cooldown(&intent.topic, last_proactive, Utc::now()) {
+    let cooldown = crate::services::agent::merope::self_state::current(db)
+        .await
+        .proactive_cooldown_secs();
+    if within_proactive_cooldown(&intent.topic, last_proactive, Utc::now(), cooldown) {
         log_skip(intent.user_id, &intent.topic, "proactive_cooldown");
         return Ok(());
     }
@@ -312,18 +315,27 @@ pub fn fallback_line(summary: &str) -> String {
 async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> String {
     let fallback = fallback_line(summary);
     let Some(analyzer) =
-        create_strict_lite_ai_analyzer_with_timeout(Some(std::time::Duration::from_secs(12))).await
+        create_strict_lite_ai_analyzer_with_timeout(Some(std::time::Duration::from_secs(30)))
+            .await
+            .map(crate::services::analyzer::AiAnalyzer::with_light_thinking)
     else {
         return fallback;
     };
     let soul = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_else(|| "You are Agent.".to_string());
-    let addressee = resolve_addressee_label(db, user_id).await;
-    let mood_block = match get_or_create_state(db, user_id).await {
-        Ok(state) => format!("\n\n{}", format_mood_section(state.mood, state.arousal)),
-        Err(_) => String::new(),
-    };
+    let mut sections =
+        crate::services::agent::merope::speaking_prompt_for_event(db, user_id, summary).await;
+    // How the last exchange left her, if it was a moment ago.
+    sections.extend(
+        super::super::inner::current(
+            user_id,
+            &crate::services::agent::memory::unified::Audience::private(user_id),
+        )
+        .as_deref()
+        .and_then(crate::services::agent::merope::format_inner_moment_ago_section),
+    );
+    let mind = crate::services::agent::merope::speaking_prompt_plain(&sections);
     let recent = recent_proactive(db, user_id, 6)
         .await
         .unwrap_or_default()
@@ -336,12 +348,8 @@ async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> S
     } else {
         recent
     };
-    let system = super::super::speaking_prompts::compose_proactive_system(
-        &soul,
-        &addressee_speaking_section(&addressee),
-        &mood_block,
-        &recent_block,
-    );
+    let system =
+        super::super::speaking_prompts::compose_proactive_system(&soul, &mind, &recent_block);
     let prompt = super::super::speaking_prompts::compose_proactive_user(summary);
     match crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,
@@ -492,23 +500,23 @@ async fn display_name(db: &DatabaseConnection) -> String {
     public_persona_name(true, stored.as_deref())
 }
 
-/// 两次主动开口之间的最短间隔，跨事件计算。同一事件的重复另有
-/// `SAME_EVENT_MINUTES` 管。
-const PROACTIVE_COOLDOWN_SECONDS: i64 = 180;
-
-/// 刚主动说过话就先不再开口。触摸是对当下动作的回应，任务结果是对方在等的事，
-/// 这两类不受间隔限制。
+/// 刚主动说过话就先不再开口。间隔跨事件计算（同一事件的重复另有
+/// `SAME_EVENT_MINUTES` 管），由她自己的精力决定，最短
+/// `BASE_PROACTIVE_COOLDOWN_SECS`，累了就等更久（见 `self_state`）。
+/// 触摸是对当下动作的回应，任务结果是对方在等的事，这两类不受间隔限制。
 fn within_proactive_cooldown(
     topic: &str,
     last_proactive_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
+    cooldown_secs: i64,
 ) -> bool {
     if topic == "agent.merope.touch" || is_task_outcome(topic) {
         return false;
     }
-    last_proactive_at.is_some_and(|last| {
-        now.signed_duration_since(last) < chrono::Duration::seconds(PROACTIVE_COOLDOWN_SECONDS)
-    })
+    let cooldown =
+        cooldown_secs.max(crate::services::agent::merope::self_state::BASE_PROACTIVE_COOLDOWN_SECS);
+    last_proactive_at
+        .is_some_and(|last| now.signed_duration_since(last) < chrono::Duration::seconds(cooldown))
 }
 
 #[cfg(test)]
@@ -517,31 +525,53 @@ mod tests {
     fn proactive_speech_waits_between_events_but_not_for_touch_or_outcomes() {
         let now = chrono::Utc::now();
         let recent = Some(now - chrono::Duration::seconds(30));
-        let old = Some(now - chrono::Duration::seconds(super::PROACTIVE_COOLDOWN_SECONDS + 1));
+        let old = Some(
+            now - chrono::Duration::seconds(
+                crate::services::agent::merope::self_state::BASE_PROACTIVE_COOLDOWN_SECS + 1,
+            ),
+        );
         assert!(super::within_proactive_cooldown(
             "phantasi.digest",
             recent,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "phantasi.digest",
             old,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "phantasi.digest",
             None,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "agent.merope.touch",
             recent,
-            now
+            now,
+            180
         ));
         assert!(!super::within_proactive_cooldown(
             "agent.task_completed",
             recent,
-            now
+            now,
+            180
+        ));
+        // A tired persona waits longer; nothing makes the wait shorter.
+        assert!(super::within_proactive_cooldown(
+            "phantasi.digest",
+            old,
+            now,
+            600
+        ));
+        assert!(super::within_proactive_cooldown(
+            "phantasi.digest",
+            Some(now - chrono::Duration::seconds(100)),
+            now,
+            10
         ));
     }
     #[test]

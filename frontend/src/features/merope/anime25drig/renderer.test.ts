@@ -9,7 +9,7 @@ import test from 'node:test'
 import { createAnime25DFrameWork } from './performanceTelemetry'
 import { anime25DLayerUsesOwnGeometry, drawAnime25DFrame } from './renderer'
 
-test('renderer preserves collar and eye stencil order while skipping hidden art', () => {
+test('renderer preserves collar stencil and eye mask order while skipping hidden art', () => {
   const calls: string[] = []
   let boundVao = 'none'
   const gl = fakeGl(
@@ -67,7 +67,29 @@ test('renderer preserves collar and eye stencil order while skipping hidden art'
   )
   assert.deepEqual(
     calls.filter((call) => call.startsWith('stencilFunc:')),
-    ['stencilFunc:20', 'stencilFunc:20', 'stencilFunc:21', 'stencilFunc:21'],
+    ['stencilFunc:20', 'stencilFunc:21'],
+    'only the collar still uses the stencil',
+  )
+  assert.deepEqual(
+    calls.filter(
+      (call) =>
+        call.startsWith('bindFramebuffer:') ||
+        call.startsWith('uniform2f:eyeMaskChannel') ||
+        call === 'draw:eyewhite_L:9' ||
+        call === 'draw:irides_L:9',
+    ),
+    [
+      'bindFramebuffer:mask',
+      'bindFramebuffer:none',
+      'bindFramebuffer:mask',
+      'draw:eyewhite_L:9',
+      'bindFramebuffer:none',
+      'draw:eyewhite_L:9',
+      'uniform2f:eyeMaskChannel:1:0',
+      'draw:irides_L:9',
+      'uniform2f:eyeMaskChannel:0:0',
+    ],
+    'whites fill the mask first; the iris reads its own eye, then resets',
   )
   assert.equal(calls.at(-1), 'bindVao:none')
   assert.equal(calls.includes('bindVao:neck'), false)
@@ -81,8 +103,8 @@ test('collar clip is the sole geometry source for a replaced neck', () => {
   assert.equal(anime25DLayerUsesOwnGeometry('ordinary', true), true)
 })
 
-test('stencil execution isolates both eyes and collars across paint orders and frames', () => {
-  // Overlapping eye pixels must retain both bits.
+test('eye masks isolate both eyes and collars across paint orders and frames', () => {
+  // Overlapping eye pixels must keep coverage in both channels.
   for (const collarIndex of [0, 2, 6]) {
     let bound = ''
     const gl = fakeGl(
@@ -93,6 +115,10 @@ test('stencil execution isolates both eyes and collars across paint orders and f
       () => bound,
     )
     const stencil = new Uint8Array(5)
+    const mask = Array.from({ length: 5 }, () => [0, 0])
+    let framebuffer = 'none'
+    let maskChannels = [true, true]
+    let irisChannel = [0, 0]
     const painted = new Map<string, number[]>()
     const coverage: Record<string, number[]> = {
       eyewhite_L: [0],
@@ -115,10 +141,16 @@ test('stencil execution isolates both eyes and collars across paint orders and f
     let color = true
     let opacity = 1
     Object.assign(gl, {
-      clear: (mask: number) => {
-        if (mask & gl.STENCIL_BUFFER_BIT) {
+      clear: (bits: number) => {
+        if (framebuffer === 'mask' && bits & gl.COLOR_BUFFER_BIT) {
+          for (const pixel of mask) pixel.fill(0)
+        }
+        if (bits & gl.STENCIL_BUFFER_BIT) {
           for (let i = 0; i < stencil.length; i += 1) stencil[i] &= ~writeMask
         }
+      },
+      bindFramebuffer: (_target: number, next: unknown) => {
+        framebuffer = next == null ? 'none' : String(next)
       },
       stencilMask: (mask: number) => {
         writeMask = mask
@@ -137,13 +169,24 @@ test('stencil execution isolates both eyes and collars across paint orders and f
       disable: (cap: number) => {
         if (cap === gl.STENCIL_TEST) enabled = false
       },
-      colorMask: (red: boolean) => {
+      colorMask: (red: boolean, green: boolean) => {
         color = red
+        maskChannels = [red, green]
       },
       uniform1f: (location: WebGLUniformLocation, value: number) => {
         if (String(location) === 'opacity') opacity = value
       },
+      uniform2f: (location: WebGLUniformLocation, x: number, y: number) => {
+        if (String(location) === 'eyeMaskChannel') irisChannel = [x, y]
+      },
       drawElements: () => {
+        if (framebuffer === 'mask') {
+          for (const pixel of coverage[bound] ?? []) {
+            if (maskChannels[0]) mask[pixel][0] = 1
+            if (maskChannels[1]) mask[pixel][1] = 1
+          }
+          return
+        }
         const visible: number[] = []
         for (const pixel of coverage[bound] ?? []) {
           const pass =
@@ -155,7 +198,11 @@ test('stencil execution isolates both eyes and collars across paint orders and f
             stencil[pixel] =
               (stencil[pixel] & ~writeMask) | (reference & writeMask)
           }
-          if (color && opacity > 0) visible.push(pixel)
+          const eye =
+            irisChannel[0] || irisChannel[1]
+              ? mask[pixel][0] * irisChannel[0] + mask[pixel][1] * irisChannel[1]
+              : 1
+          if (color && opacity > 0 && eye > 0) visible.push(pixel)
         }
         if (color && opacity > 0) painted.set(bound, visible)
       },
@@ -202,7 +249,7 @@ test('stencil execution isolates both eyes and collars across paint orders and f
     assert.deepEqual(painted.get('clip'), [3, 4])
     assert.deepEqual(painted.get('accessory'), [0, 1, 2, 3, 4])
     assert.deepEqual(painted.get('backHair'), [0, 4], 'replay uses only the face stencil')
-    assert.equal(stencil[1] & 3, 3, 'overlapping eyes retain independent bits')
+    assert.deepEqual(mask[1], [1, 1], 'overlapping eyes keep both channels')
     draw(layers.filter((layer) => layer.renderKind !== 'eyewhite'))
     assert.deepEqual(painted.get('irides_L'), [])
     assert.deepEqual(painted.get('irides_R'), [])
@@ -404,6 +451,9 @@ function fakeBindings(): Anime25DRendererBindings {
     cry: location('cry'),
     atlasRect: location('atlasRect'),
     crownBand: location('crownBand'),
+    eyeMaskChannel: location('eyeMaskChannel'),
+    eyeMaskPass: location('eyeMaskPass'),
+    eyeMask: { framebuffer: null, texture: null, width: 0, height: 0 },
     neckSurfaceFade: location('neckSurfaceFade'),
     neckSurfaceContour: location('neckSurfaceContour'),
     neckSurfaceBounds: location('neckSurfaceBounds'),
@@ -423,11 +473,30 @@ function fakeGl(
     TRIANGLES: 5,
     UNSIGNED_SHORT: 6,
     STENCIL_TEST: 7,
+    FRAMEBUFFER: 8,
+    COLOR_ATTACHMENT0: 9,
+    RGBA: 12,
+    UNSIGNED_BYTE: 13,
+    NEAREST: 14,
+    CLAMP_TO_EDGE: 15,
+    TEXTURE_MIN_FILTER: 16,
+    TEXTURE_MAG_FILTER: 17,
+    TEXTURE_WRAP_S: 18,
+    TEXTURE_WRAP_T: 19,
+    drawingBufferWidth: 5,
+    drawingBufferHeight: 1,
     KEEP: 10,
     REPLACE: 11,
     ALWAYS: 20,
     EQUAL: 21,
     clearColor: () => calls.push('clearColor'),
+    createTexture: () => 'maskTexture' as unknown as WebGLTexture,
+    createFramebuffer: () => 'mask' as unknown as WebGLFramebuffer,
+    bindFramebuffer: (_target: number, framebuffer: unknown) =>
+      calls.push(`bindFramebuffer:${framebuffer ?? 'none'}`),
+    framebufferTexture2D: () => calls.push('framebufferTexture2D'),
+    texImage2D: () => calls.push('texImage2D'),
+    texParameteri: () => {},
     clearStencil: () => calls.push('clearStencil'),
     clear: () => calls.push('clear'),
     useProgram: () => calls.push('useProgram'),

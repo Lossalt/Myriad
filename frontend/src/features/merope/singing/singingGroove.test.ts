@@ -60,7 +60,7 @@ test('full-body listening spans several beats with smooth shoulder and arm cross
     }).slice(600)
     for (const [key, minimumRange] of [
       ['body', 1],
-      ['armPos', 0.55],
+      ['armPos', 0.35],
     ] as const) {
       const values = samples.map((s) => s.raw[key])
       assert.ok(

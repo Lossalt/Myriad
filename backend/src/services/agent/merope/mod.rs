@@ -1,21 +1,34 @@
 //! Merope: site persona, per-addressee state, hidden proactive speech.
 
 mod appraisal;
+pub mod bits;
 pub mod chat_remember;
+pub mod curiosity;
+pub mod doing;
 pub mod gates;
 pub mod ingest;
+pub(crate) mod inner;
+pub mod life;
 pub mod motion;
 pub mod motion_local;
 pub mod motion_preview;
 pub mod onboarding_ai;
 pub mod onboarding_prompts;
 pub mod outfit_overlay;
+pub mod playing;
+mod priming;
 pub mod report_dna;
+pub mod self_state;
+pub mod soup;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
+pub mod strangers;
+pub mod views;
+pub mod wander;
 
 pub use chat_remember::spawn_chat_remember;
+pub use curiosity::spawn_curiosity;
 pub use ingest::{
     allow_existing_notify, is_enabled, spawn as spawn_ingest, spawn_diary, spawn_presence,
     tick_speak_intents,
@@ -166,6 +179,72 @@ pub async fn note_user_turn(
     Some((transition, saved.last_user_message_at?))
 }
 
+/// What surrounded a chat turn, for the calls that follow it: what she said
+/// just before, what was on their screen or playing, whether it was a move in
+/// a game, and how many images came with it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnContext {
+    pub before: Option<String>,
+    pub scene: Option<String>,
+    pub in_game: bool,
+    pub images: usize,
+}
+
+pub fn turn_context(request: &crate::services::agent::UserRequest) -> TurnContext {
+    let context = request.context.as_ref();
+    let before = context
+        .and_then(|context| context.conversation_history.as_ref())
+        .and_then(|history| {
+            history
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant")
+        })
+        .map(|message| {
+            crate::services::agent::chat_prompt::chat_safe_content(&message.content)
+                .chars()
+                .take(300)
+                .collect::<String>()
+        })
+        .filter(|line| !line.trim().is_empty());
+    let custom = context.and_then(|context| context.custom_data.as_ref());
+    let scene = crate::services::agent::chat_prompt::format_chat_scene(
+        custom.and_then(|data| data.get("perception")),
+        None,
+        &request.raw_input,
+    );
+    TurnContext {
+        before,
+        scene: (!scene.trim().is_empty()).then(|| scene.chars().take(600).collect()),
+        in_game: soup::in_game(request),
+        images: context.map(|context| context.images.len()).unwrap_or(0),
+    }
+}
+
+/// After the persona is deleted: nothing of her stays in memory either, so
+/// the next one does not carry on her song, game, state or thoughts.
+pub fn forget_in_memory() {
+    doing::forget();
+    soup::forget();
+    inner::forget();
+    views::forget();
+    priming::forget();
+    wander::forget();
+    strangers::forget();
+}
+
+/// After a chat reply, let her state catch up with the exchange; the next
+/// turn starts from it without waiting.
+pub fn spawn_inner_after(
+    db: sea_orm::DatabaseConnection,
+    request: &crate::services::agent::UserRequest,
+    reply: &str,
+) {
+    if is_logged_in_addressee(request.user_id) {
+        inner::spawn_after(db, request, reply);
+    }
+}
+
 /// Chat writes this before the model; Work writes after `plan_for`.
 pub async fn note_chat_diary(db: &sea_orm::DatabaseConnection, user_id: i32, text: &str) {
     if !is_logged_in_addressee(user_id) {
@@ -253,9 +332,12 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 }
 
 pub use speaking_prompts::{
-    addressee_speaking_section, format_activity_section, format_mood_section, format_persona,
-    format_recent_section, format_remembered_section, guest_speaking_section,
-    mood_tone_instruction,
+    addressee_speaking_section, format_activity_section, format_bits_section,
+    format_brought_to_mind_section, format_curious_section, format_doing_section,
+    format_emotion_section, format_found_out_section, format_inner_moment_ago_section,
+    format_mood_section, format_on_your_mind_section, format_own_days_section, format_persona,
+    format_playing_section, format_recent_section, format_remembered_section, format_since_section,
+    format_views_section, group_speaking_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -264,6 +346,42 @@ pub async fn speaking_prompt(user_id: i32) -> Vec<String> {
 }
 
 pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Vec<String> {
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    speaking_prompt_for_turn(user_id, query, &present).await
+}
+
+/// A turn in a group chat (`venue` such as `telegram:-100123`), answering
+/// `user_id`. Others outside the community may be reading: only what this
+/// group heard is said, never anyone's private matters.
+pub async fn speaking_prompt_in_group(user_id: i32, query: &str, venue: &str) -> Vec<String> {
+    let present = crate::services::agent::memory::unified::Audience::group(venue, user_id);
+    speaking_prompt_for_turn(user_id, Some(query), &present).await
+}
+
+/// Who is present for this request: a group when the server placed the turn
+/// in one, otherwise the person alone.
+pub fn audience_for(
+    request: &crate::services::agent::UserRequest,
+) -> crate::services::agent::memory::unified::Audience {
+    match request
+        .context
+        .as_ref()
+        .and_then(|context| context.venue.as_deref())
+    {
+        Some(venue) => {
+            crate::services::agent::memory::unified::Audience::group(venue, request.user_id)
+        }
+        None => crate::services::agent::memory::unified::Audience::private(request.user_id),
+    }
+}
+
+/// Nothing waits here: this turn's appraisal and her state after it land
+/// for the turns that follow, and the speaking model hears the words itself.
+async fn speaking_prompt_for_turn(
+    user_id: i32,
+    query: Option<&str>,
+    present: &crate::services::agent::memory::unified::Audience,
+) -> Vec<String> {
     if !is_enabled().await {
         return Vec::new();
     }
@@ -278,7 +396,38 @@ pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Ve
             user_id, None, None,
         ))];
     };
-    speaking_prompt_from_db(&db, user_id, query).await
+    let turn = match query.filter(|query| !query.trim().is_empty()) {
+        Some(words) => Turn::Chat(words),
+        None => Turn::Plain,
+    };
+    speaking_prompt_from_db(&db, user_id, turn, present).await
+}
+
+/// Sections for speaking up unprompted about `summary`. The same mind as a
+/// chat turn: what she knows about them (recalled against what happened), how
+/// she feels, how she is. It reads the conversation's train of thought but
+/// does not move it; only the person's own words do.
+pub async fn speaking_prompt_for_event(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    summary: &str,
+) -> Vec<String> {
+    if user_id <= 0 || !is_logged_in_addressee(user_id) || !is_enabled().await {
+        return Vec::new();
+    }
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    speaking_prompt_from_db(db, user_id, Turn::Event(summary), &present).await
+}
+
+/// Why she is about to speak.
+#[derive(Clone, Copy)]
+enum Turn<'a> {
+    /// Answering the person's words.
+    Chat(&'a str),
+    /// Speaking up about something that happened (untrusted summary).
+    Event(&'a str),
+    /// Anything else that wears the persona, such as Work.
+    Plain,
 }
 
 const REMEMBERED_PROMPT_LIMIT: usize = 8;
@@ -286,30 +435,161 @@ const RECENT_LEDGER_LIMIT: u64 = 4;
 /// Chat diary only. Event diary reaches speaking via Remember, not this ledger.
 const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_CHAT];
 
+/// Things she looked up on her own that a turn carries.
+const FOUND_OUT_LIMIT: usize = 2;
+/// Her own days a conversation carries, most recent last.
+const OWN_DAYS_LIMIT: u64 = 3;
+/// What she did on her own in the last day, and older things their words touch.
+const DOING_RECENT: usize = 3;
+const DOING_RELATED: usize = 2;
+/// Views of her own their words touch.
+const VIEWS_LIMIT: usize = 2;
+/// Bits between her and them, freshest first.
+const BITS_LIMIT: u64 = 3;
+/// Her own unprompted lines a chat turn should know it said.
+const SAID_UNPROMPTED_LIMIT: u64 = 3;
+const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
+
+/// The conversation as she lived it: what she said to them on her own is
+/// part of it, in its place in time, as her own line. A section beside the
+/// history was ignored in testing; a line in the history is not.
+pub async fn with_said_unprompted(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    history: &[crate::services::agent::ConversationMessage],
+) -> Vec<crate::services::agent::ConversationMessage> {
+    if user_id <= 0 || !is_logged_in_addressee(user_id) || !is_enabled().await {
+        return history.to_vec();
+    }
+    let since = chrono::Utc::now() - chrono::Duration::hours(SAID_UNPROMPTED_WITHIN_HOURS);
+    let said: Vec<(chrono::DateTime<chrono::Utc>, String)> =
+        store::recent_proactive(db, user_id, SAID_UNPROMPTED_LIMIT)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|line| {
+                (
+                    line.created_at.with_timezone(&chrono::Utc),
+                    ingest::compact_summary(&line.content),
+                )
+            })
+            .filter(|(at, line)| *at >= since && !line.is_empty())
+            .collect();
+    merge_said_unprompted(history, &said)
+}
+
+/// Put her unprompted lines into the history by time. A line already in the
+/// history is not added twice; history without timestamps keeps its order
+/// and her lines go after it.
+pub fn merge_said_unprompted(
+    history: &[crate::services::agent::ConversationMessage],
+    said: &[(chrono::DateTime<chrono::Utc>, String)],
+) -> Vec<crate::services::agent::ConversationMessage> {
+    let at = |message: &crate::services::agent::ConversationMessage| {
+        message
+            .created_at
+            .as_deref()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.with_timezone(&chrono::Utc))
+    };
+    let mut merged = history.to_vec();
+    let mut said: Vec<&(chrono::DateTime<chrono::Utc>, String)> = said.iter().collect();
+    said.sort_by_key(|(when, _)| *when);
+    for (when, line) in said {
+        if merged
+            .iter()
+            .any(|message| message.content.trim() == line.trim())
+        {
+            continue;
+        }
+        let position = merged
+            .iter()
+            .position(|message| at(message).is_some_and(|message_at| message_at > *when))
+            .unwrap_or(merged.len());
+        merged.insert(
+            position,
+            crate::services::agent::ConversationMessage {
+                role: "assistant".into(),
+                content: line.clone(),
+                created_at: Some(when.to_rfc3339()),
+            },
+        );
+    }
+    merged
+}
+
 async fn speaking_prompt_from_db(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
-    query: Option<&str>,
+    turn: Turn<'_>,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Vec<String> {
+    // In a group, people outside the community may be reading: nothing
+    // private to anyone — the person's diary, her unprompted lines to them,
+    // what was on her mind — is brought in, and memory is what the group heard.
+    let group = present.is_group();
     let addressee = resolve_addressee_label(db, user_id).await;
-    let mut sections = vec![addressee_speaking_section(&addressee)];
+    let mut sections = vec![if group {
+        group_speaking_section(&addressee)
+    } else {
+        addressee_speaking_section(&addressee)
+    }];
     let Ok(state) = get_or_create_state(db, user_id).await else {
         return sections;
     };
-    if let Ok(ranked) = store::recall_remembered(db, user_id, query, REMEMBERED_PROMPT_LIMIT).await
-    {
-        if let Some(block) = format_remembered_section(&ranked) {
+    let myself = self_state::current(db).await;
+    // Only a chat turn (it has the person's words) carries its train of
+    // thought to the next turn; other readers see memory without moving it.
+    let remembered = match turn {
+        Turn::Chat(words) | Turn::Event(words) => store::recall_remembered_split(
+            db,
+            user_id,
+            present,
+            Some(words),
+            REMEMBERED_PROMPT_LIMIT,
+            &if group {
+                crate::services::agent::memory::unified::Priming::default()
+            } else {
+                priming::current(user_id)
+            },
+            myself.recall_breadth(),
+        )
+        .await
+        .map(|(recalled, next)| {
+            if matches!(turn, Turn::Chat(_)) && !group {
+                priming::keep(user_id, next);
+            }
+            recalled
+        }),
+        Turn::Plain => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT)
+            .await
+            .map(|named| store::Recalled {
+                named,
+                brought_to_mind: Vec::new(),
+            }),
+    };
+    if let Ok(recalled) = remembered {
+        if let Some(block) = format_remembered_section(&recalled.named) {
+            sections.push(block);
+        }
+        // What their words brought to mind, apart from what they named: the
+        // stuff of callbacks and unexpected remarks, hers to use or not.
+        if let Some(block) = format_brought_to_mind_section(&recalled.brought_to_mind) {
             sections.push(block);
         }
     }
-    if let Ok(notes) = list_diary_from_sources(
-        db,
-        user_id,
-        RECENT_SPEAKING_DIARY_SOURCES,
-        RECENT_LEDGER_LIMIT,
-    )
-    .await
-    {
+    let diary = if group {
+        Ok(Vec::new())
+    } else {
+        list_diary_from_sources(
+            db,
+            user_id,
+            RECENT_SPEAKING_DIARY_SOURCES,
+            RECENT_LEDGER_LIMIT,
+        )
+        .await
+    };
+    if let Ok(notes) = diary {
         let contents: Vec<String> = notes
             .into_iter()
             .map(|note| ingest::compact_summary(&note.content))
@@ -322,7 +602,114 @@ async fn speaking_prompt_from_db(
     if let Some(block) = format_activity_section(current_activity(&state)) {
         sections.push(block);
     }
+    // What the site's owner is playing, to the owner alone.
+    if !group {
+        if let Some(block) = playing::now_for(user_id, chrono::Utc::now())
+            .and_then(|line| format_playing_section(&line))
+        {
+            sections.push(block);
+        }
+    }
     sections.push(format_mood_section(state.mood, state.arousal));
+    // Her state after the last exchange already weighs how she has been and
+    // how her day went; the raw facts would say it twice.
+    let compiled = match turn {
+        Turn::Chat(_) => inner::current(user_id, present),
+        _ => None,
+    };
+    // Her inner state goes last, nearest their words, so it is what she
+    // answers from; without it, how the words landed stands here instead.
+    let inner_block = compiled
+        .as_deref()
+        .and_then(format_inner_moment_ago_section);
+    if inner_block.is_none() {
+        if let Some(block) = format_emotion_section(state.emotion, state.emotion_arousal) {
+            sections.push(block);
+        }
+    }
+    if !matches!(turn, Turn::Plain) {
+        sections.push(speaking_prompts::format_now_section(chrono::Local::now()));
+    }
+    if !matches!(turn, Turn::Plain) && compiled.is_none() {
+        sections.push(self_state::format_day_section(&myself.facts));
+    }
+    if let Turn::Chat(words) | Turn::Event(words) = turn {
+        let found = crate::services::agent::memory::unified::recall(
+            db,
+            user_id,
+            present,
+            Some(words),
+            &[crate::services::agent::memory::unified::MemoryKind::Knowledge],
+            FOUND_OUT_LIMIT,
+        )
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|note| note.content)
+        .collect::<Vec<_>>();
+        if let Some(block) = format_found_out_section(&found) {
+            sections.push(block);
+        }
+    }
+    if !matches!(turn, Turn::Plain) {
+        if let Some(block) = format_own_days_section(&life::recent_days(db, OWN_DAYS_LIMIT).await) {
+            sections.push(block);
+        }
+        // Her own time is about public things, so any audience may hear it.
+        let words = match turn {
+            Turn::Chat(words) | Turn::Event(words) => Some(words),
+            Turn::Plain => None,
+        };
+        let lately = doing::recalled(db, words, DOING_RECENT, DOING_RELATED).await;
+        let now = doing::current().map(|doing| doing::now_line(&doing, chrono::Utc::now()));
+        if let Some(block) = format_doing_section(now.as_deref(), &lately) {
+            sections.push(block);
+        }
+        // What only she and this person share, or she and this group: each
+        // heard only where it grew.
+        let shared = match present.group_id() {
+            Some(venue) => bits::in_group(db, venue, BITS_LIMIT).await,
+            None => bits::between(db, user_id, BITS_LIMIT).await,
+        };
+        if let Some(block) = format_bits_section(&shared, group) {
+            sections.push(block);
+        }
+        // What she thinks of what their words touch: hers, the same whoever asks.
+        if let Some(words) = words {
+            let views = views::touched(db, words, VIEWS_LIMIT).await;
+            if let Some(block) = format_views_section(&views) {
+                sections.push(block);
+            }
+        }
+    }
+    if matches!(turn, Turn::Chat(_)) {
+        // One mouth: what was on her mind belongs to the conversation she is
+        // now answering in. What she said on her own is in its history
+        // (see `with_said_unprompted`).
+        if let Turn::Chat(words) = turn {
+            // Something they just named that she knows only a little about.
+            // Whether she wants to know more is hers to judge.
+            let gap =
+                crate::services::agent::memory::unified::curiosity_gap(db, user_id, present, words)
+                    .await;
+            if let Some(block) = gap
+                .ok()
+                .flatten()
+                .and_then(|(gap, known)| format_curious_section(&gap, known))
+            {
+                sections.push(block);
+            }
+        }
+        let on_mind = (!group)
+            .then(|| crate::services::agent::consciousness::last_attention(user_id))
+            .flatten();
+        if let Some(segment) = on_mind {
+            if let Some(block) = format_on_your_mind_section(&segment.inner) {
+                sections.push(block);
+            }
+        }
+    }
+    sections.extend(inner_block);
     sections
 }
 
@@ -500,11 +887,11 @@ mod tests {
         assert!(
             super::speaking_prompts::PERSONA_SPEAKING_CONTRACT.contains("Do not name the mood")
         );
-        assert!(super::mood_tone_instruction(8.0, 48.0).contains("Very low"));
-        assert!(super::mood_tone_instruction(30.0, 40.0).contains("A bit low"));
-        assert!(super::mood_tone_instruction(30.0, 70.0).contains("Irritable"));
-        assert!(super::mood_tone_instruction(90.0, 48.0).contains("ordinary tone"));
-        assert!(super::mood_tone_instruction(90.0, 70.0).contains("lighter"));
+        assert!(super::mood_tone_instruction(8.0, 48.0).contains("very low"));
+        assert!(super::mood_tone_instruction(30.0, 40.0).contains("a bit low"));
+        assert!(super::mood_tone_instruction(30.0, 70.0).contains("on edge"));
+        assert!(super::mood_tone_instruction(90.0, 48.0).contains("at ease"));
+        assert!(super::mood_tone_instruction(90.0, 70.0).contains("bright"));
         let section = super::format_mood_section(72.4, 48.0);
         assert!(!section.contains("72/100"));
         assert!(!section.contains("72.4"));
@@ -573,6 +960,52 @@ mod tests {
                 "{signature} no longer filters by source"
             );
         }
+    }
+
+    #[test]
+    fn what_she_said_on_her_own_sits_in_the_history_by_time() {
+        use crate::services::agent::ConversationMessage;
+        let at = |minute: u32| {
+            chrono::DateTime::parse_from_rfc3339(&format!("2026-09-25T10:{minute:02}:00Z"))
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let message = |role: &str, content: &str, minute: u32| ConversationMessage {
+            role: role.into(),
+            content: content.into(),
+            created_at: Some(at(minute).to_rfc3339()),
+        };
+        let history = vec![
+            message("user", "早", 0),
+            message("assistant", "早啊", 1),
+            message("user", "我去忙了", 2),
+        ];
+        let said = [
+            (at(20), "周报理好了，放资料库了".to_string()),
+            (at(1), "早啊".to_string()),
+        ];
+        let merged = super::merge_said_unprompted(&history, &said);
+        let lines: Vec<(&str, &str)> = merged
+            .iter()
+            .map(|message| (message.role.as_str(), message.content.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                ("user", "早"),
+                ("assistant", "早啊"),
+                ("user", "我去忙了"),
+                ("assistant", "周报理好了，放资料库了"),
+            ],
+            "by time, and never twice"
+        );
+        let untimed = vec![ConversationMessage {
+            role: "user".into(),
+            content: "在吗".into(),
+            created_at: None,
+        }];
+        let merged = super::merge_said_unprompted(&untimed, &said[..1]);
+        assert_eq!(merged.last().unwrap().content, "周报理好了，放资料库了");
     }
 
     #[test]

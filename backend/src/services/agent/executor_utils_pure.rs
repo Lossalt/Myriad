@@ -217,7 +217,7 @@ pub fn phantasi_category_token_matches(source_category: &str, category_name: &st
         .any(|t| t == cat_lower)
 }
 
-/// 从步骤输出中提取图片 URL（如果存在）
+/// 从步骤输出中提取图片 URL（如果存在）。生图结果是 `/media/assets/…` 永久地址。
 pub fn extract_image_url(output: &Value) -> Option<String> {
     let inner = crate::services::agent::ai_process_pure::task_inner_value(output);
     inner
@@ -225,7 +225,9 @@ pub fn extract_image_url(output: &Value) -> Option<String> {
         .and_then(|obj| obj.get("url").or_else(|| obj.get("imageUrl")))
         .and_then(|v| v.as_str())
         .filter(|url| {
-            url.starts_with("http://") || url.starts_with("https://") || url.starts_with("/api/")
+            ["http://", "https://", "/api/", "/media/"]
+                .iter()
+                .any(|prefix| url.starts_with(prefix))
         })
         .map(|s| s.to_string())
 }
@@ -267,21 +269,17 @@ mod step_timeout_tests {
 
     /// 产物会被执行的提示词，必须给第三方内容划边界。
     ///
-    /// 这三处的输入里都有 `ai.webSearch` / `web.scrape` / `phantasi.article` 抓回来
-    /// 的正文，或 TAPP 自己渲染的 DOM——都是别人能写的字；而它们的输出分别是
-    /// 执行步骤和 click/input 计划。少一处边界，正文里一句「忽略以上」就通到
-    /// 执行层。
+    /// 页面动作计划的输入里有 TAPP 自己渲染的 DOM 和抓回来的正文——都是别人能写
+    /// 的字；而它的输出是 click/input 计划。少一处边界，正文里一句「忽略以上」就
+    /// 通到执行层。
     #[test]
     fn prompts_that_yield_executable_plans_frame_untrusted_input() {
-        let (label, source, expected) = (
-            "UI / 页面动作计划",
-            include_str!("executor/handlers/ui_control.rs"),
-            2,
-        );
         assert_eq!(
-            source.matches("untrusted_block(").count(),
-            expected,
-            "{label} 的第三方输入没有全部带边界"
+            include_str!("executor/handlers/ui_control.rs")
+                .matches("untrusted_block(")
+                .count(),
+            2,
+            "UI / 页面动作计划的第三方输入没有全部带边界"
         );
     }
 
@@ -308,7 +306,7 @@ mod step_timeout_tests {
     #[test]
     fn json_extraction_is_not_rehand_rolled() {
         for (label, source) in [
-            ("记忆提取", include_str!("memory/manager.rs")),
+            ("记忆提取", include_str!("memory/work_memory.rs")),
             ("报告 DNA", include_str!("merope/report_dna.rs")),
         ] {
             assert!(
@@ -402,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_image_url_accepts_http_and_local_api_paths() {
+    fn extract_image_url_accepts_http_and_local_media_paths() {
         assert_eq!(
             extract_image_url(&json!({"imageUrl": "https://x/a.png"})).as_deref(),
             Some("https://x/a.png")
@@ -419,6 +417,16 @@ mod tests {
             extract_image_url(&json!({"imageUrl": "/api/phantasi/image-cache/ab/abcd.png"}))
                 .as_deref(),
             Some("/api/phantasi/image-cache/ab/abcd.png")
+        );
+        // ai.image 的结果：永久地址。曾被过滤掉，后续步骤一成功图就从消息里消失。
+        let generated = "/media/assets/11111111-1111-1111-1111-111111111111/generated.png";
+        assert_eq!(
+            extract_image_url(&json!({
+                "format": "image",
+                "value": { "url": generated, "width": 1, "height": 1 }
+            }))
+            .as_deref(),
+            Some(generated)
         );
         assert!(extract_image_url(&json!({"imageUrl": "data:image/png;base64,xx"})).is_none());
         assert!(extract_image_url(&json!({"imageUrl": "javascript:alert(1)"})).is_none());

@@ -55,6 +55,7 @@ import {
 } from './expressionPresets'
 import { ANIME25D_MOTION_ENVELOPE_PROBES } from './motionEnvelope'
 import { PoseCorrectionEditor } from './PoseCorrectionEditor'
+import { PsdReconciliationSummary } from './PsdReconciliationSummary'
 
 interface Props {
   characterRef: RefObject<RigCharacterHandle | null>
@@ -1091,6 +1092,11 @@ export default function Anime25DWorkbench({
                         </p>
                       )}
                     </div>
+                  ) : null}
+                  {rigPreflight ? (
+                    <PsdReconciliationSummary
+                      reconciliation={rigPreflight.prepared.reconciliation}
+                    />
                   ) : null}
                   {rigPreflight ? (
                     <SettingsButton

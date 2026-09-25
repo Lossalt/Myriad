@@ -1102,6 +1102,8 @@
   "aiLiteEnable": "启用 Lite 模型",
   "aiLiteEnableDesc": "关闭后 Lite 任务回退标准模型",
   "aiLiteProviderHint": "可与标准模型不同；密钥在上面的服务商里填",
+  "aiLiteJudgeModelLabel": "判断用模型",
+  "aiLiteJudgeModelPlaceholder": "留空则与 Lite 相同。用于情绪、要不要开口、记什么这类小判断，适合更快的模型",
   "aiStandardModelTitle": "标准模型",
   "aiStandardModelDesc": "默认层级，用于常规任务",
   "aiProModelTitle": "Pro 模型",

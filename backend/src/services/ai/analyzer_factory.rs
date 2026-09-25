@@ -93,6 +93,29 @@ pub async fn create_strict_lite_ai_analyzer_with_timeout(
         .read()
         .await
         .resolve_strict_lite_ai_config()?;
+    lite_analyzer(resolved, request_timeout).await
+}
+
+/// Lite for small typed judgments (see `lite_judge_model`): a fast model
+/// deciding, while Lite's own model speaks. Judgments are short, so it
+/// thinks little: measured on the judgment suite, the same decisions in
+/// about two thirds of the time.
+pub async fn create_lite_judge_ai_analyzer_with_timeout(
+    request_timeout: Option<std::time::Duration>,
+) -> Option<AiAnalyzer> {
+    let resolved = GLOBAL_DYNAMIC_CONFIG
+        .read()
+        .await
+        .resolve_lite_judge_ai_config()?;
+    lite_analyzer(resolved, request_timeout)
+        .await
+        .map(AiAnalyzer::with_light_thinking)
+}
+
+async fn lite_analyzer(
+    resolved: crate::config::ResolvedAiConfig,
+    request_timeout: Option<std::time::Duration>,
+) -> Option<AiAnalyzer> {
     if !resolved.text_ready() {
         return None;
     }

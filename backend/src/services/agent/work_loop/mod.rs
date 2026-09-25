@@ -176,26 +176,29 @@ impl Agent {
         context
             .variables
             .insert("_task_id".into(), json!(task.task_id));
-        if let Some(memory) = super::memory::get_memory() {
-            let memories = memory
-                .recall_with_params(super::memory::RecallQuery {
-                    query: request.raw_input.clone(),
-                    limit: 4,
-                    user_id: Some(request.user_id),
-                    tier_filter: Some(vec![
-                        super::memory::MemoryTier::LongTerm,
-                        super::memory::MemoryTier::MediumTerm,
-                    ]),
-                    ..Default::default()
-                })
-                .await;
-            context.memory_context = Some(
-                memories
-                    .iter()
-                    .map(|m| m.content.chars().take(1000).collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
+        // Memory is recalled for the person this turn serves, in front of that
+        // person only. The loop passes it on as untrusted reference data.
+        match super::memory::unified::recall(
+            &self.db,
+            request.user_id,
+            &super::memory::unified::Audience::private(request.user_id),
+            Some(&request.raw_input),
+            &super::memory::unified::MemoryKind::FOR_WORK,
+            4,
+        )
+        .await
+        {
+            Ok(memories) if !memories.is_empty() => {
+                context.memory_context = Some(
+                    memories
+                        .iter()
+                        .map(|m| m.content.chars().take(1000).collect::<String>())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "[Work] memory recall failed"),
         }
         task.execution_context = Some(context);
         let evidence = request_evidence(request, &recipe, &task);
@@ -333,14 +336,11 @@ impl Agent {
             if let Some(recipe) = &state.task.recipe {
                 super::agent_footer::record_execution_memory(
                     super::agent_footer::MemoryRecordParams {
+                        db: &self.db,
                         user_id: state.user_id,
                         user_input: &state.request.raw_input,
                         recipe,
-                        planner_steps_len: state.task.step_results.len(),
                         success: state.task.status == TaskStatus::Completed,
-                        error_msg: state.task.error.as_deref(),
-                        log_prefix: "work-loop:",
-                        conversation_context: None,
                         step_results: Some(&state.task.step_results),
                     },
                 )

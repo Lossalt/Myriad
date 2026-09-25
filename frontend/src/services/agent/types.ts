@@ -147,7 +147,6 @@ export interface ClarificationPoint {
 export type AgentResponseType =
   | 'answer'
   | 'clarification'
-  | 'confirmation_required'
   | 'task_created'
   | 'task_progress'
   | 'task_completed'
@@ -228,24 +227,9 @@ export interface AgentResponse {
   dataDisplay?: DataDisplayHint
   suggestions: string[]
   task?: TaskInfo
-  confirmation?: ConfirmationInfo
   frontendAction?: FrontendAction
   performance?: PerformanceDirective
   sessionId?: string
-}
-
-export interface ConfirmationStep {
-  stepId: string
-  capabilityName: string
-  message: string
-  impact: string[]
-}
-
-export interface ConfirmationInfo {
-  confirmationId: string
-  riskLevel: string
-  expiresInSeconds: number
-  pendingSteps: ConfirmationStep[]
 }
 
 /** Resume via runId; do not create a new task. */
@@ -365,6 +349,26 @@ export interface OutfitOverlayEvent {
 export interface MusicControlEvent {
   type: 'music_control'
   action: string
+}
+
+/** What she is doing on her own right now (`GET /agent/doing`). */
+export type MeropeThing =
+  | {
+      kind: 'song'
+      id: string
+      source: string
+      name: string
+      artist: string
+      album: string
+      cover: string
+      durationMs: number
+    }
+  | { kind: 'note'; itemId: number; title: string }
+
+export interface MeropeDoingResponse {
+  doing: { thing: MeropeThing; started: string; ends: string } | null
+  /** Server clock, so where she is in it does not depend on this device's clock. */
+  now: string
 }
 
 export interface TaskAssignedEvent {
@@ -695,23 +699,13 @@ export interface ExecutionTrace {
 
 export interface MemoryEntry {
   id: string
-  memoryType:
-    | 'preference'
-    | 'fact'
-    | 'interaction'
-    | 'decision'
-    | 'entity_knowledge'
-    | 'execution_lesson'
-    | 'effective_pattern'
-    | 'session_insight'
-    | 'session_summary'
+  /** Unified memory kind. Chat and Work share one store. */
+  memoryType: 'fact' | 'preference' | 'lesson' | 'pattern' | 'knowledge'
   content: string
+  /** Where it was learned: chat, event, work or import. */
   source?: string
   createdAt: string
-  tier?: string
   importance?: number
-  entities?: string[]
-  relatedCapabilities?: string[]
 }
 
 export interface SkillInfo {

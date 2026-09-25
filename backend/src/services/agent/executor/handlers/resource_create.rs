@@ -306,10 +306,11 @@ async fn execute_report_create(
         updated_at: Set(now.into()),
         ..Default::default()
     };
-    new_record
+    let stored = new_record
         .insert(ctx.db)
         .await
         .map_err(|error| persist_resource_error("report", error))?;
+    crate::services::tapp_storage::record_storage_media(ctx.db, stored.id, Some(ctx.user_id)).await;
 
     tracing::info!(report_id = %report_id, title = %title, "[ReportCreate] Report persisted");
 
@@ -369,10 +370,11 @@ async fn execute_reminder_create(
         updated_at: Set(now.into()),
         ..Default::default()
     };
-    new_record
+    let stored = new_record
         .insert(ctx.db)
         .await
         .map_err(|error| persist_resource_error("reminder", error))?;
+    crate::services::tapp_storage::record_storage_media(ctx.db, stored.id, Some(ctx.user_id)).await;
 
     Ok(json!({
         "success": true,
@@ -423,10 +425,11 @@ async fn execute_note_create(
         updated_at: Set(now.into()),
         ..Default::default()
     };
-    new_record
+    let stored = new_record
         .insert(ctx.db)
         .await
         .map_err(|error| persist_resource_error("note", error))?;
+    crate::services::tapp_storage::record_storage_media(ctx.db, stored.id, Some(ctx.user_id)).await;
 
     Ok(json!({
         "success": true,
@@ -514,10 +517,11 @@ async fn execute_bookmark_save(
         updated_at: Set(now.into()),
         ..Default::default()
     };
-    new_record
+    let stored = new_record
         .insert(ctx.db)
         .await
         .map_err(|error| persist_resource_error("bookmark", error))?;
+    crate::services::tapp_storage::record_storage_media(ctx.db, stored.id, Some(ctx.user_id)).await;
 
     Ok(json!({
         "success": true,

@@ -1,3 +1,4 @@
+import type { ArmRig, ArmRigMesh } from './armRig'
 import type { ChestSpatialField } from './chestPhysics'
 import type { Anime25DDriver } from './driver'
 import type { Anime25DLayerSpringBinding } from './layerBinding'
@@ -17,7 +18,7 @@ import type {
   Anime25DTorsoShellProfile,
 } from './types'
 import { anime25DLayerUsesFaceSurface } from '../rig/anime25dLayerSemantics'
-import { ARM_SWING_SPREAD, ARM_SWING_TRAVEL } from './armFollow'
+import { ARM_CUT_BAND, ARM_SHRUG, armDrapeWeight } from './armRig'
 import { chestDeformationWeight } from './chestPhysics'
 import {
   BODY_HEAD_FOLLOW,
@@ -38,7 +39,6 @@ import {
 type SecondaryDeformationDriver = Pick<
   Anime25DDriver,
   | 'angleX'
-  | 'armPos'
   | 'armY'
   | 'bangC'
   | 'bangL'
@@ -69,7 +69,12 @@ export interface Anime25DSecondaryDeformationFrame {
   specialHeadOffset: number
   highCollar: boolean
   breath: number
-  armSwing: number
+  /** Image-plane shoulder rotation of the L and R sleeve drawings. */
+  armAngleL: number
+  armAngleR: number
+  /** The same rotation for cloth hanging from each arm, which lags and sags. */
+  armDrapeL: number
+  armDrapeR: number
   chestCenterX: number
   chestRegionCenterY: number
   chestMotionCenterY: number
@@ -108,6 +113,8 @@ export interface Anime25DSecondaryDeformationBinding {
   handwear: boolean
   handwearSide: Anime25DPlaybackLayer['side']
   handwearAnchorX: number
+  arm: ArmRig | null
+  armMesh: ArmRigMesh | null
   frontHair: boolean
   frontHairParallaxScale: Float32Array | null
   chestWeights: Float32Array | null
@@ -141,6 +148,8 @@ export function createAnime25DSecondaryDeformationBinding(input: {
   shellMode?: Anime25DShellMode | null
   hairlinePinWeights?: Float32Array | null
   torsoShellMode?: Anime25DTorsoShellMode | null
+  arm?: ArmRig | null
+  armMesh?: ArmRigMesh | null
 }): Anime25DSecondaryDeformationBinding {
   return {
     ...input,
@@ -156,6 +165,8 @@ export function createAnime25DSecondaryDeformationBinding(input: {
     shellMode: input.shellMode ?? null,
     hairlinePinWeights: input.hairlinePinWeights ?? null,
     torsoShellMode: input.torsoShellMode ?? null,
+    arm: input.baseRole === 'handwear' ? (input.arm ?? null) : null,
+    armMesh: input.baseRole === 'handwear' ? (input.armMesh ?? null) : null,
   }
 }
 
@@ -370,18 +381,41 @@ export function deformAnime25DSecondaryPoint(
     )
   }
   if (binding.handwear) {
-    const sleeveWeight = smoothstep(((point.y - source.y) / source.h) * 1.15)
-    const sleeveSide =
-      binding.handwearSide === 'L' ? 1 : binding.handwearSide === 'R' ? -1 : 0
-    point.y -= frame.expression.armY * 30 * frame.faceScale * sleeveWeight
-    point.y += frame.expression.armPos * 40 * frame.faceScale
-    point.x +=
-      frame.expression.armY * 6 * frame.faceScale * sleeveWeight * sleeveSide
-    point.x +=
-      frame.armSwing *
-      (ARM_SWING_TRAVEL + ARM_SWING_SPREAD * sleeveSide * frame.armSwing) *
-      frame.faceScale *
-      sleeveWeight
+    // Lifting rolls the shoulder up a little; the rest of the lift is rotation.
+    const shrug = frame.expression.armY * ARM_SHRUG * frame.faceScale
+    point.y -= shrug
+    const arm = binding.arm
+    const left = binding.handwearSide === 'L'
+    const swing = arm ? (left ? frame.armAngleL : frame.armAngleR) * arm.scale : 0
+    const drape = arm?.drape ? (left ? frame.armDrapeL : frame.armDrapeR) * arm.scale : swing
+    const angle = arm
+      ? swing * (binding.armMesh?.weights[vertex] ?? 1) +
+        (drape - swing) * armDrapeWeight(arm, restY)
+      : 0
+    if (arm && angle !== 0) {
+      // About the shoulder joint, in rest space. Everything applied above is a
+      // uniform carry of the whole sleeve, so the joint travels with it.
+      const dx = restX - arm.pivotX
+      const dy = restY - arm.pivotY
+      const cosine = Math.cos(angle)
+      const sine = Math.sin(angle)
+      point.x += dx * cosine - dy * sine - dx
+      point.y += dx * sine + dy * cosine - dy
+    }
+    if (arm?.cutY != null) {
+      // The crop hides the rest of the arm. Its cut edge slides along the frame
+      // line instead of lifting off it or following the shrug: the lower band
+      // takes up the difference this column's cut point would otherwise show.
+      const band = (arm.cutY - arm.pivotY) * ARM_CUT_BAND
+      const blend = smoothstep((restY - arm.cutY + band) / band)
+      if (blend > 0) {
+        const cutDy = arm.cutY - arm.pivotY
+        const cutAngle = swing + (drape - swing) * armDrapeWeight(arm, arm.cutY)
+        const lifted =
+          cutDy - ((restX - arm.pivotX) * Math.sin(cutAngle) + cutDy * Math.cos(cutAngle))
+        point.y += (lifted + shrug) * blend
+      }
+    }
   }
   // Torso translation is the parent of the head's local yaw/pitch/roll.
   // The neck's lower part already receives its cylinder projection above;

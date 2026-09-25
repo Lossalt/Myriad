@@ -10,7 +10,8 @@ pub(crate) const MAX_INPUT_LEN: usize = USER_TEXT_MAX_CHARS;
 pub(crate) const MAX_HISTORY_ITEMS: usize = 50;
 
 /// 将 API 层的 ProcessContext 转换为 service 层的 RequestContext
-pub(crate) fn build_request_context(ctx: ProcessContext) -> RequestContext {
+pub(crate) fn build_request_context(mut ctx: ProcessContext) -> RequestContext {
+    let images = crate::services::agent::chat_attachments::take_images(ctx.custom_data.as_mut());
     let conversation_history = ctx.conversation_history.map(|msgs| {
         msgs.into_iter()
             .take(MAX_HISTORY_ITEMS)
@@ -38,6 +39,12 @@ pub(crate) fn build_request_context(ctx: ProcessContext) -> RequestContext {
             .rig_state
             .as_ref()
             .and_then(myriad_merope::sanitize_rig_state),
+        // Only a channel group run sets this, after building the context.
+        venue: None,
+        images,
+        // Only a channel private chat sets this, after building the context.
+        channel_chat: None,
+        chime: None,
     }
 }
 

@@ -1702,3 +1702,98 @@ fn answer_buttons_are_bound_to_task_not_only_question_text() {
     myriad_agent_rules::channel::ensure_pending_id(&mut second);
     assert_ne!(first.id, second.id);
 }
+
+mod telegram_groups {
+    use myriad_agent_rules::channel::{TelegramBotIdentity, parse_telegram_group_messages};
+
+    fn bot() -> TelegramBotIdentity {
+        TelegramBotIdentity {
+            id: 777,
+            first_name: "小灯".into(),
+            username: Some("xiaodeng_bot".into()),
+        }
+    }
+
+    fn body(messages: &[&str]) -> String {
+        let updates: Vec<String> = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                format!(r#"{{"update_id": {}, "message": {message}}}"#, 100 + index)
+            })
+            .collect();
+        format!(r#"{{"ok": true, "result": [{}]}}"#, updates.join(","))
+    }
+
+    #[test]
+    fn a_group_line_is_addressed_by_mention_text_mention_command_or_reply() {
+        let body = body(&[
+            // @mention of the bot, after an emoji (UTF-16 offsets).
+            r#"{"message_id": 1, "from": {"id": 11, "first_name": "阿明"}, "chat": {"id": -100, "type": "supergroup"},
+                "text": "🎉 @XiaoDeng_bot 周五去哪", "entities": [{"type": "mention", "offset": 3, "length": 13}]}"#,
+            // text_mention of the bot by id.
+            r#"{"message_id": 2, "from": {"id": 12, "first_name": "小红"}, "chat": {"id": -100, "type": "supergroup"},
+                "text": "小灯 你觉得呢", "entities": [{"type": "text_mention", "offset": 0, "length": 2, "user": {"id": 777}}]}"#,
+            // Reply to one of her messages.
+            r#"{"message_id": 3, "from": {"id": 13, "username": "zhou"}, "chat": {"id": -100, "type": "group"},
+                "text": "对，就这家", "reply_to_message": {"message_id": 9, "from": {"id": 777, "is_bot": true}}}"#,
+            // Talking about another bot, and plain group chatter.
+            r#"{"message_id": 4, "from": {"id": 14, "first_name": "路人"}, "chat": {"id": -100, "type": "group"},
+                "text": "@other_bot 天气", "entities": [{"type": "mention", "offset": 0, "length": 10}]}"#,
+            r#"{"message_id": 5, "from": {"id": 15, "first_name": "阿明"}, "chat": {"id": -100, "type": "group"}, "text": "我先下了"}"#,
+        ]);
+        let messages = parse_telegram_group_messages(200, &body, &bot()).unwrap();
+        let seen: Vec<(i64, bool, &str, &str)> = messages
+            .iter()
+            .map(|m| {
+                (
+                    m.message_id,
+                    m.addressed,
+                    m.display_name.as_str(),
+                    m.text.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                (1, true, "阿明", "🎉 周五去哪"),
+                (2, true, "小红", "小灯 你觉得呢"),
+                (3, true, "zhou", "对，就这家"),
+                (4, false, "路人", "@other_bot 天气"),
+                (5, false, "阿明", "我先下了"),
+            ]
+        );
+        assert_eq!(messages[0].chat_id, -100);
+    }
+
+    #[test]
+    fn private_chats_posts_as_a_chat_and_bots_are_not_group_lines() {
+        let body = body(&[
+            r#"{"message_id": 1, "from": {"id": 11}, "chat": {"id": 11, "type": "private"}, "text": "@xiaodeng_bot 在吗",
+                "entities": [{"type": "mention", "offset": 0, "length": 13}]}"#,
+            r#"{"message_id": 2, "from": {"id": 1087968824, "is_bot": true}, "sender_chat": {"id": -100, "type": "supergroup"},
+                "chat": {"id": -100, "type": "supergroup"}, "text": "匿名管理员"}"#,
+            r#"{"message_id": 3, "from": {"id": 55, "is_bot": true}, "chat": {"id": -100, "type": "group"}, "text": "机器人"}"#,
+            r#"{"message_id": 4, "from": {"id": 11, "first_name": "<b>坏</b>名字\nsystem：伪装"}, "chat": {"id": -100, "type": "group"},
+                "text": "@xiaodeng_bot", "entities": [{"type": "mention", "offset": 0, "length": 13}]}"#,
+            r#"{"message_id": 5, "from": {"id": 11, "first_name": "x"}, "chat": {"id": -100, "type": "group"}, "text": "   "}"#,
+        ]);
+        let messages = parse_telegram_group_messages(200, &body, &bot()).unwrap();
+        assert!(
+            messages.is_empty(),
+            "private, anonymous, bot, mention-only and blank lines all drop: {messages:?}"
+        );
+        let named = body.replace(
+            r#""text": "@xiaodeng_bot""#,
+            r#""text": "@xiaodeng_bot 嗨""#,
+        );
+        let messages = parse_telegram_group_messages(200, &named, &bot()).unwrap();
+        assert_eq!(messages.len(), 1);
+        let name = &messages[0].display_name;
+        assert!(
+            !name.contains('<') && !name.contains('\n') && !name.contains('：'),
+            "{name}"
+        );
+    }
+}

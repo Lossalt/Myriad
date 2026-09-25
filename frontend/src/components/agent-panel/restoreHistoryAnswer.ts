@@ -26,7 +26,7 @@ export async function restoreHistoryAnswer(
   const restored = restoreSessionMessage(row, source.sessionId)
   const taskId = restored.taskExecution?.taskId
   const question = restored.pendingQuestion
-  if (!taskId || !question || question.confirmationId || question.questionId !== source.questionId) return null
+  if (!taskId || !question || question.questionId !== source.questionId) return null
   const task = await api.getTask(taskId, signal)
   if (signal.aborted || task.taskId !== taskId || task.status !== 'waiting_for_input' ||
     task.pendingQuestion?.questionId !== question.questionId) { return null

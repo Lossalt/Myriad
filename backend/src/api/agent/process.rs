@@ -291,12 +291,50 @@ pub async fn process_stream(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
+/// Save what a Chat turn had said before it was cut off, marked as such, so
+/// the next turn knows where she stopped.
+async fn save_cut_off(
+    db: &DatabaseConnection,
+    session_id: &str,
+    text: &str,
+    voice: bool,
+    run_id: &str,
+) {
+    let metadata = json!({
+        crate::services::agent::chat_prompt::CUT_OFF_KEY:
+            crate::services::agent::chat_prompt::cut_off_kind(voice),
+        "runId": run_id,
+    });
+    if let Err(error) = persist_assistant_message(db, session_id, None, text, Some(metadata)).await
+    {
+        tracing::warn!(%error, "[Agent API] Failed to save a cut-off reply");
+    }
+}
+
+/// A Chat turn stopped with no newer turn keeps what it had said itself.
+async fn save_stopped(
+    db: &DatabaseConnection,
+    session_id: &str,
+    in_group: bool,
+    spoken: Option<&crate::services::agent::turn::Spoken>,
+    run_id: &str,
+) {
+    let Some(spoken) = spoken else {
+        return;
+    };
+    if let Some(text) = spoken.stopped() {
+        if !session_id.is_empty() && !in_group {
+            save_cut_off(db, session_id, &text, spoken.voice(), run_id).await;
+        }
+    }
+}
+
 /// Browser and realtime voice enter the same run lifecycle, history, budget,
 /// Chat supersession and director. Only their event transports differ.
 pub(crate) async fn start_process_run(
     db: DatabaseConnection,
     claims: Claims,
-    req: ProcessRequest,
+    mut req: ProcessRequest,
 ) -> Result<Arc<AgentRun>, HttpError> {
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
     validate_input(&req.input)?;
@@ -305,6 +343,31 @@ pub(crate) async fn start_process_run(
         .as_ref()
         .and_then(|context| context.mode)
         .unwrap_or_default();
+    // Server-set only (`serde(skip)`): a group turn speaks as her, in Chat.
+    let group = req
+        .context
+        .as_mut()
+        .and_then(|context| context.group.take());
+    if group.is_some() && interaction_mode != crate::services::agent::AgentInteractionMode::Chat {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json("A group turn must be a Chat turn")),
+        )));
+    }
+    let channel_chat = req
+        .context
+        .as_mut()
+        .and_then(|context| context.channel_chat.take());
+    if channel_chat.is_some()
+        && interaction_mode != crate::services::agent::AgentInteractionMode::Chat
+    {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json(
+                "A channel chat turn must be a Chat turn",
+            )),
+        )));
+    }
     let source_intent_id = req
         .context
         .as_ref()
@@ -357,8 +420,48 @@ pub(crate) async fn start_process_run(
 
     let has_session = !session_id.is_empty();
 
-    // 从数据库加载最近 20 条会话历史（替代前端传入的 conversation_history）
-    let conversation_history = if has_session {
+    // 后端 run 独立于本次 HTTP 连接；前端只订阅事件。
+    // SSE 断连不取消任务：刷新 / reattach 依赖 run 继续存活；
+    // 用户中断走 cancel_task / cancel_task_for_user。
+    let run_id_for_meta = format!("run_{}", uuid::Uuid::new_v4().simple());
+    let is_chat = interaction_mode == crate::services::agent::AgentInteractionMode::Chat;
+    let in_group = group.is_some();
+    // Spoken aloud: the text runs ahead of what they heard.
+    let voice = req
+        .context
+        .as_ref()
+        .and_then(|context| context.custom_data.as_ref())
+        .and_then(|data| data.get("voice"))
+        .and_then(|voice| voice.as_str())
+        == Some("realtime");
+    // Claim before loading history, so the previous Chat run is cancelled even
+    // while this request waits for a lane permit, and so what it had said, if
+    // it was cut off partway, lands before this message. Work never claims.
+    let chat_claim = if is_chat {
+        Some(
+            crate::services::agent::turn::claim_speaking_turn(
+                user_id,
+                &session_id,
+                &run_id_for_meta,
+                voice,
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    if let Some(cut) = chat_claim.as_ref().and_then(|claim| claim.cut_off.as_ref()) {
+        // A group heard nothing until a reply was complete.
+        if has_session && !in_group {
+            save_cut_off(&db, &session_id, &cut.text, cut.voice, &cut.run_id).await;
+        }
+    }
+
+    // 从数据库加载最近 20 条会话历史（替代前端传入的 conversation_history）。
+    // A group turn answers in the group: its history is the group transcript.
+    let conversation_history = if let Some(group) = &group {
+        Some(group.transcript.clone())
+    } else if has_session {
         let history = load_session_history(
             &db,
             &session_id,
@@ -418,6 +521,9 @@ pub(crate) async fn start_process_run(
         if let Some(history) = conversation_history {
             ctx.conversation_history = Some(history);
         }
+        ctx.venue = group.as_ref().map(|group| group.venue.clone());
+        ctx.chime = group.as_ref().and_then(|group| group.chime.clone());
+        ctx.channel_chat = channel_chat.clone();
     } else {
         let mut new_ctx = RequestContext {
             lane_key: Some(lane_key.clone()),
@@ -439,10 +545,6 @@ pub(crate) async fn start_process_run(
         ctx.autonomy_permission_cap = autonomy_cap;
     }
 
-    // 后端 run 独立于本次 HTTP 连接；前端只订阅事件。
-    // SSE 断连不取消任务：刷新 / reattach 依赖 run 继续存活；
-    // 用户中断走 cancel_task / cancel_task_for_user。
-    let run_id_for_meta = format!("run_{}", uuid::Uuid::new_v4().simple());
     // Acquire input references before admission can launch an executor. This also
     // covers non-channel callers carrying local media in custom_data.
     if let Some(payload) = user_request
@@ -498,6 +600,7 @@ pub(crate) async fn start_process_run(
     // TaskCreated 时把 runId/taskId 写入会话历史，刷新后可 reattach。
     let (tx, rx) = tokio::sync::mpsc::channel::<ProgressEvent>(256);
     let run_for_forwarder = run.clone();
+    let spoken_for_forwarder = chat_claim.as_ref().map(|claim| claim.spoken.clone());
     let session_for_identity = session_id.clone();
     let db_for_identity = db.clone();
     let run_id_for_identity = run_id_for_meta.clone();
@@ -518,6 +621,11 @@ pub(crate) async fn start_process_run(
                     None
                 };
 
+            if let (Some(spoken), AgentProgressEvent::SummaryToken { token, .. }) =
+                (&spoken_for_forwarder, &event)
+            {
+                spoken.push(token);
+            }
             // 先 `publish`（hub fanout）；会话身份 persist 另 spawn，不挡热路径。
             run_for_forwarder.publish(event).await;
 
@@ -556,20 +664,13 @@ pub(crate) async fn start_process_run(
     let session_id_clone = session_id.clone();
     let queue = LANE_QUEUE.clone();
     let source_intent_id_for_work = source_intent_id.clone();
-    let is_chat = interaction_mode == crate::services::agent::AgentInteractionMode::Chat;
-    // Claim before the spawn so the previous Chat run is cancelled even while
-    // this request waits for a lane permit. Work never claims this slot.
-    let chat_claim = if is_chat {
-        Some(
-            crate::services::agent::turn::claim_chat_turn(user_id, &session_id, &run_id_for_meta)
-                .await,
-        )
-    } else {
-        None
-    };
-    let (mut chat_cancel, chat_slot_id) = match chat_claim {
-        Some((rx, slot_id)) => (Some(rx), Some(slot_id)),
-        None => (None, None),
+    let (mut chat_cancel, chat_slot_id, chat_spoken) = match chat_claim {
+        Some(claim) => (
+            Some(claim.cancelled),
+            Some(claim.slot_id),
+            Some(claim.spoken),
+        ),
+        None => (None, None, None),
     };
     // tx 会被移动到 spawn 中，确保 channel 在任务完成前不会关闭
     let execution = tokio::spawn(async move {
@@ -676,6 +777,7 @@ pub(crate) async fn start_process_run(
                             "idle",
                         )
                         .await;
+                        save_stopped(&db_clone, &session_id_clone, in_group, chat_spoken.as_ref(), &run_id_for_meta).await;
                         let _ = tx
                             .send(crate::services::agent::turn::superseded_turn_event())
                             .await;
@@ -693,6 +795,25 @@ pub(crate) async fn start_process_run(
             }
             _ => agent.process_with_progress(user_request, tx.clone()).await,
         };
+        // Cut off just as it finished: only what it had said stands.
+        if chat_spoken.as_ref().is_some_and(|spoken| !spoken.finish()) {
+            save_stopped(
+                &db_clone,
+                &session_id_clone,
+                in_group,
+                chat_spoken.as_ref(),
+                &run_id_for_meta,
+            )
+            .await;
+            let _ = tx
+                .send(crate::services::agent::turn::superseded_turn_event())
+                .await;
+            if let Some(slot_id) = chat_slot_id {
+                crate::services::agent::turn::finish_chat_turn(user_id, &session_id_clone, slot_id)
+                    .await;
+            }
+            return;
+        }
         match turn_result {
             Ok(response) => {
                 let api_response: ApiResponse = response.into();
@@ -1613,6 +1734,33 @@ mod quota_error_tests {
             completed_turn_intention_status(&blocked),
             IntentStatus::Failed
         );
+    }
+}
+
+#[cfg(test)]
+mod cut_off_tests {
+    /// What a cut-off turn had said is saved before this turn's history is
+    /// read and before this message, so it sits where it was said.
+    #[test]
+    fn a_cut_off_reply_lands_before_the_message_that_cut_it_off() {
+        let src = include_str!("process.rs");
+        let body = src
+            .split("pub(crate) async fn start_process_run(")
+            .nth(1)
+            .expect("start_process_run");
+        let claim = body.find("claim_speaking_turn(").expect("claim");
+        let save = body.find("save_cut_off(").expect("save");
+        let history = body.find("load_session_history(").expect("history");
+        let persist = body.find("persist_user_message(").expect("persist");
+        assert!(claim < save && save < history && history < persist);
+        // A turn that was cut off does not also save its whole reply.
+        let finish = body.find("spoken.finish()").expect("finish check");
+        let outcome = body.find("match turn_result").expect("turn outcome");
+        let reply = outcome
+            + body[outcome..]
+                .find("persist_assistant_message(")
+                .expect("reply persistence");
+        assert!(finish < outcome && outcome < reply);
     }
 }
 

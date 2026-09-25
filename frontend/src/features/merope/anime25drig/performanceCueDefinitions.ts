@@ -70,8 +70,7 @@ export const PERFORMANCE_CUE_DEFINITIONS = {
     resources: FACE_TORSO_ARMS_BUST,
     driver: (poseAmount) => ({
       body: 0.16 * poseAmount * bodyParticipation(poseAmount),
-      armY: 0.22 * poseAmount * bodyParticipation(poseAmount),
-      armPos: 0.34 * poseAmount * bodyParticipation(poseAmount),
+      armY: 0.4 * poseAmount * bodyParticipation(poseAmount),
       bust: IDENTITY_DRIVER.bust + 0.26 * poseAmount,
     }),
     expression: (amount, poseAmount) => ({

@@ -1,5 +1,4 @@
 import type { ProgressEvent } from '../../services/agent'
-import type { AgentPendingAction } from './agentAction'
 import type { AgentPanelMode } from './agentPanelMode'
 import type { AgentStatusState } from './agentStatus'
 import type { AgentUndoOffer } from './agentUndo'
@@ -27,8 +26,6 @@ const IDLE_LANES: Record<AgentPanelMode, boolean> = {
 
 /** Per-lane occupancy; the island is global so stop must read this lane. */
 let laneLoading: Record<AgentPanelMode, boolean> = IDLE_LANES
-
-let pendingAction: AgentPendingAction | null = null
 
 let undoOffer: AgentUndoOffer | null = null
 
@@ -71,11 +68,8 @@ function scheduleSettle(): void {
 }
 
 function commit(next: AgentStatusState): void {
-  const wasPending = pendingAction !== null
   streamed = next
-  if (wasPending && next.status !== 'needsInput') pendingAction = null
   scheduleSettle()
-  if (wasPending && pendingAction === null) notify()
   publish()
 }
 
@@ -97,35 +91,6 @@ export function setAgentStatusAwaitingConfirmation(prompt: string): void {
 export function setAgentStatusThinking(): void {
   if (streamed.status === 'thinking' || streamed.status === 'working') return
   commit(beginAgentRun())
-}
-
-export function setAgentPendingAction(action: AgentPendingAction): void {
-  pendingAction = action
-  commit(awaitingConfirmation(action.prompt))
-  notify()
-}
-
-export function clearAgentPendingAction(id?: string): void {
-  if (pendingAction === null) return
-  if (id && pendingAction.id !== id) return
-  pendingAction = null
-  notify()
-}
-
-export function getAgentPendingActionSnapshot(): AgentPendingAction | null {
-  return pendingAction
-}
-
-export function getServerAgentPendingActionSnapshot(): AgentPendingAction | null {
-  return null
-}
-
-export function useAgentPendingAction(): AgentPendingAction | null {
-  return useSyncExternalStore(
-    subscribeAgentStatus,
-    getAgentPendingActionSnapshot,
-    getServerAgentPendingActionSnapshot,
-  )
 }
 
 function clearUndoTimer(): void {
@@ -174,7 +139,6 @@ export function useAgentUndoOffer(): AgentUndoOffer | null {
 export function resetAgentStatus(): void {
   clearSettleTimer()
   clearUndoTimer()
-  pendingAction = null
   undoOffer = null
   commit(IDLE_AGENT_STATUS)
 }

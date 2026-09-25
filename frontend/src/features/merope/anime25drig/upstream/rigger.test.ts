@@ -408,6 +408,20 @@ test('narrow hair has unique, separated strands instead of forced duplicate spri
   }
 })
 
+test('a thin part keeps its strand when smoothing moves the peak off it', () => {
+  // Upstream 7ddbd99: the box-smoothed profile of a 10 px part is a wide flat
+  // top whose first index lies outside the paint, so the spring was dropped.
+  const width = 120
+  const height = 100
+  const alpha = new Uint8Array(width * height)
+  for (let y = 10; y < 90; y += 1)
+    alpha.fill(255, y * width + 55, y * width + 65)
+  const strands = port._internals.detectStrands(alpha, width, height, 30, 1)
+  assert.equal(strands.length, 1)
+  assert.ok(strands[0].x >= 55 && strands[0].x < 65)
+  assert.deepEqual([strands[0].rootY, strands[0].tipY], [10, 89])
+})
+
 test('synthetic close edges ignore RGB stored in fully transparent pixels', () => {
   const source = representativePsd()
   source.children = source.children!.filter(

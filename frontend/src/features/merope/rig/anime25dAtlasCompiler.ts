@@ -320,7 +320,8 @@ export async function packAnime25DAtlas(
   }
 }
 
-function visibleInAnalysisReference(layer: RasterLayer): boolean {
+/** Layers visible when the character rests with eyes open and mouth closed. */
+export function visibleInAnalysisReference(layer: RasterLayer): boolean {
   if (
     layer.role === 'maniac-eye-shadow' ||
     layer.role === 'maniac-mouth-shadow' ||

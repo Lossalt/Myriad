@@ -683,9 +683,9 @@ function writeBaselineOffset(
     PerformanceBaseline['posture'],
     Partial<PerformanceExpressionOffset>
   > = {
-    closed: { body: -0.16, armY: -0.14, armPos: -0.18 },
+    closed: { body: -0.16, armY: -0.14 },
     neutral: {},
-    open: { body: 0.12, armY: 0.16, armPos: 0.2 },
+    open: { body: 0.12, armY: 0.16 },
   }
   Object.assign(output, posture[baseline.posture])
   const poseEnergy = 0.72 + clamp(baseline.motionEnergy, 0.2, 1.4) * 0.36

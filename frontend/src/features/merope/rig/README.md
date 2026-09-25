@@ -17,6 +17,24 @@ pose chains. `handwear` is the shared semantic parent; optional
 hand drawings. They may lag or swing within ±15 degrees but never deform into
 an articulated limb.
 
+At bind time each split sleeve gets one shoulder joint, found on its own
+opaque pixels nearest the anatomical shoulder (never above the neck), and the
+rotation fades in across the joint so the sleeve bends into the shoulder rather
+than tearing from it. At runtime the sleeve is a damped pendulum: `armY` opens
+both arms, `armPos` swings both one way, the shoulder's actual acceleration
+after all primary motion makes the hand trail, and half of a body roll is given
+back to gravity. The swing saturates softly into the contract's
+`maxRigidArmRotationDegrees`. A sleeve that runs into the portrait crop keeps
+its cut edge on the frame line and slides along it instead of lifting off.
+A drawing whose hand is raised above its shoulder swings at 30%.
+
+A sleeve that is fabric all the way down (under 5% skin-toned pixels in its
+lower half, so no forearm or hand shows) is a drape: below a third of its length
+it blends from the arm's swing to its own softer pendulum, which trails the arm
+and settles 30% nearer vertical. A visible forearm never bends; a raised arm
+never drapes. Ribbons and tassels painted inside a sleeve cannot be separated
+from it and move with the sleeve.
+
 This boundary is shared by
 `shared/merope_rig_contract.json`, the Rust compiler, TypeScript
 validation, the PSD importer, and diagnostics. Do not add a frontend-only
@@ -124,6 +142,56 @@ Import also synthesizes optional `anger_mark` and `speechless_sweat` manga
 accents from the face scale. They stay out of the neutral analysis reference;
 runtime facial deformation remains the primary expression signal and stages
 the accents after the brows, gaze, lids, and mouth have begun moving.
+
+Every generated drawing is placed in the portrait's own face frame
+(`faceFrame.ts`): the iris-to-iris line gives the roll, its midpoint the
+origin. Eye, mouth, and heart glyphs are drawn upright and then rotated about
+their own pivot by that roll, so a tilted head gets tilted glyphs. The
+lovestruck blush sits under the drawn lower lids, and the anger mark and sweat
+drop hang off the face drawing's contour at eye height rather than off corners
+of the face's bounding box. Authored artwork and the resampled silly iris keep
+their drawn orientation. A portrait with no mouth drawing gets a mouth anchor on
+the face midline instead of the frozen rigger's fixed-pixel guess. All of this is
+baked at import; stored rigs change only when re-imported.
+
+When the square source illustration is available, import reconciles the split
+against it and repairs what the illustration proves (`psdReconciliation.ts`,
+`psdRepair.ts`). The layers visible at rest are composited in draw order and
+compared with the illustration they were decomposed from. Each disagreeing
+region is classified by cause: `buried` when a lower layer holds matching art
+that a later layer covers (an ordering fault), `missing` when the illustration
+shows art that no layer carries (e.g. a dropped earring), `spurious` when a
+layer paints over open backdrop, and `mismatch` when the visible layer differs
+and nothing beneath fits. Backdrop is flood-filled from the open edges, so pale
+skin or white hair enclosed by line art is not mistaken for it. See-through
+re-renders colours, so thresholds allow ~15–18 RGB of drift. Below 80%
+agreement the PSD is treated as split from another illustration and left
+untouched. Scenic backdrops disable the backdrop-dependent verdicts.
+
+Repair then acts on those verdicts. A `buried` region whose covered layer
+matches the illustration as a whole (mean distance ≤ 26; faithful reveals
+measured 7–23, coincidental ones 31–37) is revealed by erasing the covering
+pixels. The reveal grows past the verdict threshold for as long as some covered
+layer still beats the composite, so it stops at the covering drawing's own
+outline instead of a jagged threshold contour, and the removed drawing's
+translucent rim is cleared so no ghost outline remains. Anything else
+the illustration shows (`missing`, `mismatch`, weak `buried`) is lifted from
+the illustration itself. A morphological closing plus small-hole fill keeps an
+accessory whole, so a birdcage earring comes back with the hair seen between
+its bars. Each recovered piece then follows what holds it: one whose top end
+reaches a rigid accessory is painted into that drawing (a tassel under a hair
+ornament becomes part of the ornament, so a head turn cannot separate them),
+one hanging from the ears becomes `earwear`, one on hair `headwear`, one at the
+neck `neckwear`, and anything else a rigid `objects` layer, each placed just
+above the layers it overrides. Joining an accessory needs nothing drawn above
+it to cover the piece at rest; otherwise the piece gets its own layer. Beyond
+the `MAX_RIG_PARTS` budget, pieces of one body part share a plain `objects`
+layer. Layers with expression variants are never edited or covered, and areas
+above 2% of the content are too garment-sized to pin as static art; those are
+only reported. Surfaces the illustration hides cannot be recovered. Preflight shows
+the repairs in green on the difference map alongside what remains. Faults the
+runtime corrects later (for example lifting `neckwear` over recovered skin)
+are judged before that correction.
 
 The `lovestruck` expression keeps the character's authored irises and overlays
 one independently anchored, character-tinted heart pupil per eye. A single

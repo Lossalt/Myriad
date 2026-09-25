@@ -416,30 +416,23 @@ pub(crate) async fn list_skills() -> Result<Json<Value>, HttpError> {
 
 /// 获取记忆条目（当前用户）
 pub(crate) async fn list_memories(
+    State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<Value>, HttpError> {
     let user_id = parse_user_id(&claims)?;
-    let memory = crate::services::agent::memory::get_memory().ok_or_else(|| {
-        HttpError::from((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(AppError::public_json("Memory not initialized")),
-        ))
-    })?;
-
-    let entries = memory.list_recent(50, user_id).await;
+    let entries = crate::services::agent::memory::unified::list(&db, user_id, 50)
+        .await
+        .map_err(memory_store_http)?;
     let memories_json: Vec<Value> = entries
         .iter()
         .map(|e| {
             json!({
                 "id": e.id,
-                "memoryType": e.memory_type,
+                "memoryType": e.kind,
                 "content": e.content,
                 "source": e.source,
-                "createdAt": e.created_at,
-                "tier": e.tier,
+                "createdAt": e.created_at.to_rfc3339(),
                 "importance": e.importance,
-                "entities": e.entities,
-                "relatedCapabilities": e.related_capabilities,
             })
         })
         .collect();
@@ -447,20 +440,27 @@ pub(crate) async fn list_memories(
     Ok(Json(json!({ "memories": memories_json })))
 }
 
+fn memory_store_http(error: sea_orm::DbErr) -> HttpError {
+    tracing::error!(%error, "agent memory store failed");
+    HttpError(AppError::internal("Failed to access memory"))
+}
+
 /// 删除记忆条目（仅本人）
 pub(crate) async fn delete_memory(
+    State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Path(memory_id): Path<String>,
 ) -> Result<Json<Value>, HttpError> {
     let user_id = parse_user_id(&claims)?;
-    let memory = crate::services::agent::memory::get_memory().ok_or_else(|| {
-        HttpError::from((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(AppError::public_json("Memory not initialized")),
-        ))
-    })?;
-
-    if memory.remove_memory(&memory_id, user_id).await {
+    let removed = crate::services::agent::memory::unified::retire(
+        &db,
+        user_id,
+        std::slice::from_ref(&memory_id),
+        "deleted",
+    )
+    .await
+    .map_err(memory_store_http)?;
+    if removed > 0 {
         Ok(Json(json!({ "success": true })))
     } else {
         Err(HttpError::from((
@@ -472,6 +472,7 @@ pub(crate) async fn delete_memory(
 
 /// 更新记忆条目（仅本人）
 pub(crate) async fn update_memory(
+    State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Path(memory_id): Path<String>,
     Json(body): Json<Value>,
@@ -483,15 +484,11 @@ pub(crate) async fn update_memory(
             Json(AppError::public_json("Missing field: content")),
         ))
     })?;
-
-    let memory = crate::services::agent::memory::get_memory().ok_or_else(|| {
-        HttpError::from((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(AppError::public_json("Memory not initialized")),
-        ))
-    })?;
-
-    if memory.update_memory(&memory_id, content, user_id).await {
+    let updated =
+        crate::services::agent::memory::unified::update_content(&db, user_id, &memory_id, content)
+            .await
+            .map_err(memory_store_http)?;
+    if updated {
         Ok(Json(json!({ "success": true })))
     } else {
         Err(HttpError::from((
@@ -708,16 +705,6 @@ pub(crate) async fn steer_session(
                 })),
             ))
         })?;
-
-    // Keep an audit/session trace after the instruction is accepted for execution.
-    if let Some(mem) = crate::services::agent::memory::get_memory() {
-        mem.remember(
-            &format!("Mid-task steering instruction: {}", instruction),
-            crate::services::agent::memory::MemoryType::SessionInsight,
-            user_id,
-        )
-        .await;
-    }
 
     Ok(Json(json!({
         "success": true,

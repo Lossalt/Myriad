@@ -54,6 +54,9 @@ struct StoredSession {
     binding: Option<ChannelBinding>,
     #[serde(default)]
     address: Option<transport::ChannelAddress>,
+    /// Her chat with them, apart from the Work she hands off.
+    #[serde(default)]
+    chat_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +68,7 @@ struct StoredPending {
     expected_user_id: Option<i32>,
 }
 
+mod chat;
 mod transport;
 use crate::services::channel_pairing::ChannelBinding;
 pub use transport::ChannelTransport;
@@ -309,12 +313,6 @@ async fn continue_text(
         return;
     }
 
-    if is_active(session_key).await {
-        let _ = sink
-            .send_text("上一件事还在处理中；可发送 /status 查看，或 /stop 停止。")
-            .await;
-        return;
-    }
     if runtime::recover_session(db, session_key, Some(sink.clone())).await {
         let _ = sink.send_text("正在恢复上一件事的回复，请稍后再试。").await;
         return;
@@ -361,7 +359,8 @@ async fn continue_text(
         }
     }
 
-    start_new_work(
+    // She answers as herself; Work is what she hands off.
+    chat::start_chat_turn(
         db.clone(),
         claims,
         user_id,
@@ -417,6 +416,7 @@ async fn handle_command(
                             original_input: String::new(),
                             binding: None,
                             address: None,
+                            chat_session_id: None,
                         },
                     )
                     .await;
@@ -499,24 +499,18 @@ async fn cancel_session_tasks(db: &DatabaseConnection, user_id: i32, session_id:
     }
 }
 
-async fn start_new_work(
+/// Start their Work with images already cached: what they asked for, or what
+/// she handed off for them.
+async fn start_work_run(
     db: DatabaseConnection,
     claims: Claims,
     user_id: i32,
     session_id: String,
     input: &str,
-    images: &[ChannelImageRef],
+    custom_data: Option<Value>,
     sink: ChannelSink,
     session_key: &str,
 ) {
-    sink.send_typing().await;
-    let custom_data = match cache_inbound_images(&db, user_id, &sink.transport, images).await {
-        Ok(data) => data,
-        Err(message) => {
-            let _ = sink.send_text(&message).await;
-            return;
-        }
-    };
     let input = if input.trim().is_empty() && custom_data.is_some() {
         "请查看这张图片。"
     } else {
@@ -537,6 +531,8 @@ async fn start_new_work(
                 intention_id: None,
                 autonomy_permission_cap: None,
                 rig_state: None,
+                group: None,
+                channel_chat: None,
             }),
         },
     )
@@ -601,6 +597,8 @@ async fn resume_pending(
                         intention_id: None,
                         autonomy_permission_cap: None,
                         rig_state: None,
+                        group: None,
+                        channel_chat: None,
                     }),
                 },
             )
@@ -670,7 +668,10 @@ async fn resume_pending(
     }
 }
 
-async fn claims_for_user(db: &DatabaseConnection, user_id: i32) -> Result<Claims, DbErr> {
+pub(crate) async fn claims_for_user(
+    db: &DatabaseConnection,
+    user_id: i32,
+) -> Result<Claims, DbErr> {
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
@@ -719,6 +720,7 @@ async fn bind_session(
         original_input: String::new(),
         binding: None,
         address: None,
+        chat_session_id: None,
     };
     put_session(db, platform, user_id, session_key, stored.clone()).await?;
     Ok(stored)

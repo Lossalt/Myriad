@@ -479,6 +479,7 @@ pub(crate) fn collect_database_updates_with_vendor(
                 "lite_openai_base_url",
                 JsonValue::String(field.value.clone()),
             ),
+            "lite_judge_model" => ("lite_judge_model", JsonValue::String(field.value.clone())),
             // AI 图片生成配置
             "ai_image_provider" => ("ai_image_provider", JsonValue::String(field.value.clone())),
             "ai_image_model" => ("ai_image_model", JsonValue::String(field.value.clone())),
@@ -617,6 +618,8 @@ pub(crate) fn collect_database_updates_with_vendor(
                 | "provider_volcengine_base_url"
                 | "ai_source"
                 | "lite_ai_source"
+                // Cleared: judgments go back to Lite's own model.
+                | "lite_judge_model"
                 | "pro_ai_source"
                 | "ai_image_source"
                 | "speech_source"

@@ -34,6 +34,11 @@ uniform vec2 u_neck_surface_fade;
 uniform vec2 u_crown_band;
 uniform vec2 u_neck_surface_bounds;
 uniform vec2 u_neck_surface_contour[${NECK_SURFACE_COLUMNS}];
+// Eye whites paint their coverage into this canvas-sized mask (left eye in red,
+// right in green); an iris multiplies by its own eye's channel.
+uniform sampler2D u_eye_mask;
+uniform vec2 u_eye_mask_channel;
+uniform float u_eye_mask_pass;
 out vec4 out_color;
 
 vec2 atlas_uv(vec2 local_uv) {
@@ -127,6 +132,10 @@ void main() {
       + falling_drop * (1.0 - attached_tear.a);
     color = dry_eye + moving_water * (1.0 - dry_eye.a);
   }
+  if (u_eye_mask_pass > 0.5) {
+    out_color = vec4(color.a);
+    return;
+  }
   if (color.a < u_cut) discard;
   float neck_opacity = 1.0;
   if (u_neck_surface_fade.y > u_neck_surface_fade.x) {
@@ -142,7 +151,10 @@ void main() {
   }
   float crown_opacity = u_crown_band.y > u_crown_band.x
     ? 1.0 - smoothstep(u_crown_band.x, u_crown_band.y, local_uv.y) : 1.0;
-  out_color = color * (u_opacity * neck_opacity * crown_opacity);
+  float eye_mask = u_eye_mask_channel == vec2(0.0)
+    ? 1.0
+    : dot(texelFetch(u_eye_mask, ivec2(gl_FragCoord.xy), 0).rg, u_eye_mask_channel);
+  out_color = color * (u_opacity * neck_opacity * crown_opacity * eye_mask);
 }`
 
 export interface CroppedLayerPixels {

@@ -149,7 +149,7 @@ sudo cp /opt/src/Myriad/backend/target/release/myriad-backend /opt/myriad/
 sudo mkdir -p /opt/myriad/frontend
 sudo cp -r /opt/src/Myriad/frontend/dist /opt/myriad/frontend/dist
 
-# Agent seed data (SOUL.md / USER.md / agents/*.md / mcp_servers.json …)
+# Agent seed data (SOUL.md / USER.md / mcp_servers.json …)
 # These are committed in the repo and REQUIRED at runtime.
 sudo cp -r /opt/src/Myriad/backend/data /opt/myriad/data
 
@@ -163,7 +163,7 @@ Resulting layout:
 ├── myriad-backend          # the binary
 ├── .env                    # created in the next step
 ├── data/                   # agent templates (seed) + runtime phantasi/tapps data
-│   └── agent/              # SOUL.md, USER.md, agents/, mcp_servers.json, ...
+│   └── agent/              # SOUL.md, USER.md, mcp_servers.json, ...
 ├── cache/                  # created automatically at first run
 └── frontend/dist/          # static SPA served by the backend
 ```

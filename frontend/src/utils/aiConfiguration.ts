@@ -9,11 +9,6 @@ type Capability = 'standard' | 'chat' | 'pro' | 'persona' | 'personaName' | 'ima
 function requiredCapability(url: string, init: RequestInit): Capability | undefined {
   if ((init.method ?? 'GET').toUpperCase() !== 'POST') return
   const path = requestPathname(url)
-  if (path === '/api/agent/confirm/stream') {
-    try {
-      if (typeof init.body === 'string' && JSON.parse(init.body).confirmed === false) return
-    } catch { /* The endpoint owns request validation. */ }
-  }
   if (/^\/api\/agent\/process(?:\/stream)?$/.test(path)) {
     try {
       if (typeof init.body === 'string' && JSON.parse(init.body).context?.mode === 'chat') return 'chat'
@@ -26,7 +21,7 @@ function requiredCapability(url: string, init: RequestInit): Capability | undefi
   if (/^\/api\/agent\/persona\/(draft|import|visual-design)$/.test(path)) return 'persona'
   if (/^\/api\/tapp-playground\/generate(?:-stream)?$/.test(path)) return 'pro'
   if (/^\/api\/merope\/rig\/(portrait|avatar)$/.test(path)) return 'image'
-  if (/^\/api\/agent\/(clarify|confirm\/stream|tasks\/[^/]+\/answer(?:\/stream)?)$/.test(path)) return 'standard'
+  if (/^\/api\/agent\/(clarify|tasks\/[^/]+\/answer(?:\/stream)?)$/.test(path)) return 'standard'
   if (/^\/api\/phantasiai\/(items\/[^/]+\/(annotations|podcast)\/regenerate|sources\/[^/]+\/style-tags)$/.test(path)) return 'standard'
   if (/^\/api\/reports\/(platform|generate-all)$/.test(path)) return 'standard'
   return undefined

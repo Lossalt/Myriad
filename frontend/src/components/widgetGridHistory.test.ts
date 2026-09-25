@@ -2,10 +2,12 @@ import type { WidgetConfig } from './widgetGridTypes'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  isEditableKeyTarget,
   isRedoKey,
   isUndoKey,
   pushWidgetHistory,
   redoWidgetHistory,
+  sameWidgets,
   undoWidgetHistory,
 } from './widgetGridHistory'
 
@@ -69,5 +71,31 @@ describe('undo and redo', () => {
       isUndoKey({ ctrlKey: true, metaKey: false, shiftKey: true, key: 'z' }),
       false,
     )
+  })
+})
+
+describe('sameWidgets', () => {
+  it('compares by value so an undo re-render is not a new step', () => {
+    assert.equal(sameWidgets(a, structuredClone(a)), true)
+    assert.equal(sameWidgets(a, b), false)
+    assert.equal(sameWidgets(undefined, a), false)
+    assert.equal(sameWidgets(a, [...a, ...b]), false)
+  })
+})
+
+describe('isEditableKeyTarget', () => {
+  const element = (match: boolean, isContentEditable = false) => ({
+    isContentEditable,
+    closest: () => (match ? {} : null),
+  }) as unknown as EventTarget
+
+  it('leaves Cmd+Z in text fields to the field', () => {
+    assert.equal(isEditableKeyTarget(element(true)), true)
+    assert.equal(isEditableKeyTarget(element(false, true)), true)
+  })
+
+  it('lets the grid handle keys elsewhere', () => {
+    assert.equal(isEditableKeyTarget(element(false)), false)
+    assert.equal(isEditableKeyTarget(null), false)
   })
 })

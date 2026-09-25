@@ -335,6 +335,26 @@ pub async fn get_steam_presence(
     }
 }
 
+/// The site's own Steam status, for the persona: fresh from the cache, else
+/// fetched now. `None` when Steam is off, not configured, or unreachable.
+/// The key stays on this side; only the status comes back.
+pub(crate) async fn site_presence(db: &DatabaseConnection) -> Option<SteamPresenceResponse> {
+    let config = crate::services::config_service::ConfigService::new(db.clone())
+        .load_config()
+        .await
+        .ok()
+        .unwrap_or_default();
+    if PlatformId::Steam.explicit_enabled(&config) == Some(false) {
+        return None;
+    }
+    let api_key = stored(config.steam_api_key.as_ref())?;
+    let steam_id = stored(config.steam_id.as_ref())?;
+    if let Some(PresenceHit::Fresh(presence)) = read_presence(&steam_id) {
+        return Some(presence);
+    }
+    fetch_and_store_presence(&api_key, &steam_id).await.ok()
+}
+
 /// 获取 Steam 用户完整信息
 pub async fn get_steam_user(
     Query(params): Query<SteamQuery>,

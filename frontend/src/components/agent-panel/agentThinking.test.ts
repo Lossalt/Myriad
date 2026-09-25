@@ -239,10 +239,6 @@ test('说明性的短句都是贴：操作、附件、收藏、脚注不再另�
     new URL('./AgentPanelMessage.tsx', import.meta.url),
     'utf8',
   )
-  const action = readFileSync(
-    new URL('./AgentPanelActionCard.tsx', import.meta.url),
-    'utf8',
-  )
   const composer = readFileSync(
     new URL('./AgentPanelComposer.tsx', import.meta.url),
     'utf8',
@@ -269,12 +265,6 @@ test('说明性的短句都是贴：操作、附件、收藏、脚注不再另�
   )
   assert.doesNotMatch(css, /\.agent-panel-attach-chip/)
   assert.doesNotMatch(css, /\.agent-panel-saved-remove/)
-  assert.doesNotMatch(css, /\.agent-panel-action-risk/)
-  assert.doesNotMatch(css, /\.agent-panel-action-label \{[\s\S]*text-transform/)
-  assert.doesNotMatch(
-    css,
-    /\.agent-panel-action-section \{[\s\S]{0,160}border-radius:\s*16px/,
-  )
   assert.doesNotMatch(css, /#6366f1/)
   assert.match(css, /\.agent-panel-thinking:last-child/)
   assert.match(css, /\.agent-panel-mode/)
@@ -296,9 +286,6 @@ test('说明性的短句都是贴：操作、附件、收藏、脚注不再另�
     css,
     /@media \(hover: hover\) \{[\s\S]*\.agent-panel-message-footer/,
   )
-  assert.match(action, /className="agent-panel-tag"/)
-  assert.match(action, /agent-panel-tag-text/)
-  assert.match(action, /agent-panel-action-step-note/)
   assert.match(message, /agent-panel-tag-text/)
   assert.doesNotMatch(message, /agent-panel-attach-chip/)
   assert.match(composer, /agent-panel-tag-dismiss/)

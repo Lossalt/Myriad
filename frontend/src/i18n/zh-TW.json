@@ -772,7 +772,6 @@
     "answerFailed": "回答失敗：{error}",
     "askArael": "問 Agent",
     "cancelFailed": "沒能取消這個任務。",
-    "confirmExpiredHint": "確認已過期，請取消或重新發起請求。",
     "errorWithDetail": "出錯了：{error}",
     "executionFailed": "執行失敗",
     "failReason": "失敗原因: {reason}",
@@ -876,27 +875,18 @@
       "hoursAgo": "{value} 小時前",
       "daysAgo": "{value} 天前"
     },
-    "action": {
-      "risk": {
-        "none": "無風險",
-        "low": "可撤銷",
-        "medium": "會改動資料",
-        "high": "不可撤銷",
-        "critical": "系統級操作"
-      },
-      "steps": "它準備做",
-      "impact": "會影響",
-      "expiresIn": "{seconds} 秒內有效",
-      "expired": "已失效，需要重新發起",
-      "confirm": "確認執行",
-      "cancel": "算了"
-    },
     "undo": {
       "button": "撤銷",
       "did": {
         "navigate": "剛跳了一次頁面",
         "phantasi_open_article": "剛開啟了一篇文章"
       }
+    },
+    "herTime": {
+      "listening": "在聽《{title}》",
+      "reading": "在讀《{title}》",
+      "join": "一起聽",
+      "together": "一起在聽"
     }
   },
   "agentPersona": {

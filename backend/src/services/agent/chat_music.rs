@@ -9,6 +9,8 @@ pub enum ChatMusicAction {
     Toggle,
     Next,
     Previous,
+    /// Put the song she is listening to on their player, where she is in it.
+    Join,
 }
 
 impl ChatMusicAction {
@@ -19,6 +21,7 @@ impl ChatMusicAction {
             Self::Toggle => "toggle",
             Self::Next => "next",
             Self::Previous => "previous",
+            Self::Join => "join",
         }
     }
 }
@@ -88,6 +91,7 @@ fn parse_music_inner(inner: &str) -> Option<ChatMusicAction> {
         "toggle" => Some(ChatMusicAction::Toggle),
         "next" | "下一首" | "下一曲" => Some(ChatMusicAction::Next),
         "prev" | "previous" | "上一首" | "上一曲" => Some(ChatMusicAction::Previous),
+        "join" | "一起听" => Some(ChatMusicAction::Join),
         _ => None,
     }
 }
@@ -165,6 +169,9 @@ mod tests {
         assert_eq!(spoken, "下一首");
         assert_eq!(action, Some(ChatMusicAction::Next));
         assert_eq!(split_chat_music_directive("你好").1, None);
+        let (spoken, action) = split_chat_music_directive("来，一起听。\n[[music:join]]");
+        assert_eq!(spoken, "来，一起听。");
+        assert_eq!(action, Some(ChatMusicAction::Join));
     }
 
     #[test]

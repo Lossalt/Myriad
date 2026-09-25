@@ -772,7 +772,6 @@
     "answerFailed": "Antwort fehlgeschlagen: {error}",
     "askArael": "Agent fragen",
     "cancelFailed": "Aufgabe ließ sich nicht abbrechen.",
-    "confirmExpiredHint": "Diese Bestätigung ist abgelaufen. Abbrechen oder die Anfrage erneut senden.",
     "errorWithDetail": "Fehler: {error}",
     "executionFailed": "Ausführung fehlgeschlagen",
     "failReason": "Fehler: {reason}",
@@ -876,27 +875,18 @@
       "hoursAgo": "vor {value} Std",
       "daysAgo": "vor {value} T"
     },
-    "action": {
-      "risk": {
-        "none": "Kein Risiko",
-        "low": "Rückgängig möglich",
-        "medium": "Ändert Daten",
-        "high": "Nicht rückgängig",
-        "critical": "Systemebene"
-      },
-      "steps": "Gleich",
-      "impact": "Betrifft",
-      "expiresIn": "{seconds}s gültig",
-      "expired": "Abgelaufen — erneut fragen",
-      "confirm": "Los",
-      "cancel": "Lieber nicht"
-    },
     "undo": {
       "button": "Rückgängig",
       "did": {
         "navigate": "Habe gerade für Sie navigiert",
         "phantasi_open_article": "Habe gerade einen Artikel geöffnet"
       }
+    },
+    "herTime": {
+      "listening": "Hört „{title}“",
+      "reading": "Liest „{title}“",
+      "join": "Mithören",
+      "together": "Ihr hört gemeinsam"
     }
   },
   "agentPersona": {

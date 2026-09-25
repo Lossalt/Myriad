@@ -352,6 +352,84 @@ pub async fn bind_ai_task(
     .map(|_| ())
 }
 
+/// Media upgrade of one `tapp_storage` row, bound exactly as a live write
+/// binds it (as the namespace user, skipping what they cannot manage), for
+/// values written before storage writes recorded references.
+///
+/// Tapp AI results generated between 0ce67eaa4 and d438e3f7f were born
+/// private at the login-only `/api/media/{id}/content`, which no sandbox
+/// `<img>` can load. Those never published and still the user's are published
+/// as current results are, and every bound citation in the value is rewritten
+/// to its permanent address. Returns the value when that changed it.
+pub(crate) async fn bind_tapp_storage_upgrade(
+    txn: &impl ConnectionTrait,
+    row_id: i32,
+    user_id: i32,
+    value: &Value,
+    origins: &[String],
+) -> Result<Option<Value>, MediaError> {
+    let consumer = Consumer::tapp_storage(row_id);
+    let citations = Citations::strings(origins, value, |i| format!("value:{i}"));
+    let Ok(actor) = MediaActor::user(user_id) else {
+        bind(
+            txn,
+            &consumer,
+            &citations,
+            Authority::Anonymous,
+            Unresolved::Skip,
+        )
+        .await?;
+        return Ok(None);
+    };
+    let mut born_private = Vec::new();
+    for citation in citations.iter() {
+        let Some(id) = resolve_asset_id(txn, &citation.path).await? else {
+            continue;
+        };
+        let Some(row) = assets::find_by_id(txn, id).await? else {
+            continue;
+        };
+        let unpublished_task_result = row.first_published_at.is_none()
+            && row.exposure.as_deref() == Some("private")
+            && row.state.as_deref() == Some("ready")
+            && row
+                .producer_key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("ai-task:"));
+        if unpublished_task_result && super::access::can_manage(&actor, &assets::to_domain(row, 0)?)
+        {
+            born_private.push(id);
+        }
+    }
+    born_private.sort_unstable();
+    born_private.dedup();
+    publish_asset_ids(txn, &born_private).await?;
+    let bound = bind(
+        txn,
+        &consumer,
+        &citations,
+        Authority::Actor(&actor),
+        Unresolved::Skip,
+    )
+    .await?;
+    let mut rewritten = value.clone();
+    rewrite_strings(&mut rewritten, &|raw| bound.rewrite(raw));
+    Ok((rewritten != *value).then_some(rewritten))
+}
+
+fn rewrite_strings(value: &mut Value, rewrite: &impl Fn(&str) -> String) {
+    match value {
+        Value::String(text) => *text = rewrite(text),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| rewrite_strings(item, rewrite)),
+        Value::Object(map) => map
+            .values_mut()
+            .for_each(|item| rewrite_strings(item, rewrite)),
+        _ => {}
+    }
+}
+
 /// Media handed to one Agent run (web or channel). `payload` is client input:
 /// any string in it may name an asset. Only assets the sender may manage are
 /// bound, so a message cannot pin someone else's media against deletion; a

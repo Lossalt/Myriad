@@ -30,6 +30,8 @@ mod tables_phantasi;
 mod tables_tapp;
 mod types;
 
+#[cfg(test)]
+pub(crate) use ensure_heals::AGENT_MEMORIES_DDL;
 pub use orchestrator::{ensure_schema, report_schema_drift};
 pub use seeds::{
     DefaultPlatformSeed, default_config_seeds, default_platform_seeds, ensure_default_config,

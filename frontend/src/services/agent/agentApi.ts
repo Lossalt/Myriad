@@ -6,6 +6,7 @@ import type {
   ExecutionTrace,
   HeartbeatTask,
   MemoryEntry,
+  MeropeDoingResponse,
   MoodTransition,
   ProcessContext,
   ProcessRequest,
@@ -556,25 +557,6 @@ class AgentService {
     }
 
     return apiService.post<AgentResponse>(`${this.baseUrl}/clarify`, request)
-  }
-
-  async confirmOperation(
-    confirmationId: string,
-    confirmed: boolean,
-    note?: string,
-    onProgress?: ProgressCallback,
-  ): Promise<AgentResponse> {
-    return this.executeSSERequest(
-      `/api${this.baseUrl}/confirm/stream`,
-      'POST',
-      {
-        confirmationId,
-        confirmed,
-        ...(note ? { note } : {}),
-      },
-      onProgress,
-      false,
-    )
   }
 
   async getTask(
@@ -1167,6 +1149,10 @@ class AgentService {
     dndEnd?: string | null
   }> {
     return apiService.put(`${this.baseUrl}/addressee`, body)
+  }
+
+  async getDoing(): Promise<MeropeDoingResponse> {
+    return apiService.get<MeropeDoingResponse>(`${this.baseUrl}/doing`)
   }
 
   async creditMusicListening(listenedSeconds: number): Promise<{

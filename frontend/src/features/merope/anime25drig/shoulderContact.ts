@@ -3,6 +3,11 @@ import type { CroppedLayerPixels } from './webglRuntime'
 
 type Layer = Pick<Anime25DPlaybackLayer, 'x' | 'y' | 'w' | 'h' | 'side'>
 
+/** Warm, moderately saturated, light: anime skin, not white or dark fabric. */
+export function isSkinTone(r: number, g: number, b: number): boolean {
+  return r > 100 && r > g + 3 && g > b - 12 && r - b > 8 && r - g < 85
+}
+
 // Bind-time evidence only: an upper inner arm contour adjoining matching skin.
 // Missing pixels, detached sleeves and ambiguous torso layers remain unchanged.
 export function shoulderContactWeights(
@@ -20,9 +25,7 @@ export function shoulderContactWeights(
     const p = raster.pixels
     return p[i + 3] >= 220 ? [p[i], p[i + 1], p[i + 2]] : null
   }
-  const skin = (c: number[] | null): c is number[] => Boolean(c &&
-    c[0] > 100 && c[0] > c[1] + 3 && c[1] > c[2] - 12 &&
-    c[0] - c[2] > 8 && c[0] - c[1] < 85)
+  const skin = (c: number[] | null): c is number[] => Boolean(c && isSkinTone(c[0], c[1], c[2]))
   const matchingSkin = (a: number[] | null, b: number[] | null) =>
     skin(a) && skin(b) && Math.max(...a.map((v, i) => Math.abs(v - b[i]))) < 35
   const innerRight = arm.x + arm.w / 2 < torso.x + torso.w / 2

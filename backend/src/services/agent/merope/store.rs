@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::models::entities::{
     agent_addressee_state, agent_diary, agent_persona, agent_proactive_messages, agent_sessions,
 };
+use crate::services::agent::memory::unified::Priming;
 
 use super::state::{
     Affect, AffectBaseline, apply_music_listening, clamp, persona_affect_baseline, settle,
@@ -519,6 +520,20 @@ pub fn portrait_generation_is_pending(value: Option<&Value>) -> bool {
         .is_some_and(|token| !token.is_empty())
 }
 
+/// Memory sources that belong to the persona, not to Work.
+pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 10] = [
+    "chat",
+    "event",
+    "narrative",
+    "lookup",
+    crate::services::agent::memory::unified::OWN_EXPERIENCE,
+    crate::services::agent::memory::unified::OWN_VIEW,
+    "presence",
+    "game",
+    super::bits::SOURCE,
+    super::strangers::SOURCE,
+];
+
 pub async fn clear_persona_on<C>(db: &C) -> Result<(), anyhow::Error>
 where
     C: ConnectionTrait,
@@ -527,6 +542,20 @@ where
         .exec(db)
         .await?;
     agent_diary::Entity::delete_many().exec(db).await?;
+    // Everything the persona learned or lived goes with her: what she heard
+    // in conversation, what she looked up, played, saw them play, her days,
+    // what she did on her own and her views. Work lessons stay.
+    {
+        use crate::models::entities::agent_memories::Column;
+        crate::models::entities::agent_memories::Entity::delete_many()
+            .filter(
+                sea_orm::Condition::any()
+                    .add(Column::Source.is_in(PERSONA_MEMORY_SOURCES))
+                    .add(Column::Venue.eq(crate::services::agent::memory::unified::OWN_VENUE)),
+            )
+            .exec(db)
+            .await?;
+    }
     agent_addressee_state::Entity::delete_many()
         .exec(db)
         .await?;
@@ -813,8 +842,6 @@ where
 /// fact can never arrive somewhere expecting a generated summary.
 pub const DIARY_SOURCE_EVENT: &str = "event";
 pub const DIARY_SOURCE_CHAT: &str = "chat";
-pub const DIARY_SOURCE_REMEMBER: &str = "remember";
-pub const DIARY_SOURCE_SUPERSEDED: &str = "remember_retired";
 
 pub async fn insert_diary<C: ConnectionTrait>(
     db: &C,
@@ -863,40 +890,44 @@ pub async fn list_diary_from_sources(
         .await?)
 }
 
-/// Event persona-memory insert. Dedup against addressee-scoped diary under the memory lock, including compacted rows.
+/// Event persona-memory insert. Dedup and the retraction check run under the
+/// persona-memory lock, against the unified memory table.
 pub(crate) async fn insert_remembered_if_new(
     db: &DatabaseConnection,
     user_id: i32,
     candidate: &str,
 ) -> Result<bool, anyhow::Error> {
+    use crate::services::agent::memory::unified;
     let fact = super::ingest::compact_summary(candidate);
     if user_id <= 0 || fact.is_empty() {
         return Ok(false);
     }
     let transaction = db.begin().await?;
     lock_persona_memory(&transaction, user_id).await?;
-    let mut before = None;
-    loop {
-        // Events may add facts, but cannot resurrect a fact explicitly retired
-        // by the user. Only a new user assertion may re-establish that fact.
-        let notes = remembered_page_query(user_id, before.as_ref(), true)
-            .all(&transaction)
-            .await?;
-        if notes
-            .iter()
-            .any(|note| super::ingest::compact_summary(&note.content) == fact)
-        {
-            transaction.commit().await?;
-            return Ok(false);
-        }
-        before = notes.last().map(|note| (note.created_at, note.id.clone()));
-        if notes.len() < 128 {
-            break;
-        }
+    // Events may add facts, but cannot resurrect a fact the person retracted.
+    // Only a new user assertion may re-establish it.
+    if unified::retracted_by_person(&transaction, user_id, &fact).await? {
+        transaction.commit().await?;
+        return Ok(false);
     }
-    insert_diary(&transaction, user_id, &fact, DIARY_SOURCE_REMEMBER).await?;
+    let inserted = unified::remember(
+        &transaction,
+        unified::NewMemory {
+            user_id,
+            kind: unified::MemoryKind::Fact,
+            content: fact,
+            evidence: None,
+            speaker: unified::Speaker::Agent,
+            source: "event",
+            audience: unified::Audience::private(user_id),
+            importance: 0.5,
+            concepts: Vec::new(),
+        },
+    )
+    .await?
+    .is_some();
     transaction.commit().await?;
-    Ok(true)
+    Ok(inserted)
 }
 
 async fn lock_persona_memory<C: ConnectionTrait>(
@@ -915,11 +946,26 @@ async fn lock_persona_memory<C: ConnectionTrait>(
 /// Commit a validated extraction atomically. The input anchor is captured when
 /// the utterance is persisted, before reply generation and model extraction.
 /// Later activity/mood writes are not new inputs. A later user utterance is.
+#[cfg(test)]
 pub(crate) async fn apply_chat_memory_update(
     db: &DatabaseConnection,
     user_id: i32,
     input_at: chrono::DateTime<chrono::FixedOffset>,
     update: &super::chat_remember::ChatMemoryUpdate,
+) -> Result<bool, anyhow::Error> {
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    apply_chat_memory_update_in(db, user_id, input_at, update, &present).await
+}
+
+/// [`apply_chat_memory_update`] for what was said in front of `present`: in a
+/// group, the fact is kept for that group, and only facts the group heard can
+/// be corrected there.
+pub(crate) async fn apply_chat_memory_update_in(
+    db: &DatabaseConnection,
+    user_id: i32,
+    input_at: chrono::DateTime<chrono::FixedOffset>,
+    update: &super::chat_remember::ChatMemoryUpdate,
+    present: &crate::services::agent::memory::unified::Audience,
 ) -> Result<bool, anyhow::Error> {
     if user_id <= 0 || (update.fact.is_none() && update.supersedes.is_empty()) {
         return Ok(false);
@@ -932,26 +978,24 @@ pub(crate) async fn apply_chat_memory_update(
         transaction.commit().await?;
         return Ok(false);
     }
-    let mut before = None;
+    use crate::services::agent::memory::unified;
     let mut targets = Vec::new();
     let mut found = std::collections::HashSet::new();
     let mut duplicate = false;
-    loop {
-        let notes = remembered_page_query(user_id, before.as_ref(), false)
-            .all(&transaction)
-            .await?;
-        for note in &notes {
-            let content = super::ingest::compact_summary(&note.content);
-            if update.supersedes.contains(&content) {
-                targets.push(note.id.clone());
-                found.insert(content);
-            } else if update.fact.as_ref() == Some(&content) {
-                duplicate = true;
-            }
-        }
-        before = notes.last().map(|note| (note.created_at, note.id.clone()));
-        if notes.len() < 128 {
-            break;
+    for note in unified::active_in(
+        &transaction,
+        user_id,
+        present,
+        &unified::MemoryKind::ABOUT_PERSON,
+    )
+    .await?
+    {
+        let content = super::ingest::compact_summary(&note.content);
+        if update.supersedes.contains(&content) {
+            targets.push(note.id);
+            found.insert(content);
+        } else if update.fact.as_ref() == Some(&content) {
+            duplicate = true;
         }
     }
     // Another extraction already replaced a target: reject the whole edit,
@@ -960,21 +1004,24 @@ pub(crate) async fn apply_chat_memory_update(
         transaction.commit().await?;
         return Ok(false);
     }
-    if !targets.is_empty() {
-        agent_diary::Entity::update_many()
-            .col_expr(
-                agent_diary::Column::Source,
-                sea_orm::sea_query::Expr::value(DIARY_SOURCE_SUPERSEDED),
-            )
-            .filter(agent_diary::Column::UserId.eq(user_id))
-            .filter(agent_diary::Column::Source.eq(DIARY_SOURCE_REMEMBER))
-            .filter(agent_diary::Column::Id.is_in(targets.iter().cloned()))
-            .exec(&transaction)
-            .await?;
-    }
+    unified::retire(&transaction, user_id, &targets, "superseded").await?;
     let insert = update.fact.as_ref().filter(|_| !duplicate);
     if let Some(fact) = insert {
-        insert_diary(&transaction, user_id, fact, DIARY_SOURCE_REMEMBER).await?;
+        unified::remember(
+            &transaction,
+            unified::NewMemory {
+                user_id,
+                kind: unified::MemoryKind::Fact,
+                content: fact.clone(),
+                evidence: update.evidence.clone(),
+                speaker: unified::Speaker::User,
+                source: "chat",
+                audience: present.clone(),
+                importance: 0.6,
+                concepts: update.concepts.clone(),
+            },
+        )
+        .await?;
     }
     transaction.commit().await?;
     Ok(!targets.is_empty() || insert.is_some())
@@ -995,65 +1042,100 @@ pub(crate) async fn chat_memory_input_is_current<C: ConnectionTrait>(
         == Some(input_at))
 }
 
-fn remembered_page_query(
-    user_id: i32,
-    before: Option<&(chrono::DateTime<chrono::FixedOffset>, String)>,
-    include_superseded: bool,
-) -> sea_orm::Select<agent_diary::Entity> {
-    let query = agent_diary::Entity::find().filter(agent_diary::Column::UserId.eq(user_id));
-    let query = if include_superseded {
-        query.filter(
-            agent_diary::Column::Source.is_in([DIARY_SOURCE_REMEMBER, DIARY_SOURCE_SUPERSEDED]),
-        )
-    } else {
-        query.filter(agent_diary::Column::Source.eq(DIARY_SOURCE_REMEMBER))
-    };
-    let query = if let Some((created_at, id)) = before {
-        query.filter(
-            Condition::any()
-                .add(agent_diary::Column::CreatedAt.lt(*created_at))
-                .add(
-                    Condition::all()
-                        .add(agent_diary::Column::CreatedAt.eq(*created_at))
-                        .add(agent_diary::Column::Id.lt(id.clone())),
-                ),
-        )
-    } else {
-        query
-    };
-    query
-        .order_by_desc(agent_diary::Column::CreatedAt)
-        .order_by_desc(agent_diary::Column::Id)
-        .limit(128)
-}
-
+/// What the persona remembers about this person, most relevant to `query`
+/// first (recent first without one). Private: only this person is present.
 pub async fn recall_remembered(
     db: &DatabaseConnection,
     user_id: i32,
     query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<String>, anyhow::Error> {
-    if limit == 0 || user_id <= 0 {
-        return Ok(Vec::new());
-    }
-    let recent_only = query.is_none_or(|query| query.trim().is_empty());
-    let mut ranker = super::speaking_prompts::RememberedRanker::new(query, limit);
-    let mut before = None;
-    loop {
-        let notes = remembered_page_query(user_id, before.as_ref(), false)
-            .all(db)
-            .await?;
-        let count = notes.len();
-        before = notes.last().map(|note| (note.created_at, note.id.clone()));
-        for note in notes {
-            ranker.push(&super::ingest::compact_summary(&note.content));
+    let priming = Priming::default();
+    let present = crate::services::agent::memory::unified::Audience::private(user_id);
+    let (recalled, _) =
+        recall_remembered_primed(db, user_id, &present, query, limit, &priming, 1.0).await?;
+    Ok(recalled)
+}
+
+/// What a turn recalls, split: what they named (or recent context), and what
+/// that brought to mind by association.
+pub struct Recalled {
+    pub named: Vec<String>,
+    pub brought_to_mind: Vec<String>,
+}
+
+/// [`recall_remembered_primed`], keeping apart what was named and what it
+/// brought to mind.
+#[allow(clippy::too_many_arguments)]
+pub async fn recall_remembered_split(
+    db: &DatabaseConnection,
+    user_id: i32,
+    present: &crate::services::agent::memory::unified::Audience,
+    query: Option<&str>,
+    limit: usize,
+    priming: &Priming,
+    breadth: f64,
+) -> Result<(Recalled, Priming), anyhow::Error> {
+    use crate::services::agent::memory::unified;
+    let (recalled, next) = unified::recall_primed(
+        db,
+        user_id,
+        present,
+        query.filter(|query| !query.trim().is_empty()),
+        &unified::MemoryKind::ABOUT_PERSON,
+        limit,
+        priming,
+        breadth,
+    )
+    .await?;
+    let mut split = Recalled {
+        named: Vec::new(),
+        brought_to_mind: Vec::new(),
+    };
+    for note in recalled {
+        let content = super::ingest::compact_summary(&note.content);
+        if content.is_empty() {
+            continue;
         }
-        // Empty and duplicate rows must not consume the no-query recall budget.
-        if count < 128 || (recent_only && ranker.is_full()) {
-            break;
+        if note.brought_to_mind {
+            split.brought_to_mind.push(content);
+        } else {
+            split.named.push(content);
         }
     }
-    Ok(ranker.finish())
+    Ok((split, next))
+}
+
+/// [`recall_remembered`] for a chat turn: also starts from what the previous
+/// turn left on the mind, and returns what this one leaves.
+#[allow(clippy::too_many_arguments)]
+pub async fn recall_remembered_primed(
+    db: &DatabaseConnection,
+    user_id: i32,
+    present: &crate::services::agent::memory::unified::Audience,
+    query: Option<&str>,
+    limit: usize,
+    priming: &Priming,
+    breadth: f64,
+) -> Result<(Vec<String>, Priming), anyhow::Error> {
+    use crate::services::agent::memory::unified;
+    let (recalled, next) = unified::recall_primed(
+        db,
+        user_id,
+        present,
+        query.filter(|query| !query.trim().is_empty()),
+        &unified::MemoryKind::ABOUT_PERSON,
+        limit,
+        priming,
+        breadth,
+    )
+    .await?;
+    let recalled = recalled
+        .into_iter()
+        .map(|note| super::ingest::compact_summary(&note.content))
+        .filter(|content| !content.is_empty())
+        .collect();
+    Ok((recalled, next))
 }
 
 #[cfg(test)]
@@ -1316,7 +1398,9 @@ mod tests {
                 .await
                 .is_err()
         );
-        let locked = super::get_or_create_state(&transaction, 7001).await.unwrap();
+        let locked = super::get_or_create_state(&transaction, 7001)
+            .await
+            .unwrap();
         let second = super::save_affect_on(
             &transaction,
             locked,
@@ -1344,25 +1428,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn recall_pages_stay_in_one_addressee_and_source_with_a_stable_cursor() {
-        use sea_orm::QueryTrait;
-        let cursor = (chrono::Utc::now().fixed_offset(), "last-id".to_owned());
-        let statement = super::remembered_page_query(42, Some(&cursor), false)
-            .build(sea_orm::DatabaseBackend::Postgres);
-        let sql = statement.to_string();
-        assert!(sql.contains("\"user_id\" = 42"), "{sql}");
-        assert!(sql.contains("\"source\" = 'remember'"), "{sql}");
-        assert!(sql.contains("\"id\" < 'last-id'"), "{sql}");
-        assert!(
-            sql.contains(
-                "ORDER BY \"agent_diary\".\"created_at\" DESC, \"agent_diary\".\"id\" DESC"
-            ),
-            "{sql}"
-        );
-        assert!(sql.contains("LIMIT 128"), "{sql}");
-        assert!(!sql.contains("OFFSET"), "{sql}");
-    }
     use super::*;
     use sea_orm::{Database, TransactionTrait};
     use serde_json::json;
@@ -1805,5 +1870,41 @@ mod tests {
             .unwrap()
         );
         transaction.rollback().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod persona_sources_tests {
+    use super::PERSONA_MEMORY_SOURCES;
+
+    /// Deleting the persona must take everything she learned or lived: a
+    /// source a persona module writes but this list misses would survive
+    /// into the next persona as if it were hers.
+    #[test]
+    fn every_source_the_persona_writes_goes_with_her() {
+        let writers = [
+            include_str!("curiosity.rs"),
+            include_str!("playing.rs"),
+            include_str!("soup.rs"),
+            include_str!("chat_remember.rs"),
+            include_str!("bits.rs"),
+        ];
+        for source in writers.iter().flat_map(|code| {
+            code.match_indices("source: \"")
+                .map(|(at, _)| {
+                    let rest = &code[at + "source: \"".len()..];
+                    &rest[..rest.find('"').unwrap_or(0)]
+                })
+                .collect::<Vec<_>>()
+        }) {
+            assert!(
+                PERSONA_MEMORY_SOURCES.contains(&source),
+                "persona source {source:?} would survive deleting her"
+            );
+        }
+        assert!(
+            !PERSONA_MEMORY_SOURCES.contains(&"work"),
+            "Work lessons stay"
+        );
     }
 }

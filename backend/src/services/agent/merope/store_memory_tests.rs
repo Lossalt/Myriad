@@ -1,5 +1,42 @@
 use super::*;
+use crate::models::entities::agent_memories;
 use sea_orm::{Database, Schema};
+use serde_json::json;
+
+async fn seed_fact_at(
+    db: &DatabaseConnection,
+    user_id: i32,
+    content: &str,
+    at: chrono::DateTime<chrono::FixedOffset>,
+) -> agent_memories::Model {
+    agent_memories::ActiveModel {
+        id: Set(format!("mem_{}", Uuid::new_v4().simple())),
+        user_id: Set(Some(user_id)),
+        kind: Set("fact".into()),
+        content: Set(content.into()),
+        evidence: Set(None),
+        speaker: Set("user".into()),
+        source: Set("chat".into()),
+        venue: Set("private".into()),
+        audience: Set(json!([user_id])),
+        concepts: Set(json!([])),
+        importance: Set(0.5),
+        access_count: Set(0),
+        last_accessed_at: Set(None),
+        valid_from: Set(at),
+        invalid_at: Set(None),
+        invalid_reason: Set(None),
+        created_at: Set(at),
+        updated_at: Set(at),
+    }
+    .insert(db)
+    .await
+    .unwrap()
+}
+
+async fn seed_fact(db: &DatabaseConnection, user_id: i32, content: &str) -> agent_memories::Model {
+    seed_fact_at(db, user_id, content, Utc::now().fixed_offset()).await
+}
 
 async fn test_database() -> DatabaseConnection {
     let url = std::env::var("MEROPE_MEMORY_TEST_DATABASE_URL").expect("disposable DB URL");
@@ -18,10 +55,14 @@ async fn test_database() -> DatabaseConnection {
         name, "merope_memory_test",
         "refuse to write to any other database"
     );
-    let mut table =
-        Schema::new(DatabaseBackend::Postgres).create_table_from_entity(agent_diary::Entity);
-    table.if_not_exists();
-    db.execute(&table).await.unwrap();
+    let schema = Schema::new(DatabaseBackend::Postgres);
+    for mut table in [
+        schema.create_table_from_entity(agent_diary::Entity),
+        schema.create_table_from_entity(agent_memories::Entity),
+    ] {
+        table.if_not_exists();
+        db.execute(&table).await.unwrap();
+    }
     db
 }
 
@@ -34,36 +75,12 @@ async fn recall_and_memory_writes_cover_old_rows_duplicates_and_addressee_isolat
     let other_user = user_id + 1_000_000_000;
 
     // More than two pages, all at the same timestamp, also exercise id cursors.
-    let old = insert_diary(
-        &db,
-        user_id,
-        "  prefers   saffron tea  ",
-        DIARY_SOURCE_REMEMBER,
-    )
-    .await
-    .unwrap();
+    let old = seed_fact(&db, user_id, "  prefers   saffron tea  ").await;
     let now = Utc::now().fixed_offset();
-    let notes = (0..260)
-        .map(|index| agent_diary::ActiveModel {
-            id: Set(Uuid::new_v4().simple().to_string()),
-            user_id: Set(user_id),
-            content: Set(format!("unrelated recent fact {index}")),
-            source: Set(DIARY_SOURCE_REMEMBER.into()),
-            created_at: Set(now),
-        })
-        .collect::<Vec<_>>();
-    agent_diary::Entity::insert_many(notes)
-        .exec(&db)
-        .await
-        .unwrap();
-    insert_diary(
-        &db,
-        other_user,
-        "saffron tea with honey",
-        DIARY_SOURCE_REMEMBER,
-    )
-    .await
-    .unwrap();
+    for index in 0..260 {
+        seed_fact_at(&db, user_id, &format!("unrelated recent fact {index}"), now).await;
+    }
+    seed_fact(&db, other_user, "saffron tea with honey").await;
     insert_diary(&db, user_id, "saffron tea tool failed", DIARY_SOURCE_EVENT)
         .await
         .unwrap();
@@ -88,7 +105,7 @@ async fn recall_and_memory_writes_cover_old_rows_duplicates_and_addressee_isolat
             .unwrap()
     );
     assert_eq!(
-        agent_diary::Entity::find_by_id(old.id)
+        agent_memories::Entity::find_by_id(old.id)
             .one(&db)
             .await
             .unwrap()
@@ -131,12 +148,8 @@ async fn recall_and_memory_writes_cover_old_rows_duplicates_and_addressee_isolat
 
     // No-query recall also fills its budget through legacy blank/duplicate rows.
     for _ in 0..10 {
-        insert_diary(&db, user_id, "likes jasmine tea", DIARY_SOURCE_REMEMBER)
-            .await
-            .unwrap();
-        insert_diary(&db, user_id, " ", DIARY_SOURCE_REMEMBER)
-            .await
-            .unwrap();
+        seed_fact(&db, user_id, "likes jasmine tea").await;
+        seed_fact(&db, user_id, " ").await;
     }
     let recent = recall_remembered(&db, user_id, None, 8).await.unwrap();
     assert_eq!(recent.len(), 8);
@@ -181,20 +194,12 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         table.if_not_exists();
         db.execute(&table).await.unwrap();
     }
-    assert!(
-        DIARY_SOURCE_SUPERSEDED.len() <= 16,
-        "production source is VARCHAR(16)"
-    );
     let user_id = (Uuid::new_v4().as_u128() % 1_000_000_000) as i32 + 1;
     let other_user = user_id + 1_000_000_000;
     let (_, state) = update_affect(&db, user_id, true, |_| {}).await.unwrap();
     let input_at = state.last_user_message_at.unwrap();
-    let old = insert_diary(&db, user_id, "喜欢咖啡", DIARY_SOURCE_REMEMBER)
-        .await
-        .unwrap();
-    insert_diary(&db, other_user, "喜欢咖啡", DIARY_SOURCE_REMEMBER)
-        .await
-        .unwrap();
+    let old = seed_fact(&db, user_id, "喜欢咖啡").await;
+    seed_fact(&db, other_user, "喜欢咖啡").await;
     insert_diary(&db, user_id, "喜欢咖啡", DIARY_SOURCE_EVENT)
         .await
         .unwrap();
@@ -202,6 +207,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("现在不喝咖啡".into()),
         supersedes: vec!["喜欢咖啡".into()],
         evidence: Some("我不喝咖啡了".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &correction)
@@ -214,12 +220,12 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
             .unwrap(),
         vec!["现在不喝咖啡"]
     );
-    let retired = agent_diary::Entity::find_by_id(old.id)
+    let retired = agent_memories::Entity::find_by_id(old.id)
         .one(&db)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(retired.source, DIARY_SOURCE_SUPERSEDED);
+    assert_eq!(retired.invalid_reason.as_deref(), Some("superseded"));
     assert_eq!(retired.content, "喜欢咖啡");
     assert_eq!(retired.created_at, old.created_at);
     assert_eq!(
@@ -251,6 +257,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("喜欢茶".into()),
         supersedes: vec![],
         evidence: Some("我也喜欢茶".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &addition)
@@ -269,6 +276,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: Some("不应写入".into()),
         supersedes: vec!["喜欢茶".into(), "不存在的事实".into()],
         evidence: Some("更正".into()),
+        concepts: vec![],
     };
     assert!(
         !apply_chat_memory_update(&db, user_id, input_at, &invalid)
@@ -288,6 +296,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         fact: None,
         supersedes: vec!["喜欢茶".into()],
         evidence: Some("茶的偏好记错了".into()),
+        concepts: vec![],
     };
     assert!(
         apply_chat_memory_update(&db, user_id, input_at, &withdrawal)

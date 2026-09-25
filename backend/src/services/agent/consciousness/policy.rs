@@ -113,6 +113,9 @@ mod tests {
             captured_at: Utc::now(),
             live: Default::default(),
             attention: None,
+            myself: None,
+            addressee_name: None,
+            inner: None,
         }
     }
 

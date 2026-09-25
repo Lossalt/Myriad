@@ -318,15 +318,15 @@ export class SingingGrooveController {
         this.phraseAmount * 0.13 +
         this.modeAmount * 0.025 +
         arc * 0.025 * density)
-    // Arms follow the torso with a small lag. A squared wave has no cusp at
-    // the centre crossing, unlike abs(sin), even with a larger excursion.
+    // Arms swing with the torso a little behind it; the pendulum adds the
+    // follow-through. A squared wave has no cusp at the centre crossing.
     const armWave = Math.sin(TAU * (this.phase - this.frequency * 0.18))
     const armExtent = extent * clamp(torso / 0.8, 0.2, 1.15)
     this.output.armY = this.armMotion
-      ? armExtent * (armWave * armWave * 0.3 + this.phraseAmount * 0.2)
+      ? armExtent * (armWave * armWave * 0.15 + this.phraseAmount * 0.2)
       : 0
     this.output.armPos = this.armMotion
-      ? armExtent * (-armWave * 0.42 + offset * 0.1)
+      ? armExtent * (-armWave * 0.3 + offset * 0.1)
       : 0
     this.output.eyeX = 0
     this.output.brow = 0

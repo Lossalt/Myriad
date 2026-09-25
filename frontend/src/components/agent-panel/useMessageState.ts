@@ -258,20 +258,12 @@ export function useMessageState(visibleMode: AgentPanelMode) {
     return findMessageInBag(messagesRef.current, messageId)
   }, [])
 
-  const findMessageWhere = useCallback(
-    (predicate: (message: ChatMessage) => boolean) => {
-      return findMessageWhereInBag(messagesRef.current, predicate)
-    },
-    [],
-  )
-
   return {
     messages,
     setMessages,
     messagesRef,
     byMode,
     findMessage,
-    findMessageWhere,
     updateMessage,
     updateMessageExecution,
     addExecutionStep,

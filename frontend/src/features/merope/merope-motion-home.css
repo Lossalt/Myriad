@@ -400,6 +400,40 @@ html.dark .merope-motion-page {
   margin-top: 4px;
 }
 
+.merope-motion-rig__reconcile-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.merope-motion-rig__reconcile-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: 0;
+}
+
+.merope-motion-rig__reconcile-map {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+
+.merope-motion-rig__reconcile-map canvas {
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.merope-motion-rig__reconcile-map figcaption {
+  color: var(--merope-muted, #667085);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .merope-motion-rig__severity {
   color: var(--merope-muted, #667085);
   font-weight: 650;

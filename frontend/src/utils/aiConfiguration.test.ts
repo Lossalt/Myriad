@@ -127,18 +127,6 @@ test('naming accepts strict Lite without Pro, and rejects Pro without strict Lit
   }
 })
 
-test('rejecting a pending action never requires AI configuration', async () => {
-  const path = '/api/agent/confirm/stream'
-  const calls: string[] = []
-  await fetchWithAiConfiguration(path, {
-    method: 'POST', body: JSON.stringify({ confirmed: false }),
-  }, async (input) => {
-    calls.push(String(input))
-    return Response.json({ cancelled: true })
-  })
-  assert.deepEqual(calls, [path])
-})
-
 test('note formatting requires the configured standard model before sending the draft', async () => {
   const response = await fetchWithAiConfiguration('/api/phantasiai/notes/edit', { method: 'POST', body: '{"content_md":"private draft"}' }, async (input) => {
     if (String(input).endsWith('/config/public')) return Response.json({ aiAvailability: { standard: false } })

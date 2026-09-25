@@ -17,22 +17,12 @@ export interface ExecutionStep {
 
 export interface PendingQuestion {
   questionId: string
-  confirmationId?: string
   questionType: string
   question: string
   context?: string
   options?: Array<{ value: string; label: string; description?: string }>
   required?: boolean
   defaultValue?: string
-  riskLevel?: string
-  expiresInSeconds?: number
-  receivedAtMs?: number
-  pendingSteps?: Array<{
-    stepId: string
-    capabilityName: string
-    message: string
-    impact: string[]
-  }>
 }
 
 export interface ExecutionTrace {

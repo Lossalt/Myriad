@@ -1,0 +1,354 @@
+//! Lexical relevance for memory recall: BM25 over words and CJK bigrams.
+//!
+//! Chinese and Japanese have no spaces, and single characters are mostly noise
+//! as evidence: "今天" and "天气" share 天 but nothing else. So a run of CJK
+//! characters is read as overlapping bigrams, which carry full weight. Its
+//! single characters are still indexed so a one-character word (猫) can be
+//! found, but inside a longer run they only count as weak evidence.
+//!
+//! Repeating a word is not extra evidence: query terms are counted once.
+//!
+//! A memory's concepts are terms too. When the query names a concept by any
+//! of its names (猫, 喵, cat), every memory about that concept shares one
+//! term with it, even with no word in common.
+
+use std::collections::{HashMap, HashSet};
+
+use super::unified::Concept;
+
+const K1: f64 = 1.2;
+const B: f64 = 0.75;
+/// Weight of a single CJK character that sits inside a longer run.
+const WEAK: f64 = 0.25;
+
+#[derive(Debug, Clone, PartialEq)]
+struct Term {
+    text: String,
+    weight: f64,
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(ch as u32,
+        0x3040..=0x30FF   // Hiragana, Katakana
+        | 0x3400..=0x4DBF // CJK Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xAC00..=0xD7AF // Hangul syllables
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0x20000..=0x2FA1F)
+}
+
+fn terms(text: &str) -> Vec<Term> {
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut run: Vec<char> = Vec::new();
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            flush_word(&mut word, &mut out);
+            run.push(ch);
+        } else if ch.is_alphanumeric() {
+            flush_run(&mut run, &mut out);
+            word.extend(ch.to_lowercase());
+        } else {
+            flush_word(&mut word, &mut out);
+            flush_run(&mut run, &mut out);
+        }
+    }
+    flush_word(&mut word, &mut out);
+    flush_run(&mut run, &mut out);
+    out
+}
+
+fn flush_word(word: &mut String, out: &mut Vec<Term>) {
+    // One letter or digit alone says nothing.
+    if word.chars().count() >= 2 {
+        out.push(Term {
+            text: std::mem::take(word),
+            weight: 1.0,
+        });
+    }
+    word.clear();
+}
+
+fn flush_run(run: &mut Vec<char>, out: &mut Vec<Term>) {
+    let single = if run.len() == 1 { 1.0 } else { WEAK };
+    for ch in run.iter() {
+        out.push(Term {
+            text: ch.to_string(),
+            weight: single,
+        });
+    }
+    for pair in run.windows(2) {
+        out.push(Term {
+            text: pair.iter().collect(),
+            weight: 1.0,
+        });
+    }
+    run.clear();
+}
+
+/// One memory as recall sees it.
+pub struct Document<'a> {
+    pub text: &'a str,
+    pub concepts: &'a [Concept],
+}
+
+/// Concept terms cannot collide with words: text never yields a control char.
+fn concept_term(name: &str) -> String {
+    format!("\u{1}{}", name.to_lowercase())
+}
+
+/// Whether `form` is mentioned in `text` (both lowercase). CJK has no word
+/// boundaries, so any occurrence counts; elsewhere the form must stand as its
+/// own word ("cat" is not in "category").
+fn mentions(text: &str, form: &str) -> bool {
+    if form.is_empty() {
+        return false;
+    }
+    if form.chars().any(is_cjk) {
+        return text.contains(form);
+    }
+    text.match_indices(form).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + form.len()..].chars().next();
+        let boundary = |ch: Option<char>| ch.is_none_or(|ch| !ch.is_alphanumeric() || is_cjk(ch));
+        boundary(before) && boundary(after)
+    })
+}
+
+fn document_terms(document: &Document) -> Vec<Term> {
+    let mut out = terms(document.text);
+    out.extend(document.concepts.iter().map(|concept| Term {
+        text: concept_term(&concept.name),
+        weight: 1.0,
+    }));
+    out
+}
+
+/// Distinct query terms, keeping the strongest weight a term was seen with.
+/// A concept of any document counts when the query names it.
+fn query_terms(text: &str, documents: &[Document]) -> Vec<Term> {
+    let mut best: HashMap<String, f64> = HashMap::new();
+    let lower = text.to_lowercase();
+    for concept in documents.iter().flat_map(|document| document.concepts) {
+        if concept
+            .surface_forms()
+            .any(|form| mentions(&lower, &form.to_lowercase()))
+        {
+            best.insert(concept_term(&concept.name), 1.0);
+        }
+    }
+    for term in terms(text) {
+        let weight = best.entry(term.text).or_insert(0.0);
+        *weight = weight.max(term.weight);
+    }
+    let mut out: Vec<Term> = best
+        .into_iter()
+        .map(|(text, weight)| Term { text, weight })
+        .collect();
+    out.sort_by(|left, right| left.text.cmp(&right.text));
+    out
+}
+
+/// How well one document matched a query.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Score {
+    /// BM25 over all shared terms.
+    pub value: f64,
+    /// Whether a full-weight term (a word, a bigram, a one-character word)
+    /// was shared. Weak single characters alone never make a match.
+    pub strong: bool,
+}
+
+/// BM25 of every document against `query`, in document order. The corpus is
+/// the documents themselves, so a term most memories share counts for little.
+pub fn score_all(query: &str, documents: &[Document]) -> Vec<Score> {
+    let query = query_terms(query, documents);
+    if query.is_empty() || documents.is_empty() {
+        return vec![
+            Score {
+                value: 0.0,
+                strong: false,
+            };
+            documents.len()
+        ];
+    }
+    let indexed: Vec<(HashMap<String, u32>, usize)> = documents
+        .iter()
+        .map(|document| {
+            let terms = document_terms(document);
+            let mut counts = HashMap::new();
+            for term in &terms {
+                *counts.entry(term.text.clone()).or_insert(0) += 1;
+            }
+            (counts, terms.len())
+        })
+        .collect();
+    let total = indexed.len() as f64;
+    let average_len = indexed.iter().map(|(_, len)| *len as f64).sum::<f64>() / total;
+    let wanted: HashSet<&str> = query.iter().map(|term| term.text.as_str()).collect();
+    let mut frequency: HashMap<&str, f64> = HashMap::new();
+    for (counts, _) in &indexed {
+        for text in counts.keys() {
+            if let Some(text) = wanted.get(text.as_str()) {
+                *frequency.entry(text).or_insert(0.0) += 1.0;
+            }
+        }
+    }
+    indexed
+        .iter()
+        .map(|(counts, len)| {
+            let norm = K1 * (1.0 - B + B * (*len as f64) / average_len.max(1.0));
+            let mut score = Score {
+                value: 0.0,
+                strong: false,
+            };
+            for term in &query {
+                let Some(&count) = counts.get(&term.text) else {
+                    continue;
+                };
+                let seen = frequency.get(term.text.as_str()).copied().unwrap_or(0.0);
+                let idf = (1.0 + (total - seen + 0.5) / (seen + 0.5)).ln();
+                let count = count as f64;
+                score.value += term.weight * idf * count * (K1 + 1.0) / (count + norm);
+                score.strong |= term.weight >= 1.0;
+            }
+            score
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn score_all(query: &str, texts: &[&str]) -> Vec<Score> {
+        let documents: Vec<Document> = texts
+            .iter()
+            .map(|text| Document {
+                text,
+                concepts: &[],
+            })
+            .collect();
+        super::score_all(query, &documents)
+    }
+
+    fn texts(text: &str) -> Vec<(String, f64)> {
+        terms(text)
+            .into_iter()
+            .map(|term| (term.text, term.weight))
+            .collect()
+    }
+
+    #[test]
+    fn cjk_runs_become_bigrams_with_weak_characters() {
+        assert_eq!(
+            texts("今天"),
+            vec![
+                ("今".into(), WEAK),
+                ("天".into(), WEAK),
+                ("今天".into(), 1.0)
+            ]
+        );
+        assert_eq!(texts("猫"), vec![("猫".into(), 1.0)]);
+        assert_eq!(
+            texts("Likes 抹茶 a lot"),
+            vec![
+                ("likes".into(), 1.0),
+                ("抹".into(), WEAK),
+                ("茶".into(), WEAK),
+                ("抹茶".into(), 1.0),
+                ("lot".into(), 1.0)
+            ]
+        );
+        // Kana is read like any other CJK run.
+        assert!(
+            texts("ゲームが好き")
+                .iter()
+                .any(|(text, weight)| text == "好き" && *weight == 1.0)
+        );
+        assert!(texts("。，！ a").is_empty());
+    }
+
+    #[test]
+    fn a_shared_character_alone_is_not_a_match() {
+        let scores = score_all("今天", &["天气不错", "今天加班"]);
+        assert!(!scores[0].strong, "今天 and 天气 only share 天");
+        assert!(scores[0].value > 0.0);
+        assert!(scores[1].strong);
+        assert!(scores[1].value > scores[0].value);
+    }
+
+    #[test]
+    fn a_one_character_query_word_is_a_match() {
+        let scores = score_all("猫", &["养了一只猫", "喜欢狗"]);
+        assert!(scores[0].strong);
+        assert!(!scores[1].strong);
+    }
+
+    #[test]
+    fn a_rare_term_outweighs_a_common_one() {
+        let documents = [
+            "likes tea in the morning",
+            "likes tea at night",
+            "likes tea with oolong",
+            "likes coffee",
+        ];
+        let scores = score_all("oolong tea", &documents);
+        assert!(scores[2].value > scores[0].value);
+        assert!(scores[2].value > scores[1].value);
+    }
+
+    #[test]
+    fn repeating_a_query_word_is_not_extra_evidence() {
+        let once = score_all("tea", &["tea", "milk"]);
+        let many = score_all("tea tea tea", &["tea", "milk"]);
+        assert_eq!(once, many);
+    }
+
+    #[test]
+    fn no_query_scores_nothing() {
+        let scores = score_all("  。", &["tea"]);
+        assert_eq!(scores[0].value, 0.0);
+        assert!(!scores[0].strong);
+        assert!(score_all("tea", &[]).is_empty());
+    }
+
+    fn concept(name: &str, aliases: &[&str]) -> Concept {
+        Concept {
+            name: name.into(),
+            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn naming_a_concept_by_any_name_finds_its_memories() {
+        let cat = [concept("猫", &["喵", "猫咪", "cat"])];
+        let documents = [
+            Document {
+                text: "年糕最近不爱动",
+                concepts: &cat,
+            },
+            Document {
+                text: "今天吐了好几次",
+                concepts: &[],
+            },
+        ];
+        let scores = super::score_all("喵喵吃饭了吗", &documents);
+        assert!(scores[0].strong, "喵 names the cat");
+        assert!(scores[0].value > scores[1].value);
+        assert!(super::score_all("My CAT is sick", &documents)[0].strong);
+        assert!(
+            !super::score_all("category theory", &documents)[0].strong,
+            "cat inside a longer word is not the cat"
+        );
+    }
+
+    #[test]
+    fn latin_forms_need_word_boundaries_but_cjk_forms_do_not() {
+        assert!(mentions("my cat.", "cat"));
+        assert!(mentions("养了cat", "cat"));
+        assert!(!mentions("concatenate", "cat"));
+        assert!(mentions("喵喵叫", "喵"));
+        assert!(!mentions("anything", ""));
+    }
+}

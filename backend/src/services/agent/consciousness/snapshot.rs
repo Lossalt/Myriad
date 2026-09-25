@@ -46,5 +46,12 @@ pub async fn capture_self_snapshot(
         captured_at: Utc::now(),
         live: super::presence::last_live_presence(user_id),
         attention: super::attention::last_attention(user_id),
+        myself: Some(merope::self_state::current(db).await.facts_view()),
+        addressee_name: Some(merope::resolve_addressee_label(db, user_id).await)
+            .filter(|name| !name.trim().is_empty()),
+        inner: merope::inner::current(
+            user_id,
+            &crate::services::agent::memory::unified::Audience::private(user_id),
+        ),
     })
 }

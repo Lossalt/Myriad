@@ -224,14 +224,14 @@ pub async fn register_component(
         .await
         .map_err(|_| ComponentRegistryError::Database)?;
 
-    if let Some(existing) = existing {
+    let stored = if let Some(existing) = existing {
         let mut active: tapp_storage::ActiveModel = existing.into();
         active.value = Set(component_data);
         active.updated_at = Set(now);
         active
             .update(db)
             .await
-            .map_err(|_| ComponentRegistryError::UpdateFailed)?;
+            .map_err(|_| ComponentRegistryError::UpdateFailed)?
     } else {
         let storage = tapp_storage::ActiveModel {
             id: NotSet,
@@ -247,8 +247,9 @@ pub async fn register_component(
         storage
             .insert(db)
             .await
-            .map_err(|_| ComponentRegistryError::RegisterFailed)?;
-    }
+            .map_err(|_| ComponentRegistryError::RegisterFailed)?
+    };
+    crate::services::tapp_storage::record_storage_media(db, stored.id, Some(owner_id)).await;
 
     Ok(RegisteredComponent {
         id: component_id,

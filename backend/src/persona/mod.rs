@@ -32,9 +32,8 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
     agent::skill_evolution::init_skill_evolution(agent_data_dir.join("skills")).await;
     tracing::info!("✅ Agent skill evolution system initialized");
 
-    // Initialize Agent memory system
-    agent::memory::init_memory(agent_data_dir.join("memory")).await;
-    tracing::info!("✅ Agent memory system initialized");
+    // Carry the pre-unified JSON memory into the database (idempotent)
+    agent::memory::import_legacy_json(&db, &agent_data_dir.join("memory")).await;
 
     // Initialize MCP (Model Context Protocol) client
     agent::mcp::init_mcp(&agent_data_dir.join("mcp_servers.json")).await;
@@ -92,6 +91,34 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         Duration::ZERO,
         move || agent::merope::tick_speak_intents(speak_db.clone()),
     );
+    let wander_db = db.clone();
+    drivers.periodic(
+        "mind wandering",
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+        move || agent::merope::wander::tick(wander_db.clone()),
+    );
+    let doing_db = db.clone();
+    drivers.periodic(
+        "her own time",
+        Duration::from_secs(60),
+        Duration::from_secs(90),
+        move || agent::merope::doing::tick(doing_db.clone()),
+    );
+    let playing_db = db.clone();
+    drivers.periodic(
+        "what they play",
+        Duration::from_secs(120),
+        Duration::from_secs(60),
+        move || agent::merope::playing::tick(playing_db.clone()),
+    );
+    let life_db = db.clone();
+    drivers.periodic(
+        "persona nights",
+        Duration::from_secs(30 * 60),
+        Duration::from_secs(5 * 60),
+        move || agent::merope::life::tick(life_db.clone()),
+    );
     let expiry_db = db.clone();
     drivers.periodic("TAPP interactions", Duration::from_secs(5), Duration::ZERO, move || {
         let db = expiry_db.clone();
@@ -127,9 +154,6 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
                     );
                 }
             }
-            if let Some(memory) = agent::memory::get_memory() {
-                memory.cleanup_old_logs(30).await;
-            }
         },
     );
     *runtime = Some(drivers.supervise(FAILURE.clone(), Duration::from_secs(30)));
@@ -161,9 +185,6 @@ pub async fn shutdown() {
         // Stop admission before draining. Previously the tick/heartbeat loops
         // kept spawning work while the process waited for inflight execution.
         runtime.shutdown().await;
-    }
-    if let Some(memory) = agent::memory::get_memory() {
-        memory.force_flush().await;
     }
     if let Some(evolution) = agent::skill_evolution::get_skill_evolution() {
         evolution.flush().await;

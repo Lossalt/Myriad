@@ -474,6 +474,7 @@ pub async fn delete_persona(
         .await
         .map_err(|error| persona_store_http("commit persona delete", error))?;
     merope_rig::mirror_active_asset(cleared_asset).await;
+    merope::forget_in_memory();
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -570,6 +571,20 @@ pub async fn put_addressee(
 /// POST /api/agent/addressee/music-listening — credit a meaningful block of
 /// actual playback. The client reports time, never a mood delta; the backend
 /// owns the effect, ceiling and cross-process cooldown.
+/// What she is doing on her own right now, for someone who may join her.
+/// Why she picked it stays hers.
+pub async fn get_doing(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Value>, HttpError> {
+    require_merope_enabled().await?;
+    parse_user_id_with_agent_access(&claims, &db).await?;
+    Ok(Json(json!({
+        "doing": merope::doing::current(),
+        "now": chrono::Utc::now(),
+    })))
+}
+
 pub async fn post_music_listening(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,

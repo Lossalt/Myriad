@@ -1102,6 +1102,8 @@
   "aiLiteEnable": "Activer le modèle Lite",
   "aiLiteEnableDesc": "Si désactivé, les tâches Lite retombent sur Standard",
   "aiLiteProviderHint": "Peut différer de Standard ; les clés sont dans Fournisseurs ci-dessus",
+  "aiLiteJudgeModelLabel": "Modèle de décision",
+  "aiLiteJudgeModelPlaceholder": "Vide : identique au modèle Lite. Pour les petites décisions (humeur, prendre la parole, quoi retenir) ; un modèle rapide convient",
   "aiStandardModelTitle": "Modèle Standard",
   "aiStandardModelDesc": "Palier par défaut pour le quotidien",
   "aiProModelTitle": "Modèle Pro",

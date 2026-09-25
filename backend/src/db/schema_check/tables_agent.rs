@@ -767,5 +767,118 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 },
             ],
         },
+        TableDef {
+            name: "agent_memories".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "user_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "kind".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "content".into(),
+                    data_type: "text".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "evidence".into(),
+                    data_type: "text".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "speaker".into(),
+                    data_type: "character varying".into(),
+                    default_value: Some("'user'".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "source".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "venue".into(),
+                    data_type: "character varying".into(),
+                    default_value: Some("'private'".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "audience".into(),
+                    data_type: "jsonb".into(),
+                    default_value: Some("'[]'::jsonb".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "concepts".into(),
+                    data_type: "jsonb".into(),
+                    default_value: Some("'[]'::jsonb".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "importance".into(),
+                    data_type: "double precision".into(),
+                    default_value: Some("0.5".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "access_count".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "last_accessed_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "valid_from".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "invalid_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "invalid_reason".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "created_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "updated_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+            ],
+        },
     ]
 }

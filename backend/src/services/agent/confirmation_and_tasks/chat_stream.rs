@@ -98,6 +98,8 @@ struct WearStreamFilter {
     emitted: usize,
     fired_wear: bool,
     fired_music: bool,
+    /// She said she would host a turtle soup.
+    started_game: bool,
 }
 
 impl WearStreamFilter {
@@ -108,6 +110,7 @@ impl WearStreamFilter {
             emitted: 0,
             fired_wear: false,
             fired_music: false,
+            started_game: false,
         }
     }
 }
@@ -157,6 +160,10 @@ impl WearStreamFilter {
         let (after_wear, wear) = myriad_merope::split_chat_wear_directive(&self.raw);
         let (spoken, music) =
             crate::services::agent::chat_music::split_chat_music_directive(&after_wear);
+        let (spoken, started) = crate::services::agent::merope::soup::split_start(&spoken);
+        self.started_game |= started;
+        // A hand-off line is for the channel, not to be seen or heard.
+        let (spoken, _) = crate::services::agent::delegate::split(&spoken);
         let visible = if hold {
             crate::services::agent::chat_music::hold_incomplete_live_marker(&spoken)
         } else {
@@ -248,6 +255,37 @@ fn spawn_model_outfit_overlay(
     });
 }
 
+const EMPTY_REPLY: &str = "Chat model returned an empty response";
+
+/// This turn is a live voice call.
+fn on_call(request: &UserRequest) -> bool {
+    request
+        .context
+        .as_ref()
+        .and_then(|context| context.custom_data.as_ref())
+        .and_then(|data| data.get("voice"))
+        .and_then(|voice| voice.as_str())
+        == Some("realtime")
+}
+
+/// Her voice in chat. It thinks little: measured on the chat suite, the first
+/// word came in about 1.9 s instead of 6 s with replies of the same kind.
+async fn chat_analyzer() -> Result<crate::services::analyzer::AiAnalyzer, String> {
+    crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
+        .await
+        .map(crate::services::analyzer::AiAnalyzer::with_light_thinking)
+        .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())
+}
+
+/// The images attached to this chat message (none in a group turn).
+fn images_of(request: &UserRequest) -> &[crate::services::analyzer::ImageInput] {
+    request
+        .context
+        .as_ref()
+        .map(|context| context.images.as_slice())
+        .unwrap_or(&[])
+}
+
 impl Agent {
     /// Chat 模式的唯一模型入口。严格 Lite 不可用时直接失败，绝不借用
     /// Standard / Pro，否则“只聊天”会悄悄变成另一条 Work 费用路径。
@@ -257,9 +295,25 @@ impl Agent {
         progress_tx: &tokio::sync::mpsc::Sender<AgentProgressEvent>,
         speech_delivery: Option<ChatDelivery>,
     ) -> Result<String, String> {
-        let analyzer = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
-            .await
-            .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())?;
+        let analyzer = chat_analyzer().await?;
+        let first = self
+            .stream_chat_response_with_analyzer(
+                request,
+                progress_tx,
+                analyzer,
+                speech_delivery.clone(),
+            )
+            .await;
+        // The model now and then answers with nothing at all. Nothing reached
+        // them, so asking once more is safe.
+        if !matches!(&first, Err(error) if error == EMPTY_REPLY) {
+            return first;
+        }
+        tracing::warn!(
+            user_id = request.user_id,
+            "[Chat] empty reply; asking once more"
+        );
+        let analyzer = chat_analyzer().await?;
         self.stream_chat_response_with_analyzer(request, progress_tx, analyzer, speech_delivery)
             .await
     }
@@ -268,14 +322,20 @@ impl Agent {
         &self,
         request: &UserRequest,
     ) -> Result<String, String> {
-        let analyzer = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
-            .await
-            .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())?;
+        let analyzer = chat_analyzer().await?;
         let prompt = self.chat_response_prompt(request).await;
+        // The same request as the streamed path, only not relayed.
         let response = analyzer
-            .analyze(&prompt)
+            .analyze_stream_parts_with_images(&prompt, images_of(request), |_| async { true })
             .await
             .map_err(|error| error.to_string())?;
+        let (mut response, started_game) =
+            crate::services::agent::merope::soup::split_start(response.trim());
+        if started_game {
+            if let Some(opening) = crate::services::agent::merope::soup::start(request).await {
+                response = format!("{response}\n\n{opening}");
+            }
+        }
         let response = response.trim();
         if response.is_empty() {
             Err("Chat model returned an empty response".to_string())
@@ -289,16 +349,32 @@ impl Agent {
             .await
             .unwrap_or_default();
         let soul: String = soul.chars().take(2000).collect();
-        let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(
-            &crate::services::agent::merope::speaking_prompt_with_query(
+        let venue = request
+            .context
+            .as_ref()
+            .and_then(|context| context.venue.clone());
+        let sections = if let Some(venue) = venue.as_deref() {
+            crate::services::agent::merope::speaking_prompt_in_group(
+                request.user_id,
+                request.raw_input.as_str(),
+                venue,
+            )
+            .await
+        } else {
+            crate::services::agent::merope::speaking_prompt_with_query(
                 request.user_id,
                 Some(request.raw_input.as_str()),
             )
-            .await,
-        );
-        if request.context.as_ref().is_some_and(|context| {
-            context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
-        }) {
+            .await
+        };
+        let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(&sections);
+        // A group has no wardrobe of hers to change and no player of theirs to
+        // run: those sections are for a private chat.
+        if venue.is_none()
+            && request.context.as_ref().is_some_and(|context| {
+                context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
+            })
+        {
             let session_id = request
                 .context
                 .as_ref()
@@ -322,32 +398,135 @@ impl Agent {
                 .as_ref()
                 .and_then(|context| context.custom_data.as_ref())
                 .and_then(|data| data.get("musicStatus"));
-            let player = crate::services::agent::chat_music::format_chat_player_section(music);
+            let mut player = crate::services::agent::chat_music::format_chat_player_section(music);
+            if let Some(line) = crate::services::agent::merope::doing::current()
+                .and_then(|doing| crate::services::agent::merope::doing::player_line(&doing, music))
+            {
+                player.push('\n');
+                player.push_str(line);
+            }
+            // A turtle soup on in this conversation, with their message
+            // judged; or how she would start one.
+            let game = match crate::services::agent::merope::soup::this_turn(request).await {
+                Some(section) => Some(section),
+                None => {
+                    crate::services::agent::merope::soup::offer_line(request).map(str::to_string)
+                }
+            };
+            if let Some(game) = game {
+                player.push_str("\n\n");
+                player.push_str(&game);
+            }
+            // A private IM chat: she can hand work off.
+            if let Some(chat) = request
+                .context
+                .as_ref()
+                .and_then(|context| context.channel_chat.as_ref())
+            {
+                player.push_str("\n\n");
+                player.push_str(&crate::services::agent::delegate::section(chat));
+            }
             if merope_block.is_empty() {
                 merope_block = player;
             } else {
                 merope_block = format!("{merope_block}\n\n{player}");
             }
         }
-        let history = request
+        let supplied = request
             .context
             .as_ref()
             .and_then(|context| context.conversation_history.as_deref())
             .unwrap_or(&[]);
+        if venue.is_some() {
+            // Nobody asked her: she chose to say something.
+            if let Some(why) = request
+                .context
+                .as_ref()
+                .and_then(|context| context.chime.as_deref())
+            {
+                merope_block = format!(
+                    "{merope_block}\n\n## Chiming in\nNobody addressed you: you are joining the group's talk on your own because {why}. Say one or two short lines to the group, as yourself; do not make it a speech.",
+                    why = why.trim().trim_end_matches('.')
+                );
+            }
+            // A group turn: the history is the group's transcript, other
+            // people's words included, and nothing she said in private.
+            return crate::services::agent::chat_prompt::build_group_chat_prompt(
+                &soul,
+                &merope_block,
+                supplied,
+                &request.raw_input,
+            );
+        }
+        let history = crate::services::agent::merope::with_said_unprompted(
+            &self.db,
+            request.user_id,
+            supplied,
+        )
+        .await;
+        // How long they were away, when it was a while.
+        if let Some(block) = supplied
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .and_then(|message| message.created_at.as_deref())
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .and_then(|at| {
+                crate::services::agent::merope::format_since_section(
+                    request
+                        .timestamp
+                        .signed_duration_since(at.with_timezone(&chrono::Utc))
+                        .num_minutes(),
+                )
+            })
+        {
+            merope_block = format!("{merope_block}\n\n{block}");
+        }
+        if on_call(request) {
+            merope_block = format!(
+                "{merope_block}\n\n## On a call\nThis reply is spoken aloud on a live voice call: talk, do not write. No lists, no markup, short sentences."
+            );
+        }
 
         let custom = request
             .context
             .as_ref()
             .and_then(|context| context.custom_data.as_ref());
-        let perception = crate::services::agent::chat_prompt::format_chat_scene(
+        let mut perception = crate::services::agent::chat_prompt::format_chat_scene(
             custom.and_then(|data| data.get("perception")),
             custom.and_then(|data| data.get("pageContent")),
             &request.raw_input,
         );
+        // Which part of the site they are on, even without the page itself.
+        if let Some(route) = request
+            .context
+            .as_ref()
+            .and_then(|context| context.current_route.as_deref())
+            .map(str::trim)
+            .filter(|route| !route.is_empty() && route.len() <= 200)
+        {
+            let line = format!("They are on the page {route} of this site.");
+            perception = if perception.trim().is_empty() {
+                line
+            } else {
+                format!("{perception}\n{line}")
+            };
+        }
+        let attached = crate::services::agent::chat_attachments::format_attached(
+            custom,
+            images_of(request).len(),
+        );
+        if !attached.is_empty() {
+            perception = if perception.trim().is_empty() {
+                attached
+            } else {
+                format!("{perception}\n\n{attached}")
+            };
+        }
         crate::services::agent::chat_prompt::build_chat_lite_prompt_with_perception(
             &soul,
             &merope_block,
-            history,
+            &history,
             &request.raw_input,
             &perception,
         )
@@ -373,7 +552,7 @@ impl Agent {
             .as_ref()
             .and_then(|context| context.session_id.clone());
         match analyzer
-            .analyze_stream_parts(&prompt, |delta| {
+            .analyze_stream_parts_with_images(&prompt, images_of(request), |delta| {
                 let tx = tx.clone();
                 let speech_delivery = speech_delivery.clone();
                 let wear = wear.clone();
@@ -436,6 +615,27 @@ impl Agent {
                     )
                     .await;
                 }
+                let started_game = wear
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .started_game;
+                let (mut full_text, _) =
+                    crate::services::agent::merope::soup::split_start(&full_text);
+                // She said she would think one up: the puzzle follows her words.
+                if started_game {
+                    if let Some(opening) =
+                        crate::services::agent::merope::soup::start(request).await
+                    {
+                        let opening = format!("\n\n{opening}");
+                        full_text.push_str(&opening);
+                        emit_chat_delta(
+                            progress_tx,
+                            crate::services::analyzer::StreamDelta::Text(opening),
+                            speech_delivery.as_ref(),
+                        )
+                        .await;
+                    }
+                }
                 if let Some(delivery) = speech_delivery.as_ref() {
                     delivery
                         .lock()
@@ -444,7 +644,7 @@ impl Agent {
                 }
                 Ok(full_text.trim().to_owned())
             }
-            Ok(_) => Err("Chat model returned an empty response".to_string()),
+            Ok(_) => Err(EMPTY_REPLY.to_string()),
             Err(error) => Err(error.to_string()),
         }
     }

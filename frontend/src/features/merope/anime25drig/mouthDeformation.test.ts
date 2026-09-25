@@ -146,6 +146,43 @@ test('ordinary mouth curvature is visible, symmetric and continuous across mater
   }
 })
 
+test('a tilted mouth keeps the face angle while it morphs to another size', () => {
+  const roll = (-7 * Math.PI) / 180
+  const faceAxes = { cos: Math.cos(roll), sin: Math.sin(roll) }
+  const source = { fade: 'mouthWide' as const, x: 90, y: 160, w: 76, h: 26 }
+  const centerX = source.x + source.w / 2
+  const centerY = source.y + source.h / 2
+  for (const openMix of [0, 0.5, 1]) {
+    const frame: Anime25DMouthDeformationFrame = {
+      mouth: MOUTH, face: FACE, faceAxes, faceScale: 1,
+      // Morphing toward a narrower, taller material.
+      morph: { centerX, centerY, width: 46, height: 36, openMix, wide: 0, round: 0, narrow: 0 },
+      expression: IDENTITY_DRIVER, jawDrop: 0, jawOpen: 0, time: 0, stylizedMotion: null,
+    }
+    // Two points on the drawn mouth's own horizontal axis.
+    const ends = [-30, 30].map((along) => {
+      const restX = centerX + along * faceAxes.cos
+      const restY = centerY + along * faceAxes.sin
+      const point = { x: restX, y: restY }
+      deformAnime25DMouthPoint(point, restX, restY, source, frame, 'continuous')
+      return point
+    })
+    const angle = Math.atan2(ends[1].y - ends[0].y, ends[1].x - ends[0].x)
+    assert.ok(Math.abs(angle - roll) < 0.5 * (Math.PI / 180), `openMix ${openMix}: ${(angle * 180) / Math.PI}°`)
+  }
+  // At its own size a tilted mouth does not move at all.
+  const own: Anime25DMouthDeformationFrame = {
+    mouth: MOUTH, face: FACE, faceAxes, faceScale: 1,
+    morph: { centerX, centerY, width: source.w, height: source.h, openMix: 0, wide: 0, round: 0, narrow: 0 },
+    expression: IDENTITY_DRIVER, jawDrop: 0, jawOpen: 0, time: 0, stylizedMotion: null,
+  }
+  for (const [restX, restY] of [[source.x, source.y], [source.x + source.w, source.y + source.h], [centerX + 11, centerY - 7]]) {
+    const point = { x: restX, y: restY }
+    deformAnime25DMouthPoint(point, restX, restY, source, own, 'continuous')
+    assert.ok(Math.hypot(point.x - restX, point.y - restY) < 1e-9)
+  }
+})
+
 test('face-jaw coupling matches the frozen lower-face weighting', () => {
   for (let frameIndex = 0; frameIndex < 120; frameIndex += 1) {
     const progress = frameIndex / 119

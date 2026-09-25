@@ -1,10 +1,12 @@
 pub mod ai_process_pure;
 pub mod capability;
+pub mod chat_attachments;
 pub mod chat_music;
 pub mod chat_prompt;
 pub mod consciousness;
 pub mod data_read_pure;
 pub mod data_write_pure;
+pub mod delegate;
 pub mod error_analyzer_pure;
 pub mod executor;
 pub mod executor_resolve_pure;
@@ -24,7 +26,6 @@ pub(crate) mod presence_window;
 pub mod queue;
 pub mod resource_create_pure;
 pub mod response_agent;
-pub mod routing;
 pub mod run_hub;
 pub mod search_output;
 pub mod skill;
@@ -42,6 +43,8 @@ pub(crate) mod work_loop;
 #[cfg(test)]
 mod behavior_contract;
 
+#[cfg(test)]
+mod self_audit;
 #[cfg(test)]
 mod semantic_eval;
 

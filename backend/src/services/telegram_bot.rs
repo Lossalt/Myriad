@@ -8,8 +8,9 @@ use std::time::Duration;
 use chrono::Utc;
 use myriad_agent_rules::channel::{
     ConnectFailureKind, TelegramBotIdentity, TelegramPrivateInbound, WorkerIntent,
-    parse_telegram_bot_identity, parse_telegram_ok_payload, parse_telegram_private_inbounds,
-    telegram_max_update_id, telegram_retry_after, telegram_worker_intent,
+    parse_telegram_bot_identity, parse_telegram_group_messages, parse_telegram_ok_payload,
+    parse_telegram_private_inbounds, telegram_max_update_id, telegram_retry_after,
+    telegram_worker_intent,
 };
 use myriad_error::redact_secrets;
 use serde::Serialize;
@@ -230,6 +231,39 @@ async fn run_session(
                                 }
                             });
                         }
+                        // Group lines: all are kept in mind; only those that
+                        // speak to her are answered. A bad group payload never
+                        // costs the private chats in the same batch.
+                        let group_lines =
+                            parse_telegram_group_messages(200, &body, &identity).unwrap_or_default();
+                        for line in group_lines {
+                            crate::services::telegram_group::record(&line);
+                            if !line.addressed {
+                                // Nobody asked her; now and then she joins in.
+                                if crate::services::telegram_group::worth_a_look(&line) {
+                                    tokio::spawn(crate::services::telegram_group::consider(
+                                        line,
+                                        token.to_string(),
+                                    ));
+                                }
+                                continue;
+                            }
+                            let permit = tokio::select! {
+                                _ = cancel.changed() => return Ok(()),
+                                permit = crate::services::bot_ingress::acquire(
+                                    crate::services::bot_ingress::Channel::Telegram,
+                                    line.text.len().saturating_add(token.len()),
+                                ) => permit,
+                            };
+                            let Some(permit) = permit else {
+                                continue;
+                            };
+                            let token = token.to_string();
+                            tokio::spawn(async move {
+                                let _permit = permit;
+                                crate::services::telegram_group::handle(line, token).await;
+                            });
+                        }
                         if next_offset.is_some() {
                             offset = next_offset;
                         }
@@ -325,6 +359,42 @@ pub async fn send_outbound(
     if status == 429 {
         let wait = telegram_retry_after(&body).unwrap_or(1);
         warn!(retry_after = wait, "Telegram sendMessage rate-limited");
+        return Err(ConnectFailureKind::Transient);
+    }
+    parse_telegram_ok_payload(status, &body).map(|_| ())
+}
+
+/// Her reply in a group, threaded under the message that spoke to her.
+pub async fn send_group_reply(
+    token: &str,
+    chat_id: i64,
+    text: &str,
+    reply_to: i64,
+    thread: Option<i64>,
+) -> Result<(), ConnectFailureKind> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let enabled = {
+        let config = GLOBAL_DYNAMIC_CONFIG.read().await;
+        config.telegram_bot_enabled
+    };
+    if !enabled {
+        return Ok(());
+    }
+    let mut payload = serde_json::json!({
+        "chat_id": chat_id,
+        "text": myriad_agent_rules::channel::truncate_telegram_text(text),
+        "reply_parameters": {"message_id": reply_to, "allow_sending_without_reply": true},
+    });
+    if let Some(thread) = thread {
+        payload["message_thread_id"] = serde_json::json!(thread);
+    }
+    let (status, body) =
+        telegram_request(token, "sendMessage", Some(payload), HTTP_TIMEOUT).await?;
+    if status == 429 {
+        let wait = telegram_retry_after(&body).unwrap_or(1);
+        warn!(retry_after = wait, "Telegram group reply rate-limited");
         return Err(ConnectFailureKind::Transient);
     }
     parse_telegram_ok_payload(status, &body).map(|_| ())

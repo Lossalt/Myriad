@@ -84,6 +84,25 @@ test('explicit layer grids contain stable interior topology', () => {
   assert.ok(mesh.indices.every((index) => index < mesh.vertices.length))
 })
 
+test('plain hair is split into back and front hair by paint order around the face', async () => {
+  const psd = syntheticSeeThroughPsd()
+  for (const layer of psd.children ?? []) {
+    if (layer.name === 'back hair') layer.name = 'hair'
+    if (layer.name === 'front hair_1') layer.name = 'hair_1'
+  }
+  const layers = (await prepareWithFakeCanvas(psd)).source.anime25dPlayback!
+    .layers
+  const face = layers.findIndex((layer) => layer.role === 'face')
+  const back = layers.findIndex((layer) => layer.role === 'back-hair')
+  const front = layers.findIndex((layer) => layer.role === 'front-hair')
+  assert.ok(
+    back >= 0 && back < face,
+    'hair painted under the face is back hair',
+  )
+  assert.ok(front > face, 'hair painted over the face is front hair')
+  assert.ok(layers[front].strands.length > 0)
+})
+
 test('imports regional accessories and preserves independent depth/side fragments', async () => {
   const psd = syntheticSeeThroughPsd()
   psd.children?.push(

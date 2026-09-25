@@ -190,16 +190,22 @@ const ModelTierGroup: React.FC<
               key={field.key}
               itemKey={field.key}
               label={
-                field.key.endsWith('model')
-                  ? t.config.openaiModelLabel
-                  : field.label
+                field.key === 'lite_judge_model'
+                  ? t.config.aiLiteJudgeModelLabel
+                  : field.key.endsWith('model')
+                    ? t.config.openaiModelLabel
+                    : field.label
               }
               required={field.required}
               value={field.value}
               onChange={(value) => updateValue(field.key, value)}
               guide={fieldGuide?.guide}
               guidePath={fieldGuide?.guidePath}
-              placeholder={field.placeholder}
+              placeholder={
+                field.key === 'lite_judge_model'
+                  ? t.config.aiLiteJudgeModelPlaceholder
+                  : field.placeholder
+              }
               inputType={field.field_type as 'text' | 'password'}
               autoSelectOnMask
               layout="vertical"
@@ -224,6 +230,8 @@ function fieldsForModelTier(
     if (field.key.includes('api_key') || field.key.endsWith('base_url')) {
       return false
     }
+    // Same provider as Lite, whichever it is: only a model name.
+    if (prefix === 'lite_' && field.key === 'lite_judge_model') return true
     if (provider === 'gemini') {
       return field.key.startsWith(geminiPrefix) && field.key.endsWith('model')
     }

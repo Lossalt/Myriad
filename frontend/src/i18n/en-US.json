@@ -772,7 +772,6 @@
     "answerFailed": "Answer failed: {error}",
     "askArael": "Ask Agent",
     "cancelFailed": "Could not cancel that task.",
-    "confirmExpiredHint": "This confirmation has expired. Cancel or send the request again.",
     "errorWithDetail": "Error: {error}",
     "executionFailed": "Execution failed",
     "failReason": "Failure: {reason}",
@@ -876,27 +875,18 @@
       "hoursAgo": "{value}h ago",
       "daysAgo": "{value}d ago"
     },
-    "action": {
-      "risk": {
-        "none": "No risk",
-        "low": "Undoable",
-        "medium": "Changes data",
-        "high": "Cannot be undone",
-        "critical": "System-level"
-      },
-      "steps": "About to",
-      "impact": "Affects",
-      "expiresIn": "Valid for {seconds}s",
-      "expired": "Expired — ask again",
-      "confirm": "Go ahead",
-      "cancel": "Never mind"
-    },
     "undo": {
       "button": "Undo",
       "did": {
         "navigate": "Just navigated for you",
         "phantasi_open_article": "Just opened an article"
       }
+    },
+    "herTime": {
+      "listening": "Listening to {title}",
+      "reading": "Reading {title}",
+      "join": "Listen together",
+      "together": "Listening together"
     }
   },
   "agentPersona": {

@@ -78,14 +78,10 @@ pub(crate) fn map_progress(
         | AgentProgressEvent::StepStarted { .. }
         | AgentProgressEvent::StepCompleted { .. }
         | AgentProgressEvent::Progress { .. }
-        | AgentProgressEvent::StepRetrying { .. }
         | AgentProgressEvent::RunStarted { .. }
         | AgentProgressEvent::SessionCreated { .. }
         | AgentProgressEvent::SessionTitleUpdated { .. }
         | AgentProgressEvent::SummaryToken { .. }
-        | AgentProgressEvent::TaskAssigned { .. }
-        | AgentProgressEvent::PlannerDecision { .. }
-        | AgentProgressEvent::StepDebug { .. }
         | AgentProgressEvent::PerformancePlan { .. }
         | AgentProgressEvent::MeropeStateChanged { .. }
         | AgentProgressEvent::OutfitOverlay { .. }

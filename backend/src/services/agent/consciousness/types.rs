@@ -108,6 +108,31 @@ pub struct SelfSnapshot {
     pub live: SelfLivePresence,
     #[serde(default)]
     pub attention: Option<super::attention::AttentionSegment>,
+    /// Facts about her own day, not toward this person. How they make her
+    /// feel is the decision model's judgment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub myself: Option<SelfFacts>,
+    /// Who they are to her, as she calls them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressee_name: Option<String>,
+    /// How she was after her last exchange with them, if a moment ago.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<String>,
+}
+
+/// The persona's own day, as plain facts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SelfFacts {
+    /// Her local time, `HH:MM`.
+    #[serde(default)]
+    pub local_time: String,
+    /// Different people who talked with her in the last few hours.
+    #[serde(default)]
+    pub people_recently: usize,
+    #[serde(default)]
+    pub hours_since_anyone: Option<f64>,
+    #[serde(default)]
+    pub hours_since_learned: Option<f64>,
 }
 
 /// Side-effect class selected by the consciousness model.

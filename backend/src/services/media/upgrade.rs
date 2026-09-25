@@ -12,7 +12,9 @@ use serde_json::Value;
 const JOB: &str = "platform_media_v2";
 const BATCH: u64 = 50;
 /// 3: backfill the `site_wallpaper` reference for existing wallpaper settings.
-const REVISION: u32 = 3;
+/// 4: bind Tapp storage values and Agent messages written before their writes
+/// recorded references; publish Tapp AI results that were born private.
+const REVISION: u32 = 4;
 const WALLPAPER_KEY: &str = "ui_wallpaper_url";
 const FAILURE_JOB: &str = "upgrade_failure";
 /// Terminal record of a site setting citing local media that can never bind
@@ -44,6 +46,7 @@ const PHASES: &[(&str, &str, &str)] = &[
     ("agent_messages", "id", "TRUE"),
     // Appended so earlier phase indices (and their failure keys) stay stable.
     ("configurations", "key", "key = 'ui_wallpaper_url'"),
+    ("tapp_storage", "id", "TRUE"),
 ];
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -429,7 +432,7 @@ async fn refresh_failures(
 }
 
 async fn process_row(
-    db: &impl ConnectionTrait,
+    db: &(impl ConnectionTrait + TransactionTrait),
     store: &MediaStore,
     paths: &LegacyPaths,
     origins: &[String],
@@ -446,7 +449,9 @@ async fn process_row(
     } else if pass == 0 {
         // RSS cache-only files retain their disposable cache lifecycle. Only
         // already catalogued assets need durable RSS references in pass 2.
-        if table == "phantasi_items" && payload["content_md"].is_null() {
+        // App-supplied values never import cache either, as live writes don't.
+        if table == "tapp_storage" || (table == "phantasi_items" && payload["content_md"].is_null())
+        {
             return Ok(());
         }
         let layout = if is_wallpaper(table, cursor) {
@@ -740,8 +745,44 @@ async fn bind_empty(db: &impl ConnectionTrait, key: &str) -> Result<(), MediaErr
     .map(|_| ())
 }
 
+async fn bind_tapp_storage(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    id: i32,
+    payload: &Value,
+    origins: &[String],
+) -> Result<(), MediaError> {
+    let user_id = payload["user_id"]
+        .as_i64()
+        .and_then(|id| i32::try_from(id).ok())
+        .ok_or(MediaError::StoreFailed)?;
+    let value = payload.get("value").unwrap_or(&Value::Null);
+    let Some(rewritten) = cite::bind_tapp_storage_upgrade(db, id, user_id, value, origins).await?
+    else {
+        return Ok(());
+    };
+    // Permanent addresses are longer; a namespace at its quota keeps the old
+    // spelling (still protected) rather than failing the upgrade forever.
+    use sea_orm::TransactionSession;
+    let savepoint = db.begin().await?;
+    match savepoint
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "UPDATE tapp_storage SET value = $1, updated_at = NOW() WHERE id = $2",
+            [rewritten.into(), id.into()],
+        ))
+        .await
+    {
+        Ok(_) => savepoint.commit().await?,
+        Err(error) if crate::services::tapp_storage::is_storage_quota_exceeded(&error) => {
+            savepoint.rollback().await?
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
 async fn bind_row(
-    db: &impl ConnectionTrait,
+    db: &(impl ConnectionTrait + TransactionTrait),
     store: &MediaStore,
     paths: &LegacyPaths,
     origins: &[String],
@@ -754,6 +795,9 @@ async fn bind_row(
     let layout = parse_layout(table, payload);
     if table == "phantasi_items" && payload["content_md"].is_null() {
         return cite::bind_rss_item(db, id()?, payload, origins).await;
+    }
+    if table == "tapp_storage" {
+        return bind_tapp_storage(db, id()?, payload, origins).await;
     }
     if is_wallpaper(table, cursor) {
         let stored = stored_wallpaper(payload);

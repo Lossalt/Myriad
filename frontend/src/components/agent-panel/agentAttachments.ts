@@ -1,6 +1,8 @@
 export const AGENT_ATTACH_MAX_COUNT = 4
 export const AGENT_ATTACH_MAX_BYTES = 8 * 1024 * 1024
 export const AGENT_ATTACH_TEXT_CHARS = 8000
+export const AGENT_ATTACH_MODEL_EDGE = 1024
+const PREVIEW_EDGE = 384
 export const AGENT_ATTACH_ACCEPT =
   'image/*,text/plain,text/markdown,text/csv,application/json,application/xml,text/xml,.txt,.md,.markdown,.csv,.json,.xml'
 
@@ -11,6 +13,11 @@ export interface AgentAttachment {
   size: number
   /** UI only; omitted from the request. */
   previewUrl?: string
+  /**
+   * What the model looks at: a JPEG data URL at most `AGENT_ATTACH_MODEL_EDGE`
+   * on the long side. Sent with this message only, never kept in the chat.
+   */
+  modelImage?: string
   text?: string
 }
 
@@ -51,26 +58,43 @@ export async function fileToAttachment(file: File): Promise<AgentAttachment> {
     size: file.size,
   }
   if (file.type.startsWith('image/')) {
-    const previewUrl = await thumbnailDataUrl(file)
-    return { ...base, previewUrl }
+    const previewUrl = await downscaledDataUrl(file, PREVIEW_EDGE, 'image/webp', 0.7)
+    // JPEG encodes everywhere (Safari cannot encode WebP from a canvas).
+    const modelImage = await downscaledDataUrl(
+      file,
+      AGENT_ATTACH_MODEL_EDGE,
+      'image/jpeg',
+      0.85,
+    ).catch(() => undefined)
+    return { ...base, previewUrl, ...(modelImage ? { modelImage } : {}) }
   }
   const raw = await file.text()
   const text = raw.slice(0, AGENT_ATTACH_TEXT_CHARS)
   return { ...base, text }
 }
 
-/** Decode a small bitmap, retain only the thumbnail, and release native pixels. */
-async function thumbnailDataUrl(file: File): Promise<string> {
-  const bitmap = await createImageBitmap(file, { resizeWidth: 384, resizeQuality: 'high' })
+/** Decode a bounded bitmap, retain only the encoded copy, and release native pixels. */
+async function downscaledDataUrl(
+  file: File,
+  edge: number,
+  type: string,
+  quality: number,
+): Promise<string> {
+  const bitmap = await createImageBitmap(file, { resizeWidth: edge, resizeQuality: 'high' })
   try {
-    const scale = Math.min(1, 384 / Math.max(bitmap.width, bitmap.height))
+    const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height))
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(bitmap.width * scale))
     canvas.height = Math.max(1, Math.round(bitmap.height * scale))
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Image preview unavailable')
+    if (type === 'image/jpeg') {
+      // No alpha in JPEG: transparent areas would turn black.
+      context.fillStyle = '#fff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+    }
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    const preview = canvas.toDataURL('image/webp', 0.7)
+    const preview = canvas.toDataURL(type, quality)
     canvas.width = canvas.height = 0
     return preview
   } finally {
@@ -80,13 +104,21 @@ async function thumbnailDataUrl(file: File): Promise<string> {
 
 export function attachmentsForRequest(
   attachments: readonly AgentAttachment[],
-): Array<{ name: string; mime: string; size: number; text?: string }> {
-  return attachments.map(({ name, mime, size, text }) => ({
+): Array<{ name: string; mime: string; size: number; text?: string; image?: string }> {
+  return attachments.map(({ name, mime, size, text, modelImage }) => ({
     name,
     mime,
     size,
     ...(text ? { text } : {}),
+    ...(modelImage ? { image: modelImage } : {}),
   }))
+}
+
+/** The attachments a chat message keeps: the model-size image goes with the request only. */
+export function attachmentsForDisplay(
+  attachments: readonly AgentAttachment[],
+): AgentAttachment[] {
+  return attachments.map(({ modelImage: _modelImage, ...kept }) => kept)
 }
 
 export async function collectAttachments(
