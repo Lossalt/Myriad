@@ -32,6 +32,8 @@ export interface Anime25DPsdReconciliation {
   /** False when the source background is not flat enough to tell art from it. */
   backgroundKnown: boolean
   regions: Anime25DPsdDefectRegion[]
+  /** Regions import already fixed; `regions` lists what remains after that. */
+  repairs: { revealed: number; recovered: number }
   /** Source-shaded overview of the content with defect pixels coloured. */
   heatmap: { width: number; height: number; data: Uint8ClampedArray } | null
 }
@@ -45,8 +47,10 @@ export const ANIME25D_PSD_DEFECT_COLORS: Readonly<
   mismatch: [245, 158, 11],
 }
 
+export const ANIME25D_PSD_REPAIRED_COLOR = [34, 197, 94] as const
+
 /** See-through re-renders colours; aligned art still differs by ~15-18 RGB. */
-const MATCH_DISTANCE = 70
+export const MATCH_DISTANCE = 70
 const MISMATCH_DISTANCE = 98
 const BACKGROUND_DISTANCE = 28
 /** Below this the PSD was not decomposed from this illustration. */
@@ -58,7 +62,7 @@ const MIN_REGION_PIXELS = 48
 const MAX_REGIONS = 24
 const HEATMAP_EDGE = 320
 const OPAQUE = 0.5
-const KIND_CODES: readonly Anime25DPsdDefectKind[] = [
+export const ANIME25D_PSD_DEFECT_CODES: readonly Anime25DPsdDefectKind[] = [
   'buried',
   'missing',
   'spurious',
@@ -74,6 +78,43 @@ export function reconcileAnime25DPsd(
   layers: readonly RasterLayer[],
   reference: Readonly<Anime25DSourceReference>,
 ): Anime25DPsdReconciliation | null {
+  const analysis = analyzeAnime25DPsd(layers, reference)
+  return analysis && reportAnime25DPsdAnalysis(analysis, reference)
+}
+
+export interface Anime25DPsdAnalysisRegion extends Anime25DPsdDefectRegion {
+  /** Indices into the analysis bounds. */
+  members: number[]
+}
+
+export interface Anime25DPsdAnalysis {
+  bounds: ContentBounds
+  status: Anime25DPsdReconciliation['status']
+  agreement: number
+  compared: number
+  background: { known: boolean; color: [number, number, number] }
+  /** Composite colour and coverage of the analysed layers. */
+  color: Float32Array
+  alpha: Float32Array
+  /** Index of the topmost opaque layer per pixel, or -1. */
+  top: Int16Array
+  /** For `buried` pixels, the covered layer that matches the source. */
+  covered: Int16Array
+  /** Backdrop connected to the open edges; null when it is not flat. */
+  outside: Uint8Array | null
+  /** Per-pixel verdict codes before small regions are discarded. */
+  flagged: Uint8Array
+  classes: Uint8Array
+  /** Smallest region worth reporting or repairing. */
+  minArea: number
+  /** Every region above the size floor, largest first. */
+  regions: Anime25DPsdAnalysisRegion[]
+}
+
+export function analyzeAnime25DPsd(
+  layers: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): Anime25DPsdAnalysis | null {
   const bounds = contentBounds(layers, reference)
   if (!bounds) return null
   const { x0, y0, width, height } = bounds
@@ -111,7 +152,7 @@ export function reconcileAnime25DPsd(
     ? floodBackground(bounds, alpha, reference, background.color)
     : null
   const classes = new Uint8Array(count)
-  const buriedRole = new Int16Array(count).fill(-1)
+  const covered = new Int16Array(count).fill(-1)
   let compared = 0
   let matched = 0
   for (let target = 0; target < count; target += 1) {
@@ -143,7 +184,7 @@ export function reconcileAnime25DPsd(
       continue
     }
     if (distance <= MISMATCH_DISTANCE) continue
-    const covered = coveredMatch(
+    const match = coveredMatch(
       layers,
       top[target],
       x,
@@ -151,44 +192,70 @@ export function reconcileAnime25DPsd(
       reference.data,
       referenceOffset,
     )
-    if (covered >= 0) {
+    if (match >= 0) {
       classes[target] = 1
-      buriedRole[target] = covered
+      covered[target] = match
     } else {
       classes[target] = 4
     }
   }
 
   const agreement = compared > 0 ? matched / compared : 0
-  if (agreement < MIN_AGREEMENT) {
-    return {
-      status: 'reference-mismatch',
-      agreement,
-      contentArea: compared,
-      backgroundKnown: background.known,
-      regions: [],
-      heatmap: null,
-    }
-  }
+  const status = agreement < MIN_AGREEMENT ? 'reference-mismatch' : 'reconciled'
   const minArea = Math.max(
     MIN_REGION_PIXELS,
     Math.round(compared * MIN_REGION_SHARE),
   )
-  const regions = collectRegions(classes, bounds, minArea, (target, kind) => {
-    const index = kind === 'buried' ? buriedRole[target] : top[target]
-    return index >= 0 ? layers[index].role : null
-  })
+  const flagged = classes.slice()
+  const regions =
+    status === 'reconciled'
+      ? collectRegions(classes, bounds, minArea, (target, kind) => {
+          const index = kind === 'buried' ? covered[target] : top[target]
+          return index >= 0 ? layers[index].role : null
+        })
+      : []
   return {
-    status: 'reconciled',
+    bounds,
+    status,
     agreement,
-    contentArea: compared,
-    backgroundKnown: background.known,
+    compared,
+    background,
+    color,
+    alpha,
+    top,
+    covered,
+    outside,
+    flagged,
+    classes,
+    minArea,
     regions,
-    heatmap: renderHeatmap(classes, bounds, reference),
   }
 }
 
-interface ContentBounds {
+/** `repaired` marks changed pixels in reference space for the overview. */
+export function reportAnime25DPsdAnalysis(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  reference: Readonly<Anime25DSourceReference>,
+  repairs: Anime25DPsdReconciliation['repairs'] = { revealed: 0, recovered: 0 },
+  repaired: Uint8Array | null = null,
+): Anime25DPsdReconciliation {
+  const reconciled = analysis.status === 'reconciled'
+  return {
+    status: analysis.status,
+    agreement: analysis.agreement,
+    contentArea: analysis.compared,
+    backgroundKnown: analysis.background.known,
+    regions: analysis.regions
+      .slice(0, MAX_REGIONS)
+      .map(({ members: _members, ...region }) => region),
+    repairs,
+    heatmap: reconciled
+      ? renderHeatmap(analysis.classes, analysis.bounds, reference, repaired)
+      : null,
+  }
+}
+
+export interface ContentBounds {
   x0: number
   y0: number
   width: number
@@ -340,15 +407,15 @@ function collectRegions(
   bounds: ContentBounds,
   minArea: number,
   roleAt: (target: number, kind: Anime25DPsdDefectKind) => string | null,
-): Anime25DPsdDefectRegion[] {
+): Anime25DPsdAnalysisRegion[] {
   const { width, height } = bounds
   const visited = new Uint8Array(classes.length)
   const stack: number[] = []
-  const regions: Anime25DPsdDefectRegion[] = []
+  const regions: Anime25DPsdAnalysisRegion[] = []
   for (let start = 0; start < classes.length; start += 1) {
     const code = classes[start]
     if (!code || visited[start]) continue
-    const kind = KIND_CODES[code - 1]
+    const kind = ANIME25D_PSD_DEFECT_CODES[code - 1]
     const roles = new Map<string | null, number>()
     let area = 0
     let minX = width
@@ -397,6 +464,7 @@ function collectRegions(
         height: maxY - minY + 1,
       },
       role,
+      members,
     })
 
     function visit(next: number) {
@@ -405,15 +473,14 @@ function collectRegions(
       stack.push(next)
     }
   }
-  return regions
-    .toSorted((left, right) => right.area - left.area)
-    .slice(0, MAX_REGIONS)
+  return regions.toSorted((left, right) => right.area - left.area)
 }
 
 function renderHeatmap(
   classes: Uint8Array,
   bounds: ContentBounds,
   reference: Readonly<Anime25DSourceReference>,
+  repaired: Uint8Array | null,
 ): Anime25DPsdReconciliation['heatmap'] {
   // Show the illustration itself, not the square padding around it.
   let left = bounds.width
@@ -450,14 +517,23 @@ function renderHeatmap(
         Math.min(right, left + Math.floor((x + 1) / scale)),
       )
       let code = 0
+      let fixed = false
       for (let sy = fromY; sy < toY && !code; sy += 1) {
         for (let sx = fromX; sx < toX && !code; sx += 1) {
           code = classes[sy * bounds.width + sx]
+          fixed ||= Boolean(
+            repaired?.[(bounds.y0 + sy) * reference.width + bounds.x0 + sx],
+          )
         }
       }
       const target = (y * width + x) * 4
       if (code) {
-        data.set(ANIME25D_PSD_DEFECT_COLORS[KIND_CODES[code - 1]], target)
+        data.set(
+          ANIME25D_PSD_DEFECT_COLORS[ANIME25D_PSD_DEFECT_CODES[code - 1]],
+          target,
+        )
+      } else if (fixed) {
+        data.set(ANIME25D_PSD_REPAIRED_COLOR, target)
       } else {
         const offset =
           ((bounds.y0 + fromY) * reference.width + (bounds.x0 + fromX)) * 4
@@ -497,7 +573,7 @@ function distanceOver(
   return Math.sqrt(sum)
 }
 
-function rgbDistance(
+export function rgbDistance(
   data: Uint8ClampedArray,
   offset: number,
   color: readonly [number, number, number],

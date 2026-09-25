@@ -52,7 +52,7 @@ import {
 } from './faceFrame'
 import { formatTemplate } from './formatTemplate'
 import { inferOutfitProfileFromPartIds } from './outfit'
-import { reconcileAnime25DPsd } from './psdReconciliation'
+import { repairAnime25DPsd } from './psdRepair'
 
 function genericCloseParts() {
   if (!GenericParts) return undefined
@@ -153,12 +153,20 @@ export async function prepareAnime25DRigPsd(
   })
   assignCrossfadeSlots(layers)
   validateAnime25DCharacterLayers(layers, copy)
-  const reconciliation = sourceReference
-    ? reconcileAnime25DPsd(
-        layers.filter(visibleInAnalysisReference),
-        sourceReference,
-      )
-    : null
+  let reconciliation: Anime25DPsdReconciliation | null = null
+  if (sourceReference) {
+    const repair = repairAnime25DPsd(
+      layers,
+      visibleInAnalysisReference,
+      sourceReference,
+      Math.max(0, MAX_RIG_PARTS - layers.length),
+    )
+    layers = repair.layers
+    reconciliation = repair.reconciliation
+    layers.forEach((layer, index) => {
+      layer.order = index
+    })
+  }
   const faceCenter = {
     x: rig.anchors.face.cx,
     y: rig.anchors.face.cy,

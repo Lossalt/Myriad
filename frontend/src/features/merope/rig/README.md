@@ -137,21 +137,34 @@ the face midline instead of the frozen rigger's fixed-pixel guess. All of this i
 baked at import; stored rigs change only when re-imported.
 
 When the square source illustration is available, import reconciles the split
-against it (`psdReconciliation.ts`). The layers visible at rest are composited
-in draw order and compared with the illustration they were decomposed from.
-Each disagreeing region is classified by cause: `buried` when a lower layer
-holds matching art that a later layer covers (an ordering fault), `missing`
-when the illustration shows art that no layer carries (e.g. a dropped earring),
-`spurious` when a layer paints over open backdrop, and `mismatch` when the
-visible layer differs and nothing beneath fits. Backdrop is flood-filled from
-the open edges, so pale skin or white hair enclosed by line art is not mistaken
-for it. See-through re-renders colours, so thresholds allow ~15–18 RGB of drift.
-Below 80% agreement the PSD is treated as split from another illustration and
-not judged. Scenic backdrops disable the backdrop-dependent verdicts. This is
-diagnosis only: preflight shows the verdicts and a difference map but edits
-nothing and blocks nothing. It judges the import-time composite, so faults that
-the runtime corrects later (for example lifting `neckwear` over recovered skin)
-still show as `buried`.
+against it and repairs what the illustration proves (`psdReconciliation.ts`,
+`psdRepair.ts`). The layers visible at rest are composited in draw order and
+compared with the illustration they were decomposed from. Each disagreeing
+region is classified by cause: `buried` when a lower layer holds matching art
+that a later layer covers (an ordering fault), `missing` when the illustration
+shows art that no layer carries (e.g. a dropped earring), `spurious` when a
+layer paints over open backdrop, and `mismatch` when the visible layer differs
+and nothing beneath fits. Backdrop is flood-filled from the open edges, so pale
+skin or white hair enclosed by line art is not mistaken for it. See-through
+re-renders colours, so thresholds allow ~15–18 RGB of drift. Below 80%
+agreement the PSD is treated as split from another illustration and left
+untouched. Scenic backdrops disable the backdrop-dependent verdicts.
+
+Repair then acts on those verdicts. A `buried` region whose covered layer
+matches the illustration as a whole (mean distance ≤ 26; faithful reveals
+measured 7–23, coincidental ones 31–37) is revealed by erasing the covering
+pixels, including a few pixels of leftover line art around it. Anything else
+the illustration shows (`missing`, `mismatch`, weak `buried`) is lifted from
+the illustration itself into a rigid `objects` layer per body group, placed
+just above the layers it overrides. A morphological closing plus small-hole
+fill keeps an accessory whole, so a birdcage earring comes back with the hair
+seen between its bars. Layers with expression variants are never edited or
+covered, areas above 2% of the content are too garment-sized to pin as static
+art, and at most `MAX_RIG_PARTS` limits new layers; all of those are only
+reported. Surfaces the illustration hides cannot be recovered. Preflight shows
+the repairs in green on the difference map alongside what remains. Faults the
+runtime corrects later (for example lifting `neckwear` over recovered skin)
+are judged before that correction.
 
 The `lovestruck` expression keeps the character's authored irises and overlays
 one independently anchored, character-tinted heart pupil per eye. A single

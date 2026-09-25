@@ -4,7 +4,10 @@ import type {
 } from '../rig/psdReconciliation'
 import { useEffect, useRef } from 'react'
 import { useI18n } from '../../../contexts/I18nContext'
-import { ANIME25D_PSD_DEFECT_COLORS } from '../rig/psdReconciliation'
+import {
+  ANIME25D_PSD_DEFECT_COLORS,
+  ANIME25D_PSD_REPAIRED_COLOR,
+} from '../rig/psdReconciliation'
 
 const KINDS: readonly Anime25DPsdDefectKind[] = [
   'buried',
@@ -13,7 +16,7 @@ const KINDS: readonly Anime25DPsdDefectKind[] = [
   'spurious',
 ]
 
-/** Diagnosis only: shows where the split PSD disagrees with its source. */
+/** Where the split PSD disagreed with its source, and what import repaired. */
 export function PsdReconciliationSummary({
   reconciliation,
 }: {
@@ -77,6 +80,8 @@ export function PsdReconciliationSummary({
       ]
       return { kind, count: regions.length, roles }
     }).filter((group) => group.count > 0)
+    const { revealed, recovered } = reconciliation.repairs
+    const repaired = revealed + recovered > 0
     body = (
       <>
         <p className="merope-motion-rig__hint">
@@ -84,6 +89,23 @@ export function PsdReconciliationSummary({
             agreement: percent(reconciliation.agreement),
           })}
         </p>
+        {repaired ? (
+          <p className="merope-motion-rig__hint">
+            <span
+              className="merope-motion-rig__reconcile-swatch"
+              style={{
+                background: `rgb(${ANIME25D_PSD_REPAIRED_COLOR.join(' ')})`,
+              }}
+              aria-hidden="true"
+            />
+            {format(labels.rigReconcileRepaired, { revealed, recovered })}
+          </p>
+        ) : null}
+        {repaired && groups.length > 0 ? (
+          <p className="merope-motion-rig__hint">
+            {labels.rigReconcileRemaining}
+          </p>
+        ) : null}
         {groups.length > 0 ? (
           <ul className="merope-motion-rig__issues merope-motion-rig__reconcile-list">
             {groups.map(({ kind, count, roles }) => (
@@ -103,14 +125,18 @@ export function PsdReconciliationSummary({
             ))}
           </ul>
         ) : (
-          <p className="merope-motion-rig__hint">{labels.rigReconcileClean}</p>
+          <p className="merope-motion-rig__hint">
+            {repaired
+              ? labels.rigReconcileRemainingClean
+              : labels.rigReconcileClean}
+          </p>
         )}
         {reconciliation.backgroundKnown ? null : (
           <p className="merope-motion-rig__hint">
             {labels.rigReconcileBackgroundUnknown}
           </p>
         )}
-        {heatmap && groups.length > 0 ? (
+        {heatmap && (groups.length > 0 || repaired) ? (
           <figure className="merope-motion-rig__reconcile-map">
             <canvas ref={canvasRef} aria-label={labels.rigReconcileHeatmap} />
             <figcaption>{labels.rigReconcileHeatmap}</figcaption>
