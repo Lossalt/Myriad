@@ -90,37 +90,6 @@ fn bullet_facts(contents: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn tokens(value: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut latin = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            latin.push(ch.to_ascii_lowercase());
-            continue;
-        }
-        flush_latin(&mut latin, &mut out);
-        if ch.is_alphanumeric() {
-            out.push(ch.to_string());
-        }
-    }
-    flush_latin(&mut latin, &mut out);
-    // Repeating a word (or Chinese character) is not extra retrieval evidence.
-    out.sort_unstable();
-    out.dedup();
-    out
-}
-
-fn flush_latin(latin: &mut String, out: &mut Vec<String>) {
-    if latin.is_empty() {
-        return;
-    }
-    if latin.chars().count() >= 2 {
-        out.push(std::mem::take(latin));
-    } else {
-        latin.clear();
-    }
-}
-
 pub fn guest_speaking_section() -> String {
     "## Addressee\nYou are speaking to a guest. Do not read a diary, do not start a proactive conversation for this person, and do not pretend you already know them."
         .to_string()

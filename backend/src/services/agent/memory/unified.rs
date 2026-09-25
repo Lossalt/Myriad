@@ -323,9 +323,9 @@ fn fade_order(left: &agent_memories::Model, right: &agent_memories::Model) -> st
 }
 
 /// Relevant active memories of `user_id` that may be said in front of
-/// `present`. With a query, rows sharing words with it rank first (and only
-/// they are returned when any match); ties keep recency. Recalled rows count
-/// as used.
+/// `present`. With a query, rows ranked by BM25 against it (see
+/// `lexical`); when any row truly matches, only matching rows are
+/// returned. Ties keep recency. Recalled rows count as used.
 pub async fn recall<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
@@ -366,31 +366,24 @@ fn rank(
     query: Option<&str>,
     limit: usize,
 ) -> Vec<agent_memories::Model> {
-    let query_tokens =
-        crate::services::agent::merope::speaking_prompts::tokens(query.unwrap_or(""));
     // Blank and repeated legacy rows must not spend the recall budget.
     let mut seen = std::collections::HashSet::new();
-    let mut scored: Vec<(usize, agent_memories::Model)> = rows
+    let rows: Vec<agent_memories::Model> = rows
         .into_iter()
         .filter(|row| {
             let content = normalize_content(&row.content);
             !content.is_empty() && seen.insert(content)
         })
-        .map(|row| {
-            let row_tokens = crate::services::agent::merope::speaking_prompts::tokens(&row.content);
-            let score = query_tokens
-                .iter()
-                .filter(|token| row_tokens.contains(token))
-                .count();
-            (score, row)
-        })
         .collect();
-    let any_match = scored.iter().any(|(score, _)| *score > 0);
-    if any_match {
-        scored.retain(|(score, _)| *score > 0);
+    let documents: Vec<&str> = rows.iter().map(|row| row.content.as_str()).collect();
+    let scores = super::lexical::score_all(query.unwrap_or(""), &documents);
+    let mut scored: Vec<(super::lexical::Score, agent_memories::Model)> =
+        scores.into_iter().zip(rows).collect();
+    if scored.iter().any(|(score, _)| score.strong) {
+        scored.retain(|(score, _)| score.strong);
     }
     // Stable: equal scores keep newest-first order from the query.
-    scored.sort_by(|left, right| right.0.cmp(&left.0));
+    scored.sort_by(|left, right| right.0.value.total_cmp(&left.0.value));
     scored.into_iter().take(limit).map(|(_, row)| row).collect()
 }
 
@@ -572,10 +565,10 @@ mod tests {
             .collect()
     }
 
-    /// Chinese matches by character; repeating a word is not extra evidence;
+    /// Chinese matches by bigram; repeating a word is not extra evidence;
     /// punctuation is not evidence; nothing overlapping keeps recency.
     #[test]
-    fn overlap_is_counted_by_distinct_words_and_characters() {
+    fn overlap_is_counted_by_distinct_words_and_bigrams() {
         let facts = ["晚上想打独立游戏", "早上喝美式", "讨厌早会"];
         assert_eq!(
             ranked(&facts, Some("今晚打游戏吗"), 2),
@@ -602,6 +595,11 @@ mod tests {
             vec!["likes coffee"]
         );
         assert!(ranked(&facts, Some("tea"), 0).is_empty());
+        assert_eq!(
+            ranked(&["天气好就去跑步", "今天要加班"], Some("今天几点下班"), 2),
+            vec!["今天要加班"],
+            "sharing 天 alone is not a match"
+        );
     }
 
     #[test]
