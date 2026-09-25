@@ -1041,6 +1041,55 @@ pub async fn recall_remembered(
     Ok(recalled)
 }
 
+/// What a turn recalls, split: what they named (or recent context), and what
+/// that brought to mind by association.
+pub struct Recalled {
+    pub named: Vec<String>,
+    pub brought_to_mind: Vec<String>,
+}
+
+/// [`recall_remembered_primed`], keeping apart what was named and what it
+/// brought to mind.
+#[allow(clippy::too_many_arguments)]
+pub async fn recall_remembered_split(
+    db: &DatabaseConnection,
+    user_id: i32,
+    present: &crate::services::agent::memory::unified::Audience,
+    query: Option<&str>,
+    limit: usize,
+    priming: &Priming,
+    breadth: f64,
+) -> Result<(Recalled, Priming), anyhow::Error> {
+    use crate::services::agent::memory::unified;
+    let (recalled, next) = unified::recall_primed(
+        db,
+        user_id,
+        present,
+        query.filter(|query| !query.trim().is_empty()),
+        &unified::MemoryKind::ABOUT_PERSON,
+        limit,
+        priming,
+        breadth,
+    )
+    .await?;
+    let mut split = Recalled {
+        named: Vec::new(),
+        brought_to_mind: Vec::new(),
+    };
+    for note in recalled {
+        let content = super::ingest::compact_summary(&note.content);
+        if content.is_empty() {
+            continue;
+        }
+        if note.brought_to_mind {
+            split.brought_to_mind.push(content);
+        } else {
+            split.named.push(content);
+        }
+    }
+    Ok((split, next))
+}
+
 /// [`recall_remembered`] for a chat turn: also starts from what the previous
 /// turn left on the mind, and returns what this one leaves.
 #[allow(clippy::too_many_arguments)]

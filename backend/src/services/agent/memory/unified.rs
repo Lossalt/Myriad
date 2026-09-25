@@ -267,6 +267,9 @@ pub struct MemoryRecord {
     pub importance: f64,
     pub access_count: i32,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    /// Recalled because what they said brought it to mind by association,
+    /// not because they named it.
+    pub brought_to_mind: bool,
 }
 
 impl From<agent_memories::Model> for MemoryRecord {
@@ -281,6 +284,7 @@ impl From<agent_memories::Model> for MemoryRecord {
             importance: model.importance,
             access_count: model.access_count,
             created_at: model.created_at,
+            brought_to_mind: false,
         }
     }
 }
@@ -584,7 +588,7 @@ pub async fn recall_primed<C: ConnectionTrait>(
         return Ok((Vec::new(), Priming::default()));
     }
     let rows = rows_for(db, user_id, present, kinds).await?;
-    let (chosen, next) = rank_primed(rows, query, limit, priming, breadth);
+    let (chosen, next) = rank_marked(rows, query, limit, priming, breadth);
     if !chosen.is_empty() {
         let now = Utc::now().fixed_offset();
         agent_memories::Entity::update_many()
@@ -596,11 +600,20 @@ pub async fn recall_primed<C: ConnectionTrait>(
                 agent_memories::Column::LastAccessedAt,
                 sea_orm::sea_query::Expr::value(now),
             )
-            .filter(agent_memories::Column::Id.is_in(chosen.iter().map(|row| row.id.clone())))
+            .filter(agent_memories::Column::Id.is_in(chosen.iter().map(|(row, _)| row.id.clone())))
             .exec(db)
             .await?;
     }
-    Ok((chosen.into_iter().map(MemoryRecord::from).collect(), next))
+    Ok((
+        chosen
+            .into_iter()
+            .map(|(row, brought_to_mind)| MemoryRecord {
+                brought_to_mind,
+                ..MemoryRecord::from(row)
+            })
+            .collect(),
+        next,
+    ))
 }
 
 #[cfg(test)]
@@ -612,6 +625,7 @@ fn rank(
     rank_primed(rows, query, limit, &Priming::default(), 1.0).0
 }
 
+#[cfg(test)]
 fn rank_primed(
     rows: Vec<agent_memories::Model>,
     query: Option<&str>,
@@ -619,6 +633,19 @@ fn rank_primed(
     priming: &Priming,
     breadth: f64,
 ) -> (Vec<agent_memories::Model>, Priming) {
+    let (chosen, next) = rank_marked(rows, query, limit, priming, breadth);
+    (chosen.into_iter().map(|(row, _)| row).collect(), next)
+}
+
+/// [`rank_primed`], marking each row that came to mind by association with
+/// what was named rather than being named itself.
+fn rank_marked(
+    rows: Vec<agent_memories::Model>,
+    query: Option<&str>,
+    limit: usize,
+    priming: &Priming,
+    breadth: f64,
+) -> (Vec<(agent_memories::Model, bool)>, Priming) {
     // Blank and repeated legacy rows must not spend the recall budget.
     let mut seen = std::collections::HashSet::new();
     let rows: Vec<agent_memories::Model> = rows
@@ -669,6 +696,7 @@ fn rank_primed(
             .into_iter()
             .take(limit)
             .filter_map(|(_, index)| rows[index].take())
+            .map(|row| (row, false))
             .collect();
         return (chosen, Priming::default());
     }
@@ -709,7 +737,7 @@ fn rank_primed(
     } else {
         0
     };
-    let mut order: Vec<usize> = scored
+    let picked: Vec<(bool, usize)> = scored
         .into_iter()
         .filter(|(_, direct, _)| {
             *direct
@@ -718,9 +746,17 @@ fn rank_primed(
                     true
                 })
         })
-        .map(|(_, _, index)| index)
+        .map(|(_, direct, index)| (direct, index))
         .take(limit)
         .collect();
+    // Brought to mind only when something was actually named; a topic merely
+    // lingering from before is not a new association.
+    let brought: std::collections::HashSet<usize> = picked
+        .iter()
+        .filter(|(direct, _)| !direct && strongest > 0.0)
+        .map(|(_, index)| *index)
+        .collect();
+    let mut order: Vec<usize> = picked.into_iter().map(|(_, index)| index).collect();
     if strongest <= 0.0 {
         // Only the lingering topic came to mind: the rest of the budget is
         // the ordinary recent context, as when nothing is on the mind.
@@ -736,7 +772,11 @@ fn rank_primed(
     let mut rows: Vec<Option<agent_memories::Model>> = rows.into_iter().map(Some).collect();
     let chosen = order
         .into_iter()
-        .filter_map(|index| rows[index].take())
+        .filter_map(|index| {
+            rows[index]
+                .take()
+                .map(|row| (row, brought.contains(&index)))
+        })
         .collect();
     (chosen, next)
 }
@@ -1333,6 +1373,24 @@ mod tests {
             vec!["cat", "vet"],
             "nothing named: recency, no association"
         );
+    }
+
+    #[test]
+    fn what_was_named_and_what_it_brought_to_mind_are_told_apart() {
+        let rows = vec![
+            about(row("cat", "养了一只猫叫年糕", 0.5, 0), &["猫", "年糕"]),
+            about(row("vet", "年糕上周打了疫苗", 0.5, 30 * DAY), &["年糕"]),
+        ];
+        let (chosen, _) = rank_marked(rows.clone(), Some("猫怎么样"), 8, &Priming::default(), 1.0);
+        let marks: Vec<(String, bool)> = chosen
+            .into_iter()
+            .map(|(row, brought)| (row.id, brought))
+            .collect();
+        assert_eq!(marks, vec![("cat".into(), false), ("vet".into(), true)]);
+        // A topic only lingering from before is not a new association.
+        let (lingering, _) =
+            rank_marked(rows, Some("明日预报"), 8, &Priming::with("cat", 0.8), 1.0);
+        assert!(lingering.iter().all(|(_, brought)| !brought));
     }
 
     #[test]

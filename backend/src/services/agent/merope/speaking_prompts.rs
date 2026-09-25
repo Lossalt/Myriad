@@ -106,6 +106,20 @@ pub fn format_remembered_section(contents: &[String]) -> Option<String> {
     ))
 }
 
+/// What their words brought to mind that they did not name: the material of
+/// callbacks and of a remark nobody saw coming. Stated, never an order to
+/// use it; whether it is worth bringing up is hers to judge.
+pub fn format_brought_to_mind_section(contents: &[String]) -> Option<String> {
+    let lines = bullet_facts(contents);
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## It brings to mind\nThey did not mention these; what they said made you think of them.\n{}",
+        lines.join("\n")
+    ))
+}
+
 pub fn format_recent_section(contents: &[String]) -> Option<String> {
     let lines = bullet_facts(contents);
     if lines.is_empty() {
@@ -456,6 +470,17 @@ mod tests {
         assert!(section.contains("group chat"));
         assert!(section.contains("including people you do not know"));
         assert!(section.contains("only 瞳 told you in private"));
+    }
+
+    #[test]
+    fn what_comes_to_mind_is_stated_not_ordered() {
+        assert!(format_brought_to_mind_section(&[]).is_none());
+        let section = format_brought_to_mind_section(&["年糕上周打了疫苗".into()]).unwrap();
+        assert!(section.contains("They did not mention these"));
+        assert!(section.contains("- 年糕上周打了疫苗"));
+        for order in ["bring it up", "mention it", "you should"] {
+            assert!(!section.contains(order), "{order}");
+        }
     }
 
     #[test]

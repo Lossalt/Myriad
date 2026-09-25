@@ -125,6 +125,9 @@ struct Case {
     said_unprompted: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     own_days: Vec<String>,
+    /// Memories their words brought to mind without naming them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    brought_to_mind: Vec<String>,
     /// Her compiled inner state for this turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     inner: Option<String>,
@@ -168,6 +171,7 @@ fn is_mind_case(case: &Case) -> bool {
     !case.history.is_empty()
         || !case.said_unprompted.is_empty()
         || !case.own_days.is_empty()
+        || !case.brought_to_mind.is_empty()
         || case.inner.is_some()
         || case.gap.is_some()
 }
@@ -199,6 +203,7 @@ fn mind_chat_prompt(case: &Case) -> String {
     // Same order as production: her inner state last, nearest their words.
     let sections: Vec<String> = [
         super::merope::format_remembered_section(&case.remembered),
+        super::merope::format_brought_to_mind_section(&case.brought_to_mind),
         case.gap
             .as_deref()
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
@@ -1110,7 +1115,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 10;
+const MIND_CASES: usize = 11;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

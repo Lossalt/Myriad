@@ -278,11 +278,12 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 }
 
 pub use speaking_prompts::{
-    addressee_speaking_section, format_activity_section, format_curious_section,
-    format_emotion_section, format_found_out_section, format_inner_moment_ago_section,
-    format_inner_section, format_mood_section, format_on_your_mind_section,
-    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    group_speaking_section, guest_speaking_section, mood_tone_instruction,
+    addressee_speaking_section, format_activity_section, format_brought_to_mind_section,
+    format_curious_section, format_emotion_section, format_found_out_section,
+    format_inner_moment_ago_section, format_inner_section, format_mood_section,
+    format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
+    format_remembered_section, group_speaking_section, guest_speaking_section,
+    mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -492,7 +493,7 @@ async fn speaking_prompt_from_db(
     // Only a chat turn (it has the person's words) carries its train of
     // thought to the next turn; other readers see memory without moving it.
     let remembered = match turn {
-        Turn::Chat(words) | Turn::Event(words) => store::recall_remembered_primed(
+        Turn::Chat(words) | Turn::Event(words) => store::recall_remembered_split(
             db,
             user_id,
             present,
@@ -506,16 +507,26 @@ async fn speaking_prompt_from_db(
             myself.recall_breadth(),
         )
         .await
-        .map(|(ranked, next)| {
+        .map(|(recalled, next)| {
             if matches!(turn, Turn::Chat(_)) && !group {
                 priming::keep(user_id, next);
             }
-            ranked
+            recalled
         }),
-        Turn::Plain => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT).await,
+        Turn::Plain => store::recall_remembered(db, user_id, None, REMEMBERED_PROMPT_LIMIT)
+            .await
+            .map(|named| store::Recalled {
+                named,
+                brought_to_mind: Vec::new(),
+            }),
     };
-    if let Ok(ranked) = remembered {
-        if let Some(block) = format_remembered_section(&ranked) {
+    if let Ok(recalled) = remembered {
+        if let Some(block) = format_remembered_section(&recalled.named) {
+            sections.push(block);
+        }
+        // What their words brought to mind, apart from what they named: the
+        // stuff of callbacks and unexpected remarks, hers to use or not.
+        if let Some(block) = format_brought_to_mind_section(&recalled.brought_to_mind) {
             sections.push(block);
         }
     }
