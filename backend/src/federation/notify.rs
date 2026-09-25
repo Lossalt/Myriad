@@ -662,7 +662,7 @@ async fn dispatch_persona_observation(user_id: i32, event_key: &str, summary: St
     if crate::runtime_role::PERSONA_RUNTIME_LOCAL.load(std::sync::atomic::Ordering::Acquire) {
         crate::services::agent::merope::spawn_ingest(user_id, event_key, summary);
     } else {
-        if let Ok(db) = crate::services::tapp_registry::database() {
+        if let Ok(db) = crate::services::process_db::database() {
             crate::services::agent::notifications::publish_persona_observation(
                 &db, user_id, event_key, &summary,
             )

@@ -550,14 +550,14 @@ pub async fn drain_events(db: &DatabaseConnection, runtime_id: &str) -> Vec<Tapp
 
 /// Drop online presence when the SSE stream ends.
 pub async fn clear_subscription(runtime_id: &str) {
-    if let Ok(db) = shared_registry::database() {
+    if let Ok(db) = crate::services::process_db::database() {
         let _ = shared_registry::delete(&db, EVENT_PRESENCE_NAMESPACE, runtime_id).await;
     }
 }
 
 /// Disconnect one runtime's event presence (grant revoke).
 pub async fn disconnect_runtime_events(runtime_id: &str) -> bool {
-    match shared_registry::database() {
+    match crate::services::process_db::database() {
         Ok(db) => shared_registry::delete(&db, EVENT_PRESENCE_NAMESPACE, runtime_id)
             .await
             .unwrap_or(false),
@@ -566,7 +566,7 @@ pub async fn disconnect_runtime_events(runtime_id: &str) -> bool {
 }
 
 pub async fn disconnect_tapp_events(subject_id: i32, tapp_id: &str) -> usize {
-    match shared_registry::database() {
+    match crate::services::process_db::database() {
         Ok(db) => shared_registry::delete_matching(
             &db,
             EVENT_PRESENCE_NAMESPACE,
@@ -582,7 +582,7 @@ pub async fn disconnect_tapp_events(subject_id: i32, tapp_id: &str) -> usize {
 }
 
 pub async fn disconnect_all_tapp_events(owner_id: i32, tapp_id: &str) -> usize {
-    match shared_registry::database() {
+    match crate::services::process_db::database() {
         Ok(db) => shared_registry::delete_matching(
             &db,
             EVENT_PRESENCE_NAMESPACE,

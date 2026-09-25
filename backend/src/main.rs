@@ -491,7 +491,7 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 tracing::info!("✅ Phantasi scheduler engine initialized");
 
                 // Process-global DB must be wired before persona boot recovery.
-                services::tapp_registry::set_process_database(db.clone());
+                services::process_db::set_process_database(db.clone());
 
                 if role == runtime_role::RuntimeRole::All {
                     persona::start(db.clone()).await?;

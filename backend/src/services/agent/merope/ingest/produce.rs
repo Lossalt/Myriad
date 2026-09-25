@@ -63,7 +63,7 @@ pub fn spawn_diary(user_id: i32, summary: impl Into<String>) {
         if !is_logged_in_addressee(user_id) || !is_enabled().await {
             return;
         }
-        let Ok(db) = crate::services::tapp_registry::database() else {
+        let Ok(db) = crate::services::process_db::database() else {
             return;
         };
         if let Err(error) = insert_diary(&db, user_id, &summary, DIARY_SOURCE_EVENT).await {
@@ -80,7 +80,7 @@ pub fn spawn_presence(user_id: i32) {
         if !is_enabled().await {
             return;
         }
-        let Ok(db) = crate::services::tapp_registry::database() else {
+        let Ok(db) = crate::services::process_db::database() else {
             return;
         };
         let Ok(state) = get_or_create_state(&db, user_id).await else {
@@ -131,7 +131,7 @@ pub fn spawn(user_id: i32, event_key: impl Into<String>, summary: impl Into<Stri
     let summary = summary.into();
     tokio::spawn(async move {
         let _relay_permit = relay_permit;
-        let Ok(db) = crate::services::tapp_registry::database() else {
+        let Ok(db) = crate::services::process_db::database() else {
             return;
         };
         if !crate::runtime_role::PERSONA_RUNTIME_LOCAL.load(std::sync::atomic::Ordering::Acquire) {

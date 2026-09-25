@@ -130,7 +130,7 @@ pub(crate) async fn start_unified_server(
 
     // A FULL_MODE process losing its registered DB handle must not silently
     // degrade into an unauthenticated setup router.
-    let db_opt = match services::tapp_registry::database() {
+    let db_opt = match services::process_db::database() {
         Ok(db) => Some(db),
         Err(_) if CONFIG_MODE.load(Ordering::Relaxed) => None,
         Err(error) => {
@@ -328,7 +328,7 @@ async fn reload_config_if_requested() {
             );
             if !reconnect {
                 tracing::info!("♻️ Database target unchanged; skipping reconnect");
-                if let Ok(db) = services::tapp_registry::database() {
+                if let Ok(db) = services::process_db::database() {
                     let config_service = ConfigService::new(db);
                     match config_service.load_config().await {
                         Ok(dynamic_config) => {
@@ -359,7 +359,7 @@ async fn reload_config_if_requested() {
                         }
 
                         // Update process DB for health checks + background services
-                        services::tapp_registry::set_process_database(db.clone());
+                        services::process_db::set_process_database(db.clone());
 
                         // Reload dynamic configuration from database
                         let config_service = ConfigService::new(db);
@@ -405,7 +405,7 @@ async fn reload_config_if_requested() {
 }
 
 async fn probe_health() {
-    match services::tapp_registry::database() {
+    match services::process_db::database() {
         Ok(db) => {
             if crate::db::health::probe_database(&db).await {
                 tracing::debug!("💚 Database health check passed");

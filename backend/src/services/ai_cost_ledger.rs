@@ -155,7 +155,7 @@ pub fn site_owner_id_from_lookup(lookup: Result<Option<i32>, String>) -> Result<
 
 /// Durable site owner. Lookup/decode failure is not user `1`.
 pub async fn resolve_site_owner_id() -> Result<i32, String> {
-    let lookup = match crate::services::tapp_registry::database() {
+    let lookup = match crate::services::process_db::database() {
         Ok(db) => crate::services::tapp_ownership::find_admin_user_id(&db)
             .await
             .map_err(|_| "AI billing owner is unavailable".to_string()),
@@ -263,7 +263,7 @@ pub async fn record_ai_tokens_from_attribution(
         return;
     }
     let attr = current_attribution().unwrap_or_else(fallback_attribution);
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return;
     };
     record_ai_cost(

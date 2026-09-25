@@ -5,7 +5,7 @@
 //!
 //! The process-global DB handle lives in the backend binary; callers inject
 //! `&DatabaseConnection` / `ConnectionTrait`. Use the backend adapter
-//! `services::tapp_registry::database()` when a global handle is needed.
+//! `services::process_db::database()` when a global handle is needed.
 
 use sea_orm::{
     ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, FromQueryResult, Statement,

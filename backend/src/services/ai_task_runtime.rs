@@ -193,7 +193,7 @@ async fn cancel_shared(
     tapp_id: Option<&str>,
     predicate: impl Fn(&PersistedAiTask) -> bool,
 ) -> usize {
-    let Ok(db) = shared_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return 0;
     };
     let tasks = shared_registry::list(&db, AI_TASK_NAMESPACE, subject_id, tapp_id)
@@ -281,7 +281,7 @@ pub async fn update_task_state(task_id: &str, status: AiTaskStatus) {
         None
     };
     drop(tasks);
-    if let (Some(task), Ok(db)) = (persisted, shared_registry::database()) {
+    if let (Some(task), Ok(db)) = (persisted, crate::services::process_db::database()) {
         if let Err(error) = persist_ai_task(&db, &task).await {
             tracing::error!(%error, task_id = %task.snapshot.task_id, "[TAPP] Failed to persist AI task state");
         }
@@ -321,7 +321,7 @@ pub async fn finish_task(
     }
     task.snapshot.updated_at = Utc::now().to_rfc3339();
     task.retain_until = Utc::now().timestamp() + TASK_RETENTION_SECONDS;
-    if let Ok(db) = shared_registry::database() {
+    if let Ok(db) = crate::services::process_db::database() {
         if let Err(error) = persist_terminal_task(&db, &task).await {
             tracing::error!(%error, %task_id, "Failed to commit AI result and media references");
             // Never expose the unprotected result. Persist a failure instead; if

@@ -371,7 +371,7 @@ fn chime_schema() -> serde_json::Value {
 /// Whether she wants to join in, and about what. Only a community member's
 /// line, in a group that is paired to someone she knows, gets asked.
 async fn wants_to_chime(message: &TelegramGroupMessage) -> Option<String> {
-    let db = crate::services::tapp_registry::database().ok()?;
+    let db = crate::services::process_db::database().ok()?;
     let sender = message.from_id.to_string();
     let Ok(PairingLookup::Paired { user_id }) =
         crate::services::telegram_pairing::lookup_openid(&db, &sender).await
@@ -462,7 +462,7 @@ pub(crate) fn chime_verdict(raw: &str) -> Option<Option<String>> {
 }
 
 async fn answer(message: &TelegramGroupMessage, token: &str, chime: Option<String>) -> bool {
-    let Ok(db) = crate::services::tapp_registry::database() else {
+    let Ok(db) = crate::services::process_db::database() else {
         return false;
     };
     let inbound_id = format!("group:{}:{}", message.chat_id, message.message_id);

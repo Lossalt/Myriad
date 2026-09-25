@@ -49,7 +49,7 @@ async fn reclaim() {
     }
     crate::services::discord_bot::cleanup_channel_types().await;
     ai_task_runtime::cleanup_local_tasks().await;
-    if let Ok(db) = crate::services::tapp_registry::database() {
+    if let Ok(db) = crate::services::process_db::database() {
         match tokio::time::timeout(
             Duration::from_secs(30),
             crate::services::media::maintain(&db),
