@@ -556,7 +556,7 @@ fn request(case: &Case) -> Value {
         }
         "chime" => {
             let (system, schema) =
-                crate::services::telegram_group::chime_probe_contract(&contract_soul());
+                crate::services::channel_group::chime_probe_contract(&contract_soul());
             let conversation: Vec<String> = case
                 .history
                 .iter()
@@ -857,7 +857,7 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             // What she keeps is judged by the reviewer.
             Some(Some(_)) => "needs_review",
         },
-        "chime" => match crate::services::telegram_group::chime_verdict(output) {
+        "chime" => match crate::services::channel_group::chime_verdict(output) {
             None => "output_invalid",
             Some(why) if why.is_some() != case.fact_present => "behavior_failure",
             // Staying quiet when she should.
