@@ -182,7 +182,7 @@ pub(crate) async fn record_execution_memory(params: MemoryRecordParams<'_>) {
 
 /// 一次 Agent 回合的 AI 预算：先按估算预留，结束后按实际消耗结算。
 ///
-/// Admin（含 `SYSTEM_USER_ID` 的定时任务）在 `limits_for_role` 里是 unlimited，
+/// Admin（含代站长运行的 `SYSTEM_USER_ID` 心跳）在 `limits_for_role` 里是 unlimited，
 /// 预留是空操作，所以这条门只对普通用户和访客生效。
 pub(crate) struct AgentTurnBudget {
     reservation: crate::services::ai_quota::AiQuotaReservation,
@@ -392,21 +392,42 @@ pub async fn get_capabilities_summary_for_user(
 }
 
 /// Query the current role ([`crate::services::principal::is_current_admin`]).
-/// Agent recipes can execute long after a token was issued, so a hard-coded
-/// "first user is admin" rule is unsafe. The system user (0) is admin. A failed
-/// read is an error; callers decide, it is never reported as "not an admin".
+/// Agent work can execute long after a token was issued, so a hard-coded
+/// "first user is admin" rule is unsafe. The heartbeat (user 0) is not a
+/// person: it acts for the site owner, so it is an administrator exactly while
+/// the owner is one, and nothing before setup. A failed read is an error;
+/// callers decide, it is never reported as "not an admin".
 pub async fn user_is_current_admin(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
 ) -> Result<bool, String> {
-    if user_id == SYSTEM_USER_ID {
-        return Ok(true);
-    }
-    crate::services::principal::is_current_admin(db, user_id)
+    let subject = if user_id == SYSTEM_USER_ID {
+        match heartbeat_delegate(db).await? {
+            Some(owner) => owner,
+            None => return Ok(false),
+        }
+    } else {
+        user_id
+    };
+    crate::services::principal::is_current_admin(db, subject)
         .await
         .map_err(|error| {
             tracing::warn!(user_id, %error, "[Agent] Failed to read current user role");
             "Could not verify current administrator status".to_string()
+        })
+}
+
+/// The account the heartbeat acts for: the site owner. Heartbeat tasks are
+/// written by the owner, so they run with the owner's granted permissions and
+/// narrow with them. `None` before setup.
+pub(crate) async fn heartbeat_delegate(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Option<i32>, String> {
+    crate::services::principal::site_owner_id(db)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "[Agent] Failed to resolve the site owner for the heartbeat");
+            "Could not resolve the site owner".to_string()
         })
 }
 
@@ -633,7 +654,7 @@ pub(crate) fn scheduler_create_tapp_permissions_within_grants(
 
 /// 获取用户在 Agent 系统中的授予权限。
 ///
-/// - 管理员 / 系统用户：全部能力权限
+/// - 管理员（含站长是管理员时的心跳）：全部能力权限
 /// - 其他：候选全集 ∩ `TappPermissionService::check`（角色下放后的授予权限，不是安装批准）
 pub async fn get_user_permissions(
     db: &sea_orm::DatabaseConnection,
@@ -708,12 +729,12 @@ pub async fn init_task_store(db: DatabaseConnection) {
 mod tests {
     use super::*;
 
-    /// The system user and guests are answered without the database; a real
-    /// account whose role cannot be read is an error, not "not an admin".
+    /// Guests are answered without the database; a real account whose role
+    /// cannot be read is an error, not "not an admin". The heartbeat reads the
+    /// owner's role, so it is not assumed to be an administrator.
     #[tokio::test]
     async fn current_admin_role_read_failure_is_an_error() {
         let db = sea_orm::DatabaseConnection::default();
-        assert_eq!(user_is_current_admin(&db, SYSTEM_USER_ID).await, Ok(true));
         assert_eq!(user_is_current_admin(&db, -4).await, Ok(false));
         crate::middleware::auth::invalidate_auth_cache_local(910_401);
         assert!(user_is_current_admin(&db, 910_401).await.is_err());

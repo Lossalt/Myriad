@@ -61,7 +61,10 @@ pub(super) async fn execute_auth_status(ctx: &HandlerContext<'_>) -> Result<Valu
 
     let user_id = ctx.user_id;
     let (username, is_admin, row_exists) = if user_id == SYSTEM_USER_ID {
-        (None, true, false)
+        let admin = crate::services::agent::user_is_current_admin(ctx.db, user_id)
+            .await
+            .unwrap_or(false);
+        (None, admin, false)
     } else if user_id > 0 {
         match ctx
             .db

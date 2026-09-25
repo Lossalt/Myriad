@@ -299,6 +299,16 @@ impl IntentStore {
     }
 
     pub async fn expire_stale(&self, user_id: i32) -> Result<u64, DbErr> {
+        self.expire_stale_for(Some(user_id)).await
+    }
+
+    /// Expire Proposed and Accepted rows whose `expires_at` has passed.
+    pub async fn expire_stale_global(&self) -> Result<u64, DbErr> {
+        self.expire_stale_for(None).await
+    }
+
+    /// `None` is every addressee. User 0 is the heartbeat, never "everyone".
+    async fn expire_stale_for(&self, user_id: Option<i32>) -> Result<u64, DbErr> {
         let update = agent_intentions::ActiveModel {
             status: Set(IntentStatus::Expired.as_str().into()),
             updated_at: Set(to_fixed(Utc::now())),
@@ -311,16 +321,11 @@ impl IntentStore {
                 IntentStatus::Accepted.as_str(),
             ]))
             .filter(agent_intentions::Column::ExpiresAt.lte(to_fixed(Utc::now())));
-        if user_id != 0 {
+        if let Some(user_id) = user_id {
             query = query.filter(agent_intentions::Column::UserId.eq(user_id));
         }
         let result = query.exec(&self.db).await?;
         Ok(result.rows_affected)
-    }
-
-    /// Expire Proposed and Accepted rows whose `expires_at` has passed.
-    pub async fn expire_stale_global(&self) -> Result<u64, DbErr> {
-        self.expire_stale(0).await
     }
 
     pub async fn list_running(&self, limit: u64) -> Result<Vec<IntentRecord>, DbErr> {
