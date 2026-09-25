@@ -686,6 +686,11 @@ fn rank_marked(
         .iter()
         .enumerate()
         .map(|(index, score)| (score.value, index))
+        // Noted in passing (a game they played): recalled when it comes up,
+        // not as the recent context.
+        .filter(|(value, index)| {
+            *value > 0.0 || !NOTED_IN_PASSING.contains(&rows[*index].source.as_str())
+        })
         .collect();
     by_recency.sort_by(|left, right| right.0.total_cmp(&left.0));
     if named.iter().chain(&residual).all(|seed| *seed <= 0.0) {
@@ -1040,11 +1045,16 @@ pub async fn last_learned_at<C: ConnectionTrait>(
                 .add(agent_memories::Column::UserId.is_not_null())
                 .add(agent_memories::Column::Kind.eq(MemoryKind::Knowledge.as_str())),
         )
+        .filter(agent_memories::Column::Source.is_not_in(NOTED_IN_PASSING))
         .order_by_desc(agent_memories::Column::CreatedAt)
         .one(db)
         .await?
         .map(|row| row.created_at))
 }
+
+/// Sources of what she noted about someone in passing rather than learned
+/// from them: what they played, games she played with them.
+pub const NOTED_IN_PASSING: [&str; 2] = ["presence", "game"];
 
 /// Venue of what belongs to her alone: her days and what she did on her own.
 pub const OWN_VENUE: &str = "own";
@@ -1130,6 +1140,72 @@ async fn own_rows<C: ConnectionTrait>(
         .await
 }
 
+/// Let what she did on her own longer ago than `older_than` fade: the views
+/// it grew into stay. Faded rows are deleted once they are `purge_after` old.
+pub async fn fade_own_experiences<C: ConnectionTrait>(
+    db: &C,
+    older_than: chrono::Duration,
+    purge_after: chrono::Duration,
+) -> Result<(u64, u64), DbErr> {
+    let now = Utc::now().fixed_offset();
+    let faded = agent_memories::Entity::update_many()
+        .set(agent_memories::ActiveModel {
+            invalid_at: Set(Some(now)),
+            invalid_reason: Set(Some("faded".into())),
+            updated_at: Set(now),
+            ..Default::default()
+        })
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::Source.eq(OWN_EXPERIENCE))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::CreatedAt.lt(now - older_than))
+        .exec(db)
+        .await?
+        .rows_affected;
+    let purged = agent_memories::Entity::delete_many()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::Source.eq(OWN_EXPERIENCE))
+        .filter(agent_memories::Column::InvalidAt.lt(now - purge_after))
+        .exec(db)
+        .await?
+        .rows_affected;
+    Ok((faded, purged))
+}
+
+/// How many things she did on her own since `since`.
+pub async fn own_experiences_since<C: ConnectionTrait>(
+    db: &C,
+    since: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<u64, DbErr> {
+    use sea_orm::PaginatorTrait;
+    agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::Source.eq(OWN_EXPERIENCE))
+        .filter(agent_memories::Column::CreatedAt.gte(since))
+        .count(db)
+        .await
+}
+
+/// A person's active memory from `source` whose text mentions `needle`.
+pub async fn find_active<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    source: &str,
+    needle: &str,
+) -> Result<Option<agent_memories::Model>, DbErr> {
+    Ok(agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::Source.eq(source))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Content.contains(needle))
+        .order_by_desc(agent_memories::Column::CreatedAt)
+        .one(db)
+        .await?)
+}
+
 /// Retire something of her own (a view she no longer holds). Kept, not
 /// deleted: what she used to think is part of her.
 pub async fn retire_own<C: ConnectionTrait>(db: &C, id: &str, reason: &str) -> Result<bool, DbErr> {
@@ -1148,6 +1224,29 @@ pub async fn retire_own<C: ConnectionTrait>(db: &C, id: &str, reason: &str) -> R
         .exec(db)
         .await?;
     Ok(result.rows_affected > 0)
+}
+
+/// Whether her day `day` is written, and whether any day before it is.
+pub async fn own_day_written<C: ConnectionTrait>(
+    db: &C,
+    day: chrono::NaiveDate,
+) -> Result<(bool, bool), DbErr> {
+    use sea_orm::PaginatorTrait;
+    let written = agent_memories::Entity::find_by_id(format!("day_{day}"))
+        .one(db)
+        .await?
+        .is_some();
+    let Some(noon) = day.and_hms_opt(12, 0, 0) else {
+        return Ok((written, false));
+    };
+    let before = agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Kind.eq(MemoryKind::Narrative.as_str()))
+        .filter(agent_memories::Column::CreatedAt.lt(noon.and_utc().fixed_offset()))
+        .count(db)
+        .await?
+        > 0;
+    Ok((written, before))
 }
 
 /// Her latest days, most recent first.
@@ -1282,6 +1381,28 @@ pub async fn import<C: ConnectionTrait>(db: &C, memory: ImportedMemory) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_she_noted_in_passing_is_recalled_when_named_not_as_filler() {
+        let mut played = row(
+            "played",
+            "常在 Steam 上玩《Hades》，最近一次是 09-25",
+            0.3,
+            10,
+        );
+        played.source = "presence".into();
+        let rows = vec![played, row("cat", "养了一只猫叫年糕", 0.6, 1_000)];
+        let filler: Vec<String> = rank(rows.clone(), None, 8)
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert_eq!(filler, vec!["cat".to_string()]);
+        let named: Vec<String> = rank(rows, Some("Hades"), 8)
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert!(named.contains(&"played".to_string()));
+    }
 
     fn row(id: &str, content: &str, importance: f64, age_secs: i64) -> agent_memories::Model {
         let at = (Utc::now() - chrono::Duration::seconds(age_secs)).fixed_offset();

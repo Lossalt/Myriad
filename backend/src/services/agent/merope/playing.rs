@@ -91,7 +91,9 @@ pub async fn tick(db: DatabaseConnection) {
     }
 }
 
-fn session_note(session: &Session) -> Option<String> {
+/// What she keeps about a game they played: one line per game, the latest
+/// session in it, and whether they have played it before.
+fn session_note(session: &Session, before: bool) -> Option<String> {
     let length = session.seen.signed_duration_since(session.started);
     if length < WORTH_REMEMBERING {
         return None;
@@ -102,16 +104,32 @@ fn session_note(session: &Session) -> Option<String> {
     } else {
         format!("大约{minutes}分钟")
     };
-    Some(format!(
-        "在 Steam 上玩《{}》，这次玩了{how_long}",
-        session.game
-    ))
+    let when = session.started.format("%m-%d");
+    Some(if before {
+        format!(
+            "常在 Steam 上玩《{}》，最近一次是 {when}，玩了{how_long}",
+            session.game
+        )
+    } else {
+        format!(
+            "在 Steam 上玩过《{}》，那次是 {when}，玩了{how_long}",
+            session.game
+        )
+    })
 }
 
 async fn remember_session(db: &DatabaseConnection, owner: i32, session: Session) {
-    let Some(note) = session_note(&session) else {
+    // One line per game: the new session replaces what she kept of the last.
+    let earlier = unified::find_active(db, owner, "presence", &format!("《{}》", session.game))
+        .await
+        .ok()
+        .flatten();
+    let Some(note) = session_note(&session, earlier.is_some()) else {
         return;
     };
+    if let Some(earlier) = earlier {
+        let _ = unified::retire(db, owner, &[earlier.id], "superseded").await;
+    }
     let kept = unified::remember(
         db,
         unified::NewMemory {
@@ -176,15 +194,15 @@ mod tests {
         let ended = look(&mut watch, None, at(42)).unwrap();
         assert_eq!((ended.started, ended.seen), (at(0), at(40)));
         assert_eq!(
-            session_note(&ended).as_deref(),
-            Some("在 Steam 上玩《Elden Ring》，这次玩了大约40分钟")
+            session_note(&ended, false).as_deref(),
+            Some("在 Steam 上玩过《Elden Ring》，那次是 09-25，玩了大约40分钟")
         );
         // Switching games ends one session and starts the next.
         look(&mut watch, Some("Hades".into()), at(50));
         let ended = look(&mut watch, Some("Celeste".into()), at(55)).unwrap();
         assert_eq!(ended.game, "Hades");
         assert!(
-            session_note(&ended).is_none(),
+            session_note(&ended, false).is_none(),
             "five minutes is not a session"
         );
     }
@@ -197,8 +215,8 @@ mod tests {
             seen: at(170),
         };
         assert_eq!(
-            session_note(&session).as_deref(),
-            Some("在 Steam 上玩《Factorio》，这次玩了大约3小时")
+            session_note(&session, true).as_deref(),
+            Some("常在 Steam 上玩《Factorio》，最近一次是 09-25，玩了大约3小时")
         );
     }
 

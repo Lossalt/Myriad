@@ -421,7 +421,7 @@ pub fn offer_line(request: &UserRequest) -> Option<&'static str> {
     Some(OFFER)
 }
 
-pub(crate) const OFFER: &str = "## Games\nIf they want to play turtle soup (海龟汤, a lateral-thinking puzzle) with you, you host it: say briefly that you are thinking one up, and put [[game:soup]] on its own last line; the puzzle follows your words. Do not make one up yourself. Do not read that line aloud.";
+pub(crate) const OFFER: &str = "## Games\nIf they want to play turtle soup (海龟汤, a lateral-thinking puzzle) with you, you host it: say briefly that you are thinking one up, and put [[game:soup]] on its own last line; the puzzle follows your words. Do not make one up yourself. Do not read that line aloud.\nIf the conversation shows a turtle soup still going but you do not have its truth here, you have lost it: say so plainly and offer a new one. Never answer its questions without the truth.";
 
 fn parse<T: for<'de> Deserialize<'de>>(raw: &str) -> Option<T> {
     let json = myriad_agent_rules::extract_json_object_from_ai_response(raw.trim());

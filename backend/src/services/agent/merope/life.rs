@@ -32,6 +32,8 @@ const CONCEPTS_SCHEMA: &str = "merope_memory_concepts";
 const FILL_PER_PERSON: u64 = 20;
 const FILL_PEOPLE: u64 = 10;
 const MAX_DAY_CHARS: usize = 300;
+/// Days a missed night can still be written for.
+const BACKFILL_DAYS: u64 = 3;
 
 /// What happened on one day, with no one in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -51,10 +53,21 @@ pub async fn tick(db: DatabaseConnection) {
     let Ok(owner) = crate::services::ai_cost_ledger::resolve_site_owner_id().await else {
         return;
     };
-    if let Some(yesterday) = now.date_naive().pred_opt() {
-        write_yesterday(&db, owner, yesterday).await;
+    // Yesterday, and any day just before it a missed night left unwritten
+    // between days she did write (never days before she had any).
+    for back in (1..=BACKFILL_DAYS).rev() {
+        let Some(day) = now.date_naive().checked_sub_days(chrono::Days::new(back)) else {
+            continue;
+        };
+        let Ok((written, before)) = unified::own_day_written(&db, day).await else {
+            continue;
+        };
+        if !written && (back == 1 || before) {
+            write_yesterday(&db, owner, day).await;
+        }
     }
     super::views::go_over(&db, owner).await;
+    super::views::let_fade(&db).await;
     fill_old_concepts(&db, owner).await;
 }
 
@@ -117,16 +130,6 @@ Output only the diary lines."
 }
 
 async fn write_yesterday(db: &DatabaseConnection, owner: i32, day: NaiveDate) {
-    let exists = unified::own_days(db, 1)
-        .await
-        .map(|days| {
-            days.first()
-                .is_some_and(|last| last.id == format!("day_{day}"))
-        })
-        .unwrap_or(true);
-    if exists {
-        return;
-    }
     let Some(facts) = day_facts(db, day).await else {
         return;
     };

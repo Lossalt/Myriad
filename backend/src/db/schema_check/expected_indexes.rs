@@ -865,6 +865,12 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             is_unique: false,
         },
         IndexDef {
+            name: "idx_agent_memories_venue_created".into(),
+            table: "agent_memories".into(),
+            columns: vec!["venue".into(), "created_at".into()],
+            is_unique: false,
+        },
+        IndexDef {
             name: "idx_federation_domain_aliases_new".into(),
             table: "federation_domain_aliases".into(),
             columns: vec!["new_base_url".into()],

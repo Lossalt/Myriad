@@ -165,6 +165,21 @@ pub async fn tick(db: DatabaseConnection) {
             tracing::info!("[Merope] writing down what she did ran out of time");
         }
     }
+    // After a restart the day's count comes back from what she wrote down.
+    if LIFE.lock().is_ok_and(|life| life.day.is_none()) {
+        let midnight = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .and_then(|midnight| midnight.and_local_timezone(chrono::Local).earliest());
+        if let Some(midnight) = midnight {
+            if let Ok(done) = unified::own_experiences_since(&db, midnight.fixed_offset()).await {
+                if let Ok(mut life) = LIFE.lock() {
+                    life.day = Some(chrono::Local::now().date_naive());
+                    life.today = u32::try_from(done).unwrap_or(PER_DAY);
+                }
+            }
+        }
+    }
     if !free_to_start(now) {
         return;
     }

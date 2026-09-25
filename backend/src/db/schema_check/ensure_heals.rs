@@ -284,6 +284,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_memories_user_created
     ON agent_memories (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_memories_user_kind
     ON agent_memories (user_id, kind);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_venue_created
+    ON agent_memories (venue, created_at DESC);
 "#;
 
 /// `02c8d2ddc` 之前，面板开关发来的空列表被当成「当前全部授予权限」，管理员的

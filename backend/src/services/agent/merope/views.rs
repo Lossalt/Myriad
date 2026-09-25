@@ -25,8 +25,16 @@ use crate::services::agent::memory::lexical;
 use crate::services::agent::memory::unified::{self, Concept};
 
 const LOOK_BACK: chrono::Duration = chrono::Duration::days(14);
-const EXPERIENCES: u64 = 40;
-const HELD: u64 = 30;
+/// Read from the whole window (she does up to a few dozen things a day),
+/// then spread down to what one going-over can hold.
+const WINDOW_ROWS: u64 = 600;
+const EXPERIENCES: usize = 60;
+/// Views matched against; the most recent of them go into the prompt.
+const HELD: u64 = 300;
+const HELD_IN_PROMPT: usize = 60;
+/// Her own time older than this fades; the views it grew into stay.
+const FADE_AFTER: chrono::Duration = chrono::Duration::days(30);
+const PURGE_AFTER: chrono::Duration = chrono::Duration::days(90);
 const MAX_CHANGES: usize = 6;
 const SCHEMA_NAME: &str = "merope_views";
 
@@ -112,13 +120,16 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
         return;
     }
     let now = Utc::now();
-    let Ok(experiences) = unified::own_experiences(db, EXPERIENCES).await else {
+    let Ok(experiences) = unified::own_experiences(db, WINDOW_ROWS).await else {
         return;
     };
-    let experiences: Vec<agent_memories::Model> = experiences
-        .into_iter()
-        .filter(|row| now.signed_duration_since(row.created_at) < LOOK_BACK)
-        .collect();
+    let experiences: Vec<agent_memories::Model> = spread(
+        experiences
+            .into_iter()
+            .filter(|row| now.signed_duration_since(row.created_at) < LOOK_BACK)
+            .collect(),
+        EXPERIENCES,
+    );
     let Ok(held) = unified::own_views(db, HELD).await else {
         return;
     };
@@ -132,8 +143,6 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
     if experiences.len() < 2 || !anything_new {
         return;
     }
-    // Oldest first, as she would go over them.
-    let experiences: Vec<agent_memories::Model> = experiences.into_iter().rev().collect();
     let input = json!({
         "experiences": experiences
             .iter()
@@ -148,6 +157,7 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
             .collect::<Vec<_>>(),
         "views": held
             .iter()
+            .take(HELD_IN_PROMPT)
             .filter_map(view_of)
             .map(|(about, view)| json!({ "about": about, "view": view }))
             .collect::<Vec<_>>(),
@@ -182,6 +192,11 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
         tracing::info!("[Merope] could not go over her own time");
         return;
     };
+    // What she holds, kept current as this pass changes it.
+    let mut holding: Vec<(String, String, String)> = held
+        .iter()
+        .filter_map(|row| view_of(row).map(|(about, view)| (row.id.clone(), about, view)))
+        .collect();
     let mut kept = 0;
     for change in changes.views.into_iter().take(MAX_CHANGES) {
         let about: String = change.about.trim().chars().take(40).collect();
@@ -195,15 +210,15 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
         if about.is_empty() || view.is_empty() || sources.is_empty() {
             continue;
         }
-        if let Some((row, (_, old))) = held
+        if let Some(at) = holding
             .iter()
-            .filter_map(|row| view_of(row).map(|view| (row, view)))
-            .find(|(_, (subject, _))| same_subject(subject, &about))
+            .position(|(_, subject, _)| same_subject(subject, &about))
         {
-            if old == view {
+            if holding[at].2 == view {
                 continue;
             }
-            let _ = unified::retire_own(db, &row.id, "changed_mind").await;
+            let (id, _, _) = holding.remove(at);
+            let _ = unified::retire_own(db, &id, "changed_mind").await;
         }
         let mut concepts = vec![Concept {
             name: about.clone(),
@@ -215,21 +230,46 @@ pub async fn go_over(db: &DatabaseConnection, owner: i32) {
             );
         }
         concepts.truncate(5);
-        if matches!(
-            unified::remember_own(
-                db,
-                &view,
-                &json!({ "about": about, "changed": change.changed }).to_string(),
-                concepts,
-                unified::OWN_VIEW,
-            )
-            .await,
-            Ok(Some(_))
-        ) {
+        if let Ok(Some(id)) = unified::remember_own(
+            db,
+            &view,
+            &json!({ "about": about, "changed": change.changed }).to_string(),
+            concepts,
+            unified::OWN_VIEW,
+        )
+        .await
+        {
+            holding.push((id, about, view));
             kept += 1;
         }
     }
     tracing::info!(kept, "[Merope] went over her own time");
+}
+
+/// Her own time older than a month fades once its views are drawn; faded
+/// rows go for good later. Runs each night, apart from going over.
+pub async fn let_fade(db: &DatabaseConnection) {
+    match unified::fade_own_experiences(db, FADE_AFTER, PURGE_AFTER).await {
+        Ok((faded, purged)) if faded + purged > 0 => {
+            tracing::info!(faded, purged, "[Merope] older own time faded")
+        }
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "[Merope] could not let her older own time fade"),
+    }
+}
+
+/// At most `keep` rows spread evenly over `rows` (newest first in, oldest
+/// first out), so a going-over sees the whole window, not only its last day.
+fn spread(rows: Vec<agent_memories::Model>, keep: usize) -> Vec<agent_memories::Model> {
+    let mut rows = rows;
+    rows.reverse();
+    if rows.len() <= keep || keep == 0 {
+        return rows;
+    }
+    let step = rows.len() as f64 / keep as f64;
+    (0..keep)
+        .map(|index| rows[(index as f64 * step) as usize].clone())
+        .collect()
 }
 
 fn parse(raw: &str) -> Option<Changes> {
@@ -321,6 +361,40 @@ mod tests {
         assert_eq!(parsed[0].0, "amazarashi");
         assert!(parse_views(r#"{"views":[{"about":"x","view":"y"}]}"#).is_none());
         assert_eq!(parse_views(r#"{"views":[]}"#), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_going_over_sees_the_whole_window() {
+        let rows: Vec<agent_memories::Model> = (0..300)
+            .map(|index| agent_memories::Model {
+                id: format!("own_{index}"),
+                user_id: None,
+                kind: "knowledge".into(),
+                content: String::new(),
+                evidence: None,
+                speaker: "agent".into(),
+                source: unified::OWN_EXPERIENCE.into(),
+                venue: unified::OWN_VENUE.into(),
+                audience: json!([]),
+                concepts: json!([]),
+                importance: 0.4,
+                access_count: 0,
+                last_accessed_at: None,
+                valid_from: Utc::now().fixed_offset(),
+                invalid_at: None,
+                invalid_reason: None,
+                created_at: Utc::now().fixed_offset(),
+                updated_at: Utc::now().fixed_offset(),
+            })
+            .collect();
+        // Newest first in: own_0 is the newest, own_299 the oldest.
+        let spread = spread(rows, 60);
+        assert_eq!(spread.len(), 60);
+        assert_eq!(
+            spread[0].id, "own_299",
+            "oldest first, from the start of the window"
+        );
+        assert_eq!(spread.last().unwrap().id, "own_4", "and on to its end");
     }
 
     #[test]
