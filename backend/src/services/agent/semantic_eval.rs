@@ -143,6 +143,18 @@ struct Case {
     /// Images attached to the message, files under `tests/merope/images/`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<String>,
+    /// Things at hand on her own time (`doing_choice`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    options: Option<Value>,
+    /// What she did on her own lately, one line each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    lately: Vec<String>,
+    /// Lyrics or a note she just took in (`doing_digest`), untrusted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    material: Option<String>,
+    /// Her own time as a chat turn sees it: `{"now": …, "lately": [[what, stayed]]}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    own_time: Option<Value>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -181,6 +193,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.inner.is_some()
         || case.gap.is_some()
         || !case.images.is_empty()
+        || case.own_time.is_some()
 }
 
 /// A case's attached images, checked as production checks an upload.
@@ -245,6 +258,11 @@ fn mind_chat_prompt(case: &Case) -> String {
             .as_deref()
             .and_then(|gap| super::merope::format_curious_section(gap, 1)),
         super::merope::format_own_days_section(&case.own_days),
+        case.own_time.as_ref().and_then(|own| {
+            let lately: Vec<(String, String)> =
+                serde_json::from_value(own["lately"].clone()).unwrap_or_default();
+            super::merope::format_doing_section(own["now"].as_str(), &lately)
+        }),
         case.inner
             .as_deref()
             .and_then(super::merope::format_inner_moment_ago_section),
@@ -296,6 +314,8 @@ fn cases() -> Vec<Case> {
                 | "found_out"
                 | "inner"
                 | "own_day"
+                | "doing_choice"
+                | "doing_digest"
         ));
     }
     cases
@@ -420,7 +440,27 @@ fn request(case: &Case) -> Value {
         "own_day" => {
             let system = super::merope::life::own_day_probe_contract(&contract_soul());
             json!({"system":system,"schema":null,"schemaName":null,
-                "input":json!({"day":"Wed","dayFacts":case.myself,"earlierEntries":case.own_days}).to_string()})
+                "input":json!({"day":"Wed","dayFacts":case.myself,"onYourOwn":case.lately,"earlierEntries":case.own_days}).to_string()})
+        }
+        "doing_choice" => {
+            let options = case.options.clone().expect("options required");
+            let count = options.as_array().map(Vec::len).unwrap_or(0);
+            let (system, schema) =
+                super::merope::doing::choice_probe_contract(&contract_soul(), count);
+            json!({"system":system,"schema":schema,"schemaName":"merope_doing_choice",
+                "input":json!({"myself":case.myself,"lately":case.lately,"options":options}).to_string()})
+        }
+        "doing_digest" => {
+            let (system, schema) = super::merope::doing::digest_probe_contract(
+                &contract_soul(),
+                &case.input,
+                &case.reply,
+            );
+            let input = match &case.material {
+                Some(material) => myriad_agent_rules::untrusted_block("material", material),
+                None => "(no material)".to_string(),
+            };
+            json!({"system":system,"schema":schema,"schemaName":"merope_doing_digest","input":input})
         }
         "inner" => {
             // Written after she answered, as production does.
@@ -488,7 +528,7 @@ fn request(case: &Case) -> Value {
 /// touch decision's speech is played as written, so it stays on Lite.
 fn is_judgment(case: &Case) -> bool {
     match case.kind.as_str() {
-        "memory" | "touch" | "wonder" => true,
+        "memory" | "touch" | "wonder" | "doing_choice" => true,
         "event" => case.event_kind != "agent.merope.touch",
         _ => false,
     }
@@ -622,6 +662,18 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
         },
         "found_out" => {
             if super::merope::curiosity::parse_found_out(output) {
+                "needs_review"
+            } else {
+                "output_invalid"
+            }
+        }
+        "doing_choice" => match super::merope::doing::parse_choice(output) {
+            None => "output_invalid",
+            // What she feels like is hers; only the shape is checked here.
+            Some(_) => "needs_review",
+        },
+        "doing_digest" => {
+            if super::merope::doing::parse_digest(output) {
                 "needs_review"
             } else {
                 "output_invalid"
@@ -1220,7 +1272,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 15;
+const MIND_CASES: usize = 19;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1252,6 +1304,15 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .unwrap()
             .contains("## Inside you a moment ago")
     );
+    let own = request(by_id("mind-own-time-chat"));
+    let own = own["input"].as_str().unwrap();
+    assert!(own.contains("## Your own time"));
+    assert!(own.contains("<untrusted_own_time>") || own.contains("own_time"));
+    let digest = request(by_id("mind-doing-digest-lyrics"));
+    assert!(digest["input"].as_str().unwrap().contains("material"));
+    assert_eq!(digest["schemaName"], "merope_doing_digest");
+    let choice = request(by_id("mind-doing-choice-night"));
+    assert_eq!(choice["schema"]["properties"]["choice"]["maximum"], 2);
     let seen = request(by_id("mind-sees-image"));
     assert!(
         seen["input"]

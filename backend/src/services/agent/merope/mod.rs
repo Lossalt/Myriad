@@ -3,6 +3,7 @@
 mod appraisal;
 pub mod chat_remember;
 pub mod curiosity;
+pub mod doing;
 pub mod gates;
 pub mod ingest;
 pub(crate) mod inner;
@@ -273,11 +274,10 @@ pub async fn resolve_addressee_label(db: &sea_orm::DatabaseConnection, user_id: 
 
 pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_brought_to_mind_section,
-    format_curious_section, format_emotion_section, format_found_out_section,
-    format_inner_moment_ago_section, format_mood_section,
-    format_on_your_mind_section, format_own_days_section, format_persona, format_recent_section,
-    format_remembered_section, group_speaking_section, guest_speaking_section,
-    mood_tone_instruction,
+    format_curious_section, format_doing_section, format_emotion_section, format_found_out_section,
+    format_inner_moment_ago_section, format_mood_section, format_on_your_mind_section,
+    format_own_days_section, format_persona, format_recent_section, format_remembered_section,
+    group_speaking_section, guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -379,6 +379,9 @@ const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_CHAT];
 const FOUND_OUT_LIMIT: usize = 2;
 /// Her own days a conversation carries, most recent last.
 const OWN_DAYS_LIMIT: u64 = 3;
+/// What she did on her own in the last day, and older things their words touch.
+const DOING_RECENT: usize = 3;
+const DOING_RELATED: usize = 2;
 /// Her own unprompted lines a chat turn should know it said.
 const SAID_UNPROMPTED_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
@@ -575,6 +578,16 @@ async fn speaking_prompt_from_db(
     }
     if !matches!(turn, Turn::Plain) {
         if let Some(block) = format_own_days_section(&life::recent_days(db, OWN_DAYS_LIMIT).await) {
+            sections.push(block);
+        }
+        // Her own time is about public things, so any audience may hear it.
+        let words = match turn {
+            Turn::Chat(words) | Turn::Event(words) => Some(words),
+            Turn::Plain => None,
+        };
+        let lately = doing::recalled(db, words, DOING_RECENT, DOING_RELATED).await;
+        let now = doing::current().map(|doing| doing::now_line(&doing, chrono::Utc::now()));
+        if let Some(block) = format_doing_section(now.as_deref(), &lately) {
             sections.push(block);
         }
     }

@@ -351,6 +351,26 @@ export interface MusicControlEvent {
   action: string
 }
 
+/** What she is doing on her own right now (`GET /agent/doing`). */
+export type MeropeThing =
+  | {
+      kind: 'song'
+      id: string
+      source: string
+      name: string
+      artist: string
+      album: string
+      cover: string
+      durationMs: number
+    }
+  | { kind: 'note'; itemId: number; title: string }
+
+export interface MeropeDoingResponse {
+  doing: { thing: MeropeThing; started: string; ends: string } | null
+  /** Server clock, so where she is in it does not depend on this device's clock. */
+  now: string
+}
+
 export interface TaskAssignedEvent {
   type: 'task_assigned'
   taskId: string

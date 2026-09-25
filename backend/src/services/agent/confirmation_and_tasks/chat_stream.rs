@@ -349,7 +349,14 @@ impl Agent {
                 .as_ref()
                 .and_then(|context| context.custom_data.as_ref())
                 .and_then(|data| data.get("musicStatus"));
-            let player = crate::services::agent::chat_music::format_chat_player_section(music);
+            let mut player = crate::services::agent::chat_music::format_chat_player_section(music);
+            if let Some(line) = crate::services::agent::merope::doing::current()
+                .and_then(|doing| crate::services::agent::merope::doing::player_line(&doing, music))
+                .filter(|_| venue.is_none())
+            {
+                player.push('\n');
+                player.push_str(line);
+            }
             if merope_block.is_empty() {
                 merope_block = player;
             } else {

@@ -6,6 +6,7 @@ import type {
   ExecutionTrace,
   HeartbeatTask,
   MemoryEntry,
+  MeropeDoingResponse,
   MoodTransition,
   ProcessContext,
   ProcessRequest,
@@ -1148,6 +1149,10 @@ class AgentService {
     dndEnd?: string | null
   }> {
     return apiService.put(`${this.baseUrl}/addressee`, body)
+  }
+
+  async getDoing(): Promise<MeropeDoingResponse> {
+    return apiService.get<MeropeDoingResponse>(`${this.baseUrl}/doing`)
   }
 
   async creditMusicListening(listenedSeconds: number): Promise<{

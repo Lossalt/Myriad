@@ -98,6 +98,13 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         Duration::from_secs(60),
         move || agent::merope::wander::tick(wander_db.clone()),
     );
+    let doing_db = db.clone();
+    drivers.periodic(
+        "her own time",
+        Duration::from_secs(60),
+        Duration::from_secs(90),
+        move || agent::merope::doing::tick(doing_db.clone()),
+    );
     let life_db = db.clone();
     drivers.periodic(
         "persona nights",

@@ -6,7 +6,7 @@
 //! memories and imports the pre-unified JSON store.
 
 mod association;
-mod lexical;
+pub(crate) mod lexical;
 pub mod unified;
 pub(crate) mod work_memory;
 

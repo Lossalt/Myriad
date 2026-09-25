@@ -195,6 +195,28 @@ pub fn format_found_out_section(notes: &[String]) -> Option<String> {
     ))
 }
 
+/// Her own time: what she is in the middle of, and what she did lately with
+/// what stayed with her. Titles and her notes on them come from outside text,
+/// so they are fenced.
+pub fn format_doing_section(now: Option<&str>, lately: &[(String, String)]) -> Option<String> {
+    let mut lines: Vec<String> = now.into_iter().map(str::to_string).collect();
+    if !lately.is_empty() {
+        lines.push("Lately:".into());
+        lines.extend(
+            lately
+                .iter()
+                .map(|(what, stayed)| format!("- {what}: {stayed}")),
+        );
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Your own time\nWhat you do on your own, apart from them. It is part of your day: bring it up only when it fits, and do not report on it.\n{}",
+        myriad_agent_rules::untrusted_block("own_time", &lines.join("\n"))
+    ))
+}
+
 /// Her own last few days, in her own words, oldest first. They are about her,
 /// not about the person she is talking to.
 pub fn format_own_days_section(days: &[String]) -> Option<String> {

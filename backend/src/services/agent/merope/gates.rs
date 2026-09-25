@@ -39,10 +39,13 @@ pub fn is_task_outcome(event_key: &str) -> bool {
     NotificationEventKey::from_key(event_key).is_some_and(NotificationEventKey::is_task_outcome)
 }
 
-/// Said to someone here or not at all: a passing thought, or something she
-/// found out on her own. Never a notification, never a diary entry.
+/// Said to someone here or not at all: a passing thought, something she
+/// found out, something she just did on her own. Never a notification, never
+/// a diary entry.
 pub fn said_only_in_person(event_key: &str) -> bool {
-    event_key == super::wander::THOUGHT_EVENT || event_key == super::curiosity::FOUND_OUT_EVENT
+    event_key == super::wander::THOUGHT_EVENT
+        || event_key == super::curiosity::FOUND_OUT_EVENT
+        || event_key == super::doing::DOING_EVENT
 }
 
 pub fn worth_notifying(event_key: &str) -> bool {
@@ -238,6 +241,9 @@ mod tests {
         assert!(!worth_notifying(thought));
         let found = crate::services::agent::merope::curiosity::FOUND_OUT_EVENT;
         assert!(!worth_notifying(found));
+        let doing = crate::services::agent::merope::doing::DOING_EVENT;
+        assert!(said_only_in_person(doing));
+        assert!(!worth_notifying(doing));
         assert!(!decide_ingest(found, &IngestSight::default()).allow_model);
         let away = decide_ingest(thought, &IngestSight::default());
         assert!(!away.allow_model);

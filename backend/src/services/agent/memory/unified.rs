@@ -1006,7 +1006,7 @@ pub async fn write_own_day<C: ConnectionTrait>(
         evidence: Set(None),
         speaker: Set(Speaker::Agent.as_str().into()),
         source: Set("narrative".into()),
-        venue: Set("own".into()),
+        venue: Set(OWN_VENUE.into()),
         audience: Set(json!([])),
         concepts: Set(json!([])),
         importance: Set(0.5),
@@ -1029,16 +1029,82 @@ pub async fn write_own_day<C: ConnectionTrait>(
     Ok(inserted > 0)
 }
 
-/// When she last learned anything about anyone, if ever.
+/// When she last learned anything, about anyone or from something she did on
+/// her own, if ever. Her days are not learning.
 pub async fn last_learned_at<C: ConnectionTrait>(
     db: &C,
 ) -> Result<Option<chrono::DateTime<chrono::FixedOffset>>, DbErr> {
     Ok(agent_memories::Entity::find()
-        .filter(agent_memories::Column::UserId.is_not_null())
+        .filter(
+            sea_orm::Condition::any()
+                .add(agent_memories::Column::UserId.is_not_null())
+                .add(agent_memories::Column::Kind.eq(MemoryKind::Knowledge.as_str())),
+        )
         .order_by_desc(agent_memories::Column::CreatedAt)
         .one(db)
         .await?
         .map(|row| row.created_at))
+}
+
+/// Venue of what belongs to her alone: her days and what she did on her own.
+pub const OWN_VENUE: &str = "own";
+
+/// Something she did on her own (a song, something she read) and what stayed
+/// with her, in her words. Belongs to no one and names no one; `evidence`
+/// says what it was. Nothing personal is in it, so any conversation may hear
+/// it.
+pub async fn remember_own<C: ConnectionTrait>(
+    db: &C,
+    content: &str,
+    evidence: &str,
+    concepts: Vec<Concept>,
+) -> Result<Option<String>, DbErr> {
+    let content = normalize_content(content);
+    if content.is_empty() {
+        return Ok(None);
+    }
+    let now = Utc::now().fixed_offset();
+    let id = format!("own_{}", uuid::Uuid::new_v4().simple());
+    let row = agent_memories::ActiveModel {
+        id: Set(id.clone()),
+        user_id: Set(None),
+        kind: Set(MemoryKind::Knowledge.as_str().into()),
+        content: Set(content),
+        evidence: Set(Some(evidence.chars().take(MAX_CONTENT_CHARS).collect())),
+        speaker: Set(Speaker::Agent.as_str().into()),
+        source: Set("doing".into()),
+        venue: Set(OWN_VENUE.into()),
+        audience: Set(json!([])),
+        concepts: Set(json!(clean_concepts(concepts))),
+        importance: Set(0.4),
+        access_count: Set(0),
+        last_accessed_at: Set(None),
+        valid_from: Set(now),
+        invalid_at: Set(None),
+        invalid_reason: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+    agent_memories::Entity::insert(row)
+        .exec_without_returning(db)
+        .await?;
+    Ok(Some(id))
+}
+
+/// What she did on her own, most recent first.
+pub async fn own_experiences<C: ConnectionTrait>(
+    db: &C,
+    limit: u64,
+) -> Result<Vec<agent_memories::Model>, DbErr> {
+    agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Kind.eq(MemoryKind::Knowledge.as_str()))
+        .filter(agent_memories::Column::Venue.eq(OWN_VENUE))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .order_by_desc(agent_memories::Column::CreatedAt)
+        .limit(limit)
+        .all(db)
+        .await
 }
 
 /// Her latest days, most recent first.
