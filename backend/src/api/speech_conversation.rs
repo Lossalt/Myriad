@@ -159,6 +159,8 @@ fn live_chat_context(
         "presence": {"faceVisible": live.face_visible, "pageVisible": live.page_visible,
             "panelVisible": live.panel_visible, "visibleMode": "chat", "speaking": live.speaking},
         "perception": perception,
+        // Silence on a call is loud: the reply does not wait for appraisal.
+        "voice": "realtime",
     });
     if let Some(music) = live.music_status.as_ref() {
         context["musicStatus"] = music.clone();
@@ -435,6 +437,10 @@ mod tests {
         assert_eq!(context["perception"][0]["sourceId"], "music_track");
         assert_eq!(context["perception"][1]["summary"], "");
         assert_eq!(context["musicStatus"]["currentSong"]["name"], "Song");
+        assert_eq!(
+            context["voice"], "realtime",
+            "a call does not wait for appraisal"
+        );
         let wire = context.to_string();
         assert!(!wire.contains("MUST_NOT_SURVIVE"));
         assert!(!wire.contains("secret-url"));

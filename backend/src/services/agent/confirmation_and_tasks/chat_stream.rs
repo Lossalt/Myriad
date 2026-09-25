@@ -289,13 +289,27 @@ impl Agent {
             .await
             .unwrap_or_default();
         let soul: String = soul.chars().take(2000).collect();
-        let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(
-            &crate::services::agent::merope::speaking_prompt_with_query(
+        let on_call = request
+            .context
+            .as_ref()
+            .and_then(|context| context.custom_data.as_ref())
+            .and_then(|data| data.get("voice"))
+            .and_then(|voice| voice.as_str())
+            == Some("realtime");
+        let sections = if on_call {
+            crate::services::agent::merope::speaking_prompt_on_call(
                 request.user_id,
                 Some(request.raw_input.as_str()),
             )
-            .await,
-        );
+            .await
+        } else {
+            crate::services::agent::merope::speaking_prompt_with_query(
+                request.user_id,
+                Some(request.raw_input.as_str()),
+            )
+            .await
+        };
+        let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(&sections);
         if request.context.as_ref().is_some_and(|context| {
             context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
         }) {

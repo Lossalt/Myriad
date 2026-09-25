@@ -271,6 +271,20 @@ pub async fn speaking_prompt(user_id: i32) -> Vec<String> {
 }
 
 pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Vec<String> {
+    speaking_prompt_for_turn(user_id, query, true).await
+}
+
+/// A live call: silence is loud, so the reply does not wait for this turn's
+/// appraisal. The appraisal still lands, for the next turn.
+pub async fn speaking_prompt_on_call(user_id: i32, query: Option<&str>) -> Vec<String> {
+    speaking_prompt_for_turn(user_id, query, false).await
+}
+
+async fn speaking_prompt_for_turn(
+    user_id: i32,
+    query: Option<&str>,
+    wait_for_appraisal: bool,
+) -> Vec<String> {
     if !is_enabled().await {
         return Vec::new();
     }
@@ -289,7 +303,9 @@ pub async fn speaking_prompt_with_query(user_id: i32, query: Option<&str>) -> Ve
         Some(words) => {
             // A chat turn answers from how these words landed, if that is
             // known soon enough.
-            appraisal::settle(user_id).await;
+            if wait_for_appraisal {
+                appraisal::settle(user_id).await;
+            }
             Turn::Chat(words)
         }
         None => Turn::Plain,
