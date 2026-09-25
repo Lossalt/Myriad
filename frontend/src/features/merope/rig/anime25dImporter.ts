@@ -42,6 +42,10 @@ import {
   PORTRAIT_CANVAS,
   RIG_IR_VERSION,
 } from './contract'
+import {
+  estimateAnime25DMouthAnchor,
+  resolveAnime25DFaceFrame,
+} from './faceFrame'
 import { formatTemplate } from './formatTemplate'
 import { inferOutfitProfileFromPartIds } from './outfit'
 
@@ -124,6 +128,17 @@ export async function prepareAnime25DRigPsd(
   layers = splitVariantEyesIfNeeded(layers, rig.anchors.face.cx, 'eye-dizzy')
   layers = splitVariantEyesIfNeeded(layers, rig.anchors.face.cx, 'eye-squeeze')
   layers = splitVariantEyesIfNeeded(layers, rig.anchors.face.cx, 'eye-cry')
+  if (
+    !layers.some(
+      (layer) => layer.role === 'mouth-open' || layer.role === 'mouth-close',
+    )
+  ) {
+    // The frozen rigger guesses a fixed-pixel box off the face centroid.
+    const frame = resolveAnime25DFaceFrame(rig.anchors)
+    if (frame.landmarks) {
+      rig.anchors.mouth = estimateAnime25DMouthAnchor(frame, rig.anchors.face)
+    }
+  }
   layers = compileAnime25DExpressionLayers(layers, rig.anchors)
   layers = splitHighCollarOcclusion(layers, rig.anchors, sourceReference)
   layers.forEach((layer, index) => {

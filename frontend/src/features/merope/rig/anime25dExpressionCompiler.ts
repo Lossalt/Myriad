@@ -1,5 +1,7 @@
 import type { Anime25DRiggerAnchors } from '../anime25drig/playback'
+import type { Anime25DEyeAnchor } from '../anime25drig/types'
 import type { RasterLayer } from './anime25dImportTypes'
+import type { Anime25DFaceFrame } from './faceFrame'
 import type { MouthExpressionKind } from './mouthExpression'
 import { uniquePartId } from './anime25dRaster'
 import { createCryEyeBitmap, cryEyeGeneratedSize } from './cryEye'
@@ -14,9 +16,16 @@ import {
   expressionSymbolGeneratedSizes,
 } from './expressionSymbols'
 import {
+  faceContourAlongEyeLine,
+  faceFramePoint,
+  placeFaceBitmap,
+  resolveAnime25DFaceFrame,
+} from './faceFrame'
+import {
   createLovestruckDroolBitmap,
   createLovestruckFaceEffectBitmap,
   createLovestruckHeartBitmap,
+  LOVESTRUCK_CHEEK_ROW,
   lovestruckDroolGeneratedSize,
   lovestruckFaceEffectGeneratedSize,
   lovestruckHeartGeneratedSize,
@@ -46,19 +55,21 @@ export function compileAnime25DExpressionLayers(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
 ): RasterLayer[] {
-  let output = synthesizeMissingDizzyEyes(layers, anchors)
-  output = synthesizeMissingSqueezeEyes(output, anchors)
-  output = synthesizeMissingCryEyes(output, anchors)
-  output = synthesizeMissingSillyEyes(output, anchors)
-  output = synthesizeMissingLovestruckEffects(output, anchors)
-  output = synthesizeMissingManiacEyeShadows(output, anchors)
-  output = synthesizeMissingMouthExpressions(output, anchors)
-  return synthesizeMissingExpressionSymbols(output, anchors)
+  const frame = resolveAnime25DFaceFrame(anchors)
+  let output = synthesizeMissingDizzyEyes(layers, anchors, frame)
+  output = synthesizeMissingSqueezeEyes(output, anchors, frame)
+  output = synthesizeMissingCryEyes(output, anchors, frame)
+  output = synthesizeMissingSillyEyes(output, anchors, frame)
+  output = synthesizeMissingLovestruckEffects(output, anchors, frame)
+  output = synthesizeMissingManiacEyeShadows(output, anchors, frame)
+  output = synthesizeMissingMouthExpressions(output, anchors, frame)
+  return synthesizeMissingExpressionSymbols(output, anchors, frame)
 }
 
 function synthesizeMissingDizzyEyes(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const generated: RasterLayer[] = []
   const usedIds = new Set(layers.map((layer) => layer.id))
@@ -86,11 +97,13 @@ function synthesizeMissingDizzyEyes(
       order: 0,
       side,
       group: 'head',
-      left: Math.round(eye.icx - bitmap.width / 2),
-      top: Math.round(eye.icy - bitmap.height / 2),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.height / 2,
+        { x: eye.icx, y: eye.icy },
+        frame.roll,
+      ),
     })
   }
   if (generated.length === 0) return layers
@@ -110,6 +123,7 @@ function synthesizeMissingDizzyEyes(
 function synthesizeMissingSqueezeEyes(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const generated: RasterLayer[] = []
   const usedIds = new Set(layers.map((layer) => layer.id))
@@ -131,7 +145,13 @@ function synthesizeMissingSqueezeEyes(
       sampleDizzyEyeTint(eyelash?.data),
       side,
     )
-    const centerY = eye.icy + (eye.closeY - eye.icy) * 0.45
+    const center = faceFramePoint(
+      frame,
+      eye.icx,
+      eye.icy,
+      0,
+      (eye.closeY - eye.icy) * 0.45,
+    )
     generated.push({
       id: uniquePartId(`eye-squeeze-${side}`, usedIds),
       role: 'eye-squeeze',
@@ -139,11 +159,13 @@ function synthesizeMissingSqueezeEyes(
       order: 0,
       side,
       group: 'head',
-      left: Math.round(eye.icx - bitmap.width / 2),
-      top: Math.round(centerY - bitmap.height / 2),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.height / 2,
+        center,
+        frame.roll,
+      ),
     })
   }
   if (generated.length === 0) return layers
@@ -164,6 +186,7 @@ function synthesizeMissingSqueezeEyes(
 function synthesizeMissingCryEyes(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const generated: RasterLayer[] = []
   const usedIds = new Set(layers.map((layer) => layer.id))
@@ -183,7 +206,13 @@ function synthesizeMissingCryEyes(
       sampleDizzyEyeTint(eyelash?.data),
       side,
     )
-    const eyeMarkCenterY = eye.icy + (eye.closeY - eye.icy) * 0.45
+    const eyeMarkCenter = faceFramePoint(
+      frame,
+      eye.icx,
+      eye.icy,
+      0,
+      (eye.closeY - eye.icy) * 0.45,
+    )
     generated.push({
       id: uniquePartId(`eye-cry-${side}`, usedIds),
       role: 'eye-cry',
@@ -191,11 +220,13 @@ function synthesizeMissingCryEyes(
       order: 0,
       side,
       group: 'head',
-      left: Math.round(eye.icx - bitmap.width / 2),
-      top: Math.round(eyeMarkCenterY - bitmap.width * 0.305),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.width * 0.305,
+        eyeMarkCenter,
+        frame.roll,
+      ),
     })
   }
   if (generated.length === 0) return layers
@@ -217,6 +248,7 @@ function synthesizeMissingCryEyes(
 function synthesizeMissingSillyEyes(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const generated: RasterLayer[] = []
   const usedIds = new Set(layers.map((layer) => layer.id))
@@ -256,11 +288,13 @@ function synthesizeMissingSillyEyes(
         order: 0,
         side,
         group: 'head',
-        left: Math.round(centerX - bitmap.width / 2),
-        top: Math.round(centerY - bitmap.height / 2),
-        width: bitmap.width,
-        height: bitmap.height,
-        data: bitmap.data,
+        ...placeFaceBitmap(
+          bitmap,
+          bitmap.width / 2,
+          bitmap.height / 2,
+          { x: centerX, y: centerY },
+          frame.roll,
+        ),
         synthetic: true,
       })
     }
@@ -273,6 +307,14 @@ function synthesizeMissingSillyEyes(
         (side === 'left' ? -1 : 1) * room.x * SILLY_IRIS_REST_SHARE
       const divergentY =
         (side === 'left' ? 1 : -1) * room.y * SILLY_IRIS_REST_SHARE
+      // The iris keeps its drawn orientation; only its resting offset tilts.
+      const irisCenter = faceFramePoint(
+        frame,
+        centerX,
+        centerY,
+        divergentX,
+        divergentY,
+      )
       generated.push({
         id: uniquePartId(`iris-silly-${side}`, usedIds),
         role: 'iris-silly',
@@ -280,11 +322,13 @@ function synthesizeMissingSillyEyes(
         order: 0,
         side,
         group: 'head',
-        left: Math.round(centerX + divergentX - bitmap.width / 2),
-        top: Math.round(centerY + divergentY - bitmap.height / 2),
-        width: bitmap.width,
-        height: bitmap.height,
-        data: bitmap.data,
+        ...placeFaceBitmap(
+          bitmap,
+          bitmap.width / 2,
+          bitmap.height / 2,
+          irisCenter,
+          0,
+        ),
         synthetic: true,
       })
     }
@@ -309,6 +353,7 @@ function synthesizeMissingSillyEyes(
 function synthesizeMissingLovestruckEffects(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const usedIds = new Set(layers.map((layer) => layer.id))
   const generated: RasterLayer[] = []
@@ -338,11 +383,13 @@ function synthesizeMissingLovestruckEffects(
       order: 0,
       side,
       group: 'head',
-      left: Math.round(eye.icx - bitmap.width / 2),
-      top: Math.round(eye.icy - bitmap.height * 0.48),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.height * 0.48,
+        { x: eye.icx, y: eye.icy },
+        frame.roll,
+      ),
       synthetic: true,
     })
   }
@@ -352,17 +399,41 @@ function synthesizeMissingLovestruckEffects(
       lovestruckFaceEffectGeneratedSize(anchors.face),
       pink,
     )
-    const faceHeight = Math.max(1, anchors.face.y1 - anchors.face.y0)
-    const left = Math.round(anchors.face.cx - bitmap.width / 2)
-    const top = Math.round(anchors.face.y0 + faceHeight * 0.12)
+    const placed =
+      frame.landmarks && anchors.eyeL && anchors.eyeR
+        ? placeFaceBitmap(
+            bitmap,
+            bitmap.width / 2,
+            bitmap.height * LOVESTRUCK_CHEEK_ROW,
+            faceFramePoint(
+              frame,
+              frame.originX,
+              frame.originY,
+              0,
+              cheekDrop(anchors.eyeL, anchors.eyeR),
+            ),
+            frame.roll,
+          )
+        : placeFaceBitmap(
+            bitmap,
+            bitmap.width / 2,
+            0,
+            {
+              x: anchors.face.cx,
+              y:
+                anchors.face.y0 +
+                Math.max(1, anchors.face.y1 - anchors.face.y0) * 0.12,
+            },
+            0,
+          )
     const faceLayer = layers.find((layer) => layer.role === 'face')
     if (faceLayer) {
       clipBitmapAlphaToLayer(
-        bitmap.data,
-        bitmap.width,
-        bitmap.height,
-        left,
-        top,
+        placed.data,
+        placed.width,
+        placed.height,
+        placed.left,
+        placed.top,
         faceLayer,
       )
     }
@@ -373,11 +444,7 @@ function synthesizeMissingLovestruckEffects(
       order: 0,
       side: null,
       group: 'head',
-      left,
-      top,
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placed,
       synthetic: true,
     })
   }
@@ -395,18 +462,34 @@ function synthesizeMissingLovestruckEffects(
       order: 0,
       side: null,
       group: 'head',
-      left: Math.round(
-        anchors.mouth.cx + mouthWidth * 0.5 - bitmap.width * 0.36,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width * 0.36,
+        0,
+        faceFramePoint(
+          frame,
+          anchors.mouth.cx,
+          anchors.mouth.cy,
+          mouthWidth * 0.5,
+          mouthHeight * 0.08,
+        ),
+        frame.roll,
       ),
-      top: Math.round(anchors.mouth.cy + mouthHeight * 0.08),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
       synthetic: true,
     })
   }
 
   return generated.length > 0 ? [...layers, ...generated] : layers
+}
+
+/** Cheek blush sits just under the drawn lower lids, not at a face-box ratio. */
+function cheekDrop(
+  eyeL: Readonly<Anime25DEyeAnchor>,
+  eyeR: Readonly<Anime25DEyeAnchor>,
+): number {
+  const lowerLid = (eyeL.y1 - eyeL.icy + (eyeR.y1 - eyeR.icy)) / 2
+  const eyeHeight = (eyeL.y1 - eyeL.y0 + (eyeR.y1 - eyeR.y0)) / 2
+  return lowerLid + eyeHeight * 0.2
 }
 
 function clipBitmapAlphaToLayer(
@@ -441,6 +524,7 @@ function clipBitmapAlphaToLayer(
 function synthesizeMissingManiacEyeShadows(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const generated: RasterLayer[] = []
   const usedIds = new Set(layers.map((layer) => layer.id))
@@ -472,11 +556,19 @@ function synthesizeMissingManiacEyeShadows(
       order: 0,
       side,
       group: 'head',
-      left: Math.round(eye.icx + inwardOffset - bitmap.width / 2),
-      top: Math.round(eye.y1 - eyeHeight * 0.22),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        0,
+        faceFramePoint(
+          frame,
+          eye.icx,
+          eye.icy,
+          inwardOffset,
+          eye.y1 - eyeHeight * 0.22 - eye.icy,
+        ),
+        frame.roll,
+      ),
       synthetic: true,
     })
   }
@@ -498,6 +590,7 @@ function synthesizeMissingManiacEyeShadows(
 function synthesizeMissingMouthExpressions(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const reference =
     layers.find((layer) => layer.role === 'mouth-close') ??
@@ -538,11 +631,24 @@ function synthesizeMissingMouthExpressions(
   const palette = sampleMouthExpressionPalette(reference.data)
   const usedIds = new Set(layers.map((layer) => layer.id))
   const generated: RasterLayer[] = []
-  const add = (
-    role: (typeof expressions)[number]['role'],
+  const mouthCenter = { x: anchors.mouth.cx, y: anchors.mouth.cy }
+  const placeOnMouth = (
+    bitmap: { width: number; height: number; data: Uint8ClampedArray },
     kind: MouthExpressionKind,
-  ) => {
+  ) =>
+    placeFaceBitmap(
+      bitmap,
+      bitmap.width / 2,
+      mouthPivotY(kind, bitmap.height),
+      mouthCenter,
+      frame.roll,
+    )
+  let generatedManiacSize: { width: number; height: number } | null = null
+  for (const { role, kind } of missing) {
     const bitmap = createMouthExpressionBitmap(kind, sizes[kind], palette)
+    if (kind === 'maniac') {
+      generatedManiacSize = { width: bitmap.width, height: bitmap.height }
+    }
     generated.push({
       id: uniquePartId(role, usedIds),
       role,
@@ -550,28 +656,16 @@ function synthesizeMissingMouthExpressions(
       order: 0,
       side: null,
       group: 'head',
-      left: Math.round(anchors.mouth.cx - bitmap.width / 2),
-      top: Math.round(
-        anchors.mouth.cy -
-          bitmap.height *
-            (kind === 'cry' ? 0.46 : kind === 'maniac' ? 0.61 : 0.5) +
-          (kind === 'maniac' ? 3 : 0),
-      ),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeOnMouth(bitmap, kind),
       synthetic: true,
     })
   }
-  for (const expression of missing) add(expression.role, expression.kind)
   if (needsManiacShadow) {
-    const maniacMouth =
-      layers.find((layer) => layer.role === 'mouth-maniac') ??
-      generated.find((layer) => layer.role === 'mouth-maniac')
+    const authoredManiac = layers.find((layer) => layer.role === 'mouth-maniac')
     const bitmap = createManiacMouthShadowBitmap(
-      maniacMouth
-        ? { width: maniacMouth.width, height: maniacMouth.height }
-        : sizes.maniac,
+      authoredManiac
+        ? { width: authoredManiac.width, height: authoredManiac.height }
+        : (generatedManiacSize ?? sizes.maniac),
       palette,
     )
     generated.unshift({
@@ -581,14 +675,16 @@ function synthesizeMissingMouthExpressions(
       order: 0,
       side: null,
       group: 'head',
-      left:
-        maniacMouth?.left ?? Math.round(anchors.mouth.cx - bitmap.width / 2),
-      top:
-        maniacMouth?.top ??
-        Math.round(anchors.mouth.cy - bitmap.height * 0.61 + 3),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      // Authored artwork already carries the portrait's tilt.
+      ...(authoredManiac
+        ? {
+            left: authoredManiac.left,
+            top: authoredManiac.top,
+            width: bitmap.width,
+            height: bitmap.height,
+            data: bitmap.data,
+          }
+        : placeOnMouth(bitmap, 'maniac')),
       synthetic: true,
     })
   }
@@ -612,9 +708,17 @@ function synthesizeMissingMouthExpressions(
   return output.toSpliced(insertAt + 1, 0, ...generated)
 }
 
+/** Where each generated glyph's own mouth line sits, measured from its top. */
+function mouthPivotY(kind: MouthExpressionKind, height: number): number {
+  if (kind === 'cry') return height * 0.46
+  if (kind === 'maniac') return height * 0.61 - 3
+  return height * 0.5
+}
+
 function synthesizeMissingExpressionSymbols(
   layers: RasterLayer[],
   anchors: Anime25DRiggerAnchors,
+  frame: Readonly<Anime25DFaceFrame>,
 ): RasterLayer[] {
   const needsAnger = !layers.some((layer) => layer.role === 'anger-mark')
   const needsSweat = !layers.some((layer) => layer.role === 'speechless-sweat')
@@ -628,10 +732,37 @@ function synthesizeMissingExpressionSymbols(
   const tint = sampleDizzyEyeTint(eyelash?.data)
   const generated: RasterLayer[] = []
 
+  // Both accents hang off the drawn face contour at eye height, so a turned
+  // or tilted head keeps them on its temple and cheek instead of box corners.
+  const faceLayer = layers.find((layer) => layer.role === 'face')
+  const contour = (
+    eye: Readonly<Anime25DEyeAnchor> | undefined,
+    direction: -1 | 1,
+  ) =>
+    frame.landmarks && eye && faceLayer
+      ? faceContourAlongEyeLine(
+          frame,
+          faceLayer,
+          { x: eye.icx, y: eye.icy },
+          direction,
+        )
+      : null
+
   if (needsAnger) {
     const bitmap = createAngerMarkBitmap(sizes.anger, tint)
-    const centerX = anchors.face.x0 + faceWidth * 0.13
-    const centerY = anchors.face.y0 + faceHeight * 0.22
+    const temple = contour(anchors.eyeL, -1)
+    const center = temple
+      ? faceFramePoint(
+          frame,
+          temple.x,
+          temple.y,
+          faceWidth * 0.13,
+          -faceHeight * 0.36,
+        )
+      : {
+          x: anchors.face.x0 + faceWidth * 0.13,
+          y: anchors.face.y0 + faceHeight * 0.22,
+        }
     generated.push({
       id: uniquePartId('anger-mark', usedIds),
       role: 'anger-mark',
@@ -639,20 +770,27 @@ function synthesizeMissingExpressionSymbols(
       order: 0,
       side: null,
       group: 'head',
-      left: Math.round(centerX - bitmap.width / 2),
-      top: Math.round(centerY - bitmap.height / 2),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.height / 2,
+        center,
+        temple ? frame.roll : 0,
+      ),
       synthetic: true,
     })
   }
 
   if (needsSweat) {
     const bitmap = createSpeechlessSweatBitmap(sizes.speechless)
+    const cheek = contour(anchors.eyeR, 1)
     const eyeY = anchors.eyeR?.icy ?? anchors.eyeL?.icy
-    const centerX = anchors.face.x1 - faceWidth * 0.015
-    const centerY = eyeY ?? anchors.face.y0 + faceHeight * 0.48
+    const center = cheek
+      ? faceFramePoint(frame, cheek.x, cheek.y, -faceWidth * 0.015, 0)
+      : {
+          x: anchors.face.x1 - faceWidth * 0.015,
+          y: eyeY ?? anchors.face.y0 + faceHeight * 0.48,
+        }
     generated.push({
       id: uniquePartId('speechless-sweat', usedIds),
       role: 'speechless-sweat',
@@ -660,11 +798,13 @@ function synthesizeMissingExpressionSymbols(
       order: 0,
       side: null,
       group: 'head',
-      left: Math.round(centerX - bitmap.width / 2),
-      top: Math.round(centerY - bitmap.height * 0.2),
-      width: bitmap.width,
-      height: bitmap.height,
-      data: bitmap.data,
+      ...placeFaceBitmap(
+        bitmap,
+        bitmap.width / 2,
+        bitmap.height * 0.2,
+        center,
+        cheek ? frame.roll : 0,
+      ),
       synthetic: true,
     })
   }

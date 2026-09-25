@@ -101,6 +101,9 @@ export function createLovestruckHeartBitmap(
   return { width, height, data }
 }
 
+/** Normalized row of the face effect that carries both cheek blush centres. */
+export const LOVESTRUCK_CHEEK_ROW = 0.49
+
 export function createLovestruckFaceEffectBitmap(
   requestedSize: Readonly<LovestruckBitmapSize>,
   sourcePink: Readonly<RgbColor>,
@@ -116,8 +119,22 @@ export function createLovestruckFaceEffectBitmap(
     for (let x = 0; x < width; x += 1) {
       const nx = ((x + 0.5) / width - 0.5) * 2
       const ny = (y + 0.5) / height
-      const leftCheek = gaussian(nx, ny, -0.48, 0.49, 0.43, 0.18)
-      const rightCheek = gaussian(nx, ny, 0.48, 0.49, 0.43, 0.18)
+      const leftCheek = gaussian(
+        nx,
+        ny,
+        -0.48,
+        LOVESTRUCK_CHEEK_ROW,
+        0.43,
+        0.18,
+      )
+      const rightCheek = gaussian(
+        nx,
+        ny,
+        0.48,
+        LOVESTRUCK_CHEEK_ROW,
+        0.43,
+        0.18,
+      )
       const noseBridge = gaussian(nx, ny, 0, 0.47, 0.5, 0.15) * 0.62
       const blushAlpha =
         clamp(

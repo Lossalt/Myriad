@@ -125,6 +125,17 @@ accents from the face scale. They stay out of the neutral analysis reference;
 runtime facial deformation remains the primary expression signal and stages
 the accents after the brows, gaze, lids, and mouth have begun moving.
 
+Every generated drawing is placed in the portrait's own face frame
+(`faceFrame.ts`): the iris-to-iris line gives the roll, its midpoint the
+origin. Eye, mouth, and heart glyphs are drawn upright and then rotated about
+their own pivot by that roll, so a tilted head gets tilted glyphs. The
+lovestruck blush sits under the drawn lower lids, and the anger mark and sweat
+drop hang off the face drawing's contour at eye height rather than off corners
+of the face's bounding box. Authored artwork and the resampled silly iris keep
+their drawn orientation. A portrait with no mouth drawing gets a mouth anchor on
+the face midline instead of the frozen rigger's fixed-pixel guess. All of this is
+baked at import; stored rigs change only when re-imported.
+
 The `lovestruck` expression keeps the character's authored irises and overlays
 one independently anchored, character-tinted heart pupil per eye. A single
 face-local atlas rectangle carries the broad blush, cheek hatching, and three
