@@ -234,23 +234,25 @@ pub enum Gateway {
 }
 
 impl Gateway {
-    /// 这一家「别思考」怎么说。`None` = 不确定就什么都不发。
+    /// 这一家「少想」怎么说。`None` = 不确定就什么都不发。
     ///
-    /// 只写有把握的那一个：OpenRouter 的统一参数是
-    /// `reasoning: { enabled: false }`，而它也是本仓库的默认出口
-    /// （默认 Lite 模型 `openai/gpt-oss-20b:free` 就挂在这儿）。
+    /// 只写有把握的那一个：OpenRouter 的统一参数，也是本仓库的默认出口。
+    /// 发的是 `reasoning: { effort: "low" }`，不是 `{ enabled: false }`：
+    /// 有些型号的思考关不掉，收到 `enabled: false` 直接 400（2026-09-25 实测
+    /// `google/gemini-3.8-flash`），而 `effort: "low"` 在它和
+    /// `openai/gpt-6-luna` 上都被接受，思考 token 大多降到 0。
     ///
     /// 其余三家**故意留空**：
     /// - OpenAI 用 `reasoning_effort`，取值随模型代际变（GPT-5 的 `minimal`
     ///   在 o 系上不成立），发错就是 4xx；
-    /// - Gemini 用 `thinkingConfig.thinkingBudget`，而 `0` 只在允许关闭的
-    ///   型号上合法，Pro 系的下限不是 0；
+    /// - Gemini 用 `thinkingConfig`，各代参数不同（`thinkingBudget` 的 `0`
+    ///   只在允许关闭的型号上合法，3 代改用 `thinkingLevel`）；
     /// - 自建端点根本不知道后面是谁。
     ///
     /// 这些留空是 `uncertain`，不是「不需要」。要补的话补在这里，一处即可。
-    pub(super) fn thinking_off(self) -> Option<(&'static str, serde_json::Value)> {
+    pub(super) fn light_thinking(self) -> Option<(&'static str, serde_json::Value)> {
         match self {
-            Self::OpenRouter => Some(("reasoning", serde_json::json!({ "enabled": false }))),
+            Self::OpenRouter => Some(("reasoning", serde_json::json!({ "effort": "low" }))),
             Self::OpenAi | Self::Gemini | Self::OpenAiCompatible => None,
         }
     }
@@ -326,12 +328,12 @@ mod tests {
     #[test]
     fn only_a_gateway_we_are_sure_about_gets_a_thinking_switch() {
         assert_eq!(
-            Gateway::OpenRouter.thinking_off(),
-            Some(("reasoning", json!({ "enabled": false })))
+            Gateway::OpenRouter.light_thinking(),
+            Some(("reasoning", json!({ "effort": "low" })))
         );
         for unsure in [Gateway::OpenAi, Gateway::Gemini, Gateway::OpenAiCompatible] {
             assert!(
-                unsure.thinking_off().is_none(),
+                unsure.light_thinking().is_none(),
                 "{unsure:?} 的参数没核实过，不该发"
             );
         }

@@ -197,9 +197,11 @@ async fn compile(
         "remembered": remembered.map(|(facts, _)| facts).unwrap_or_default(),
     })
     .to_string();
+    // Her own voice, thinking little: this runs before she answers.
     let analyzer =
         crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
-            .await?;
+            .await?
+            .with_light_thinking();
     let raw = crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,
         "merope",

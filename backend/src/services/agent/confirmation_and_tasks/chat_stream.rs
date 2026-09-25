@@ -248,6 +248,15 @@ fn spawn_model_outfit_overlay(
     });
 }
 
+/// Her voice in chat. It thinks little: measured on the chat suite, the first
+/// word came in about 1.9 s instead of 6 s with replies of the same kind.
+async fn chat_analyzer() -> Result<crate::services::analyzer::AiAnalyzer, String> {
+    crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
+        .await
+        .map(crate::services::analyzer::AiAnalyzer::with_light_thinking)
+        .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())
+}
+
 /// The images attached to this chat message (none in a group turn).
 fn images_of(request: &UserRequest) -> &[crate::services::analyzer::ImageInput] {
     request
@@ -266,9 +275,7 @@ impl Agent {
         progress_tx: &tokio::sync::mpsc::Sender<AgentProgressEvent>,
         speech_delivery: Option<ChatDelivery>,
     ) -> Result<String, String> {
-        let analyzer = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
-            .await
-            .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())?;
+        let analyzer = chat_analyzer().await?;
         self.stream_chat_response_with_analyzer(request, progress_tx, analyzer, speech_delivery)
             .await
     }
@@ -277,19 +284,13 @@ impl Agent {
         &self,
         request: &UserRequest,
     ) -> Result<String, String> {
-        let analyzer = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
-            .await
-            .ok_or_else(|| "Lite model is not configured for Chat mode".to_string())?;
+        let analyzer = chat_analyzer().await?;
         let prompt = self.chat_response_prompt(request).await;
-        let images = images_of(request);
-        let response = if images.is_empty() {
-            analyzer.analyze(&prompt).await
-        } else {
-            analyzer
-                .analyze_stream_parts_with_images(&prompt, images, |_| async { true })
-                .await
-        }
-        .map_err(|error| error.to_string())?;
+        // The same request as the streamed path, only not relayed.
+        let response = analyzer
+            .analyze_stream_parts_with_images(&prompt, images_of(request), |_| async { true })
+            .await
+            .map_err(|error| error.to_string())?;
         let response = response.trim();
         if response.is_empty() {
             Err("Chat model returned an empty response".to_string())

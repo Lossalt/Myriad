@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 pub(crate) enum Reasoning {
     Default,
     Disabled,
+    Minimal,
     Low,
 }
 
@@ -53,6 +54,7 @@ fn body(
     match policy.reasoning {
         Reasoning::Default => {}
         Reasoning::Disabled => body["reasoning"] = json!({"enabled":false}),
+        Reasoning::Minimal => body["reasoning"] = json!({"effort":"minimal"}),
         Reasoning::Low => body["reasoning"] = json!({"effort":"low"}),
     }
     if let Some(temperature) = policy.temperature {

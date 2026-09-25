@@ -780,12 +780,18 @@ async fn run_semantic_suite() {
             .filter(|key| !key.is_empty())
             .expect("configured Lite credentials required");
         model_info = json!({"model":configured.model,"provider":configured.provider});
+        let lite = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
+            Duration::from_secs(diagnostic.unwrap_or(4)),
+        ))
+        .await
+        .expect("configured Lite unavailable");
+        // Her voice thinks little, as production asks; `default` compares.
         Some(
-            crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
-                Duration::from_secs(diagnostic.unwrap_or(4)),
-            ))
-            .await
-            .expect("configured Lite unavailable"),
+            if std::env::var("MEROPE_SEMANTIC_THINKING").as_deref() == Ok("default") {
+                lite
+            } else {
+                lite.with_light_thinking()
+            },
         )
     } else {
         None
@@ -820,8 +826,8 @@ async fn run_semantic_suite() {
     assert!(
         probe
             .as_deref()
-            .is_none_or(|p| matches!(p, "default" | "disabled")),
-        "probe must be default or disabled"
+            .is_none_or(|p| matches!(p, "default" | "disabled" | "minimal" | "low")),
+        "probe must be default, disabled, minimal or low"
     );
     let mut pending: std::collections::VecDeque<_> = cases.into();
     while let Some(case) = pending.pop_front() {
@@ -916,10 +922,11 @@ async fn run_semantic_suite() {
                                 request["schemaName"].as_str().unwrap(),
                                 &request["schema"],
                                 Policy {
-                                    reasoning: if probe == "disabled" {
-                                        Reasoning::Disabled
-                                    } else {
-                                        Reasoning::Default
+                                    reasoning: match probe.as_str() {
+                                        "disabled" => Reasoning::Disabled,
+                                        "minimal" => Reasoning::Minimal,
+                                        "low" => Reasoning::Low,
+                                        _ => Reasoning::Default,
                                     },
                                     temperature: None,
                                     max_tokens: 2048,

@@ -315,7 +315,9 @@ pub fn fallback_line(summary: &str) -> String {
 async fn compose_line(db: &DatabaseConnection, user_id: i32, summary: &str) -> String {
     let fallback = fallback_line(summary);
     let Some(analyzer) =
-        create_strict_lite_ai_analyzer_with_timeout(Some(std::time::Duration::from_secs(12))).await
+        create_strict_lite_ai_analyzer_with_timeout(Some(std::time::Duration::from_secs(12)))
+            .await
+            .map(crate::services::analyzer::AiAnalyzer::with_light_thinking)
     else {
         return fallback;
     };

@@ -28,6 +28,9 @@ pub struct AiAnalyzer {
     pub(super) api_key: String,
     pub(super) model: String,
     pub(super) base_url: Option<String>, // For OpenAI-compatible APIs
+    /// Ask the gateway for as little thinking as it allows; see
+    /// [`AiAnalyzer::with_light_thinking`].
+    pub(super) light_thinking: bool,
 }
 
 /// 进程内记下 (base_url, model, structured|extras) 曾被 `rejected_request`；重启清空。
@@ -60,8 +63,10 @@ pub(crate) fn cleanup_shape_memo() {
 enum RequestShape {
     /// `response_format` / `responseSchema`
     StructuredOutput,
-    /// 输出上限 + 那一家的「别思考」参数
+    /// 输出上限 + 那一家的「少想」参数
     Extras,
+    /// 只有「少想」参数（[`AiAnalyzer::with_light_thinking`]）
+    LightThinking,
 }
 
 impl RequestShape {
@@ -69,6 +74,7 @@ impl RequestShape {
         match self {
             Self::StructuredOutput => "structured",
             Self::Extras => "extras",
+            Self::LightThinking => "light-thinking",
         }
     }
 }
@@ -284,7 +290,80 @@ impl AiAnalyzer {
             api_key,
             model,
             base_url,
+            light_thinking: false,
         }
+    }
+
+    /// For calls where waiting costs more than thinking gains: small typed
+    /// judgments, and talk. Sends the gateway's "think little" parameter where
+    /// it is known ([`Gateway::light_thinking`]); an endpoint that refuses it
+    /// is remembered and asked again without it.
+    pub fn with_light_thinking(mut self) -> Self {
+        self.light_thinking = true;
+        self
+    }
+
+    /// The light-thinking parameter to send now, if any.
+    fn light_thinking_param(&self) -> Option<(&'static str, serde_json::Value)> {
+        if !self.light_thinking || self.refused(RequestShape::LightThinking) {
+            return None;
+        }
+        self.gateway().light_thinking()
+    }
+
+    /// POST a streaming OpenAI-compatible body, with the light-thinking
+    /// parameter when asked for. An endpoint that refuses the parameter is
+    /// remembered and asked once more without it.
+    async fn post_openai_stream(&self, mut body: serde_json::Value) -> Result<reqwest::Response> {
+        let url = openai_chat_completions_url(self.base_url.as_deref());
+        let light = self.light_thinking_param();
+        if let (Some(object), Some((key, value))) = (body.as_object_mut(), light.clone()) {
+            object.insert(key.to_string(), value);
+        }
+        let mut response = self.send_openai_stream(&url, &body).await?;
+        if let Some((key, _)) = light
+            && ProviderCallFailure::http(response.status(), anyhow::anyhow!("refused"))
+                .rejected_request()
+        {
+            if let Some(object) = body.as_object_mut() {
+                object.remove(key);
+            }
+            response = self.send_openai_stream(&url, &body).await?;
+            // Only when that was the difference: an image the model cannot
+            // take is refused either way.
+            if response.status().is_success() {
+                self.remember_refusal(RequestShape::LightThinking);
+            }
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = Self::read_limited_error_text(response).await;
+            return Err(anyhow::anyhow!(format_openai_compatible_http_error(
+                status,
+                &url,
+                &self.model,
+                &error_text,
+            )));
+        }
+        Ok(response)
+    }
+
+    async fn send_openai_stream(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        self.authenticate(self.client.post(url))
+            .header("Content-Type", "application/json")
+            .json(&super::request_budget::prepare(body, self.provider)?)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to send streaming request to OpenAI-compatible API (endpoint: {url}, model: {})",
+                    self.model
+                )
+            })
     }
 
     pub async fn analyze_profile(&self, profile_data: &serde_json::Value) -> Result<String> {
@@ -651,9 +730,23 @@ impl AiAnalyzer {
         } else {
             JsonMode::Structured(schema)
         };
+        let light = self.light_thinking_param().is_some();
         let mut result = self
             .analyze_json_inner(system, prompt, schema_name, mode, None)
             .await;
+
+        // The think-little parameter goes first: a refusal of it says
+        // nothing about structured output.
+        if light
+            && result
+                .as_ref()
+                .is_err_and(ProviderCallFailure::rejected_request)
+        {
+            self.remember_refusal(RequestShape::LightThinking);
+            result = self
+                .analyze_json_inner(system, prompt, schema_name, mode, None)
+                .await;
+        }
 
         if let Err(ref failure) = result {
             if matches!(mode, JsonMode::Structured(_)) && failure.rejected_request() {
@@ -725,6 +818,10 @@ impl AiAnalyzer {
                 .is_err_and(ProviderCallFailure::rejected_request)
         {
             self.remember_refusal(RequestShape::Extras);
+            // The same parameter would ride again without the budget.
+            if self.light_thinking {
+                self.remember_refusal(RequestShape::LightThinking);
+            }
             result = self
                 .analyze_json_inner(system, prompt, schema_name, mode, None)
                 .await;
@@ -1029,16 +1126,19 @@ impl AiAnalyzer {
                     response_format: mode.openai_response_format(schema_name),
                     max_tokens: budget.map(|b| b.max_tokens),
                 };
-                // 「别思考」和输出上限同进同退：它们同属「附加参数」这一类，
-                // 被拒时一起丢掉，也一起被记住。
+                // 「少想」和输出上限同进同退：它们同属「附加参数」这一类，
+                // 被拒时一起丢掉，也一起被记住。没有输出上限时，只有要求
+                // 少想的分析器才发（单独记忆，见 `RequestShape::LightThinking`）。
                 let mut request_body = serde_json::to_value(request_body)
                     .map_err(|e| ProviderCallFailure::transport(e.into()))?;
-                if budget.is_some() {
-                    if let (Some(object), Some((key, value))) =
-                        (request_body.as_object_mut(), self.gateway().thinking_off())
-                    {
-                        object.insert(key.to_string(), value);
-                    }
+                let thinking = if budget.is_some() {
+                    self.gateway().light_thinking()
+                } else {
+                    self.light_thinking_param()
+                };
+                if let (Some(object), Some((key, value))) = (request_body.as_object_mut(), thinking)
+                {
+                    object.insert(key.to_string(), value);
                 }
 
                 let url = openai_chat_completions_url(self.base_url.as_deref());
@@ -1194,30 +1294,9 @@ impl AiAnalyzer {
             }
             return super::sse::consume_text_sse(response, on_delta, gemini_stream_deltas).await;
         }
-        let body = openai_image_request(&self.model, prompt, images);
-        let url = openai_chat_completions_url(self.base_url.as_deref());
         let response = self
-            .authenticate(self.client.post(&url))
-            .header("Content-Type", "application/json")
-            .json(&super::request_budget::prepare(&body, self.provider)?)
-            .send()
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to send streaming image request to OpenAI-compatible API (endpoint: {url}, model: {})",
-                    self.model
-                )
-            })?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = Self::read_limited_error_text(response).await;
-            return Err(anyhow::anyhow!(format_openai_compatible_http_error(
-                status,
-                &url,
-                &self.model,
-                &error_text,
-            )));
-        }
+            .post_openai_stream(openai_image_request(&self.model, prompt, images))
+            .await?;
         consume_openai_sse(response, on_delta).await
     }
 
@@ -1277,33 +1356,9 @@ impl AiAnalyzer {
                     }],
                     stream: true,
                 };
-
-                let url = openai_chat_completions_url(self.base_url.as_deref());
-
                 let response = self
-                    .authenticate(self.client.post(&url))
-                    .header("Content-Type", "application/json")
-                    .json(&super::request_budget::prepare(&request_body, self.provider)?)
-                    .send()
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to send streaming request to OpenAI-compatible API (endpoint: {url}, model: {})",
-                            self.model
-                        )
-                    })?;
-
-                if !response.status().is_success() {
-                    let status = response.status();
-                    let error_text = Self::read_limited_error_text(response).await;
-                    return Err(anyhow::anyhow!(format_openai_compatible_http_error(
-                        status,
-                        &url,
-                        &self.model,
-                        &error_text,
-                    )));
-                }
-
+                    .post_openai_stream(serde_json::to_value(request_body)?)
+                    .await?;
                 consume_openai_sse(response, on_delta).await
             }
             AiProvider::OpenAIResponses | AiProvider::Anthropic => {
@@ -1372,6 +1427,32 @@ mod image_request_tests {
         }
     }
 
+    #[tokio::test]
+    async fn light_thinking_is_asked_only_when_wanted_and_only_where_known() {
+        let router = || {
+            AiAnalyzer::new(
+                AiProvider::OpenAI,
+                String::new(),
+                "light-thinking-test".into(),
+                Some("https://openrouter.ai/api/v1".into()),
+            )
+        };
+        assert!(router().await.light_thinking_param().is_none());
+        assert_eq!(
+            router().await.with_light_thinking().light_thinking_param(),
+            Some(("reasoning", serde_json::json!({ "effort": "low" })))
+        );
+        let unknown = AiAnalyzer::new(
+            AiProvider::OpenAI,
+            String::new(),
+            "light-thinking-test".into(),
+            Some("https://llm.example/v1".into()),
+        )
+        .await
+        .with_light_thinking();
+        assert!(unknown.light_thinking_param().is_none());
+    }
+
     #[test]
     fn images_ride_beside_the_prompt_in_each_protocol() {
         let gemini = gemini_image_request("看看这个", &[image()]);
@@ -1438,7 +1519,7 @@ mod tests {
             .expect("analyze_json_inner body");
         // 只在带预算的那一档附上，跟着一起丢。
         assert!(inner.contains("if budget.is_some()"));
-        assert!(inner.contains("self.gateway().thinking_off()"));
+        assert!(inner.contains("self.gateway().light_thinking()"));
     }
 
     /// 只在「请求形状被拒」时记忆——鉴权失败和限流不是能力问题，记下来会让

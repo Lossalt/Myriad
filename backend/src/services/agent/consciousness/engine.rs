@@ -79,6 +79,7 @@ pub async fn consider_event(
             DECISION_REQUEST_TIMEOUT,
         ))
         .await
+        .map(crate::services::analyzer::AiAnalyzer::with_light_thinking)
     } else {
         crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(
             DECISION_REQUEST_TIMEOUT,
