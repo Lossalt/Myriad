@@ -41,24 +41,6 @@ fn inject_role_identity(
         None => return params,
     };
 
-    // 1. 注入角色身份到 systemPrompt
-    if !exec_ctx.role_contexts.is_empty() {
-        let router = crate::services::agent::routing::get_router();
-        let role = router.route_capability(capability_id);
-        let role_key = format!("{:?}", role);
-
-        if let Some(role_identity) = exec_ctx.role_contexts.get(&role_key) {
-            let existing = params
-                .get("systemPrompt")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            params.insert(
-                "systemPrompt".to_string(),
-                Value::String(merge_system_prompt(existing, role_identity)),
-            );
-        }
-    }
-
     // 2. 记忆是不可信数据。工具循环写入的 memory_context 也走这里，
     //    必须包在 <untrusted_memory> 里，不能当系统指令。
     if capability_needs_memory(capability_id) {

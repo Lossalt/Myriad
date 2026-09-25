@@ -529,25 +529,6 @@ WHERE namespace = $1 AND runtime_id = $2
                     state.message = message.clone();
                     None
                 }
-                AgentProgressEvent::TaskAssigned {
-                    task_id,
-                    assignment,
-                } => {
-                    notify = true;
-                    state.task_id = Some(task_id.clone());
-                    state.status = "running".to_string();
-                    state.message = format!(
-                        "已分配给 {} 个 Agent: {}",
-                        assignment.total_agents,
-                        assignment
-                            .agents
-                            .iter()
-                            .map(|agent| agent.display_name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                    None
-                }
                 AgentProgressEvent::Progress {
                     progress, message, ..
                 } => {

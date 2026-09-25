@@ -810,10 +810,6 @@ pub struct ExecutionContext {
     /// 包含之前的对话消息，让 AI 能够理解上下文
     #[serde(default)]
     pub conversation_context: Option<Vec<ConversationMessage>>,
-    /// 角色身份上下文（Orchestrator 注入）
-    /// key = `format!("{:?}", role)`（`AgentRole` Debug）；value = 对应 worker 身份文本
-    #[serde(default)]
-    pub role_contexts: HashMap<String, String>,
     /// Extra ceiling for autonomy-accepted Work. Names only.
     #[serde(default)]
     pub autonomy_permission_cap: Option<Vec<String>>,
@@ -850,7 +846,6 @@ impl Default for ExecutionContext {
             decision_history: Vec::new(),
             page_context: None,
             conversation_context: None,
-            role_contexts: HashMap::new(),
             retry_budget_remaining: 5,
             pending_questions: Vec::new(),
             memory_context: None,
@@ -1063,13 +1058,6 @@ pub enum AgentProgressEvent {
         #[serde(rename = "stepDescriptions", skip_serializing_if = "Vec::is_empty")]
         step_descriptions: Vec<String>,
     },
-    /// 任务已分配给多个 Agent（多 Agent 协作时发送）
-    TaskAssigned {
-        #[serde(rename = "taskId")]
-        task_id: String,
-        /// Agent 分配详情
-        assignment: Box<super::routing::TaskAssignment>,
-    },
     /// 步骤开始
     StepStarted {
         #[serde(rename = "stepId")]
@@ -1108,19 +1096,6 @@ pub enum AgentProgressEvent {
         #[serde(rename = "totalSteps")]
         total_steps: u32,
         message: String,
-    },
-    /// 步骤重试中（智能重试：分析错误后修改参数重试）
-    StepRetrying {
-        #[serde(rename = "stepId")]
-        step_id: String,
-        #[serde(rename = "stepIndex")]
-        step_index: u32,
-        #[serde(rename = "retryCount")]
-        retry_count: u32,
-        #[serde(rename = "maxRetries")]
-        max_retries: u32,
-        /// 重试原因（错误分析结果）
-        reason: String,
     },
     /// 任务完成（response 为序列化后的 ApiResponse JSON）
     TaskCompleted {
@@ -1192,54 +1167,6 @@ pub enum AgentProgressEvent {
         task_id: Option<String>,
         message: String,
         code: String,
-    },
-    /// 主 Agent（Planner）决策 — 调试用
-    PlannerDecision {
-        /// Planner 输出状态
-        status: String,
-        /// AI 推理
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reasoning: Option<String>,
-        /// 置信度
-        confidence: f32,
-        /// 规划的步骤列表
-        steps: Vec<PlannerStepSummary>,
-        /// 用户原始请求
-        #[serde(rename = "userRequest")]
-        user_request: String,
-    },
-    /// 子 Agent 步骤执行详情 — 调试用
-    StepDebug {
-        #[serde(rename = "stepId")]
-        step_id: String,
-        /// 步骤阶段：`"start"` / `"complete"` / `"expired"`
-        phase: String,
-        #[serde(rename = "capabilityId")]
-        capability_id: String,
-        /// 主 Agent 给此步骤的指令
-        #[serde(skip_serializing_if = "Option::is_none")]
-        directive: Option<String>,
-        /// 用户原始请求
-        #[serde(rename = "userRequest", skip_serializing_if = "Option::is_none")]
-        user_request: Option<String>,
-        /// `build_debug_params(&step.params)`（截断原 params，不是 resolve 后）
-        #[serde(skip_serializing_if = "Option::is_none")]
-        params: Option<Value>,
-        /// 执行输出预览（`complete` 才有）
-        #[serde(rename = "outputPreview", skip_serializing_if = "Option::is_none")]
-        output_preview: Option<String>,
-        /// 是否动态步骤
-        #[serde(rename = "isDynamic")]
-        is_dynamic: bool,
-        /// 耗时 ms（`complete` 才有）
-        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
-        duration_ms: Option<u64>,
-        /// 是否成功（`complete` / `expired`）
-        #[serde(skip_serializing_if = "Option::is_none")]
-        success: Option<bool>,
-        /// 错误信息（`complete` 失败或 `expired`）
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
     },
 }
 

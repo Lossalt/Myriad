@@ -28,11 +28,9 @@ pub fn event_plane(event: &AgentProgressEvent) -> EventPlane {
         AgentProgressEvent::RunStarted { .. }
         | AgentProgressEvent::WorkPlanUpdated { .. }
         | AgentProgressEvent::TaskCreated { .. }
-        | AgentProgressEvent::TaskAssigned { .. }
         | AgentProgressEvent::StepStarted { .. }
         | AgentProgressEvent::StepCompleted { .. }
         | AgentProgressEvent::Progress { .. }
-        | AgentProgressEvent::StepRetrying { .. }
         | AgentProgressEvent::TaskCompleted { .. }
         | AgentProgressEvent::WaitingForInput { .. }
         | AgentProgressEvent::SessionCreated { .. }
@@ -43,9 +41,7 @@ pub fn event_plane(event: &AgentProgressEvent) -> EventPlane {
         | AgentProgressEvent::MeropeStateChanged { .. }
         | AgentProgressEvent::OutfitOverlay { .. }
         | AgentProgressEvent::MusicControl { .. }
-        | AgentProgressEvent::Error { .. }
-        | AgentProgressEvent::PlannerDecision { .. }
-        | AgentProgressEvent::StepDebug { .. } => EventPlane::Control,
+        | AgentProgressEvent::Error { .. } => EventPlane::Control,
     }
 }
 
