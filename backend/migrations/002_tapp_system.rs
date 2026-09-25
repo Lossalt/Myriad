@@ -832,39 +832,13 @@ ALTER TABLE tapp_storage
             )
             .await?;
 
-        // ==================== 9. TAPP RUNTIME SHARED STATE ====================
-        // tapp_ai_cost_ledger，以及 tapp_storage 8388608 字节 INSERT/UPDATE
-        // 触发器。跨副本的运行时注册表与邮箱是平台设施，在 001 创建。
+        // ==================== 9. TAPP STORAGE QUOTA ====================
+        // tapp_storage 8388608 字节 INSERT/UPDATE 触发器。跨副本的运行时注册表、
+        // 邮箱和全站 AI 费用账本是平台设施，在 001 创建。
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
--- 独立 AI 费用账本：逐次调用的 append-only 流水，与按日聚合的
--- tapp_quota_usage 配额计数相互独立，不随每日重置。
-CREATE TABLE IF NOT EXISTS tapp_ai_cost_ledger (
-    id BIGSERIAL PRIMARY KEY,
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    subject_id INTEGER NOT NULL,
-    owner_id INTEGER NOT NULL,
-    tapp_id VARCHAR(255) NOT NULL,
-    task_id VARCHAR(160) NOT NULL,
-    source VARCHAR(64) NOT NULL,
-    operation VARCHAR(32) NOT NULL,
-    provider VARCHAR(64) NOT NULL,
-    model VARCHAR(255) NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    tokens_estimated BOOLEAN NOT NULL DEFAULT TRUE,
-    cost_micro_usd BIGINT,
-    status VARCHAR(16) NOT NULL,
-    error_code VARCHAR(64)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapp_ai_cost_subject_time
-    ON tapp_ai_cost_ledger (subject_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_tapp_ai_cost_tapp_time
-    ON tapp_ai_cost_ledger (tapp_id, occurred_at);
-
 CREATE OR REPLACE FUNCTION enforce_tapp_storage_quota()
 RETURNS TRIGGER AS $$
 DECLARE

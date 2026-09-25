@@ -1,5 +1,13 @@
 # 升级说明
 
+## AI 费用账本改为平台设施
+
+全站 AI 费用账本原名 `tapp_ai_cost_ledger`，站点自身的调用（Agent、报告、人设等）只能往
+`tapp_id` 里填 `__agent__`、`__merope__` 这类占位值。现在改名为 `ai_cost_ledger`，由 `001`
+创建；`tapp_id` 可空，只有 Tapp 发起的调用才有，站点调用靠 `source` 区分。已有库在
+`Migrator::up` 里原地改名，并把占位值置空。`GET /api/tapp/ai/v2/ledger` 的流水里站点调用的
+`tappId` 为 `null`，按 Tapp 的汇总不再包含站点调用。
+
 ## 运行时注册表改为平台设施
 
 跨副本共享的租约、邮箱和带过期的记录原名 `tapp_runtime_registry` / `tapp_runtime_mailbox`，

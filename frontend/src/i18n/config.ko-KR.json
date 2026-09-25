@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "출처",
     "aiUsageFilterAll": "전체",
     "aiUsageFiltersAria": "사용자, 모델, 출처로 AI 사용량 필터",
-    "aiUsageNote": "사이트 전체 비용 장부(tapp_ai_cost_ledger): 관리자와 일반 사용자를 포함. 텍스트·이미지·음성 호출을 기록. 토큰은 추정치인 경우가 많습니다.",
+    "aiUsageNote": "사이트 전체 비용 장부(ai_cost_ledger): 관리자와 일반 사용자를 포함. 텍스트·이미지·음성 호출을 기록. 토큰은 추정치인 경우가 많습니다.",
     "pageLabels": {
       "/": "홈",
       "/library": "라이브러리",

@@ -318,7 +318,7 @@
     },
     "aiUsage": {
       "what": "Usage IA de tout le site (y compris administrateurs/propriétaire) : tendance quotidienne, classements par utilisateur/modèle/source, avec filtres.",
-      "chain": "1) Chaque appel fournisseur (texte, image, parole) écrit tapp_ai_cost_ledger. Tapp / tâches planifiées règlent encore le quota sur le chemin gouverné ; Agent, rapports, persona Agent, atelier et parole sont étiquetés ; les appels sans étiquette tombent en interne.\n2) GET /api/analytics/ai-usage administrateur agrège par jour calendaire local du serveur et n’exclut pas le personnel.\n3) Barres = appels (axe gauche), ligne = jetons (axe droit, échelle indépendante) ; listes par utilisateur, modèle et source.\n4) Indépendant de l’interrupteur de collecte des statistiques de visite.",
+      "chain": "1) Chaque appel fournisseur (texte, image, parole) écrit ai_cost_ledger. Tapp / tâches planifiées règlent encore le quota sur le chemin gouverné ; Agent, rapports, persona Agent, atelier et parole sont étiquetés ; les appels sans étiquette tombent en interne.\n2) GET /api/analytics/ai-usage administrateur agrège par jour calendaire local du serveur et n’exclut pas le personnel.\n3) Barres = appels (axe gauche), ligne = jetons (axe droit, échelle indépendante) ; listes par utilisateur, modèle et source.\n4) Indépendant de l’interrupteur de collecte des statistiques de visite.",
       "frontend": "Paramètres → Données et statistiques → « Statistiques d’usage IA » (KPI, graphique, par utilisateur / modèle / source).",
       "notes": "Les jetons sont souvent des estimations (images par résolution, parole par longueur texte/audio). Panneau réservé aux administrateurs."
     },

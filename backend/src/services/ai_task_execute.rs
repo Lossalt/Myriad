@@ -938,7 +938,7 @@ pub async fn execute_task(execution: AiTaskExecution) {
                 AiCostLedgerEntry {
                     subject_id,
                     owner_id,
-                    tapp_id: &tapp_id,
+                    tapp_id: Some(&tapp_id),
                     task_id: &task_id,
                     source: &ledger_source,
                     operation: operation_name(request.operation),
@@ -972,7 +972,7 @@ pub async fn execute_task(execution: AiTaskExecution) {
                 AiCostLedgerEntry {
                     subject_id,
                     owner_id,
-                    tapp_id: &tapp_id,
+                    tapp_id: Some(&tapp_id),
                     task_id: &task_id,
                     source: &ledger_source,
                     operation: operation_name(request.operation),

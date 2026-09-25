@@ -415,7 +415,7 @@ Manifest 只声明能力与预算层级，不暴露供应商参数：
 
 当前进度：1 已完成核心路由迁移和共享 Grant；2 已完成 Manifest round-trip、宿主授权队列与
 结构化弹窗、在线 Provider broker、一次性 Grant、同 subject 隔离、主动撤销及响应边界；3 已完成持久化用量账本、独立
-per-call AI 费用账本（`tapp_ai_cost_ledger`）、任务状态机、上下文/输出校验和 SSE；4 已完成在线 at-most-once 路由与 Manifest allowlist；5 已完成
+per-call AI 费用账本（`ai_cost_ledger`）、任务状态机、上下文/输出校验和 SSE；4 已完成在线 at-most-once 路由与 Manifest allowlist；5 已完成
 interaction schema、CAS 接受/提交/拒绝状态机、办事任务恢复以及
 `ui.open`、`report.create`、`dataExchange.request` 宿主 adapter。在线状态使用 PostgreSQL
 TTL registry、durable mailbox 与 `pg_notify` 提示；Agent run 元数据和最近 256 个 SSE 事件

@@ -28,7 +28,7 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// （`ensure_agent_memories_table`）；记忆的概念与别名列（`agent_memories.concepts`）；
 /// 记忆的场合放宽到能放下群的标识（`agent_memories.venue` VARCHAR(96)）；
 /// 按场合取记忆的索引（`idx_agent_memories_venue_created`，群聊和她自己的记录）。
-pub const SCHEMA_VERSION: &str = "2026.09.26.1";
+pub const SCHEMA_VERSION: &str = "2026.09.26.2";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

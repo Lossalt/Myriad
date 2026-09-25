@@ -144,7 +144,7 @@ impl AgentTurnBudget {
             role,
             user_id,
             user_id,
-            AGENT_LEDGER_TAPP_ID,
+            AGENT_QUOTA_BUCKET,
             AGENT_TURN_TOKEN_ESTIMATE,
             None,
             kind.reserve_options(),
@@ -168,7 +168,7 @@ impl AgentTurnBudget {
                 owner_id: user_id,
                 source: "agent".into(),
                 operation: operation.into(),
-                tapp_id: AGENT_LEDGER_TAPP_ID.into(),
+                tapp_id: None,
                 task_id,
             },
         })
@@ -277,8 +277,9 @@ impl AgentTurnBudget {
     }
 }
 
-/// Agent 在配额与成本账里的 bucket key（与 `AiLedgerAttribution.tapp_id` 一致）
-pub(crate) const AGENT_LEDGER_TAPP_ID: &str = "__agent__";
+/// Agent 在 AI 配额里的 bucket key。成本账本里 Agent 不是 Tapp，没有 `tapp_id`，
+/// 靠 `source = "agent"` 区分。
+pub(crate) const AGENT_QUOTA_BUCKET: &str = "__agent__";
 
 /// Discovery list filtered by the same granted permissions the planner uses (`TappPermissionService::check`).
 pub async fn get_capabilities_summary_for_user(

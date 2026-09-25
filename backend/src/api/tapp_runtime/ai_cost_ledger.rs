@@ -28,7 +28,7 @@ pub struct LedgerQuery {
 /// GET /api/tapp/ai/v2/ledger
 ///
 /// Host UI endpoint: the authenticated user reads their own per-call AI
-/// spending journal plus per-Tapp totals. This is deliberately not part of the
+/// spending journal (site calls have no `tappId`) plus per-Tapp totals. This is deliberately not part of the
 /// sandbox SDK surface — Tapps see quota snapshots, not the account book.
 pub async fn ai_cost_ledger(
     State(db): State<DatabaseConnection>,
@@ -54,7 +54,7 @@ pub async fn ai_cost_ledger(
                 SELECT id, occurred_at, tapp_id, task_id, source, operation,
                        provider, model, input_tokens, output_tokens,
                        tokens_estimated, cost_micro_usd, status, error_code
-                FROM tapp_ai_cost_ledger
+                FROM ai_cost_ledger
                 WHERE subject_id = $1 AND tapp_id = $2
                 ORDER BY occurred_at DESC, id DESC
                 LIMIT $3
@@ -65,7 +65,7 @@ pub async fn ai_cost_ledger(
                        COALESCE(SUM(input_tokens), 0)::BIGINT AS input_tokens,
                        COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
                        SUM(cost_micro_usd)::BIGINT AS cost_micro_usd
-                FROM tapp_ai_cost_ledger
+                FROM ai_cost_ledger
                 WHERE subject_id = $1 AND tapp_id = $2
                 GROUP BY tapp_id
             "#,
@@ -79,7 +79,7 @@ pub async fn ai_cost_ledger(
                 SELECT id, occurred_at, tapp_id, task_id, source, operation,
                        provider, model, input_tokens, output_tokens,
                        tokens_estimated, cost_micro_usd, status, error_code
-                FROM tapp_ai_cost_ledger
+                FROM ai_cost_ledger
                 WHERE subject_id = $1
                 ORDER BY occurred_at DESC, id DESC
                 LIMIT $2
@@ -90,8 +90,8 @@ pub async fn ai_cost_ledger(
                        COALESCE(SUM(input_tokens), 0)::BIGINT AS input_tokens,
                        COALESCE(SUM(output_tokens), 0)::BIGINT AS output_tokens,
                        SUM(cost_micro_usd)::BIGINT AS cost_micro_usd
-                FROM tapp_ai_cost_ledger
-                WHERE subject_id = $1
+                FROM ai_cost_ledger
+                WHERE subject_id = $1 AND tapp_id IS NOT NULL
                 GROUP BY tapp_id
                 ORDER BY calls DESC
             "#,
@@ -133,7 +133,7 @@ pub async fn ai_cost_ledger(
                     .try_get::<chrono::DateTime<chrono::FixedOffset>>("", "occurred_at")
                     .ok()?
                     .to_rfc3339(),
-                "tappId": row.try_get::<String>("", "tapp_id").ok()?,
+                "tappId": row.try_get::<Option<String>>("", "tapp_id").ok()?,
                 "taskId": row.try_get::<String>("", "task_id").ok()?,
                 "source": row.try_get::<String>("", "source").ok()?,
                 "operation": row.try_get::<String>("", "operation").ok()?,

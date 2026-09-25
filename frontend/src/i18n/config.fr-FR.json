@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "Source",
     "aiUsageFilterAll": "Tous",
     "aiUsageFiltersAria": "Filtrer l'usage IA par utilisateur, modèle et source",
-    "aiUsageNote": "Grand livre des coûts du site (tapp_ai_cost_ledger) : inclut admins et utilisateurs. Texte, image et voix sont enregistrés. Les tokens sont souvent des estimations.",
+    "aiUsageNote": "Grand livre des coûts du site (ai_cost_ledger) : inclut admins et utilisateurs. Texte, image et voix sont enregistrés. Les tokens sont souvent des estimations.",
     "pageLabels": {
       "/": "Accueil",
       "/library": "Bibliothèque",

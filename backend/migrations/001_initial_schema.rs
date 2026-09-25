@@ -710,6 +710,7 @@ CREATE INDEX IF NOT EXISTS idx_analytics_country_visitor_day
 
         // 平台运行时注册表与邮箱：所有后端副本共享的租约、邮箱和带过期的记录。
         // 智能体运行、AI 任务、IM 通道、限流和 Tapp 运行时都是它的租户。
+        // 全站 AI 费用账本同属平台：Tapp 只是调用方之一。
         manager
             .get_connection()
             .execute_unprepared(
@@ -747,6 +748,33 @@ CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_recipient
     ON runtime_mailbox (channel, runtime_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_expiry
     ON runtime_mailbox (expires_at);
+
+-- 全站 AI 费用账本：逐次调用的 append-only 流水，与按日聚合的
+-- tapp_quota_usage 配额计数相互独立，不随每日重置。Tapp 发起的调用带
+-- tapp_id；站点自身的调用（Agent、报告、人设等）没有，靠 source 区分。
+CREATE TABLE IF NOT EXISTS ai_cost_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    subject_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    tapp_id VARCHAR(255),
+    task_id VARCHAR(160) NOT NULL,
+    source VARCHAR(64) NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    model VARCHAR(255) NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    tokens_estimated BOOLEAN NOT NULL DEFAULT TRUE,
+    cost_micro_usd BIGINT,
+    status VARCHAR(16) NOT NULL,
+    error_code VARCHAR(64)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_cost_subject_time
+    ON ai_cost_ledger (subject_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_ai_cost_tapp_time
+    ON ai_cost_ledger (tapp_id, occurred_at);
 "#,
             )
             .await?;
@@ -762,6 +790,7 @@ CREATE INDEX IF NOT EXISTS idx_runtime_mailbox_expiry
                 r#"
 DROP TABLE IF EXISTS runtime_mailbox;
 DROP TABLE IF EXISTS runtime_registry;
+DROP TABLE IF EXISTS ai_cost_ledger;
 DROP TABLE IF EXISTS analytics_country_visitor;
 DROP TABLE IF EXISTS analytics_country_daily;
 DROP TABLE IF EXISTS analytics_referrer_daily;

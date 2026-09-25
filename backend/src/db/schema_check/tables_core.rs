@@ -752,5 +752,107 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 },
             ],
         },
+        // Site-wide AI cost ledger; a Tapp is one caller among others.
+        TableDef {
+            name: "ai_cost_ledger".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "id".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "occurred_at".into(),
+                    data_type: "timestamp with time zone".into(),
+                    default_value: Some("now()".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "subject_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "owner_id".into(),
+                    data_type: "integer".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "tapp_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "task_id".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "source".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "operation".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "provider".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "model".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "input_tokens".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "output_tokens".into(),
+                    data_type: "integer".into(),
+                    default_value: Some("0".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "tokens_estimated".into(),
+                    data_type: "boolean".into(),
+                    default_value: Some("true".into()),
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "cost_micro_usd".into(),
+                    data_type: "bigint".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "status".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+                ColumnDef {
+                    name: "error_code".into(),
+                    data_type: "character varying".into(),
+                    default_value: None,
+                    not_null: false,
+                },
+            ],
+        },
     ]
 }

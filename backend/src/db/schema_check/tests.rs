@@ -2220,3 +2220,63 @@ async fn tapp_named_runtime_registry_is_renamed_in_place() {
     .unwrap();
     schema.drop().await;
 }
+
+/// A database from before the AI cost ledger was platform infrastructure
+/// comes up with the platform name; Tapp rows keep their `tapp_id`, site
+/// rows lose the `__<source>__` stand-in, and new site rows need none.
+#[tokio::test]
+async fn tapp_named_ai_cost_ledger_is_renamed_in_place() {
+    use sea_orm::{ConnectionTrait, Statement};
+    // An isolated schema: safe on the shared test database.
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        return;
+    };
+    let schema = crate::db::IsolatedSchema::migrated(&url, "ledger_rename").await;
+    let db = &schema.db;
+    db.execute_unprepared(
+        "ALTER TABLE ai_cost_ledger RENAME TO tapp_ai_cost_ledger;
+         ALTER INDEX ai_cost_ledger_pkey RENAME TO tapp_ai_cost_ledger_pkey;
+         ALTER INDEX idx_ai_cost_subject_time RENAME TO idx_tapp_ai_cost_subject_time;
+         ALTER INDEX idx_ai_cost_tapp_time RENAME TO idx_tapp_ai_cost_tapp_time;
+         ALTER SEQUENCE ai_cost_ledger_id_seq RENAME TO tapp_ai_cost_ledger_id_seq;
+         ALTER TRIGGER trg_ai_cost_ledger_subject_user ON tapp_ai_cost_ledger
+             RENAME TO trg_tapp_ai_cost_ledger_subject_user;
+         INSERT INTO tapp_ai_cost_ledger
+             (subject_id, owner_id, tapp_id, task_id, source, operation, provider, model, status)
+             VALUES (0, 0, 'com.example.app', 't', 'runtime', 'chat', 'p', 'm', 'ok'),
+                    (0, 0, '__merope__', 't', 'merope', 'chat', 'p', 'm', 'ok');
+         ALTER TABLE tapp_ai_cost_ledger ALTER COLUMN tapp_id SET NOT NULL;",
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        migration::rename_ai_cost_ledger_if_needed(db).await.unwrap();
+    }
+    let names = |sql: &'static str| async move {
+        db.query_all_raw(Statement::from_string(db.get_database_backend(), sql))
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get::<Option<String>>("", "name").unwrap().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names("SELECT indexname::text AS name FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE '%ai_cost%' ORDER BY 1").await,
+        ["ai_cost_ledger_pkey", "idx_ai_cost_subject_time", "idx_ai_cost_tapp_time"]
+    );
+    assert_eq!(
+        names("SELECT tgname::text AS name FROM pg_trigger WHERE tgrelid = to_regclass('ai_cost_ledger') AND NOT tgisinternal").await,
+        ["trg_ai_cost_ledger_subject_user"]
+    );
+    assert_eq!(
+        names("SELECT tapp_id AS name FROM ai_cost_ledger ORDER BY source DESC").await,
+        ["com.example.app", ""]
+    );
+    db.execute_unprepared(
+        "INSERT INTO ai_cost_ledger (subject_id, owner_id, task_id, source, operation, provider, model, status)
+         VALUES (0, 0, 't', 'agent', 'chat', 'p', 'm', 'ok')",
+    )
+    .await
+    .unwrap();
+    schema.drop().await;
+}

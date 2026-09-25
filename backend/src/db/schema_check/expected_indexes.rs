@@ -206,16 +206,16 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             ],
             is_unique: true,
         },
-        // tapp_ai_cost_ledger 索引
+        // ai_cost_ledger 索引
         IndexDef {
-            name: "idx_tapp_ai_cost_subject_time".into(),
-            table: "tapp_ai_cost_ledger".into(),
+            name: "idx_ai_cost_subject_time".into(),
+            table: "ai_cost_ledger".into(),
             columns: vec!["subject_id".into(), "occurred_at".into()],
             is_unique: false,
         },
         IndexDef {
-            name: "idx_tapp_ai_cost_tapp_time".into(),
-            table: "tapp_ai_cost_ledger".into(),
+            name: "idx_ai_cost_tapp_time".into(),
+            table: "ai_cost_ledger".into(),
             columns: vec!["tapp_id".into(), "occurred_at".into()],
             is_unique: false,
         },

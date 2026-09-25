@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "來源",
     "aiUsageFilterAll": "全部",
     "aiUsageFiltersAria": "按使用者、模型與來源篩選 AI 用量",
-    "aiUsageNote": "全站費用賬本（tapp_ai_cost_ledger）：含管理員與普通使用者；文字、影象、語音呼叫都會入賬。Token 多為估算值。",
+    "aiUsageNote": "全站費用賬本（ai_cost_ledger）：含管理員與普通使用者；文字、影象、語音呼叫都會入賬。Token 多為估算值。",
     "pageLabels": {
       "/": "首頁",
       "/library": "資料庫",

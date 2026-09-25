@@ -154,7 +154,7 @@
     "aiUsageFilterSource": "来源",
     "aiUsageFilterAll": "全部",
     "aiUsageFiltersAria": "按用户、模型与来源筛选 AI 用量",
-    "aiUsageNote": "全站费用账本（tapp_ai_cost_ledger）：含管理员与普通用户；文字、图像、语音调用都会入账。Token 多为估算值。",
+    "aiUsageNote": "全站费用账本（ai_cost_ledger）：含管理员与普通用户；文字、图像、语音调用都会入账。Token 多为估算值。",
     "pageLabels": {
       "/": "首页",
       "/library": "资料库",

@@ -318,7 +318,7 @@
     },
     "aiUsage": {
       "what": "Siteweite KI-Nutzung (einschließlich Admins/Inhaber): Tagestrend, Ränge nach Nutzer/Modell/Quelle, mit Filtern.",
-      "chain": "1) Jeder Anbieteraufruf (Text, Bild, Sprache) schreibt tapp_ai_cost_ledger. Tapp / geplante Jobs rechnen Kontingent weiter auf dem geregelten Pfad ab; Agent, Berichte, Agent-Persona, Playground und Sprache sind gekennzeichnet; unbeschriftete Aufrufe landen als intern.\n2) Admin GET /api/analytics/ai-usage aggregiert nach lokalem Kalendertag des Servers und schließt Personal nicht aus.\n3) Balken = Aufrufe (linke Achse), Linie = Tokens (rechte Achse, unabhängige Skala); Listen nach Nutzer, Modell und Quelle.\n4) Unabhängig vom Erfassungsschalter der Besucherstatistik.",
+      "chain": "1) Jeder Anbieteraufruf (Text, Bild, Sprache) schreibt ai_cost_ledger. Tapp / geplante Jobs rechnen Kontingent weiter auf dem geregelten Pfad ab; Agent, Berichte, Agent-Persona, Playground und Sprache sind gekennzeichnet; unbeschriftete Aufrufe landen als intern.\n2) Admin GET /api/analytics/ai-usage aggregiert nach lokalem Kalendertag des Servers und schließt Personal nicht aus.\n3) Balken = Aufrufe (linke Achse), Linie = Tokens (rechte Achse, unabhängige Skala); Listen nach Nutzer, Modell und Quelle.\n4) Unabhängig vom Erfassungsschalter der Besucherstatistik.",
       "frontend": "Einstellungen → Daten & Statistik → „KI-Nutzungsstatistik“ (KPIs, Diagramm, nach Nutzer / Modell / Quelle).",
       "notes": "Tokens sind oft Schätzungen (Bilder nach Auflösung, Sprache nach Text-/Audiolänge). Das Panel ist nur für Admins."
     },

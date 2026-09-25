@@ -991,7 +991,7 @@ INSERT INTO federation_room_members (room_id, actor_url, is_local, membership_st
 VALUES ('room', 'https://site.example/users/gone', TRUE, 'joined', 10);
 INSERT INTO tapps (tapp_id, user_id, name, version, manifest, file_path, code_path)
 VALUES ('com.example.a', 10, 'A', '1', '{}', '', ''), ('com.example.a', 0, 'A', '1', '{}', '', '');
-INSERT INTO tapp_ai_cost_ledger (subject_id, owner_id, tapp_id, task_id, source, operation, provider, model, status)
+INSERT INTO ai_cost_ledger (subject_id, owner_id, tapp_id, task_id, source, operation, provider, model, status)
 VALUES (10, 10, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok'), (0, 0, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok');
 "#,
         )
@@ -1029,10 +1029,7 @@ VALUES (10, 10, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok'), (0, 0, 't', 'k', 'ag
             1
         );
         assert_eq!(count("SELECT count(*) AS n FROM tapps").await, 1);
-        assert_eq!(
-            count("SELECT count(*) AS n FROM tapp_ai_cost_ledger").await,
-            1
-        );
+        assert_eq!(count("SELECT count(*) AS n FROM ai_cost_ledger").await, 1);
 
         // Existing DBs: a missing FK is healed after clearing orphans only.
         db.execute_unprepared(
@@ -1063,7 +1060,7 @@ VALUES (10, 10, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok'), (0, 0, 't', 'k', 'ag
         // guest (negative) subjects stay unconstrained.
         let ledger = |subject: i32| {
             format!(
-                "INSERT INTO tapp_ai_cost_ledger (subject_id, owner_id, tapp_id, task_id, \
+                "INSERT INTO ai_cost_ledger (subject_id, owner_id, tapp_id, task_id, \
                  source, operation, provider, model, status) \
                  VALUES ({subject}, 0, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok')"
             )
@@ -1091,7 +1088,7 @@ VALUES (10, 10, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok'), (0, 0, 't', 'k', 'ag
         writer.commit().await.unwrap();
         deleting.await.unwrap().unwrap();
         assert_eq!(
-            count("SELECT count(*) AS n FROM tapp_ai_cost_ledger WHERE subject_id = 11").await,
+            count("SELECT count(*) AS n FROM ai_cost_ledger WHERE subject_id = 11").await,
             0
         );
 
@@ -1111,7 +1108,7 @@ VALUES (10, 10, 't', 'k', 'agent', 'chat', 'p', 'm', 'ok'), (0, 0, 't', 'k', 'ag
         deleter.commit().await.unwrap();
         assert!(writing.await.unwrap().is_err());
         assert_eq!(
-            count("SELECT count(*) AS n FROM tapp_ai_cost_ledger WHERE subject_id = 12").await,
+            count("SELECT count(*) AS n FROM ai_cost_ledger WHERE subject_id = 12").await,
             0
         );
 
