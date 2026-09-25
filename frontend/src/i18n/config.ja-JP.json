@@ -1102,6 +1102,8 @@
   "aiLiteEnable": "Lite モデルを有効化",
   "aiLiteEnableDesc": "オフ時は Lite タスクがスタンダードに戻る",
   "aiLiteProviderHint": "スタンダードと別設定可。キーは上のサービス設定へ",
+  "aiLiteJudgeModelLabel": "判断用モデル",
+  "aiLiteJudgeModelPlaceholder": "空欄なら Lite と同じ。気分・話しかけるか・何を覚えるかなど小さな判断用。速いモデル向け",
   "aiStandardModelTitle": "スタンダードモデル",
   "aiStandardModelDesc": "既定階層。通常タスク向け",
   "aiProModelTitle": "Pro モデル",

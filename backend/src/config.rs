@@ -335,6 +335,10 @@ pub struct DynamicConfig {
     pub lite_openai_api_key: Option<String>,
     pub lite_openai_model: String,
     pub lite_openai_base_url: String,
+    /// Optional model for Lite's small typed judgments (affect appraisal,
+    /// event decisions, memory extraction, whether to look something up),
+    /// on the same provider and credentials. Blank: Lite's own model.
+    pub lite_judge_model: String,
     // AI 配置（Pro 模型）
     pub pro_enabled: bool,
     pub pro_ai_provider: String,
@@ -766,6 +770,8 @@ impl Default for DynamicConfig {
             lite_openai_api_key: None,
             lite_openai_model: "openai/gpt-oss-20b:free".to_string(),
             lite_openai_base_url: "https://openrouter.ai/api/v1".to_string(),
+            // 留空：判断也用 Lite 的模型。
+            lite_judge_model: String::new(),
             // Pro 模型默认配置
             pro_enabled: false,
             pro_ai_provider: "openai".to_string(),
@@ -1553,6 +1559,17 @@ impl DynamicConfig {
         Some(self.resolve_ai_config(ModelTier::Lite))
     }
 
+    /// Lite for small typed judgments: the same provider and credentials,
+    /// with `lite_judge_model` when set. Speaking stays on Lite's own model.
+    pub fn resolve_lite_judge_ai_config(&self) -> Option<ResolvedAiConfig> {
+        let mut resolved = self.resolve_strict_lite_ai_config()?;
+        let judge = self.lite_judge_model.trim();
+        if !judge.is_empty() {
+            resolved.model = judge.to_string();
+        }
+        Some(resolved)
+    }
+
     /// 这一档要的模型没配、实际会落到 Standard 上吗？
     ///
     /// 开关打开但模型字段留空时，`resolve_tier` 会取 Standard 的模型。配置上
@@ -2108,6 +2125,40 @@ mod tests {
                 .resolve_strict_lite_ai_config()
                 .map(|resolved| resolved.model),
             Some("lite/model".to_string())
+        );
+    }
+
+    #[test]
+    fn judgments_use_the_judge_model_on_the_same_lite_credentials() {
+        let lite = DynamicConfig {
+            lite_enabled: true,
+            lite_ai_provider: "openai".to_string(),
+            lite_openai_model: "google/gemini-3.8-flash".to_string(),
+            lite_openai_base_url: "https://openrouter.ai/api/v1".to_string(),
+            ..DynamicConfig::default()
+        };
+        assert_eq!(
+            lite.resolve_lite_judge_ai_config().map(|r| r.model),
+            Some("google/gemini-3.8-flash".to_string()),
+            "blank: judgments use Lite's own model"
+        );
+        let split = DynamicConfig {
+            lite_judge_model: "  openai/gpt-6-luna ".to_string(),
+            ..lite.clone()
+        };
+        let judge = split.resolve_lite_judge_ai_config().unwrap();
+        let speak = split.resolve_strict_lite_ai_config().unwrap();
+        assert_eq!(judge.model, "openai/gpt-6-luna");
+        assert_eq!(speak.model, "google/gemini-3.8-flash");
+        assert_eq!(judge.base_url, speak.base_url, "same provider");
+        assert_eq!(judge.api_format, speak.api_format);
+        let off = DynamicConfig {
+            lite_enabled: false,
+            ..split
+        };
+        assert!(
+            off.resolve_lite_judge_ai_config().is_none(),
+            "no Lite, no judge"
         );
     }
 

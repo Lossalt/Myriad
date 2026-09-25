@@ -368,8 +368,7 @@ async fn evaluate(
         .map(|fact| bounded(&fact, 160))
         .collect();
     let analyzer =
-        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
-            .await?;
+        crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(CALL_TIMEOUT)).await?;
     let input = serde_json::to_string(&input).ok()?;
     tracing::info!(
         elapsed_ms = preparing.elapsed().as_millis() as u64,

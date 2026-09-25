@@ -219,9 +219,9 @@ async fn fill_old_concepts(db: &DatabaseConnection, owner: i32) {
         if memories.is_empty() {
             continue;
         }
-        let Some(analyzer) = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(
-            Some(std::time::Duration::from_secs(30)),
-        )
+        let Some(analyzer) = crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(
+            std::time::Duration::from_secs(30),
+        ))
         .await
         else {
             return;

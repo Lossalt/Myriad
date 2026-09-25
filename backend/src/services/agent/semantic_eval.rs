@@ -420,6 +420,16 @@ fn request(case: &Case) -> Value {
     }
 }
 
+/// Kinds production runs on the judgment model (`lite_judge_model`). A
+/// touch decision's speech is played as written, so it stays on Lite.
+fn is_judgment(case: &Case) -> bool {
+    match case.kind.as_str() {
+        "memory" | "touch" | "wonder" => true,
+        "event" => case.event_kind != "agent.merope.touch",
+        _ => false,
+    }
+}
+
 fn gated(case: &Case) -> bool {
     if case.kind != "event" {
         return false;
@@ -718,6 +728,23 @@ async fn run_semantic_suite() {
     } else {
         None
     };
+    // Judgment kinds run on the judgment model, as production does.
+    let judge = if mode == "live" {
+        crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(Duration::from_secs(
+            diagnostic.unwrap_or(4),
+        )))
+        .await
+    } else {
+        None
+    };
+    if mode == "live" {
+        let judge_model = crate::GLOBAL_DYNAMIC_CONFIG
+            .read()
+            .await
+            .resolve_lite_judge_ai_config()
+            .map(|resolved| resolved.model);
+        model_info["judgeModel"] = json!(judge_model);
+    }
     let director = if mode == "live" {
         crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(Duration::from_secs(
             diagnostic.unwrap_or(9),
@@ -768,6 +795,8 @@ async fn run_semantic_suite() {
             ("gated".into(), String::new())
         } else if let Some(analyzer) = if case.kind == "motion" {
             &director
+        } else if is_judgment(&case) {
+            &judge
         } else {
             &analyzer
         } {

@@ -805,6 +805,17 @@ pub(crate) async fn build_config(
                     required: false,
                 },
                 ConfigField {
+                    key: "lite_judge_model".to_string(),
+                    label: "Judgment Model".to_string(),
+                    field_type: "text".to_string(),
+                    value: db_config
+                        .as_ref()
+                        .map(|c| c.lite_judge_model.clone())
+                        .unwrap_or_else(|| std::env::var("LITE_JUDGE_MODEL").unwrap_or_default()),
+                    placeholder: "Blank: same as the Lite model".to_string(),
+                    required: false,
+                },
+                ConfigField {
                     key: "lite_openai_base_url".to_string(),
                     label: "【Lite Model】OpenAI Base URL".to_string(),
                     field_type: "text".to_string(),

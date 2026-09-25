@@ -229,6 +229,7 @@ async fn wonder_and_find_out(
     let soul: String = soul.chars().take(2000).collect();
     let myself = super::self_state::current(&db).await.facts_view();
     let Some(wonder) = ask_model::<Wonder>(
+        Voice::Judge,
         user_id,
         "wonder",
         &wonder_system(&soul),
@@ -276,6 +277,7 @@ async fn wonder_and_find_out(
     }
     let why = wonder.why.unwrap_or_default();
     let Some(found) = ask_model::<FoundOut>(
+        Voice::Hers,
         user_id,
         "found_out",
         &digest_system(&soul, why.trim()),
@@ -346,7 +348,14 @@ pub(crate) fn parse_found_out(raw: &str) -> bool {
     parse::<FoundOut>(raw).is_some_and(|found| !found.learned.trim().is_empty())
 }
 
+/// Whether a call judges (fast model) or writes in her own words (Lite).
+enum Voice {
+    Judge,
+    Hers,
+}
+
 async fn ask_model<T: for<'de> Deserialize<'de>>(
+    voice: Voice,
     user_id: i32,
     operation: &'static str,
     system: &str,
@@ -354,9 +363,16 @@ async fn ask_model<T: for<'de> Deserialize<'de>>(
     schema_name: &str,
     schema: &Value,
 ) -> Option<T> {
-    let analyzer =
-        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
-            .await?;
+    let analyzer = match voice {
+        Voice::Judge => {
+            crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
+                .await?
+        }
+        Voice::Hers => {
+            crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(CALL_TIMEOUT))
+                .await?
+        }
+    };
     let raw = crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,
         "merope",

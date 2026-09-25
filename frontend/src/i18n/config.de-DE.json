@@ -1102,6 +1102,8 @@
   "aiLiteEnable": "Lite-Modell aktivieren",
   "aiLiteEnableDesc": "Wenn aus, fallen Lite-Aufgaben auf Standard zurück",
   "aiLiteProviderHint": "Kann von Standard abweichen; Schlüssel liegen oben unter Anbieter",
+  "aiLiteJudgeModelLabel": "Modell für Entscheidungen",
+  "aiLiteJudgeModelPlaceholder": "Leer: wie das Lite-Modell. Für kleine Entscheidungen (Stimmung, ob sie spricht, was sie sich merkt); ein schnelles Modell passt",
   "aiStandardModelTitle": "Standard-Modell",
   "aiStandardModelDesc": "Standardstufe für den Alltag",
   "aiProModelTitle": "Pro-Modell",

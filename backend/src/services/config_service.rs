@@ -81,6 +81,7 @@ standard_fields! {
         lite_gemini_model,
         lite_openai_model,
         lite_openai_base_url,
+        lite_judge_model,
         pro_ai_provider,
         pro_gemini_model,
         pro_openai_model,

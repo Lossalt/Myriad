@@ -72,11 +72,20 @@ pub async fn consider_event(
         ConsciousnessGate::Decide => {}
     }
 
-    let Some(analyzer) = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
-        DECISION_REQUEST_TIMEOUT,
-    ))
-    .await
-    else {
+    // A touch decision's speech plays as she wrote it: her own voice. Every
+    // other decision is a typed judgment; its gist is voiced later.
+    let analyzer = if event.kind == "agent.merope.touch" {
+        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
+            DECISION_REQUEST_TIMEOUT,
+        ))
+        .await
+    } else {
+        crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(
+            DECISION_REQUEST_TIMEOUT,
+        ))
+        .await
+    };
+    let Some(analyzer) = analyzer else {
         tracing::debug!("[Consciousness] strict Lite unavailable; decision skipped");
         return Ok(None);
     };

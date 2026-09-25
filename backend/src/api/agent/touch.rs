@@ -173,7 +173,8 @@ pub async fn appraise(
     let decision = tokio::time::timeout(Duration::from_secs(3), async {
         let state = merope::get_or_create_state(&db, user_id).await.ok()?;
         let soul = merope::resolve_speaking_soul().await?;
-        let analyzer = crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(
+        // A nonverbal reaction class: a typed judgment, not speech.
+        let analyzer = crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(
             Duration::from_secs(2),
         ))
         .await?;

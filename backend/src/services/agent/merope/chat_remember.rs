@@ -243,7 +243,7 @@ async fn extract_and_store(
         return;
     }
     let Some(analyzer) =
-        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(EXTRACT_TIMEOUT))
+        crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(EXTRACT_TIMEOUT))
             .await
     else {
         tracing::warn!(
