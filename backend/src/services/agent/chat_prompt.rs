@@ -33,14 +33,44 @@ pub fn reconstruct_conversation_message(
             content.push_str(&format!("\n{extras}"));
         }
     }
+    let content = if for_chat {
+        let spoken = chat_safe_content(&content);
+        match cut_off_marker(&role, metadata) {
+            Some(marker) if !spoken.is_empty() => format!("{spoken}{marker}"),
+            _ => spoken,
+        }
+    } else {
+        content
+    };
     ConversationMessage {
         role,
-        content: if for_chat {
-            chat_safe_content(&content)
-        } else {
-            content
-        },
+        content,
         created_at,
+    }
+}
+
+/// Metadata key on a reply she did not get to finish.
+pub const CUT_OFF_KEY: &str = "cutOff";
+/// Typed: they saw exactly this much.
+const CUT_OFF_SEEN: &str = "partial";
+/// Spoken: the text ran ahead of her voice; how much they heard is unknown.
+const CUT_OFF_SPOKEN: &str = "unheard_end";
+
+pub fn cut_off_kind(voice: bool) -> &'static str {
+    if voice { CUT_OFF_SPOKEN } else { CUT_OFF_SEEN }
+}
+
+/// How a cut-off reply of hers reads in the conversation.
+fn cut_off_marker(role: &str, metadata: Option<&Value>) -> Option<&'static str> {
+    if role != "assistant" {
+        return None;
+    }
+    match metadata?.get(CUT_OFF_KEY)?.as_str()? {
+        CUT_OFF_SEEN => Some(" [cut off here: they spoke before you finished]"),
+        CUT_OFF_SPOKEN => {
+            Some(" [cut off while saying this: they spoke over you and may not have heard the end]")
+        }
+        _ => None,
     }
 }
 
@@ -432,6 +462,27 @@ mod tests {
             "frontendAction": { "action": "navigate", "path": "/reports" },
             "confirmation": { "confirmationId": "cnf_1" }
         })
+    }
+
+    #[test]
+    fn a_reply_she_did_not_finish_reads_as_cut_off() {
+        let read = |role: &str, kind: &str| {
+            reconstruct_conversation_message(
+                role.into(),
+                "我觉得海边挺好的，因为".into(),
+                None,
+                Some(&json!({ CUT_OFF_KEY: kind, "runId": "run_1" })),
+                true,
+            )
+            .content
+        };
+        assert_eq!(
+            read("assistant", cut_off_kind(false)),
+            "我觉得海边挺好的，因为 [cut off here: they spoke before you finished]"
+        );
+        assert!(read("assistant", cut_off_kind(true)).ends_with("may not have heard the end]"));
+        assert_eq!(read("user", cut_off_kind(false)), "我觉得海边挺好的，因为");
+        assert_eq!(read("assistant", "other"), "我觉得海边挺好的，因为");
     }
 
     #[test]

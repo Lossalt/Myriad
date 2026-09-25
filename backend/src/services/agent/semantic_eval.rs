@@ -150,6 +150,9 @@ struct Case {
 struct HistoryLine {
     role: String,
     text: String,
+    /// Her line was cut off: `partial` (typed) or `unheard_end` (spoken).
+    #[serde(default, rename = "cutOff", skip_serializing_if = "Option::is_none")]
+    cut_off: Option<String>,
 }
 
 /// Mind cases wear the production persona contract (no body, own words).
@@ -208,10 +211,18 @@ fn mind_chat_prompt(case: &Case) -> String {
         .history
         .iter()
         .enumerate()
-        .map(|(index, line)| super::ConversationMessage {
-            role: line.role.clone(),
-            content: line.text.clone(),
-            created_at: Some((base + chrono::Duration::minutes(index as i64)).to_rfc3339()),
+        .map(|(index, line)| {
+            // Read back as production reads a stored row.
+            chat_prompt::reconstruct_conversation_message(
+                line.role.clone(),
+                line.text.clone(),
+                Some((base + chrono::Duration::minutes(index as i64)).to_rfc3339()),
+                line.cut_off
+                    .as_ref()
+                    .map(|kind| json!({ chat_prompt::CUT_OFF_KEY: kind }))
+                    .as_ref(),
+                true,
+            )
         })
         .collect();
     let said: Vec<(chrono::DateTime<chrono::Utc>, String)> = case
@@ -1213,7 +1224,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 14;
+const MIND_CASES: usize = 15;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -1253,6 +1264,13 @@ fn mind_cases_run_through_production_sections_and_contracts() {
             .contains("They attached 1 image to this message; you can see it.")
     );
     assert_eq!(case_images(by_id("mind-sees-image"))[0].mime, "image/jpeg");
+    let cut = request(by_id("mind-cut-off"));
+    assert!(
+        cut["input"]
+            .as_str()
+            .unwrap()
+            .contains("[cut off here: they spoke before you finished]")
+    );
     let after = request(by_id("mind-inner-after"));
     assert!(
         after["system"]

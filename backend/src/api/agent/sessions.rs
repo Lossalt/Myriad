@@ -524,6 +524,43 @@ pub(crate) async fn persist_assistant_message(
 ///
 /// Chat (`for_chat`) 只保留对白；Work 仍可把任务元数据、确认卡和前端动作
 /// 追加进 planner 可见内容。
+/// Her spoken reply was cut off after it had been saved whole: the voice runs
+/// behind the text, so mark it as possibly not heard to the end.
+pub(crate) async fn mark_spoken_reply_cut_off(
+    db: &DatabaseConnection,
+    session_id: &str,
+    run_id: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    let recent = agent_messages::Entity::find()
+        .filter(agent_messages::Column::SessionId.eq(session_id))
+        .filter(agent_messages::Column::Role.eq("assistant"))
+        .order_by_desc(agent_messages::Column::CreatedAt)
+        .paginate(db, 4)
+        .fetch_page(0)
+        .await?;
+    let Some(reply) = recent.into_iter().find(|message| {
+        message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("runId"))
+            .and_then(Value::as_str)
+            == Some(run_id)
+    }) else {
+        return Ok(false);
+    };
+    let mut metadata = reply.metadata.clone().unwrap_or_else(|| json!({}));
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert(
+            crate::services::agent::chat_prompt::CUT_OFF_KEY.into(),
+            json!(crate::services::agent::chat_prompt::cut_off_kind(true)),
+        );
+    }
+    let mut active: agent_messages::ActiveModel = reply.into();
+    active.metadata = Set(Some(metadata));
+    active.update(db).await?;
+    Ok(true)
+}
+
 pub(crate) async fn load_session_history(
     db: &DatabaseConnection,
     session_id: &str,

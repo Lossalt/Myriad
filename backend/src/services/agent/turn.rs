@@ -6,7 +6,8 @@
 //! by Chat. SSE disconnect unsubscribes; it does not cancel the run.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use once_cell::sync::Lazy;
 use serde_json::json;
@@ -64,6 +65,90 @@ struct ChatTurnSlot {
     tx: oneshot::Sender<()>,
     slot_id: u64,
     run_id: String,
+    spoken: Spoken,
+}
+
+const RUNNING: u8 = 0;
+const FINISHED: u8 = 1;
+/// Cut off by a newer turn, which saves what was said.
+const TAKEN: u8 = 2;
+/// Cut off with no newer turn: the turn saves what it said itself.
+const STOPPED: u8 = 3;
+const MAX_SPOKEN_BYTES: usize = 16 * 1024;
+
+/// What a Chat turn has said so far. A turn either finishes and saves its
+/// whole reply, or is cut off and only what was said is saved; never both.
+#[derive(Clone, Default)]
+pub struct Spoken {
+    text: Arc<std::sync::Mutex<String>>,
+    state: Arc<AtomicU8>,
+    /// Spoken aloud: the text runs ahead of what they heard.
+    voice: bool,
+}
+
+/// A turn cut off partway, and what it had said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CutOff {
+    pub text: String,
+    pub voice: bool,
+    pub run_id: String,
+}
+
+impl Spoken {
+    pub fn push(&self, token: &str) {
+        if let Ok(mut text) = self.text.lock() {
+            if text.len() + token.len() <= MAX_SPOKEN_BYTES {
+                text.push_str(token);
+            }
+        }
+    }
+
+    /// The turn ends by itself. False when it was cut off first: then its
+    /// reply is not saved, only what it had said.
+    pub fn finish(&self) -> bool {
+        match self
+            .state
+            .compare_exchange(RUNNING, FINISHED, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => true,
+            Err(state) => state == FINISHED,
+        }
+    }
+
+    fn cut(&self, to: u8, run_id: &str) -> Option<CutOff> {
+        self.state
+            .compare_exchange(RUNNING, to, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        let text = self.text.lock().ok()?.trim().to_string();
+        (!text.is_empty()).then(|| CutOff {
+            text,
+            voice: self.voice,
+            run_id: run_id.to_owned(),
+        })
+    }
+
+    /// Stopped with no newer turn: what this turn said, for it to save.
+    pub fn stopped(&self) -> Option<String> {
+        (self.state.load(Ordering::Acquire) == STOPPED)
+            .then(|| self.text.lock().ok().map(|text| text.trim().to_string()))
+            .flatten()
+            .filter(|text| !text.is_empty())
+    }
+
+    pub fn voice(&self) -> bool {
+        self.voice
+    }
+}
+
+/// A claimed Chat turn.
+pub struct ChatClaim {
+    /// Fires when a newer turn or a stop cuts this one off.
+    pub cancelled: oneshot::Receiver<()>,
+    pub slot_id: u64,
+    /// Where this turn keeps what it has said.
+    pub spoken: Spoken,
+    /// The previous turn, if this claim cut it off partway.
+    pub cut_off: Option<CutOff>,
 }
 
 static CHAT_TURNS: Lazy<Mutex<HashMap<(i32, String), ChatTurnSlot>>> =
@@ -72,25 +157,52 @@ static NEXT_CHAT_SLOT: AtomicU64 = AtomicU64::new(1);
 
 /// Register this Chat run as the live turn for the session. The previous Chat
 /// turn, if any, is cancelled. Work must not call this.
+#[cfg(test)]
 pub async fn claim_chat_turn(
     user_id: i32,
     session_id: &str,
     run_id: &str,
 ) -> (oneshot::Receiver<()>, u64) {
+    let claim = claim_speaking_turn(user_id, session_id, run_id, false).await;
+    (claim.cancelled, claim.slot_id)
+}
+
+/// [`claim_chat_turn`], keeping what the turn says and handing over what the
+/// turn it replaces had said, if it was cut off partway.
+pub async fn claim_speaking_turn(
+    user_id: i32,
+    session_id: &str,
+    run_id: &str,
+    voice: bool,
+) -> ChatClaim {
     let (tx, rx) = oneshot::channel();
     let slot_id = NEXT_CHAT_SLOT.fetch_add(1, Ordering::Relaxed);
+    let spoken = Spoken {
+        voice,
+        ..Spoken::default()
+    };
     let mut slots = CHAT_TURNS.lock().await;
-    if let Some(previous) = slots.insert(
-        (user_id, session_id.to_string()),
-        ChatTurnSlot {
-            tx,
-            slot_id,
-            run_id: run_id.to_owned(),
-        },
-    ) {
-        let _ = previous.tx.send(());
+    let cut_off = slots
+        .insert(
+            (user_id, session_id.to_string()),
+            ChatTurnSlot {
+                tx,
+                slot_id,
+                run_id: run_id.to_owned(),
+                spoken: spoken.clone(),
+            },
+        )
+        .and_then(|previous| {
+            let cut_off = previous.spoken.cut(TAKEN, &previous.run_id);
+            let _ = previous.tx.send(());
+            cut_off
+        });
+    ChatClaim {
+        cancelled: rx,
+        slot_id,
+        spoken,
+        cut_off,
     }
-    (rx, slot_id)
 }
 
 /// A voice transport may stop its own run, never a newer typed Chat reply.
@@ -101,6 +213,7 @@ pub async fn cancel_chat_run(user_id: i32, session_id: &str, run_id: &str) -> bo
         return false;
     }
     if let Some(slot) = slots.remove(&key) {
+        slot.spoken.cut(STOPPED, &slot.run_id);
         let _ = slot.tx.send(());
     }
     true
@@ -120,6 +233,7 @@ pub async fn cancel_chat_turn(user_id: i32, session_id: &str) -> bool {
     let mut slots = CHAT_TURNS.lock().await;
     if !session_id.is_empty() {
         if let Some(previous) = slots.remove(&(user_id, session_id.to_string())) {
+            previous.spoken.cut(STOPPED, &previous.run_id);
             let _ = previous.tx.send(());
             return true;
         }
@@ -133,6 +247,7 @@ pub async fn cancel_chat_turn(user_id: i32, session_id: &str) -> bool {
     let mut cancelled = false;
     for key in keys {
         if let Some(previous) = slots.remove(&key) {
+            previous.spoken.cut(STOPPED, &previous.run_id);
             let _ = previous.tx.send(());
             cancelled = true;
         }
@@ -275,6 +390,39 @@ mod tests {
         let _second = claim_chat_turn(13, "s", "second").await;
         let _again = claim_chat_turn(13, "s", "again").await;
         assert!(first.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_turn_hands_over_what_it_said_exactly_once() {
+        let first = claim_speaking_turn(16, "s", "first", false).await;
+        first.spoken.push("我觉得海边");
+        first.spoken.push("挺好的，因为");
+        let second = claim_speaking_turn(16, "s", "second", false).await;
+        assert!(first.cancelled.await.is_ok());
+        assert_eq!(
+            second.cut_off,
+            Some(CutOff {
+                text: "我觉得海边挺好的，因为".into(),
+                voice: false,
+                run_id: "first".into(),
+            })
+        );
+        // The cut-off turn does not also save its whole reply.
+        assert!(!first.spoken.finish());
+        assert!(first.spoken.stopped().is_none());
+
+        // A turn that already finished is not cut off.
+        second.spoken.push("好。");
+        assert!(second.spoken.finish());
+        let third = claim_speaking_turn(16, "s", "third", true).await;
+        assert!(third.cut_off.is_none());
+
+        // Stopped with no newer turn: it keeps what it said, to save itself.
+        third.spoken.push("那我们");
+        assert!(cancel_chat_run(16, "s", "third").await);
+        assert!(!third.spoken.finish());
+        assert_eq!(third.spoken.stopped().as_deref(), Some("那我们"));
+        assert!(third.spoken.voice());
     }
 
     #[tokio::test]
