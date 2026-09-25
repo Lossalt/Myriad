@@ -91,6 +91,13 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         Duration::ZERO,
         move || agent::merope::tick_speak_intents(speak_db.clone()),
     );
+    let wander_db = db.clone();
+    drivers.periodic(
+        "mind wandering",
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+        move || agent::merope::wander::tick(wander_db.clone()),
+    );
     let expiry_db = db.clone();
     drivers.periodic("TAPP interactions", Duration::from_secs(5), Duration::ZERO, move || {
         let db = expiry_db.clone();

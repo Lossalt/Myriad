@@ -40,6 +40,8 @@ const ASSOCIATED_MIN: f64 = 0.15;
 const PRIMING_FADE: f64 = 0.5;
 /// How many memories stay on the mind between turns.
 const PRIMING_KEPT: usize = 16;
+/// How far one bout of mind-wandering drifts.
+const WANDER_STEPS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryKind {
@@ -634,6 +636,66 @@ fn rank_primed(
         .filter_map(|index| rows[index].take())
         .collect();
     (chosen, next)
+}
+
+/// Let the mind wander over a person's memories that `present` may hear:
+/// start from what is still on the mind (else somewhere recent), drift a few
+/// steps along association, and return where it settled. `avoid` holds ids
+/// thought of lately, which are never landed on. Nothing is counted as used:
+/// a passing thought is not a recall until it is said.
+pub async fn wander<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    priming: &Priming,
+    avoid: &std::collections::HashSet<String>,
+    roll: &mut impl FnMut() -> f64,
+) -> Result<Option<MemoryRecord>, DbErr> {
+    if user_id <= 0 {
+        return Ok(None);
+    }
+    let mut seen = std::collections::HashSet::new();
+    let rows: Vec<agent_memories::Model> = active_rows(db, user_id, &MemoryKind::ABOUT_PERSON)
+        .await?
+        .into_iter()
+        .filter(|row| audience_admits(&audience_of(row), present))
+        .filter(|row| {
+            let content = normalize_content(&row.content);
+            !content.is_empty() && seen.insert(content)
+        })
+        .collect();
+    if rows.len() < 2 {
+        return Ok(None);
+    }
+    let concepts: Vec<Vec<Concept>> = rows.iter().map(concepts_of).collect();
+    let nodes: Vec<super::association::Node> = rows
+        .iter()
+        .zip(&concepts)
+        .map(|(row, concepts)| super::association::Node {
+            concepts,
+            at: row.created_at,
+        })
+        .collect();
+    let primed = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| (priming.of(&row.id), index))
+        .filter(|(activation, _)| *activation > 0.0)
+        .max_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, index)| index);
+    // Rows are newest first; squaring leans a random start toward recent.
+    let start = primed.unwrap_or_else(|| {
+        let at = roll().clamp(0.0, 1.0);
+        ((at * at) * rows.len() as f64) as usize % rows.len()
+    });
+    let avoid: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| avoid.contains(&row.id))
+        .map(|(index, _)| index)
+        .collect();
+    let landed = super::association::wander(&nodes, start, WANDER_STEPS, &avoid, roll);
+    Ok(landed.map(|index| MemoryRecord::from(rows[index].clone())))
 }
 
 /// What stays on the mind for the next turn: the most active memories, each

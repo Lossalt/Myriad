@@ -100,6 +100,21 @@ pub fn remember_live_presence(user_id: i32, live: SelfLivePresence) -> bool {
         .unwrap_or(false)
 }
 
+/// People with a page of the site open and visible right now.
+pub fn present_users() -> Vec<i32> {
+    let now = Utc::now();
+    LIVE.read()
+        .map(|store| {
+            store
+                .users
+                .keys()
+                .copied()
+                .filter(|user_id| store.last(*user_id, now).page_visible)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn last_live_presence(user_id: i32) -> SelfLivePresence {
     LIVE.read()
         .map(|store| store.last(user_id, Utc::now()))

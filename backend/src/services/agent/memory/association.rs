@@ -82,6 +82,66 @@ pub fn spread(seeds: &[f64], nodes: &[Node]) -> Vec<f64> {
         .collect()
 }
 
+/// Mind-wandering: from `start`, take up to `steps` steps along association,
+/// each to a neighbour chosen in proportion to link strength (a shared rare
+/// concept pulls harder than a hub; learned together pulls hardest when close
+/// in time). `avoid` nodes are never landed on, so the same thought does not
+/// keep coming back. `roll` yields uniform numbers in `0..1`. Returns where
+/// the walk stopped if it moved at all.
+///
+/// A random walk on an association network reproduces how people drift
+/// through memory (Abbott, Austerweil & Griffiths 2015); no model is needed
+/// until there is something worth saying.
+pub fn wander(
+    nodes: &[Node],
+    start: usize,
+    steps: usize,
+    avoid: &[usize],
+    roll: &mut impl FnMut() -> f64,
+) -> Option<usize> {
+    if start >= nodes.len() {
+        return None;
+    }
+    let members = concept_members(nodes);
+    let neighbours = time_neighbours(nodes);
+    let mut at = start;
+    let mut visited = vec![start];
+    for _ in 0..steps {
+        let mut options: HashMap<usize, f64> = HashMap::new();
+        for concept in nodes[at].concepts {
+            if let Some(members) = members.get(&concept.name.to_lowercase()) {
+                for &other in members {
+                    *options.entry(other).or_default() += 1.0 / members.len() as f64;
+                }
+            }
+        }
+        for &(other, weight) in &neighbours[at] {
+            *options.entry(other).or_default() += weight;
+        }
+        let mut options: Vec<(usize, f64)> = options
+            .into_iter()
+            .filter(|(other, _)| !visited.contains(other) && !avoid.contains(other))
+            .collect();
+        if options.is_empty() {
+            break;
+        }
+        options.sort_by_key(|(other, _)| *other);
+        let total: f64 = options.iter().map(|(_, weight)| weight).sum();
+        let mut pick = roll().clamp(0.0, 1.0) * total;
+        let mut next = options[options.len() - 1].0;
+        for (other, weight) in options {
+            if pick < weight {
+                next = other;
+                break;
+            }
+            pick -= weight;
+        }
+        visited.push(next);
+        at = next;
+    }
+    (at != start).then_some(at)
+}
+
 fn concept_members(nodes: &[Node]) -> HashMap<String, Vec<usize>> {
     let mut members: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, node) in nodes.iter().enumerate() {
@@ -207,6 +267,40 @@ mod tests {
             activation[1],
             activation[3]
         );
+    }
+
+    #[test]
+    fn wandering_follows_associations_and_avoids_recent_thoughts() {
+        let cat = [concept("猫"), concept("年糕")];
+        let mochi = [concept("年糕")];
+        let tea = [concept("茶")];
+        let nodes = [
+            Node {
+                concepts: &cat,
+                at: at(0),
+            },
+            Node {
+                concepts: &mochi,
+                at: at(60 * 24 * 30),
+            },
+            Node {
+                concepts: &tea,
+                at: at(60 * 24 * 60),
+            },
+        ];
+        let mut always = || 0.5;
+        assert_eq!(wander(&nodes, 0, 3, &[], &mut always), Some(1));
+        assert_eq!(
+            wander(&nodes, 0, 3, &[1], &mut always),
+            None,
+            "the only association was thought of lately"
+        );
+        assert_eq!(
+            wander(&nodes, 2, 3, &[], &mut always),
+            None,
+            "nothing links tea"
+        );
+        assert_eq!(wander(&nodes, 9, 3, &[], &mut always), None);
     }
 
     #[test]

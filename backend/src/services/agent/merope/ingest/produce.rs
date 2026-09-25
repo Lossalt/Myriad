@@ -175,6 +175,14 @@ pub async fn ingest(
     let sight = current_sight(user_id, &state).await;
     let decision = decide_ingest(event_key, &sight);
     let touch = event_key == "agent.merope.touch";
+    // A passing thought: said live to someone who can see her, or let go.
+    let thought = event_key == super::super::wander::THOUGHT_EVENT;
+    if thought {
+        let live = crate::services::agent::consciousness::last_live_presence(user_id);
+        if !live.face_visible || live.speaking || !decision.allow_model {
+            return Ok(());
+        }
+    }
     if touch {
         let live = crate::services::agent::consciousness::last_live_presence(user_id);
         if !live.face_visible || live.speaking || !decision.allow_model {
@@ -272,6 +280,9 @@ pub async fn ingest(
             intent.expires_at = conscious_event.occurred_at + chrono::Duration::seconds(20);
             intent.observation = Some(summary.clone());
         }
+        if thought {
+            intent.expires_at = conscious_event.occurred_at + chrono::Duration::seconds(60);
+        }
         enqueue_speak_intent(intent);
         let speak_db = db.clone();
         tokio::spawn(async move {
@@ -279,7 +290,7 @@ pub async fn ingest(
         });
     }
 
-    if !touch {
+    if !touch && !thought {
         let _ = insert_diary(db, user_id, &summary, DIARY_SOURCE_EVENT).await;
     }
     Ok(())

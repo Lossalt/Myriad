@@ -16,6 +16,7 @@ pub mod self_state;
 pub mod speaking_prompts;
 pub mod state;
 pub mod store;
+pub mod wander;
 
 pub use chat_remember::spawn_chat_remember;
 pub use ingest::{

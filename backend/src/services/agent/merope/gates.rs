@@ -40,7 +40,9 @@ pub fn is_task_outcome(event_key: &str) -> bool {
 }
 
 pub fn worth_notifying(event_key: &str) -> bool {
-    if event_key == "agent.merope.touch" {
+    // A touch answers the moment; a passing thought is said to someone here
+    // or not at all. Neither is worth a notification.
+    if event_key == "agent.merope.touch" || event_key == super::wander::THOUGHT_EVENT {
         return false;
     }
     is_valuable_event(event_key) || event_key.starts_with("agent.merope.")
@@ -56,6 +58,14 @@ pub fn decide_ingest(event_key: &str, sight: &IngestSight) -> IngestDecision {
             notify: false,
             live: false,
             reason: "touch_not_present",
+        };
+    }
+    if event_key == super::wander::THOUGHT_EVENT && !sight.on_page {
+        return IngestDecision {
+            allow_model: false,
+            notify: false,
+            live: false,
+            reason: "thought_not_present",
         };
     }
     if sight.executing && !is_task_outcome(event_key) {
@@ -215,6 +225,24 @@ mod tests {
         assert!(!is_valuable_event("platform.sync.error"));
         let decision = decide_ingest("platform.sync.failed", &IngestSight::default());
         assert!(decision.notify);
+    }
+
+    #[test]
+    fn a_passing_thought_is_said_to_someone_here_or_not_at_all() {
+        let thought = crate::services::agent::merope::wander::THOUGHT_EVENT;
+        assert!(!worth_notifying(thought));
+        let away = decide_ingest(thought, &IngestSight::default());
+        assert!(!away.allow_model);
+        assert!(!away.notify);
+        let here = decide_ingest(
+            thought,
+            &IngestSight {
+                on_page: true,
+                ..IngestSight::default()
+            },
+        );
+        assert!(here.allow_model);
+        assert!(!here.notify);
     }
 
     #[test]
