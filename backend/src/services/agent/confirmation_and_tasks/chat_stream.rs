@@ -329,11 +329,16 @@ impl Agent {
                 merope_block = format!("{merope_block}\n\n{player}");
             }
         }
-        let history = request
-            .context
-            .as_ref()
-            .and_then(|context| context.conversation_history.as_deref())
-            .unwrap_or(&[]);
+        let history = crate::services::agent::merope::with_said_unprompted(
+            &self.db,
+            request.user_id,
+            request
+                .context
+                .as_ref()
+                .and_then(|context| context.conversation_history.as_deref())
+                .unwrap_or(&[]),
+        )
+        .await;
 
         let custom = request
             .context
@@ -347,7 +352,7 @@ impl Agent {
         crate::services::agent::chat_prompt::build_chat_lite_prompt_with_perception(
             &soul,
             &merope_block,
-            history,
+            &history,
             &request.raw_input,
             &perception,
         )

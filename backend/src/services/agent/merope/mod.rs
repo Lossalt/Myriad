@@ -262,7 +262,7 @@ pub use speaking_prompts::{
     addressee_speaking_section, format_activity_section, format_curious_section,
     format_emotion_section, format_mood_section, format_on_your_mind_section,
     format_own_days_section, format_persona, format_recent_section, format_remembered_section,
-    format_said_unprompted_section, guest_speaking_section, mood_tone_instruction,
+    guest_speaking_section, mood_tone_instruction,
 };
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -334,6 +334,74 @@ const OWN_DAYS_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_LIMIT: u64 = 3;
 const SAID_UNPROMPTED_WITHIN_HOURS: i64 = 6;
 
+/// The conversation as she lived it: what she said to them on her own is
+/// part of it, in its place in time, as her own line. A section beside the
+/// history was ignored in testing; a line in the history is not.
+pub async fn with_said_unprompted(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    history: &[crate::services::agent::ConversationMessage],
+) -> Vec<crate::services::agent::ConversationMessage> {
+    if user_id <= 0 || !is_logged_in_addressee(user_id) || !is_enabled().await {
+        return history.to_vec();
+    }
+    let since = chrono::Utc::now() - chrono::Duration::hours(SAID_UNPROMPTED_WITHIN_HOURS);
+    let said: Vec<(chrono::DateTime<chrono::Utc>, String)> =
+        store::recent_proactive(db, user_id, SAID_UNPROMPTED_LIMIT)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|line| {
+                (
+                    line.created_at.with_timezone(&chrono::Utc),
+                    ingest::compact_summary(&line.content),
+                )
+            })
+            .filter(|(at, line)| *at >= since && !line.is_empty())
+            .collect();
+    merge_said_unprompted(history, &said)
+}
+
+/// Put her unprompted lines into the history by time. A line already in the
+/// history is not added twice; history without timestamps keeps its order
+/// and her lines go after it.
+pub fn merge_said_unprompted(
+    history: &[crate::services::agent::ConversationMessage],
+    said: &[(chrono::DateTime<chrono::Utc>, String)],
+) -> Vec<crate::services::agent::ConversationMessage> {
+    let at = |message: &crate::services::agent::ConversationMessage| {
+        message
+            .created_at
+            .as_deref()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.with_timezone(&chrono::Utc))
+    };
+    let mut merged = history.to_vec();
+    let mut said: Vec<&(chrono::DateTime<chrono::Utc>, String)> = said.iter().collect();
+    said.sort_by_key(|(when, _)| *when);
+    for (when, line) in said {
+        if merged
+            .iter()
+            .any(|message| message.content.trim() == line.trim())
+        {
+            continue;
+        }
+        let position = merged
+            .iter()
+            .position(|message| at(message).is_some_and(|message_at| message_at > *when))
+            .unwrap_or(merged.len());
+        merged.insert(
+            position,
+            crate::services::agent::ConversationMessage {
+                role: "assistant".into(),
+                content: line.clone(),
+                created_at: Some(when.to_rfc3339()),
+            },
+        );
+    }
+    merged
+}
+
 async fn speaking_prompt_from_db(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
@@ -403,21 +471,9 @@ async fn speaking_prompt_from_db(
         }
     }
     if matches!(turn, Turn::Chat(_)) {
-        // One mouth: what she said on her own and what was on her mind
-        // belong to the same conversation she is now answering in.
-        let since = chrono::Utc::now() - chrono::Duration::hours(SAID_UNPROMPTED_WITHIN_HOURS);
-        if let Ok(lines) = store::recent_proactive(db, user_id, SAID_UNPROMPTED_LIMIT).await {
-            let lines: Vec<String> = lines
-                .into_iter()
-                .filter(|line| line.created_at.with_timezone(&chrono::Utc) >= since)
-                .rev()
-                .map(|line| ingest::compact_summary(&line.content))
-                .filter(|line| !line.is_empty())
-                .collect();
-            if let Some(block) = format_said_unprompted_section(&lines) {
-                sections.push(block);
-            }
-        }
+        // One mouth: what was on her mind belongs to the conversation she is
+        // now answering in. What she said on her own is in its history
+        // (see `with_said_unprompted`).
         if let Turn::Chat(words) = turn {
             // Something they just named that she knows only a little about.
             // Whether she wants to know more is hers to judge.
@@ -692,6 +748,52 @@ mod tests {
                 "{signature} no longer filters by source"
             );
         }
+    }
+
+    #[test]
+    fn what_she_said_on_her_own_sits_in_the_history_by_time() {
+        use crate::services::agent::ConversationMessage;
+        let at = |minute: u32| {
+            chrono::DateTime::parse_from_rfc3339(&format!("2026-09-25T10:{minute:02}:00Z"))
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let message = |role: &str, content: &str, minute: u32| ConversationMessage {
+            role: role.into(),
+            content: content.into(),
+            created_at: Some(at(minute).to_rfc3339()),
+        };
+        let history = vec![
+            message("user", "早", 0),
+            message("assistant", "早啊", 1),
+            message("user", "我去忙了", 2),
+        ];
+        let said = [
+            (at(20), "周报理好了，放资料库了".to_string()),
+            (at(1), "早啊".to_string()),
+        ];
+        let merged = super::merge_said_unprompted(&history, &said);
+        let lines: Vec<(&str, &str)> = merged
+            .iter()
+            .map(|message| (message.role.as_str(), message.content.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                ("user", "早"),
+                ("assistant", "早啊"),
+                ("user", "我去忙了"),
+                ("assistant", "周报理好了，放资料库了"),
+            ],
+            "by time, and never twice"
+        );
+        let untimed = vec![ConversationMessage {
+            role: "user".into(),
+            content: "在吗".into(),
+            created_at: None,
+        }];
+        let merged = super::merge_said_unprompted(&untimed, &said[..1]);
+        assert_eq!(merged.last().unwrap().content, "周报理好了，放资料库了");
     }
 
     #[test]
