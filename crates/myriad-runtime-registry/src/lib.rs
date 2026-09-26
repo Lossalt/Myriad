@@ -436,6 +436,40 @@ pub async fn mailbox_depth(db: &impl ConnectionTrait, channel: &str) -> Result<i
     .map_or(0, |row| row.count))
 }
 
+/// Count one more under `record_id`, keeping the record until `expires_at`,
+/// and return the new count. An expired record starts again from one.
+/// Atomic: concurrent callers each get their own count.
+pub async fn increment(
+    db: &impl ConnectionTrait,
+    namespace: &str,
+    record_id: &str,
+    expires_at: i64,
+) -> Result<i64, DbErr> {
+    #[derive(FromQueryResult)]
+    struct CountRow {
+        count: i64,
+    }
+    let row = CountRow::find_by_statement(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated_at)
+VALUES ($1, $2, '{"count": 1}'::jsonb, $3, NOW())
+ON CONFLICT (namespace, record_id) DO UPDATE SET
+    payload = jsonb_build_object('count',
+        CASE WHEN runtime_registry.expires_at > EXTRACT(EPOCH FROM NOW())::BIGINT
+             THEN COALESCE((runtime_registry.payload ->> 'count')::BIGINT, 0) + 1
+             ELSE 1 END),
+    expires_at = EXCLUDED.expires_at,
+    updated_at = NOW()
+RETURNING (payload ->> 'count')::BIGINT AS count
+"#,
+        vec![namespace.into(), record_id.into(), expires_at.into()],
+    ))
+    .one(db)
+    .await?;
+    Ok(row.map_or(1, |row| row.count))
+}
+
 pub async fn delete(
     db: &impl ConnectionTrait,
     namespace: &str,

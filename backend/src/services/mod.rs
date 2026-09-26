@@ -107,6 +107,7 @@ pub mod updater_client;
 
 pub(crate) mod bot_ingress;
 pub(crate) mod bot_supervisor; // One reconnect loop for every chat bot worker
+pub mod channel_group; // Persona in group chats (Telegram groups, Discord channels)
 pub mod channel_pairing;
 pub mod channel_platform; // Shared pairing mint/consume/unbind
 pub mod channel_work; // Shared private-chat Work: session, pending, delivery
@@ -136,7 +137,6 @@ pub mod qq_work; // QQ C2C send adapter + Work entry
 pub mod rig_chest_analysis; // One-shot vision profile for Anime2.5D chest motion
 pub mod rsshub_service;
 pub mod telegram_bot; // Telegram DM getUpdates worker
-pub mod telegram_group; // Persona in Telegram groups: the first community venue
 pub mod telegram_pairing; // Telegram DM pairing codes + user_identities
 pub mod telegram_work; // Telegram DM send adapter + Work entry
 

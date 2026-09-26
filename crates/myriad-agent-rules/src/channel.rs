@@ -95,9 +95,32 @@ pub const DISCORD_CHANNEL_TYPE_DM: i64 = 1;
 /// Discord channel type: Group DM. Also arrives on `DIRECT_MESSAGES` intent.
 pub const DISCORD_CHANNEL_TYPE_GROUP_DM: i64 = 3;
 
-/// `DIRECT_MESSAGES` intent. First-cut Identify only sends this bit.
+/// `DIRECT_MESSAGES` intent.
 /// <https://discord.com/developers/docs/topics/gateway#gateway-intents>
 pub const DISCORD_DIRECT_MESSAGES: u32 = 1 << 12;
+
+/// `GUILD_MESSAGES` intent: messages in server channels. Not privileged, but
+/// without [`DISCORD_MESSAGE_CONTENT`] their text arrives only when they
+/// mention the bot or reply to it.
+pub const DISCORD_GUILD_MESSAGES: u32 = 1 << 9;
+
+/// `MESSAGE_CONTENT` intent: privileged, switched on in the Developer Portal.
+/// Asked for while not switched on, the Gateway closes with 4014.
+pub const DISCORD_MESSAGE_CONTENT: u32 = 1 << 15;
+
+/// Gateway close code for intents the application is not allowed.
+pub const DISCORD_DISALLOWED_INTENTS: u16 = 4014;
+
+/// What the bot identifies with: DMs always; server channels too, with their
+/// text when the privileged intent is allowed.
+pub const fn discord_identify_intents(message_content: bool) -> u32 {
+    let intents = DISCORD_DIRECT_MESSAGES | DISCORD_GUILD_MESSAGES;
+    if message_content {
+        intents | DISCORD_MESSAGE_CONTENT
+    } else {
+        intents
+    }
+}
 
 /// How to answer a yes/no confirmation in chat.
 pub const CONFIRM_HINT: &str = "回复「是」确认，或「否」取消。";
@@ -2863,6 +2886,98 @@ pub fn discord_private_text_from_create(
         channel_id: json_snowflake(data.get("channel_id"))?,
         text,
         images,
+    })
+}
+
+/// One human line in a Discord server channel (or its thread), as the
+/// persona sees it. `addressed` is whether it speaks to her: it mentions the
+/// bot, or replies to one of her messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscordGroupMessage {
+    pub message_id: String,
+    pub channel_id: String,
+    pub guild_id: String,
+    pub author_id: String,
+    /// What the sender goes by in the server; attacker-controlled, bounded.
+    pub display_name: String,
+    /// The text with the bot's own mention taken out.
+    pub text: String,
+    pub addressed: bool,
+}
+
+/// Server-channel `MESSAGE_CREATE`. DMs, bots, webhooks, the bot itself and
+/// lines without text drop.
+pub fn discord_group_message_from_create(
+    data: &serde_json::Value,
+    bot_user_id: &str,
+) -> Option<DiscordGroupMessage> {
+    let guild_id = json_snowflake(data.get("guild_id"))?;
+    if data.get("webhook_id").is_some_and(|value| !value.is_null()) {
+        return None;
+    }
+    let author = data.get("author")?;
+    if author.get("bot").and_then(|value| value.as_bool()) == Some(true) {
+        return None;
+    }
+    let author_id = json_snowflake(author.get("id"))?;
+    if bot_user_id.is_empty() || author_id == bot_user_id {
+        return None;
+    }
+    let raw = data
+        .get("content")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let mentions_her = data
+        .get("mentions")
+        .and_then(|value| value.as_array())
+        .is_some_and(|mentions| {
+            mentions
+                .iter()
+                .any(|user| json_snowflake(user.get("id")).as_deref() == Some(bot_user_id))
+        });
+    let replies_to_her = data
+        .get("referenced_message")
+        .and_then(|reply| reply.get("author"))
+        .and_then(|author| json_snowflake(author.get("id")))
+        .as_deref()
+        == Some(bot_user_id);
+    let text = raw
+        .replace(&format!("<@{bot_user_id}>"), " ")
+        .replace(&format!("<@!{bot_user_id}>"), " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() {
+        return None;
+    }
+    let name = [
+        data.get("member").and_then(|member| member.get("nick")),
+        author.get("global_name"),
+        author.get("username"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|value| value.as_str())
+    .map(str::trim)
+    .find(|name| !name.is_empty())
+    .unwrap_or("");
+    let display_name: String = name
+        .chars()
+        .filter(|ch| !ch.is_control() && !matches!(ch, '<' | '>' | '：'))
+        .take(GROUP_NAME_CHARS)
+        .collect();
+    Some(DiscordGroupMessage {
+        message_id: json_snowflake(data.get("id"))?,
+        channel_id: json_snowflake(data.get("channel_id"))?,
+        guild_id,
+        author_id,
+        display_name: if display_name.trim().is_empty() {
+            "someone".into()
+        } else {
+            display_name
+        },
+        text,
+        addressed: mentions_her || replies_to_her,
     })
 }
 

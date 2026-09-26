@@ -1797,3 +1797,66 @@ mod telegram_groups {
         );
     }
 }
+
+#[test]
+fn discord_server_lines_are_heard_and_those_to_her_are_marked() {
+    use myriad_agent_rules::channel::{
+        DISCORD_DIRECT_MESSAGES, DISCORD_GUILD_MESSAGES, DISCORD_MESSAGE_CONTENT,
+        discord_group_message_from_create, discord_identify_intents,
+    };
+    let to_her = serde_json::json!({
+        "id": "11", "channel_id": "22", "guild_id": "33",
+        "author": { "id": "44", "username": "ming", "global_name": "阿明" },
+        "member": { "nick": "明<b>" },
+        "mentions": [{ "id": "99" }],
+        "content": "<@99>  你推荐哪首？"
+    });
+    let line = discord_group_message_from_create(&to_her, "99").expect("server line");
+    assert!(line.addressed);
+    assert_eq!(line.text, "你推荐哪首？");
+    assert_eq!(line.display_name, "明b");
+    assert_eq!(
+        (line.channel_id.as_str(), line.guild_id.as_str()),
+        ("22", "33")
+    );
+
+    let reply = serde_json::json!({
+        "id": "12", "channel_id": "22", "guild_id": "33",
+        "author": { "id": "45", "username": "hong" },
+        "referenced_message": { "author": { "id": "99" } },
+        "content": "哈哈真的吗"
+    });
+    let line = discord_group_message_from_create(&reply, "99").unwrap();
+    assert!(line.addressed, "a reply to her speaks to her");
+    assert_eq!(line.display_name, "hong");
+
+    let talk = serde_json::json!({
+        "id": "13", "channel_id": "22", "guild_id": "33",
+        "author": { "id": "45", "username": "hong" },
+        "content": "今天好热"
+    });
+    assert!(
+        !discord_group_message_from_create(&talk, "99")
+            .unwrap()
+            .addressed
+    );
+
+    for dropped in [
+        serde_json::json!({"id": "1", "channel_id": "22", "author": {"id": "45"}, "content": "dm"}),
+        serde_json::json!({"id": "1", "channel_id": "22", "guild_id": "33", "author": {"id": "46", "bot": true}, "content": "bot"}),
+        serde_json::json!({"id": "1", "channel_id": "22", "guild_id": "33", "webhook_id": "7", "author": {"id": "46"}, "content": "hook"}),
+        serde_json::json!({"id": "1", "channel_id": "22", "guild_id": "33", "author": {"id": "99"}, "content": "her own"}),
+        serde_json::json!({"id": "1", "channel_id": "22", "guild_id": "33", "author": {"id": "45"}, "content": "<@99>"}),
+    ] {
+        assert!(
+            discord_group_message_from_create(&dropped, "99").is_none(),
+            "{dropped}"
+        );
+    }
+
+    assert_eq!(
+        discord_identify_intents(true),
+        DISCORD_DIRECT_MESSAGES | DISCORD_GUILD_MESSAGES | DISCORD_MESSAGE_CONTENT
+    );
+    assert_eq!(discord_identify_intents(false) & DISCORD_MESSAGE_CONTENT, 0);
+}

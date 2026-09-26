@@ -1,21 +1,30 @@
-//! Discord DM worker: Gateway WebSocket, no Interactions Endpoint.
+//! Discord worker: Gateway WebSocket, no Interactions Endpoint. DMs go to
+//! pairing and Work; server-channel lines go to the persona's group chat
+//! ([`crate::services::channel_group`]).
 //!
 //! Bot token stays on the outbound path. Errors never echo the token.
 //! Identify is budgeted (1000/24h); reconnects Resume first.
+//!
+//! Server-channel text needs the privileged Message Content intent. The
+//! worker asks for it; if the application is not allowed it (close 4014), it
+//! identifies again without it and says so in the log: DMs and lines that
+//! mention her or reply to her still arrive, only the rest of the channel's
+//! talk stays unheard until the intent is switched on in the Developer Portal.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use myriad_agent_rules::channel::{
-    ConnectFailureKind, DISCORD_CHANNEL_TYPE_DM, DISCORD_DIRECT_MESSAGES, DISCORD_TEXT_LIMIT,
+    ConnectFailureKind, DISCORD_CHANNEL_TYPE_DM, DISCORD_DISALLOWED_INTENTS, DISCORD_TEXT_LIMIT,
     DiscordBotIdentity, WorkerIntent, classify_discord_rest, classify_gateway_close,
-    discord_channel_type, discord_private_component_from_create, discord_private_text_from_create,
-    discord_retry_after, discord_session_starts_remaining, discord_worker_intent,
-    is_discord_dm_channel, parse_discord_bot_identity, parse_discord_channel_type,
-    parse_discord_gateway_url,
+    discord_channel_type, discord_group_message_from_create, discord_identify_intents,
+    discord_private_component_from_create, discord_private_text_from_create, discord_retry_after,
+    discord_session_starts_remaining, discord_worker_intent, is_discord_dm_channel,
+    parse_discord_bot_identity, parse_discord_channel_type, parse_discord_gateway_url,
 };
 use myriad_error::redact_secrets;
 use serde::Serialize;
@@ -36,6 +45,10 @@ const API_BASE: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "DiscordBot (https://github.com/myriad, 1.0)";
 const CHANNEL_TYPE_CACHE_CAP: usize = 256;
 const CHANNEL_TYPE_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
+
+/// The application was refused the Message Content intent (close 4014): later
+/// sessions identify without it.
+static MESSAGE_CONTENT_DENIED: AtomicBool = AtomicBool::new(false);
 
 /// Channel id → Discord channel type. Gateway `MESSAGE_CREATE` usually omits type.
 #[derive(Clone, Copy)]
@@ -333,6 +346,7 @@ async fn gateway_session(
     let first_wait = Duration::from_millis(((hello_ms as f64) * jitter) as u64);
     let interval = Duration::from_millis(hello_ms.max(1000));
 
+    let asks_content = !MESSAGE_CONTENT_DENIED.load(Ordering::Relaxed);
     let handshake = if let Some(state) = resume.as_ref() {
         serde_json::json!({
             "op": 6,
@@ -347,7 +361,7 @@ async fn gateway_session(
             "op": 2,
             "d": {
                 "token": token,
-                "intents": DISCORD_DIRECT_MESSAGES,
+                "intents": discord_identify_intents(asks_content),
                 "properties": {
                     "os": std::env::consts::OS,
                     "browser": "myriad",
@@ -416,6 +430,13 @@ async fn gateway_session(
                     }
                     Some(Ok(Message::Close(frame))) => {
                         let code = frame.map(|f| u16::from(f.code)).unwrap_or(1000);
+                        if code == DISCORD_DISALLOWED_INTENTS && asks_content {
+                            MESSAGE_CONTENT_DENIED.store(true, Ordering::Relaxed);
+                            warn!(
+                                "Discord refused the Message Content intent; server channels are heard only when they mention her or reply to her. Switch it on under Bot → Privileged Gateway Intents in the Developer Portal."
+                            );
+                            return Err((ConnectFailureKind::Transient, None));
+                        }
                         let kind = classify_gateway_close(code);
                         let keep = matches!(kind, ConnectFailureKind::Transient)
                             && !matches!(code, 1000 | 1001);
@@ -528,6 +549,16 @@ where
                     let permit = ingress.take();
                     tokio::spawn(async move {
                         let _permit = permit;
+                        // A server channel: the persona's group chat.
+                        if data.get("guild_id").is_some() {
+                            if let Some(line) =
+                                discord_group_message_from_create(&data, &bot_user_id)
+                            {
+                                mark_inbound().await;
+                                hear_group_line(line.into(), token, _permit).await;
+                            }
+                            return;
+                        }
                         if !ensure_discord_dm_payload(&token, &mut data).await {
                             return;
                         }
@@ -577,6 +608,27 @@ where
             None
         }
         _ => None,
+    }
+}
+
+/// A server-channel line: kept in mind; answered when it speaks to her, and
+/// now and then joined in on when it does not.
+/// The ingress permit is held only while she answers a line that speaks to
+/// her, as for DMs; deciding whether to join in does not hold it.
+async fn hear_group_line<P>(
+    line: crate::services::channel_group::GroupLine,
+    token: String,
+    permit: P,
+) {
+    crate::services::channel_group::record(&line);
+    if line.addressed {
+        crate::services::channel_group::handle(line, token).await;
+        drop(permit);
+        return;
+    }
+    drop(permit);
+    if crate::services::channel_group::worth_a_look(&line) {
+        crate::services::channel_group::consider(line, token).await;
     }
 }
 
@@ -800,6 +852,42 @@ pub async fn send_photo(
     Ok(())
 }
 
+/// Her reply in a server channel, as a reply to the line she answers. Nobody
+/// is pinged but the one she replies to: whatever the text says, `@everyone`,
+/// roles and users are not mentions.
+pub async fn send_group_reply(
+    token: &str,
+    channel_id: &str,
+    text: &str,
+    reply_to: &str,
+) -> Result<(), ConnectFailureKind> {
+    if channel_id.is_empty() || text.is_empty() || !bot_enabled().await {
+        return Ok(());
+    }
+    let content: String = text.chars().take(DISCORD_TEXT_LIMIT).collect();
+    let payload = group_reply_payload(&content, reply_to);
+    let path = format!("/channels/{channel_id}/messages");
+    let (status, body) =
+        discord_request(token, reqwest::Method::POST, &path, Some(payload)).await?;
+    if status == 429 {
+        let wait = discord_retry_after(&body).unwrap_or(1);
+        warn!(retry_after = wait, "Discord group reply rate-limited");
+        return Err(ConnectFailureKind::Transient);
+    }
+    if !(200..300).contains(&status) {
+        return Err(classify_discord_rest(status, &body));
+    }
+    Ok(())
+}
+
+fn group_reply_payload(content: &str, reply_to: &str) -> Value {
+    serde_json::json!({
+        "content": content,
+        "message_reference": { "message_id": reply_to, "fail_if_not_exists": false },
+        "allowed_mentions": { "parse": [], "replied_user": true },
+    })
+}
+
 pub async fn send_typing(token: &str, channel_id: &str) -> Result<(), ConnectFailureKind> {
     if channel_id.is_empty() || !bot_enabled().await {
         return Ok(());
@@ -947,8 +1035,21 @@ mod tests {
     }
 
     #[test]
-    fn identify_intent_is_direct_messages_only() {
+    fn identify_intent_covers_dms_and_server_channels() {
+        use myriad_agent_rules::channel::{DISCORD_DIRECT_MESSAGES, DISCORD_GUILD_MESSAGES};
         assert_eq!(DISCORD_DIRECT_MESSAGES, 1 << 12);
+        assert_eq!(
+            discord_identify_intents(false),
+            DISCORD_DIRECT_MESSAGES | DISCORD_GUILD_MESSAGES
+        );
+    }
+
+    #[test]
+    fn her_group_reply_pings_nobody_but_the_one_she_answers() {
+        let payload = group_reply_payload("@everyone 看这里", "11");
+        assert_eq!(payload["allowed_mentions"]["parse"], serde_json::json!([]));
+        assert_eq!(payload["allowed_mentions"]["replied_user"], true);
+        assert_eq!(payload["message_reference"]["message_id"], "11");
     }
 
     #[test]

@@ -230,7 +230,6 @@ pub fn forget_in_memory() {
     views::forget();
     priming::forget();
     wander::forget();
-    strangers::forget();
 }
 
 /// After a chat reply, let her state catch up with the exchange; the next

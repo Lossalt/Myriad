@@ -237,11 +237,12 @@ async fn run_session(
                         let group_lines =
                             parse_telegram_group_messages(200, &body, &identity).unwrap_or_default();
                         for line in group_lines {
-                            crate::services::telegram_group::record(&line);
+                            let line = crate::services::channel_group::GroupLine::from(line);
+                            crate::services::channel_group::record(&line);
                             if !line.addressed {
                                 // Nobody asked her; now and then she joins in.
-                                if crate::services::telegram_group::worth_a_look(&line) {
-                                    tokio::spawn(crate::services::telegram_group::consider(
+                                if crate::services::channel_group::worth_a_look(&line) {
+                                    tokio::spawn(crate::services::channel_group::consider(
                                         line,
                                         token.to_string(),
                                     ));
@@ -261,7 +262,7 @@ async fn run_session(
                             let token = token.to_string();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                crate::services::telegram_group::handle(line, token).await;
+                                crate::services::channel_group::handle(line, token).await;
                             });
                         }
                         if next_offset.is_some() {

@@ -1,4 +1,9 @@
-//! The persona in Telegram groups: the community's first shared venue.
+//! The persona in group chats: the community's shared venues, on any
+//! platform whose bot can hear a group (Telegram groups, Discord server
+//! channels). Each platform only parses its lines into a [`GroupLine`] and
+//! delivers her replies; everything else here is the same everywhere. A
+//! group is its venue, `<platform>:<chat id>` (`telegram:-100123`,
+//! `discord:123456`).
 //!
 //! She answers a group line when it speaks to her (an @mention, a mention of
 //! her, a command aimed at her, or a reply to her message). Groups get no
@@ -33,14 +38,142 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use myriad_agent_rules::channel::{PairingLookup, TelegramGroupMessage};
+use myriad_agent_rules::channel::{
+    ConnectFailureKind, DiscordGroupMessage, PairingLookup, TelegramGroupMessage,
+};
 use sea_orm::DatabaseConnection;
 use tracing::{info, warn};
 
 use crate::services::agent::AgentInteractionMode;
 use crate::services::agent::types::{AgentProgressEvent, ConversationMessage};
-use crate::services::channel_pairing::ChannelBinding;
+use crate::services::channel_pairing::{ChannelBinding, PairingChannel};
 use crate::services::channel_platform::ChannelPlatform;
+
+/// One human line in a group, whatever the platform. Ids are the platform's,
+/// as text; the name and text are attacker-controlled and bounded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupLine {
+    pub platform: ChannelPlatform,
+    pub chat: String,
+    pub message_id: String,
+    /// A Telegram forum topic, answered in the same topic.
+    pub thread: Option<i64>,
+    pub from: String,
+    pub display_name: String,
+    pub text: String,
+    /// Whether it speaks to her.
+    pub addressed: bool,
+}
+
+impl GroupLine {
+    /// The group, as sessions and memory know it: `<platform>:<chat id>`.
+    pub fn venue(&self) -> String {
+        format!("{}:{}", self.platform.slug(), self.chat)
+    }
+}
+
+impl From<TelegramGroupMessage> for GroupLine {
+    fn from(message: TelegramGroupMessage) -> Self {
+        Self {
+            platform: ChannelPlatform::Telegram,
+            chat: message.chat_id.to_string(),
+            message_id: message.message_id.to_string(),
+            thread: message.message_thread_id,
+            from: message.from_id.to_string(),
+            display_name: message.display_name,
+            text: message.text,
+            addressed: message.addressed,
+        }
+    }
+}
+
+impl From<DiscordGroupMessage> for GroupLine {
+    fn from(message: DiscordGroupMessage) -> Self {
+        Self {
+            platform: ChannelPlatform::Discord,
+            chat: message.channel_id,
+            message_id: message.message_id,
+            thread: None,
+            from: message.author_id,
+            display_name: message.display_name,
+            text: message.text,
+            addressed: message.addressed,
+        }
+    }
+}
+
+/// Deliver one chunk of her reply in the group, as a reply to `line`.
+async fn send_reply(line: &GroupLine, token: &str, text: &str) -> Result<(), ConnectFailureKind> {
+    match line.platform {
+        ChannelPlatform::Telegram => {
+            let (Ok(chat), Ok(message_id)) = (line.chat.parse(), line.message_id.parse()) else {
+                return Err(ConnectFailureKind::Permanent);
+            };
+            crate::services::telegram_bot::send_group_reply(
+                token,
+                chat,
+                text,
+                message_id,
+                line.thread,
+            )
+            .await
+        }
+        ChannelPlatform::Discord => {
+            crate::services::discord_bot::send_group_reply(
+                token,
+                &line.chat,
+                text,
+                &line.message_id,
+            )
+            .await
+        }
+        ChannelPlatform::Qq | ChannelPlatform::Feishu => Err(ConnectFailureKind::Permanent),
+    }
+}
+
+async fn send_typing(line: &GroupLine, token: &str) {
+    match line.platform {
+        ChannelPlatform::Telegram => {
+            let _ = crate::services::telegram_bot::send_typing(token, &line.chat).await;
+        }
+        ChannelPlatform::Discord => {
+            let _ = crate::services::discord_bot::send_typing(token, &line.chat).await;
+        }
+        ChannelPlatform::Qq | ChannelPlatform::Feishu => {}
+    }
+}
+
+fn text_limit(platform: ChannelPlatform) -> usize {
+    match platform {
+        ChannelPlatform::Discord => myriad_agent_rules::channel::DISCORD_TEXT_LIMIT,
+        _ => myriad_agent_rules::channel::TELEGRAM_TEXT_LIMIT,
+    }
+}
+
+/// Her reply, chunk by chunk; whether any of it reached the group.
+async fn deliver(line: &GroupLine, token: &str, reply: &str) -> bool {
+    let mut sent = false;
+    for chunk in myriad_agent_rules::channel::split_channel_text(reply, text_limit(line.platform)) {
+        match send_reply(line, token, &chunk).await {
+            Ok(()) => sent = true,
+            Err(kind) => {
+                warn!(?kind, venue = %line.venue(), "[Group] reply not sent");
+                break;
+            }
+        }
+    }
+    sent
+}
+
+async fn lookup(db: &DatabaseConnection, line: &GroupLine) -> Option<PairingLookup> {
+    crate::services::channel_pairing::lookup_openid(
+        db,
+        PairingChannel::of(line.platform),
+        &line.from,
+    )
+    .await
+    .ok()
+}
 
 /// Lines of a group she keeps in mind, and for how long.
 const TRANSCRIPT_LINES: usize = 30;
@@ -68,7 +201,7 @@ const TYPING_EVERY: Duration = Duration::from_secs(4);
 #[derive(Clone)]
 struct Line {
     at: Instant,
-    message_id: Option<i64>,
+    message_id: Option<String>,
     name: String,
     text: String,
     hers: bool,
@@ -84,7 +217,7 @@ struct Group {
     chimes: Option<(chrono::NaiveDate, u32)>,
     last_look: Option<Instant>,
     /// The latest line that spoke to her while she was busy.
-    waiting: Option<TelegramGroupMessage>,
+    waiting: Option<GroupLine>,
     /// Replies today to people outside the community: the day, and how many.
     stranger_replies: Option<(chrono::NaiveDate, u32)>,
 }
@@ -109,26 +242,27 @@ fn count_today(slot: &mut Option<(chrono::NaiveDate, u32)>, limit: u32) -> bool 
     true
 }
 
-static GROUPS: LazyLock<Mutex<HashMap<i64, Group>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static GROUPS: LazyLock<Mutex<HashMap<String, Group>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The Chat session each sender has in each group, so their turns in that
 /// group supersede only each other.
-static SESSIONS: LazyLock<Mutex<HashMap<(i64, i32), String>>> =
+static SESSIONS: LazyLock<Mutex<HashMap<(String, i32), String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn with_group<T>(chat_id: i64, act: impl FnOnce(&mut Group) -> T) -> Option<T> {
+fn with_group<T>(venue: &str, act: impl FnOnce(&mut Group) -> T) -> Option<T> {
     let mut groups = GROUPS.lock().ok()?;
-    if !groups.contains_key(&chat_id) && groups.len() >= MAX_GROUPS {
+    if !groups.contains_key(venue) && groups.len() >= MAX_GROUPS {
         if let Some(stalest) = groups
             .iter()
             .filter(|(_, group)| !group.busy)
             .min_by_key(|(_, group)| group.touched)
-            .map(|(id, _)| *id)
+            .map(|(id, _)| id.clone())
         {
             groups.remove(&stalest);
         }
     }
-    let group = groups.entry(chat_id).or_default();
+    let group = groups.entry(venue.to_string()).or_default();
     group.touched = Some(Instant::now());
     Some(act(group))
 }
@@ -148,18 +282,18 @@ fn bounded(text: &str) -> String {
 }
 
 /// Keep a group line in mind, whoever wrote it.
-pub fn record(message: &TelegramGroupMessage) {
+pub fn record(message: &GroupLine) {
     let line = Line {
         at: Instant::now(),
-        message_id: Some(message.message_id),
+        message_id: Some(message.message_id.clone()),
         name: message.display_name.clone(),
         text: bounded(&message.text),
         hers: false,
     };
-    with_group(message.chat_id, |group| push_line(group, line));
+    with_group(&message.venue(), |group| push_line(group, line));
 }
 
-fn record_hers(chat_id: i64, text: &str) {
+fn record_hers(venue: &str, text: &str) {
     let line = Line {
         at: Instant::now(),
         message_id: None,
@@ -167,18 +301,18 @@ fn record_hers(chat_id: i64, text: &str) {
         text: bounded(text),
         hers: true,
     };
-    with_group(chat_id, |group| push_line(group, line));
+    with_group(venue, |group| push_line(group, line));
 }
 
-/// The group's recent lines before `message_id`, oldest first. Others' lines
-/// carry their name; hers are her own turns.
-fn transcript(chat_id: i64, message_id: i64) -> Vec<ConversationMessage> {
-    with_group(chat_id, |group| {
+/// The group's recent lines before `message_id` (all of them without one),
+/// oldest first. Others' lines carry their name; hers are her own turns.
+fn transcript(venue: &str, message_id: Option<&str>) -> Vec<ConversationMessage> {
+    with_group(venue, |group| {
         group
             .lines
             .iter()
             .filter(|line| line.at.elapsed() < TRANSCRIPT_FOR)
-            .take_while(|line| line.message_id != Some(message_id))
+            .take_while(|line| message_id.is_none() || line.message_id.as_deref() != message_id)
             .map(|line| ConversationMessage {
                 role: if line.hers { "assistant" } else { "user" }.into(),
                 content: if line.hers {
@@ -194,8 +328,8 @@ fn transcript(chat_id: i64, message_id: i64) -> Vec<ConversationMessage> {
 }
 
 /// Take the group's single turn, if it is free and not just replied in.
-fn begin_turn(chat_id: i64) -> Turn {
-    with_group(chat_id, begin).unwrap_or(Turn::Busy)
+fn begin_turn(venue: &str) -> Turn {
+    with_group(venue, begin).unwrap_or(Turn::Busy)
 }
 
 fn begin(group: &mut Group) -> Turn {
@@ -213,8 +347,8 @@ fn begin(group: &mut Group) -> Turn {
     Turn::Began
 }
 
-fn end_turn(chat_id: i64, replied: bool) {
-    with_group(chat_id, |group| {
+fn end_turn(venue: &str, replied: bool) {
+    with_group(venue, |group| {
         group.busy = false;
         if replied {
             group.last_reply = Some(Instant::now());
@@ -224,12 +358,12 @@ fn end_turn(chat_id: i64, replied: bool) {
 
 /// Answer one group line that spoke to her: now, or when she is done with
 /// the one on hand.
-pub async fn handle(mut message: TelegramGroupMessage, token: String) {
-    let chat_id = message.chat_id;
+pub async fn handle(mut message: GroupLine, token: String) {
+    let venue = message.venue();
     loop {
         // Busy or not is decided under the same lock that parks the line, so
         // the turn on hand cannot end without seeing it.
-        let turn = with_group(chat_id, |group| {
+        let turn = with_group(&venue, |group| {
             let turn = begin(group);
             if matches!(turn, Turn::Busy) {
                 group.waiting = Some(message.clone());
@@ -241,14 +375,14 @@ pub async fn handle(mut message: TelegramGroupMessage, token: String) {
             Turn::Began => break,
             Turn::Resting(rest) => tokio::time::sleep(rest).await,
             Turn::Busy => {
-                info!(chat_id, "[Telegram group] busy; the line waits for her");
+                info!(%venue, "[Group] busy; the line waits for her");
                 return;
             }
         }
     }
     loop {
         let replied = answer(&message, &token, None).await;
-        match finish_turn(chat_id, replied).await {
+        match finish_turn(&venue, replied).await {
             Some(next) => message = next,
             None => return,
         }
@@ -257,35 +391,35 @@ pub async fn handle(mut message: TelegramGroupMessage, token: String) {
 
 /// End the turn; if a line waited meanwhile, take the turn again for it
 /// after the pause.
-async fn finish_turn(chat_id: i64, replied: bool) -> Option<TelegramGroupMessage> {
-    end_turn(chat_id, replied);
-    with_group(chat_id, |group| group.waiting.is_some()).filter(|waiting| *waiting)?;
+async fn finish_turn(venue: &str, replied: bool) -> Option<GroupLine> {
+    end_turn(venue, replied);
+    with_group(venue, |group| group.waiting.is_some()).filter(|waiting| *waiting)?;
     if replied {
         tokio::time::sleep(GROUP_PAUSE).await;
     }
     loop {
-        match begin_turn(chat_id) {
+        match begin_turn(venue) {
             Turn::Began => break,
             Turn::Resting(rest) => tokio::time::sleep(rest).await,
             // Someone else took the turn; they will find the line waiting.
             Turn::Busy => return None,
         }
     }
-    let next = with_group(chat_id, |group| group.waiting.take()).flatten();
+    let next = with_group(venue, |group| group.waiting.take()).flatten();
     if next.is_none() {
-        end_turn(chat_id, false);
+        end_turn(venue, false);
     }
     next
 }
 
 /// Whether a line nobody addressed to her is worth a look: the cheap gates
 /// before any model call. Taking a look counts, so looks are spaced out.
-pub fn worth_a_look(message: &TelegramGroupMessage) -> bool {
+pub fn worth_a_look(message: &GroupLine) -> bool {
     if message.text.trim().chars().count() < 4 {
         return false;
     }
     let today = chrono::Local::now().date_naive();
-    with_group(message.chat_id, |group| {
+    with_group(&message.venue(), |group| {
         let chimed_today = match group.chimes {
             Some((day, count)) if day == today => count,
             _ => 0,
@@ -313,29 +447,29 @@ pub fn worth_a_look(message: &TelegramGroupMessage) -> bool {
 }
 
 /// A line nobody addressed to her, past the cheap gates: she may join in.
-pub async fn consider(message: TelegramGroupMessage, token: String) {
+pub async fn consider(message: GroupLine, token: String) {
     let Some(why) = wants_to_chime(&message).await else {
         return;
     };
-    let chat_id = message.chat_id;
-    if !matches!(begin_turn(chat_id), Turn::Began) {
+    let venue = message.venue();
+    if !matches!(begin_turn(&venue), Turn::Began) {
         return;
     }
     let replied = answer(&message, &token, Some(why)).await;
     if replied {
         let today = chrono::Local::now().date_naive();
-        with_group(chat_id, |group| {
+        with_group(&venue, |group| {
             group.chimes = Some(match group.chimes {
                 Some((day, count)) if day == today => (day, count + 1),
                 _ => (today, 1),
             });
         });
-        info!(chat_id, "[Telegram group] she chimed in");
+        info!(%venue, "[Group] she chimed in");
     }
-    let mut next = finish_turn(chat_id, replied).await;
+    let mut next = finish_turn(&venue, replied).await;
     while let Some(message) = next {
         let replied = answer(&message, &token, None).await;
-        next = finish_turn(chat_id, replied).await;
+        next = finish_turn(&venue, replied).await;
     }
 }
 
@@ -370,16 +504,13 @@ fn chime_schema() -> serde_json::Value {
 
 /// Whether she wants to join in, and about what. Only a community member's
 /// line, in a group that is paired to someone she knows, gets asked.
-async fn wants_to_chime(message: &TelegramGroupMessage) -> Option<String> {
+async fn wants_to_chime(message: &GroupLine) -> Option<String> {
     let db = crate::services::process_db::database().ok()?;
-    let sender = message.from_id.to_string();
-    let Ok(PairingLookup::Paired { user_id }) =
-        crate::services::telegram_pairing::lookup_openid(&db, &sender).await
-    else {
+    let Some(PairingLookup::Paired { user_id }) = lookup(&db, message).await else {
         return None;
     };
-    current_binding(&db, user_id, &sender).await?;
-    let lines: Vec<String> = transcript(message.chat_id, i64::MAX)
+    current_binding(&db, message, user_id).await?;
+    let lines: Vec<String> = transcript(&message.venue(), None)
         .into_iter()
         .rev()
         .take(12)
@@ -461,30 +592,23 @@ pub(crate) fn chime_verdict(raw: &str) -> Option<Option<String>> {
     parse_chime(raw)
 }
 
-async fn answer(message: &TelegramGroupMessage, token: &str, chime: Option<String>) -> bool {
+async fn answer(message: &GroupLine, token: &str, chime: Option<String>) -> bool {
     let Ok(db) = crate::services::process_db::database() else {
         return false;
     };
-    let inbound_id = format!("group:{}:{}", message.chat_id, message.message_id);
-    if !crate::services::channel_work::claim_inbound(
-        &db,
-        ChannelPlatform::Telegram,
-        None,
-        &inbound_id,
-    )
-    .await
+    let inbound_id = format!("group:{}:{}", message.chat, message.message_id);
+    if !crate::services::channel_work::claim_inbound(&db, message.platform, None, &inbound_id).await
     {
         return false;
     }
-    let sender = message.from_id.to_string();
-    let user_id = match crate::services::telegram_pairing::lookup_openid(&db, &sender).await {
-        Ok(PairingLookup::Paired { user_id }) => user_id,
+    let user_id = match lookup(&db, message).await {
+        Some(PairingLookup::Paired { user_id }) => user_id,
         // Someone from outside the community: answered lightly. Never a
         // chime-in, which is only for the community.
-        Ok(_) if chime.is_none() => return answer_stranger(&db, message, token).await,
+        Some(_) if chime.is_none() => return answer_stranger(&db, message, token).await,
         _ => return false,
     };
-    let Some(binding) = current_binding(&db, user_id, &sender).await else {
+    let Some(binding) = current_binding(&db, message, user_id).await else {
         return false;
     };
     let Some(reply) = run_turn(&db, message, user_id, token, chime).await else {
@@ -494,66 +618,34 @@ async fn answer(message: &TelegramGroupMessage, token: &str, chime: Option<Strin
     if !binding.is_current(&db).await {
         return false;
     }
-    let mut sent = false;
-    for chunk in myriad_agent_rules::channel::split_channel_text(
-        &reply,
-        myriad_agent_rules::channel::TELEGRAM_TEXT_LIMIT,
-    ) {
-        match crate::services::telegram_bot::send_group_reply(
-            token,
-            message.chat_id,
-            &chunk,
-            message.message_id,
-            message.message_thread_id,
-        )
-        .await
-        {
-            Ok(()) => sent = true,
-            Err(kind) => {
-                warn!(
-                    ?kind,
-                    chat_id = message.chat_id,
-                    "[Telegram group] reply not sent"
-                );
-                break;
-            }
-        }
-    }
+    let sent = deliver(message, token, &reply).await;
     if sent {
-        record_hers(message.chat_id, &reply);
+        record_hers(&message.venue(), &reply);
     }
     sent
 }
 
 /// Answer someone from outside the community, with little context, on the
 /// site owner's budget.
-async fn answer_stranger(
-    db: &DatabaseConnection,
-    message: &TelegramGroupMessage,
-    token: &str,
-) -> bool {
-    let within = with_group(message.chat_id, |group| {
+async fn answer_stranger(db: &DatabaseConnection, message: &GroupLine, token: &str) -> bool {
+    let venue = message.venue();
+    let within = with_group(&venue, |group| {
         count_today(&mut group.stranger_replies, STRANGER_REPLIES_PER_DAY)
     })
     .unwrap_or(false);
     if !within {
-        info!(
-            chat_id = message.chat_id,
-            "[Telegram group] enough replies to outsiders today"
-        );
+        info!(%venue, "[Group] enough replies to outsiders today");
         return false;
     }
     let Ok(owner) = crate::services::site_owner::site_owner_user_id(db).await else {
         return false;
     };
-    let venue = format!("telegram:{}", message.chat_id);
     let stranger = crate::services::agent::merope::strangers::Stranger {
-        who: format!("telegram:{}", message.from_id),
+        who: format!("{}:{}", message.platform.slug(), message.from),
         name: message.display_name.chars().take(40).collect(),
     };
-    let chat = message.chat_id.to_string();
-    let _ = crate::services::telegram_bot::send_typing(token, &chat).await;
-    let transcript = transcript(message.chat_id, message.message_id);
+    send_typing(message, token).await;
+    let transcript = transcript(&venue, Some(&message.message_id));
     let Ok(Some(reply)) = tokio::time::timeout(
         TURN_DEADLINE,
         crate::services::agent::merope::strangers::reply(
@@ -569,33 +661,9 @@ async fn answer_stranger(
     else {
         return false;
     };
-    let mut sent = false;
-    for chunk in myriad_agent_rules::channel::split_channel_text(
-        &reply,
-        myriad_agent_rules::channel::TELEGRAM_TEXT_LIMIT,
-    ) {
-        match crate::services::telegram_bot::send_group_reply(
-            token,
-            message.chat_id,
-            &chunk,
-            message.message_id,
-            message.message_thread_id,
-        )
-        .await
-        {
-            Ok(()) => sent = true,
-            Err(kind) => {
-                warn!(
-                    ?kind,
-                    chat_id = message.chat_id,
-                    "[Telegram group] reply not sent"
-                );
-                break;
-            }
-        }
-    }
+    let sent = deliver(message, token, &reply).await;
     if sent {
-        record_hers(message.chat_id, &reply);
+        record_hers(&venue, &reply);
         crate::services::agent::merope::strangers::spawn_after(
             db.clone(),
             owner,
@@ -610,10 +678,10 @@ async fn answer_stranger(
 
 async fn current_binding(
     db: &DatabaseConnection,
+    message: &GroupLine,
     user_id: i32,
-    sender: &str,
 ) -> Option<ChannelBinding> {
-    let binding = ChannelBinding::resolve(db, ChannelPlatform::Telegram, user_id, sender)
+    let binding = ChannelBinding::resolve(db, message.platform, user_id, &message.from)
         .await
         .ok()
         .flatten()?;
@@ -622,7 +690,7 @@ async fn current_binding(
 
 async fn run_turn(
     db: &DatabaseConnection,
-    message: &TelegramGroupMessage,
+    message: &GroupLine,
     user_id: i32,
     token: &str,
     chime: Option<String>,
@@ -630,7 +698,8 @@ async fn run_turn(
     let claims = crate::services::channel_work::claims_for_user(db, user_id)
         .await
         .ok()?;
-    let key = (message.chat_id, user_id);
+    let venue = message.venue();
+    let key = (venue.clone(), user_id);
     let known = SESSIONS
         .lock()
         .ok()
@@ -647,10 +716,9 @@ async fn run_turn(
         sessions.insert(key, session_id.clone());
     }
     // A group session is never read back as a private conversation.
-    let venue = format!("telegram:{}", message.chat_id);
     if known.as_deref() != Some(session_id.as_str()) {
         if let Err(error) = crate::api::agent::mark_session_venue(db, &session_id, &venue).await {
-            warn!(%error, "[Telegram group] could not mark the session as a group's");
+            warn!(%error, "[Group] could not mark the session as a group's");
         }
     }
     let run = crate::api::agent::start_process_run(
@@ -662,8 +730,8 @@ async fn run_turn(
                 mode: Some(AgentInteractionMode::Chat),
                 session_id: Some(session_id),
                 group: Some(crate::api::agent::GroupTurn {
+                    transcript: transcript(&venue, Some(&message.message_id)),
                     venue,
-                    transcript: transcript(message.chat_id, message.message_id),
                     chime,
                 }),
                 ..Default::default()
@@ -672,7 +740,6 @@ async fn run_turn(
     )
     .await
     .ok()?;
-    let chat = message.chat_id.to_string();
     let mut events = Box::pin(crate::api::agent::agent_run_envelopes(run));
     let mut typing = tokio::time::interval(TYPING_EVERY);
     let deadline = tokio::time::sleep(TURN_DEADLINE);
@@ -680,9 +747,7 @@ async fn run_turn(
     loop {
         tokio::select! {
             _ = &mut deadline => return None,
-            _ = typing.tick() => {
-                let _ = crate::services::telegram_bot::send_typing(token, &chat).await;
-            }
+            _ = typing.tick() => send_typing(message, token).await,
             envelope = events.next() => {
                 match envelope?.event {
                     AgentProgressEvent::TaskCompleted { success, response, .. } => {
@@ -706,8 +771,8 @@ async fn run_turn(
 mod tests {
     use super::*;
 
-    fn line(chat_id: i64, message_id: i64, name: &str, text: &str) -> TelegramGroupMessage {
-        TelegramGroupMessage {
+    fn line(chat_id: i64, message_id: i64, name: &str, text: &str) -> GroupLine {
+        GroupLine::from(TelegramGroupMessage {
             update_id: message_id,
             message_id,
             chat_id,
@@ -716,7 +781,11 @@ mod tests {
             display_name: name.into(),
             text: text.into(),
             addressed: false,
-        }
+        })
+    }
+
+    fn venue(chat_id: i64) -> String {
+        format!("telegram:{chat_id}")
     }
 
     #[test]
@@ -724,9 +793,9 @@ mod tests {
         let chat = -9_001;
         record(&line(chat, 1, "阿明", "周五聚餐吗"));
         record(&line(chat, 2, "小红", "我可以"));
-        record_hers(chat, "我在屏幕里，就不去了，你们吃好");
+        record_hers(&venue(chat), "我在屏幕里，就不去了，你们吃好");
         record(&line(chat, 3, "阿明", "@bot 你推荐哪家"));
-        let lines: Vec<(String, String)> = transcript(chat, 3)
+        let lines: Vec<(String, String)> = transcript(&venue(chat), Some("3"))
             .into_iter()
             .map(|message| (message.role, message.content))
             .collect();
@@ -743,21 +812,24 @@ mod tests {
     #[test]
     fn a_group_gets_one_turn_at_a_time_and_a_pause_after_replying() {
         let chat = -9_002;
-        assert!(matches!(begin_turn(chat), Turn::Began));
-        assert!(matches!(begin_turn(chat), Turn::Busy), "one turn at a time");
-        end_turn(chat, true);
+        assert!(matches!(begin_turn(&venue(chat)), Turn::Began));
         assert!(
-            matches!(begin_turn(chat), Turn::Resting(_)),
+            matches!(begin_turn(&venue(chat)), Turn::Busy),
+            "one turn at a time"
+        );
+        end_turn(&venue(chat), true);
+        assert!(
+            matches!(begin_turn(&venue(chat)), Turn::Resting(_)),
             "a short pause after a reply"
         );
         let other = -9_003;
-        assert!(matches!(begin_turn(other), Turn::Began));
-        end_turn(other, false);
+        assert!(matches!(begin_turn(&venue(other)), Turn::Began));
+        end_turn(&venue(other), false);
         assert!(
-            matches!(begin_turn(other), Turn::Began),
+            matches!(begin_turn(&venue(other)), Turn::Began),
             "no reply, no pause"
         );
-        end_turn(other, false);
+        end_turn(&venue(other), false);
     }
 
     #[test]
@@ -780,7 +852,9 @@ mod tests {
         for index in 0..3 {
             record(&line(other, index, "某人", "今天天气真不错啊"));
         }
-        with_group(other, |group| group.last_reply = Some(Instant::now()));
+        with_group(&venue(other), |group| {
+            group.last_reply = Some(Instant::now())
+        });
         assert!(
             !worth_a_look(&line(other, 9, "某人", "今天天气真不错啊")),
             "she spoke there just now"
@@ -798,13 +872,13 @@ mod tests {
     #[test]
     fn a_line_that_comes_while_she_is_busy_waits_for_her() {
         let chat = -9_007;
-        assert!(matches!(begin_turn(chat), Turn::Began));
-        assert!(matches!(begin_turn(chat), Turn::Busy));
-        with_group(chat, |group| {
+        assert!(matches!(begin_turn(&venue(chat)), Turn::Began));
+        assert!(matches!(begin_turn(&venue(chat)), Turn::Busy));
+        with_group(&venue(chat), |group| {
             group.waiting = Some(line(chat, 5, "阿明", "@她 在吗"))
         });
-        end_turn(chat, true);
-        assert!(matches!(begin_turn(chat), Turn::Resting(_)));
+        end_turn(&venue(chat), true);
+        assert!(matches!(begin_turn(&venue(chat)), Turn::Resting(_)));
         let mut today = None;
         for _ in 0..3 {
             assert!(count_today(&mut today, 3));
@@ -813,12 +887,30 @@ mod tests {
     }
 
     #[test]
+    fn a_group_is_its_venue_on_every_platform() {
+        let telegram = line(-100123, 7, "阿明", "在吗");
+        assert_eq!(telegram.venue(), "telegram:-100123");
+        assert_eq!(telegram.message_id, "7");
+        let discord = GroupLine::from(DiscordGroupMessage {
+            message_id: "11".into(),
+            channel_id: "22".into(),
+            guild_id: "33".into(),
+            author_id: "44".into(),
+            display_name: "阿明".into(),
+            text: "在吗".into(),
+            addressed: true,
+        });
+        assert_eq!(discord.venue(), "discord:22");
+        assert_eq!(text_limit(ChannelPlatform::Discord), 2000);
+    }
+
+    #[test]
     fn a_group_keeps_only_its_recent_lines() {
         let chat = -9_004;
         for index in 0..(TRANSCRIPT_LINES as i64 + 5) {
             record(&line(chat, index, "某人", &format!("第{index}句")));
         }
-        let lines = transcript(chat, i64::MAX);
+        let lines = transcript(&venue(chat), None);
         assert_eq!(lines.len(), TRANSCRIPT_LINES);
         assert_eq!(lines[0].content, "某人：第5句");
     }
