@@ -24,6 +24,7 @@ import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, resolveDirectedArmIntent } from './armChoreography'
 import { ArmDrape, ArmPendulum, ArmSegment, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
+import { headRidesBody, KeyedBodyTurn } from './bodyTurnKeyforms'
 import {
   chestBodyExcitationY,
   chestBreathResidual,
@@ -153,6 +154,8 @@ export class Anime25DBodyFrames {
   private jawTravel = 0
   /** A full figure's stance on its ground; a bust has none. */
   private standing: Anime25DStanding | null = null
+  /** A keyed body turn (bodyTurnKeyforms); without one the torso is a cylinder. */
+  private keyedBodyTurn: KeyedBodyTurn | null = null
 
   constructor(
     /** The composed driver; the body only reads it. */
@@ -169,6 +172,7 @@ export class Anime25DBodyFrames {
   ): void {
     this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
+    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot)
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -331,7 +335,8 @@ export class Anime25DBodyFrames {
     this.shellActivation = Math.min(1, this.shellActivation + dt * 8)
     stepAnime25DTorsoShellRotation(
       this.torsoYaw,
-      this.current.angleX,
+      // The head's own turn: what it took from the directed torso turn is not followed back.
+      this.current.angleX - this.current.torsoTurn * headRidesBody(Boolean(this.keyedBodyTurn), this.secondaryDeformationFrame.keyedHead === true),
       this.current.body,
       dt,
       this.torsoShellRotation,
@@ -446,9 +451,8 @@ export class Anime25DBodyFrames {
     frame.shellActivation = this.shellActivation
     frame.torsoShellBlend = this.shellProfile.enabled && this.shellProfile.torso.enabled
       ? frame.shellBlend * this.shellProfile.torso.blend : 0
-    frame.torsoNeckOffsetX = anime25DTorsoShellOffsetX(
-      anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend,
-    )
+    frame.torsoNeckOffsetX = this.keyedBodyTurn?.step(frame, this.torsoShellRotation, this.shellActivation) ??
+      anime25DTorsoShellOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
     writeAnime25DShellRotation(e.angleX, e.angleY, this.shellRotation)
     updateHeadTurn(this.headTurn, e.angleX, e.angleY)
     this.renderFrame.bodyPivotX = anchors.bodyPivot.x

@@ -6,10 +6,11 @@ import type { Anime25DDriver } from './driver'
 import type { headTurnFeatures } from './headTurn'
 import type { Anime25DLayerBinding } from './layerBinding'
 import type { Anime25DGpuLayer } from './layerGpuBinding'
-import type { Anime25DPlayback, Anime25DShellProfile } from './types'
+import type { Anime25DPlayback, Anime25DPlaybackLayer, Anime25DShellProfile } from './types'
 import type { AtlasPixelPatch, CroppedLayerPixels } from './webglRuntime'
 import { isAnime25DRigidAttachment } from '../rig/anime25dLayerSemantics'
 import { removeDuplicatedNeckComponents } from './accessoryComponents'
+import { bindBodyTurnKeyform } from './bodyTurnKeyforms'
 import { sampleChestWeight } from './chestPhysics'
 import { bindCropBoundary } from './cropBoundary'
 import { deriveCrownOcclusionBand, unionDrawing } from './crownOcclusion'
@@ -175,7 +176,10 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     shellMode === 'front-hair' && source.role === 'front-hair'
       ? sampleAnime25DHairlinePinWeights(rest, source, rows, shellProfile)
       : null
-  const standing = bindStanding(baseRole, source, playback.anchors)
+  // A skirt cut in pieces (its lining behind the legs) swings as the one skirt.
+  const standing = bindStanding(baseRole, baseRole === 'bottomwear' ? skirtSpan(playback.layers, source) : source, playback.anchors)
+  const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest,
+    standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined)
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
     standing: Boolean(standing),
     // A part on a standing leg goes with the leg, not with the body as a whole.
@@ -189,7 +193,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     shellDeformation: Boolean(
       shellMode && shellProfile.enabled && shellProfile.blend > 0,
     ),
-    torsoShellDeformation: Boolean(
+    torsoShellDeformation: Boolean(bodyTurnKeyform) || Boolean(
       torsoShellMode &&
       shellProfile.enabled &&
       shellProfile.blend > 0 &&
@@ -259,6 +263,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     handwearAnchorX: linkedArmAnchorX,
     turnFeature: turnFeatures.get(source) ?? null,
     turnKeyform: bindTurnKeyform(playback.turnKeyforms, source, rest),
+    bodyTurnKeyform,
     standing,
     ...armBinding(source, rest),
   })
@@ -469,6 +474,13 @@ export function bindLayerAttachments(
         layer.attachment.hostSource, layer.attachment)
       if (layer.attachmentTurn) layer.deformed = layer.rest.slice()
     }
+    for (const attachment of [layer.attachment, layer.neckwearBridge?.upper, layer.neckwearBridge?.lower]) {
+      // Its host's body key, per vertex of the host, is taken at the anchor and a pixel across (vertices 0, 1).
+      if (attachment?.hostSource) {
+        attachment.binding.bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, attachment.hostSource,
+          Float32Array.of(attachment.x, attachment.y, attachment.x + 1, attachment.y))
+      }
+    }
     if (layer.source.role === 'earwear') {
       layer.earwearPhysics = bindEarwearPhysics(layer.source, layer.attachment,
         readBindingPixels(layer.source), playback.anchors.face.y1 - playback.anchors.face.y0)
@@ -612,4 +624,16 @@ function shareEarringHosts(
         readBindingPixels(member.source), playback.anchors.face.y1 - playback.anchors.face.y0)
     }
   }
+}
+
+/** The bounds every layer of a skirt spans together. */
+function skirtSpan(layers: readonly Anime25DPlaybackLayer[], source: Anime25DPlaybackLayer): Anime25DPlaybackLayer {
+  let top = source.y
+  let bottom = source.y + source.h
+  for (const layer of layers) {
+    if (layer.group !== source.group || anime25DLayerBaseName(layer.role) !== 'bottomwear') continue
+    top = Math.min(top, layer.y)
+    bottom = Math.max(bottom, layer.y + layer.h)
+  }
+  return top === source.y && bottom === source.y + source.h ? source : { ...source, y: top, h: bottom - top }
 }

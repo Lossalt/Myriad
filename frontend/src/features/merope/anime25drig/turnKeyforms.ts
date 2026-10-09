@@ -86,7 +86,11 @@ export function bindTurnKeyform(
   rest: Float32Array,
 ): BoundTurnKeyform | null {
   const key = turnKeyFor(keyforms, layer)
-  if (!key) return null
+  return key ? bindTurnKey(key, rest) : null
+}
+
+/** A key's offsets at each rest point (x, y per point). */
+export function bindTurnKey(key: Readonly<Anime25DTurnKey>, rest: Float32Array): BoundTurnKeyform {
   const nod = Boolean(key.up && key.down)
   return {
     plus: invertLattice(key.plus, rest),

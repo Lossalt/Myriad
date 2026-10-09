@@ -251,6 +251,8 @@ export interface Anime25DPlayback {
   shellProfile: Anime25DShellProfile
   /** The head's turn as keyed shapes per part; absent, the turn is computed. */
   turnKeyforms?: Anime25DTurnKeyforms
+  /** A standing figure's body turn as keyed shapes per body part (bodyTurnKeyforms); absent, the torso is a cylinder. */
+  bodyTurnKeyforms?: Anime25DTurnKeyforms
   /**
    * What generated drawings this rig was enhanced with when imported; absent
    * on rigs imported before it was recorded (then turn keys alone tell).
@@ -301,7 +303,8 @@ export function isAnime25DPlayback(value: unknown): value is Anime25DPlayback {
     isAnime25DMouthProfile(mouthProfile, canvas.width, canvas.height) &&
     isAnime25DChestProfile(chestProfile, canvas.width, canvas.height) &&
     isAnime25DShellProfile(shellProfile, canvas.width, canvas.height) &&
-    (record.turnKeyforms === undefined || isAnime25DTurnKeyforms(record.turnKeyforms))
+    (record.turnKeyforms === undefined || isAnime25DTurnKeyforms(record.turnKeyforms)) &&
+    (record.bodyTurnKeyforms === undefined || isAnime25DTurnKeyforms(record.bodyTurnKeyforms))
   )
 }
 
