@@ -908,5 +908,26 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("created_at", "timestamp with time zone").not_null(),
             ],
         },
+        TableDef {
+            name: "agent_sync_devices".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "character varying").not_null(),
+                ColumnDef::new("user_id", "integer").not_null(),
+                ColumnDef::new("name", "character varying").not_null(),
+                ColumnDef::new("scope", "character varying")
+                    .not_null()
+                    .default_value("'persona-sync'"),
+                ColumnDef::new("role", "character varying")
+                    .not_null()
+                    .default_value("'child'"),
+                ColumnDef::new("token_hash", "character varying").not_null(),
+                ColumnDef::new("token_hint", "character varying").not_null(),
+                ColumnDef::new("lineage", "character varying"),
+                ColumnDef::new("created_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("last_seen_at", "timestamp with time zone"),
+                ColumnDef::new("revoked_at", "timestamp with time zone"),
+                ColumnDef::new("revoked_reason", "character varying"),
+            ],
+        },
     ]
 }

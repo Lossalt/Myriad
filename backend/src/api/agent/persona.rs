@@ -77,7 +77,10 @@ async fn require_merope_enabled() -> Result<(), HttpError> {
     }
 }
 
-async fn require_site_owner(claims: &Claims, db: &DatabaseConnection) -> Result<i32, HttpError> {
+pub(super) async fn require_site_owner(
+    claims: &Claims,
+    db: &DatabaseConnection,
+) -> Result<i32, HttpError> {
     let user_id = parse_user_id_with_agent_access(claims, db).await?;
     let owner = site_owner_user_id(db).await.map_err(|error| {
         tracing::error!(%error, "[Agent persona] Failed to resolve site owner");

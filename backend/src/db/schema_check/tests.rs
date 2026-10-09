@@ -47,6 +47,7 @@ fn test_folded_extension_tables_in_expected_schema() {
         // 004
         "heartbeat_claims",
         "agent_memory_embeddings",
+        "agent_sync_devices",
         "agent_intentions",
         "agent_autonomy_grants",
         // 005 扩展
@@ -593,11 +594,13 @@ VALUES
         "tapp_storage must reject encrypted payloads outside _credentials.*"
     );
 
-    // The generic path puts back a missing index, in its declared shape.
+    // The generic path puts back a missing index, in its declared shape, and
+    // a database that ran 004 before the sync devices table gets it.
     db.execute_unprepared(
         r#"
 DROP INDEX idx_phantasi_items_source_recent;
 DROP INDEX idx_metadata_history_user_date;
+DROP TABLE agent_sync_devices;
 "#,
     )
     .await
@@ -613,6 +616,21 @@ DROP INDEX idx_metadata_history_user_date;
             .try_get::<String>("", "indexdef")
             .unwrap()
             .contains("published_at DESC NULLS LAST, id DESC")
+    );
+    let devices_index = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() \
+             AND indexname = 'idx_agent_sync_devices_one_parent'",
+        ))
+        .await
+        .unwrap()
+        .expect("the heal creates the sync devices table and its one-parent index");
+    assert!(
+        devices_index
+            .try_get::<String>("", "indexdef")
+            .unwrap()
+            .contains("WHERE")
     );
     ensure_schema(&db)
         .await

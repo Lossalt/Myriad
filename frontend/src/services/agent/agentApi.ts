@@ -47,6 +47,29 @@ export type AgentIntentionStatus =
   | 'abandoned'
   | 'expired'
 
+/** A device that syncs her with this site (`/api/agent/devices`). */
+export interface SyncDevice {
+  id: string
+  name: string
+  /** `mys_` and the first 8 characters, to tell tokens apart. */
+  tokenHint: string
+  /** The parent end is where her own life happens. */
+  role: 'parent' | 'child'
+  createdAt: string
+  lastSeenAt: string | null
+  revokedAt: string | null
+  revokedReason: 'owner_revoked' | 'owner_changed' | 'device_left' | null
+  /** Live and not seen for 30 days. Never removed for it. */
+  stale: boolean
+}
+
+export interface SyncDeviceList {
+  devices: SyncDevice[]
+  /** `site`, or the id of the live device that is the parent end. */
+  parent: string
+  limit: number
+}
+
 export interface AgentWorkProposal {
   title: string
   instruction: string
@@ -391,6 +414,23 @@ class AgentService {
     pairing: QqPairingStatus
   }> {
     return apiService.post(`${this.baseUrl}/qq/pairing`)
+  }
+
+  async listSyncDevices(): Promise<SyncDeviceList> {
+    return apiService.get(`${this.baseUrl}/devices`)
+  }
+
+  /** The token comes back this once only. */
+  async addSyncDevice(
+    name: string,
+  ): Promise<{ device: SyncDevice; token: string }> {
+    return apiService.post(`${this.baseUrl}/devices`, { name })
+  }
+
+  async removeSyncDevice(id: string): Promise<{ device: SyncDevice }> {
+    return apiService.delete(
+      `${this.baseUrl}/devices/${encodeURIComponent(id)}`,
+    )
   }
 
   async unpairQq(): Promise<{ success: boolean }> {

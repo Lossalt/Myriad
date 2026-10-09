@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
 );
 "#;
 
+/// Syncing her with other platforms: the device table, for databases that
+/// ran 004 before it had one. Same file as 004 (`migrations/persona_sync.sql`),
+/// so the shapes cannot drift; every statement is `IF NOT EXISTS`.
+pub(crate) async fn ensure_persona_sync_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(include_str!("../../../migrations/persona_sync.sql"))
+        .await?;
+    Ok(())
+}
+
 /// User lifecycle owned by the schema (`migrations/user_lifecycle.sql`): FK
 /// cascades for account-owned rows; for subject-keyed tables an insert-side
 /// guard plus an AFTER DELETE trigger on `users`. Unlike the federation candidates below this heal always applies:
