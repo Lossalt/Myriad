@@ -5,6 +5,8 @@ import { isAnime25DTurnKeyforms } from '../anime25drig/turnKeyforms'
 export interface DocumentTurnKeyforms {
   canvas: [number, number]
   keyforms: Anime25DTurnKeyforms
+  /** A standing figure's body turn keys (bodyTurnKeyforms), on the same document. */
+  bodyKeyforms?: Anime25DTurnKeyforms
 }
 
 const keyed = new WeakMap<Blob, DocumentTurnKeyforms>()
@@ -20,9 +22,9 @@ export function turnKeyformsFor(file: Blob): DocumentTurnKeyforms | undefined {
 
 export function isDocumentTurnKeyforms(value: unknown): value is DocumentTurnKeyforms {
   if (!value || typeof value !== 'object') return false
-  const { canvas, keyforms } = value as Record<string, unknown>
+  const { canvas, keyforms, bodyKeyforms } = value as Record<string, unknown>
   return Array.isArray(canvas) && canvas.length === 2 && canvas.every((v) => Number.isFinite(v) && v > 0) &&
-    isAnime25DTurnKeyforms(keyforms)
+    isAnime25DTurnKeyforms(keyforms) && (bodyKeyforms === undefined || isAnime25DTurnKeyforms(bodyKeyforms))
 }
 
 /**
@@ -36,11 +38,25 @@ export function placeTurnKeyforms(
   frame: { x: number; y: number },
 ): Anime25DTurnKeyforms | undefined {
   if (keys.canvas[0] !== document.width || keys.canvas[1] !== document.height) return undefined
+  return placed(keys.keyforms, frame)
+}
+
+/** The body turn keys that came with a decomposition, in the playback's pixels (placeTurnKeyforms). */
+export function placeBodyTurnKeyforms(
+  keys: DocumentTurnKeyforms,
+  document: { width: number; height: number },
+  frame: { x: number; y: number },
+): Anime25DTurnKeyforms | undefined {
+  if (!keys.bodyKeyforms || keys.canvas[0] !== document.width || keys.canvas[1] !== document.height) return undefined
+  return placed(keys.bodyKeyforms, frame)
+}
+
+function placed(keyforms: Anime25DTurnKeyforms, frame: { x: number; y: number }): Anime25DTurnKeyforms {
   const place = (lattice: Anime25DTurnLattice): Anime25DTurnLattice => ({
     ...lattice,
     box: [lattice.box[0] - frame.x, lattice.box[1] - frame.y, lattice.box[2] - frame.x, lattice.box[3] - frame.y],
   })
-  return Object.fromEntries(Object.entries(keys.keyforms).map(([family, key]): [string, Anime25DTurnKey] => [family, {
+  return Object.fromEntries(Object.entries(keyforms).map(([family, key]): [string, Anime25DTurnKey] => [family, {
     plus: place(key.plus),
     minus: place(key.minus),
     ...(key.up && key.down ? { up: place(key.up), down: place(key.down) } : {}),

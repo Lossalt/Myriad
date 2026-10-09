@@ -6,7 +6,7 @@ import { API_URL } from '../../../config'
 import { currentCopy } from '../../../i18n/localeCopy'
 import { anime25DImportCopy } from './anime25dImportCopy'
 import { importRigPsdInWorker } from './psdImportClient'
-import { placeTurnKeyforms, turnKeyformsFor } from './turnKeyformImport'
+import { placeBodyTurnKeyforms, placeTurnKeyforms, turnKeyformsFor } from './turnKeyformImport'
 
 /** The worker's psdDecode MAX_PSD_BYTES, kept here so the page needs no PSD reader. */
 const MAX_PSD_BYTES = 96 * 1024 * 1024
@@ -57,9 +57,11 @@ export async function prepareRigPsdImport(
   // Keys measured on this decomposition ride into the playback, cut as it is.
   const keys = turnKeyformsFor(file)
   const turnKeyforms = keys && placeTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
+  const bodyTurnKeyforms = keys && placeBodyTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
   const playback = prepared.source.anime25dPlayback
   if (playback) {
     if (turnKeyforms) playback.turnKeyforms = turnKeyforms
+    if (bodyTurnKeyforms) playback.bodyTurnKeyforms = bodyTurnKeyforms
     // Kept with the rig, so its page shows the mode it was made in.
     playback.enhancement = { turn: Boolean(turnKeyforms), expressions: expressions.length > 0 }
   }

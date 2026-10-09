@@ -11,6 +11,9 @@
 //! 重启，或同一张立绘再导入一次，已经花钱做完的生图与拆层直接取用，只把缺的
 //! 补上；拟合（Space 上只用 CPU）每次重做，拟合改进后再导入一次就能用上。
 //!
+//! 站立全身的增强另外画整个人左右转身的两张图、拆两次层，在 Space 上拟合出
+//! 身体各部件的转身关键形（`body_turn`），和头部关键形放在同一份 JSON 里。
+//!
 //! 每个完成的任务整套存档（`archive`）：立绘、四张图、五份拆层、关键形与烘焙后的
 //! 拆层，每张立绘留最近两份。存档可以打包下载，也可以不再生图、拆层，只用 Space
 //! 现在的拟合重做一次，照常导入。
@@ -80,6 +83,7 @@ fn turn_prompts() -> [String; 4] {
 }
 
 mod archive;
+mod body_turn;
 mod cache;
 mod figure_picture;
 use archive::{ArchiveFiles, ArchiveMeta, FigureFiles, FigureMeta};
@@ -572,7 +576,7 @@ async fn run_figure(
     let Some(plan) = plan else {
         tracing::info!(job = %id, "figure decomposed whole");
         return if turn {
-            run(id, user_id, generation, picture, client, &cache).await
+            run(id, user_id, generation, picture.clone(), client, &cache).await
         } else {
             Ok(plain(whole, drawn.1))
         };
@@ -614,7 +618,7 @@ async fn run_figure(
     let stitched = client
         .figure_stitch(
             drawn.clone(),
-            whole,
+            whole.clone(),
             [upper_psd, middle, lower],
             &plan.tiles,
         )
@@ -633,7 +637,14 @@ async fn run_figure(
         master: drawn.0,
         decomposition: stitched,
     };
-    put_back(client, made, figure, kept).await
+    let mut made = put_back(client, made, figure, kept).await?;
+    // The body turns on the figure's whole decomposition, the canvas its turned drawings are decomposed on.
+    let body = body_turn::body_turn_keys(
+        id, user_id, generation, &reference, &picture, &whole, client, &cache,
+    )
+    .await;
+    made.files.keyforms = body_turn::with_body_keys(made.files.keyforms, body.as_ref());
+    Ok(made)
 }
 
 /// A plain figure: its decomposition, no keys (`null`), nothing kept.
@@ -1239,6 +1250,8 @@ pub async fn refit_turn_archive(
                 .try_into()
                 .expect("five pictures");
         let figure = files.figure;
+        // The body's keys are not fitted again: they go along as they were.
+        let body = body_turn::body_of(&files.keyforms);
         let result = fit(&client, &files.decompositions, &pictures)
             .await
             .map(|output| Made {
@@ -1257,7 +1270,11 @@ pub async fn refit_turn_archive(
         let result = match (result, kept.figure.clone(), figure) {
             (Ok(made), Some(meta), Some(files)) => put_back(&client, made, meta, files).await,
             (result, _, _) => result,
-        };
+        }
+        .map(|mut made| {
+            made.files.keyforms = body_turn::with_body_keys(made.files.keyforms, body.as_ref());
+            made
+        });
         finish(&db, &task_id, result, meta).await;
     });
     Ok(Json(json!({ "jobId": job_id })))

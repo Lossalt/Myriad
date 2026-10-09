@@ -116,7 +116,13 @@ export async function decomposeWithTurnKeyforms(
       throw new MeropeApiError(currentCopy().merope.motionSeeThroughUpstream, 502)
     }
     const file = new File([psd], 'see-through.psd', { type: 'image/vnd.adobe.photoshop' })
-    if (isDocumentTurnKeyforms(keys)) attachTurnKeyforms(file, { canvas: keys.canvas, keyforms: keys.keyforms })
+    if (isDocumentTurnKeyforms(keys)) {
+      attachTurnKeyforms(file, {
+        canvas: keys.canvas,
+        keyforms: keys.keyforms,
+        ...(keys.bodyKeyforms ? { bodyKeyforms: keys.bodyKeyforms } : {}),
+      })
+    }
     return file
   } catch (reason) {
     if (reason instanceof MeropeApiError) throw reason

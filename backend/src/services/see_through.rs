@@ -690,6 +690,62 @@ impl SeeThroughClient {
         Ok(keyforms)
     }
 
+    /// A standing figure's body turn keys (`/body_keys`): its decomposition
+    /// fitted onto decompositions of it drawn turned toward image right and
+    /// left, placed on `picture`, the picture that decomposition was made of.
+    /// JSON `{canvas, keyforms, drift, knees}`.
+    pub async fn body_keys(
+        &self,
+        (picture, media_type): (Vec<u8>, String),
+        figure: Vec<u8>,
+        turned: [Vec<u8>; 2],
+        turned_pictures: [Vec<u8>; 2],
+    ) -> Result<Vec<u8>, SeeThroughError> {
+        validate_psd(&figure)?;
+        for psd in &turned {
+            validate_psd(psd)?;
+        }
+        self.wait_until_running().await?;
+        let name = format!("figure.{}", image_extension(&media_type).unwrap_or("png"));
+        let file = |path: String, name: &str| json!({ "path": path, "orig_name": name, "meta": { "_type": "gradio.FileData" } });
+        let picture = self.upload_file(picture, &name, &media_type).await?;
+        let figure = self
+            .upload_file(figure, "figure.psd", "image/vnd.adobe.photoshop")
+            .await?;
+        let [right, left] = turned;
+        let right = self
+            .upload_file(right, "right.psd", "image/vnd.adobe.photoshop")
+            .await?;
+        let left = self
+            .upload_file(left, "left.psd", "image/vnd.adobe.photoshop")
+            .await?;
+        let [right_png, left_png] = turned_pictures;
+        let right_png = self
+            .upload_file(right_png, "right.png", "image/png")
+            .await?;
+        let left_png = self.upload_file(left_png, "left.png", "image/png").await?;
+        let data = json!([
+            file(figure, "figure.psd"),
+            file(right, "right.psd"),
+            file(left, "left.psd"),
+            file(right_png, "right.png"),
+            file(left_png, "left.png"),
+            file(picture, &name),
+        ]);
+        let event_id = self.start("body_keys", data).await?;
+        let data = self
+            .await_data("body_keys", &event_id, KEYFORMS_TIMEOUT)
+            .await?;
+        let keys_url = output_file_url_at(&self.space, &data, 0)?;
+        let keyforms = self
+            .download(keys_url, "body keys download", MAX_KEYFORMS_JSON_BYTES)
+            .await?;
+        serde_json::from_slice::<Value>(&keyforms).map_err(|_| {
+            SeeThroughError::InvalidOutput("See-through returned invalid body keys".to_string())
+        })?;
+        Ok(keyforms)
+    }
+
     /// Wakes the Space if it sleeps and waits while it builds or starts. A
     /// stage the Hub will not tell (a private Space this token cannot read)
     /// is left to the calls that follow.
