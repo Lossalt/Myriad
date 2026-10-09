@@ -22,7 +22,10 @@ use myriad_persona_sync::{
     hlc,
     persona::{PersonaBody, PersonaField, VISUAL_PREFIX},
 };
-use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, EntityTrait, QueryResult, Statement};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, EntityTrait, QueryResult,
+    Statement,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -111,13 +114,14 @@ fn entity<B: Serialize>(
 }
 
 /// One page of the snapshot for the owner `owner`, after `after`.
-pub async fn page<C: ConnectionTrait>(
-    db: &C,
+pub async fn page(
+    db: &DatabaseConnection,
     owner: i32,
     after: Option<&Cursor>,
     limits: &Limits,
     embedding_model: Option<&EmbeddingModel>,
 ) -> Result<Page, DbErr> {
+    let pictures = assets::Pictures::new(db, owner);
     let mut page = Page {
         next: after.cloned(),
         ..Page::default()
@@ -130,7 +134,7 @@ pub async fn page<C: ConnectionTrait>(
             _ => None,
         };
         let room = limits.entities - page.entities.len();
-        let found = of_kind(db, owner, kind, after_id, room + 1).await?;
+        let found = of_kind(db, &pictures, owner, kind, after_id, room + 1).await?;
         for entity in found {
             let size = entity.canonical_bytes().len();
             let full = page.entities.len() >= limits.entities
@@ -157,6 +161,7 @@ pub async fn page<C: ConnectionTrait>(
 /// Up to `limit` entities of `kind` after `after`, in id order.
 async fn of_kind<C: ConnectionTrait>(
     db: &C,
+    pictures: &assets::Pictures,
     owner: i32,
     kind: Kind,
     after: Option<&str>,
@@ -168,13 +173,13 @@ async fn of_kind<C: ConnectionTrait>(
         Kind::AffectEvent => Vec::new(),
         Kind::Diary => return diary(db, owner, after, limit).await,
         Kind::Memory => return memories(db, owner, after, limit).await,
-        Kind::Outfit => outfits(db).await?,
-        Kind::Persona => persona(db).await?.into_iter().collect(),
+        Kind::Outfit => outfits(db, pictures).await?,
+        Kind::Persona => persona(db, pictures).await?.into_iter().collect(),
         Kind::SerialFollowing | Kind::SerialPast | Kind::SerialShelf | Kind::SerialWork => {
             serials(db, kind).await?
         }
         Kind::SoupGame => soup(db, owner).await?.into_iter().collect(),
-        Kind::Sticker => return stickers(db, after, limit).await,
+        Kind::Sticker => return stickers(db, pictures, after, limit).await,
         Kind::VitalsDay => vitals(db).await?,
     };
     found.sort_by(|a, b| a.id.cmp(&b.id));
@@ -326,6 +331,7 @@ async fn diary<C: ConnectionTrait>(
 
 async fn stickers<C: ConnectionTrait>(
     db: &C,
+    pictures: &assets::Pictures,
     after: Option<&str>,
     limit: usize,
 ) -> Result<Vec<EntityVersion>, DbErr> {
@@ -351,7 +357,7 @@ async fn stickers<C: ConnectionTrait>(
         let created_at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
         // A picture the site cannot read still crosses, marked so: the
         // other side can say so instead of losing the sticker silently.
-        let image = assets::picture_at(&url).await;
+        let image = pictures.picture_at(&url).await;
         if image.is_unreadable() {
             tracing::warn!(sticker = %id, "[sync] a sticker's picture cannot be read");
         }
@@ -387,7 +393,10 @@ async fn persona_row<C: ConnectionTrait>(db: &C) -> Result<Option<PersonaRow>, D
 /// crosses as outfits, and which outfit she wears is each side's own (Q12).
 const VISUAL_NOT_FIELDS: [&str; 2] = ["wardrobe", "activeOutfitId"];
 
-async fn persona<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, DbErr> {
+async fn persona<C: ConnectionTrait>(
+    db: &C,
+    pictures: &assets::Pictures,
+) -> Result<Option<EntityVersion>, DbErr> {
     let Some(row) = persona_row(db).await? else {
         return Ok(None);
     };
@@ -421,7 +430,7 @@ async fn persona<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, Db
         .map(str::trim)
         .filter(|url| !url.is_empty())
     {
-        let picture = assets::picture_at(avatar).await;
+        let picture = pictures.picture_at(avatar).await;
         if picture.is_unreadable() {
             tracing::warn!("[sync] her sticker avatar cannot be read");
         }
@@ -447,7 +456,10 @@ fn text(item: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-async fn outfits<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr> {
+async fn outfits<C: ConnectionTrait>(
+    db: &C,
+    pictures: &assets::Pictures,
+) -> Result<Vec<EntityVersion>, DbErr> {
     let Some(row) = persona_row(db).await? else {
         return Ok(Vec::new());
     };
@@ -473,7 +485,7 @@ async fn outfits<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr
         });
         let portrait = match portrait_url {
             Some(url) => {
-                let picture = assets::picture_at(&url).await;
+                let picture = pictures.picture_at(&url).await;
                 if picture.is_unreadable() {
                     tracing::warn!(outfit = %id, "[sync] an outfit's portrait cannot be read");
                 }

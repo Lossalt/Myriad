@@ -7,6 +7,7 @@
 
 pub mod assets;
 pub mod devices;
+mod outside;
 pub mod snapshot;
 
 use myriad_persona_sync::{Holdings, entity::EmbeddingModel};

@@ -211,10 +211,11 @@ pub async fn sync_pull(
 /// persona refers to now.
 pub async fn sync_asset(
     State(db): State<DatabaseConnection>,
-    Extension(_device): Extension<SyncDevice>,
+    Extension(device): Extension<SyncDevice>,
     Path(asset_id): Path<String>,
 ) -> Result<axum::response::Response, HttpError> {
-    use crate::services::persona_sync::assets::{self, RIG_MEDIA_TYPE, Source};
+    use crate::services::persona_sync::assets::{self, Pictures, RIG_MEDIA_TYPE, Source};
+    let pictures = Pictures::new(&db, owner_of(&device));
     use axum::http::header;
     use axum::response::IntoResponse;
     let not_found = || {
@@ -223,7 +224,7 @@ pub async fn sync_asset(
             Json(json!({ "error": "No such asset", "code": "asset_not_found" })),
         ))
     };
-    let source = assets::find(&db, &asset_id)
+    let source = assets::find(&pictures, &asset_id)
         .await
         .map_err(sync_failed)?
         .ok_or_else(not_found)?;
@@ -231,7 +232,9 @@ pub async fn sync_asset(
     match source {
         Source::Image { url, media_type } => {
             let id = asset_id.trim().to_ascii_lowercase();
-            let bytes = assets::image_bytes(&url, &id).await.ok_or_else(not_found)?;
+            let bytes = assets::image_bytes(&pictures, &url, &id)
+                .await
+                .ok_or_else(not_found)?;
             Ok((
                 [
                     (header::CONTENT_TYPE, media_type),
