@@ -5,13 +5,16 @@
 //! owner's private ones whose audience is the owner alone. Nobody else's
 //! memories, and nothing learned in a group.
 
+pub mod assets;
 pub mod devices;
+pub mod snapshot;
 
 use myriad_persona_sync::{Holdings, entity::EmbeddingModel};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, Statement};
 
-/// Most entities and bytes in one pull page.
+/// Most entities in one pull page, the default, and most bytes.
 pub const PULL_MAX_ENTITIES: usize = 2000;
+pub const PULL_DEFAULT_ENTITIES: usize = 500;
 pub const PULL_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// What a push will take, once pushing exists.
 pub const PUSH_MAX_ENTITIES: usize = 500;

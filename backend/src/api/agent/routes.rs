@@ -665,6 +665,20 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
             )),
         )
         .route(
+            "/sync/pull",
+            get(super::sync::sync_pull).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/assets/{asset_id}",
+            get(super::sync::sync_asset).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
             "/sync/role",
             put(super::sync::sync_role).route_layer(from_fn_with_state(
                 app_state.clone(),

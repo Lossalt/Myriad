@@ -1,6 +1,6 @@
 //! What a device calls to sync her (`/api/agent/sync/*`), behind
-//! `sync_device_auth`: who it is and what the site has (`hello`), leaving,
-//! and which end her own life happens at.
+//! `sync_device_auth`: who it is and what the site has (`hello`), reading
+//! her (`pull`, `assets`), leaving, and which end her own life happens at.
 
 use super::*;
 use crate::error::HttpError;
@@ -105,4 +105,290 @@ pub async fn sync_role(
         "role": updated.role.as_str(),
         "parent": parent.unwrap_or_else(|| "site".to_string()),
     })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PullQuery {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    /// The device's embedding model, as JSON `{model, dims}`.
+    #[serde(default)]
+    embedding_model: Option<String>,
+}
+
+fn bad_request(error: &str, code: &str) -> HttpError {
+    HttpError::from((
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": error, "code": code })),
+    ))
+}
+
+/// GET /api/agent/sync/pull: one page of everything the site has of her,
+/// in `(kind, id)` order. Read only. No cursor is the start; `next` is
+/// where the following page starts.
+pub async fn sync_pull(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Query(query): Query<PullQuery>,
+) -> Result<Json<Value>, HttpError> {
+    use crate::services::persona_sync::snapshot::{Cursor, Limits, page};
+    let after = match query.cursor.as_deref().filter(|raw| !raw.is_empty()) {
+        Some(raw) => Some(
+            Cursor::decode(raw).ok_or_else(|| bad_request("Unknown cursor", "invalid_cursor"))?,
+        ),
+        None => None,
+    };
+    let theirs = match query.embedding_model.as_deref() {
+        Some(raw) => Some(
+            serde_json::from_str::<myriad_persona_sync::entity::EmbeddingModel>(raw).map_err(
+                |_| bad_request("embeddingModel is {model, dims}", "invalid_embedding_model"),
+            )?,
+        ),
+        None => None,
+    };
+    let ours = persona_sync::embedding_model(&db)
+        .await
+        .map_err(sync_failed)?;
+    let shared = match (theirs, ours) {
+        (Some(mut theirs), Some(ours)) => {
+            theirs.model = theirs.model.trim().to_string();
+            (theirs == ours).then_some(ours)
+        }
+        _ => None,
+    };
+    let limits = Limits {
+        entities: query
+            .limit
+            .unwrap_or(persona_sync::PULL_DEFAULT_ENTITIES)
+            .clamp(1, persona_sync::PULL_MAX_ENTITIES),
+        bytes: persona_sync::PULL_MAX_BYTES,
+    };
+    let page = page(
+        &db,
+        owner_of(&device),
+        after.as_ref(),
+        &limits,
+        shared.as_ref(),
+    )
+    .await
+    .map_err(sync_failed)?;
+    Ok(Json(json!({
+        "lineage": device.0.lineage,
+        "entities": page.entities,
+        "embeddings": page.embeddings,
+        "assets": page.assets,
+        "next": page.next.as_ref().map(Cursor::encode),
+        "more": page.more,
+    })))
+}
+
+/// GET /api/agent/sync/assets/{asset_id}: a picture as itself, a rig as
+/// `multipart/mixed` (`manifest.json`, then `atlas.png`). Only what her
+/// persona refers to now.
+pub async fn sync_asset(
+    State(db): State<DatabaseConnection>,
+    Extension(_device): Extension<SyncDevice>,
+    Path(asset_id): Path<String>,
+) -> Result<axum::response::Response, HttpError> {
+    use crate::services::persona_sync::assets::{self, RIG_MEDIA_TYPE, Source};
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let not_found = || {
+        HttpError::from((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "No such asset", "code": "asset_not_found" })),
+        ))
+    };
+    let source = assets::find(&db, &asset_id)
+        .await
+        .map_err(sync_failed)?
+        .ok_or_else(not_found)?;
+    const IMMUTABLE: &str = "private, max-age=31536000, immutable";
+    match source {
+        Source::Image { url, media_type } => {
+            let id = asset_id.trim().to_ascii_lowercase();
+            let bytes = assets::image_bytes(&url, &id).await.ok_or_else(not_found)?;
+            Ok((
+                [
+                    (header::CONTENT_TYPE, media_type),
+                    (header::CACHE_CONTROL, IMMUTABLE.to_string()),
+                ],
+                bytes,
+            )
+                .into_response())
+        }
+        Source::Rig { id } => {
+            let manifest = crate::services::merope_rig::read_manifest_bytes(&id)
+                .await
+                .map_err(|_| not_found())?;
+            let atlas = crate::services::merope_rig::read_atlas_bytes(&id)
+                .await
+                .map_err(|_| not_found())?;
+            let boundary = format!("myriad-rig-{}", &id[..16]);
+            let mut body = Vec::with_capacity(manifest.len() + atlas.len() + 512);
+            for (media_type, name, bytes) in [
+                ("application/json", "manifest.json", &manifest),
+                ("image/png", "atlas.png", &atlas),
+            ] {
+                body.extend_from_slice(
+                    format!(
+                        "--{boundary}\r\nContent-Type: {media_type}\r\n\
+                         Content-Disposition: attachment; filename=\"{name}\"\r\n\
+                         Content-Length: {}\r\n\r\n",
+                        bytes.len()
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(bytes);
+                body.extend_from_slice(b"\r\n");
+            }
+            body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+            Ok((
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        format!("{RIG_MEDIA_TYPE}; boundary={boundary}"),
+                    ),
+                    (header::CACHE_CONTROL, IMMUTABLE.to_string()),
+                ],
+                body,
+            )
+                .into_response())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use sea_orm::ConnectionTrait;
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    async fn call(
+        app: &axum::Router,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder().method(method).uri(path);
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 22).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// The device routes over HTTP on a real database (an isolated schema;
+    /// skipped without a test database): only a live device token gets in,
+    /// a device token is no session, and hello, pull and leave answer.
+    #[tokio::test]
+    async fn device_routes_take_only_a_live_device_token() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = fixture.db.clone();
+        db.execute_unprepared(
+            "INSERT INTO users (id, username, is_admin, is_owner) VALUES (41, 'owner41', true, true)",
+        )
+        .await
+        .unwrap();
+        crate::services::principal::invalidate_site_owner_cache();
+        let state = crate::state::AppState::new(
+            db.clone(),
+            crate::config::AppConfig::default(),
+            crate::config::DynamicConfig::default(),
+        );
+        let app = axum::Router::new()
+            .nest(
+                "/api/agent",
+                super::super::create_agent_routes(state.clone()),
+            )
+            .with_state(state);
+        let (_, token) = crate::services::persona_sync::devices::add(&db, 41, "Mac")
+            .await
+            .unwrap();
+
+        let (status, body) = call(&app, "GET", "/api/agent/sync/hello", None).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::UNAUTHORIZED, Some("device_token_required"))
+        );
+        let forged = format!("mys_{}", "A".repeat(43));
+        let (status, body) = call(&app, "GET", "/api/agent/sync/hello", Some(&forged)).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::UNAUTHORIZED, Some("device_token_invalid"))
+        );
+        // A device token is not a session. (Without a JWT secret configured
+        // the session gate answers 500 here instead of 401; either way, no.)
+        let (status, body) = call(&app, "GET", "/api/agent/devices", Some(&token)).await;
+        assert!(
+            status == StatusCode::UNAUTHORIZED || status == StatusCode::INTERNAL_SERVER_ERROR,
+            "{status} {body}"
+        );
+        assert!(!body.to_string().contains(&token));
+
+        crate::services::principal::invalidate_site_owner_cache();
+        let (status, hello) = call(&app, "GET", "/api/agent/sync/hello", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "{hello}");
+        assert_eq!(hello["formatVersion"], 1);
+        assert_eq!(hello["empty"], true);
+        assert_eq!(hello["persona"], Value::Null);
+        assert_eq!(hello["parent"], "site");
+        assert_eq!(hello["role"], "child");
+        assert!(hello["deviceId"].as_str().unwrap().starts_with("dev_"));
+
+        let (status, page) = call(&app, "GET", "/api/agent/sync/pull", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(page["entities"], serde_json::json!([]));
+        assert_eq!(page["more"], false);
+        let (status, body) = call(
+            &app,
+            "GET",
+            "/api/agent/sync/pull?cursor=nope",
+            Some(&token),
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("invalid_cursor"))
+        );
+        let (status, body) = call(
+            &app,
+            "GET",
+            &format!("/api/agent/sync/assets/{}", "ab".repeat(32)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::NOT_FOUND, Some("asset_not_found"))
+        );
+
+        let (status, _) = call(&app, "POST", "/api/agent/sync/leave", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = call(&app, "GET", "/api/agent/sync/hello", Some(&token)).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::UNAUTHORIZED, Some("device_revoked"))
+        );
+
+        fixture.close().await;
+    }
 }

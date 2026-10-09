@@ -1693,6 +1693,9 @@
     "device_token_invalid",
     "device_token_required",
     "invalid_role",
-    "owner_changed"
+    "owner_changed",
+    "asset_not_found",
+    "invalid_cursor",
+    "invalid_embedding_model"
   ]
 }
