@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, FixedOffset};
 
-use super::unified::Concept;
+use crate::Concept;
 
 const DECAY: f64 = 0.5;
 const SPREAD: f64 = 0.8;
