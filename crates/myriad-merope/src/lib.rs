@@ -11,6 +11,7 @@ pub mod chat_days;
 pub mod chat_remember;
 pub mod contrast;
 pub mod curiosity;
+pub mod diary;
 pub mod doing;
 pub mod explore;
 pub mod heard;

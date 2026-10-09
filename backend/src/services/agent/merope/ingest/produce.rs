@@ -74,7 +74,8 @@ pub fn spawn_presence(user_id: i32) {
         // Her day, on the site's clock: it turns when she gets up, not at
         // midnight UTC.
         let first_today = state.last_user_message_at.is_none_or(|at| {
-            at.with_timezone(&chrono::Local).date_naive() < super::super::timing::her_date()
+            at.with_timezone(&super::super::clock::zone()).date_naive()
+                < super::super::timing::her_date()
         });
         if !first_today && gap_hours < 12.0 {
             return;

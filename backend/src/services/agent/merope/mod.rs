@@ -296,16 +296,7 @@ pub async fn note_chat_diary(db: &sea_orm::DatabaseConnection, user_id: i32, tex
     maybe_write_chat_diary(db, user_id, text).await;
 }
 
-const CHAT_DIARY_MIN_CHARS: usize = 8;
-const CHAT_DIARY_GAP_MINUTES: i64 = 20;
-
-pub fn should_write_chat_diary(text: &str, last_chat_age_minutes: Option<i64>) -> bool {
-    let summary = crate::services::agent::merope::ingest::compact_summary(text);
-    if summary.chars().count() < CHAT_DIARY_MIN_CHARS {
-        return false;
-    }
-    last_chat_age_minutes.is_none_or(|age| age >= CHAT_DIARY_GAP_MINUTES)
-}
+pub use myriad_merope::diary::should_write_chat_diary;
 
 async fn maybe_write_chat_diary(db: &sea_orm::DatabaseConnection, user_id: i32, text: &str) {
     let last_age = match latest_diary(db, user_id, store::DIARY_SOURCE_CHAT).await {
