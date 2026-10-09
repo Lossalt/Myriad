@@ -46,7 +46,7 @@ pub const HISTORY_CHARS: usize = 5000;
 pub const MARKED_PAUSE_SECS: i64 = 3 * 3600;
 
 /// How long a pause was, plainly: "13 hours", "3 days".
-fn pause_text(seconds: i64) -> String {
+pub fn pause_text(seconds: i64) -> String {
     let hours = seconds / 3600;
     match hours {
         ..=23 => format!("{} hours", hours.max(1)),
@@ -68,14 +68,24 @@ pub struct HistoryMessage<'a> {
     pub sent_at: Option<DateTime<Utc>>,
 }
 
-/// One message per line, each with who said it: a message sent as several
-/// lines reads as one. Long pauses between them are marked; how long since
-/// the last of them is told apart (see `format_since_section`), so the whole
-/// stands against now.
-pub fn chat_history_text(history: &[HistoryMessage]) -> String {
-    let mut kept: Vec<(String, Option<DateTime<Utc>>)> = Vec::new();
+/// One line of the conversation as she has it: which message of the
+/// history it is, what was said in it, as one line, and the pause marked
+/// before it, if one was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryLine {
+    pub index: usize,
+    pub said: String,
+    pub pause: Option<String>,
+}
+
+/// The messages she still has in front of her, oldest first: the latest
+/// `HISTORY_MESSAGES`, or as many as fit in `HISTORY_CHARS`, a message sent
+/// as several lines read as one, empty ones left out, and a pause of
+/// `MARKED_PAUSE_SECS` or more marked before the message after it.
+pub fn chat_history_lines(history: &[HistoryMessage]) -> Vec<HistoryLine> {
+    let mut kept: Vec<(usize, String, Option<DateTime<Utc>>)> = Vec::new();
     let mut chars = 0;
-    for message in history.iter().rev().take(HISTORY_MESSAGES) {
+    for (index, message) in history.iter().enumerate().rev().take(HISTORY_MESSAGES) {
         let said = chat_safe_content(message.content)
             .lines()
             .map(str::trim)
@@ -85,29 +95,39 @@ pub fn chat_history_text(history: &[HistoryMessage]) -> String {
         if said.is_empty() {
             continue;
         }
-        let line = format!("{}：{said}", message.role);
-        chars += line.chars().count();
+        chars += format!("{}：{said}", message.role).chars().count();
         if chars > HISTORY_CHARS && !kept.is_empty() {
             break;
         }
-        kept.push((line, message.sent_at));
+        kept.push((index, said, message.sent_at));
     }
     kept.reverse();
-    let mut lines = Vec::with_capacity(kept.len() + 2);
+    let mut lines = Vec::with_capacity(kept.len());
     let mut previous: Option<DateTime<Utc>> = None;
-    for (line, at) in kept {
-        if let (Some(before), Some(at)) = (previous, at)
-            && (at - before).num_seconds() >= MARKED_PAUSE_SECS
-        {
-            lines.push(format!(
-                "（{} later）",
-                pause_text((at - before).num_seconds())
-            ));
-        }
+    for (index, said, at) in kept {
+        let pause = match (previous, at) {
+            (Some(before), Some(at)) if (at - before).num_seconds() >= MARKED_PAUSE_SECS => Some(
+                format!("（{} later）", pause_text((at - before).num_seconds())),
+            ),
+            _ => None,
+        };
         if at.is_some() {
             previous = at;
         }
-        lines.push(line);
+        lines.push(HistoryLine { index, said, pause });
+    }
+    lines
+}
+
+/// One message per line, each with who said it: a message sent as several
+/// lines reads as one. Long pauses between them are marked; how long since
+/// the last of them is told apart (see `format_since_section`), so the whole
+/// stands against now.
+pub fn chat_history_text(history: &[HistoryMessage]) -> String {
+    let mut lines = Vec::new();
+    for line in chat_history_lines(history) {
+        lines.extend(line.pause);
+        lines.push(format!("{}：{}", history[line.index].role, line.said));
     }
     lines.join("\n")
 }
@@ -153,6 +173,14 @@ mod tests {
             chat_history_text(&gaps),
             "user：在吗\nassistant：在\n（1 day later）\nuser：哦"
         );
+        // The same, as lines that say which message each is.
+        let lines = chat_history_lines(&gaps);
+        assert_eq!(
+            lines.iter().map(|line| line.index).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(lines[2].pause.as_deref(), Some("（1 day later）"));
+        assert_eq!(lines[1].said, "在");
         // Without times, nothing is made up.
         let plain = [
             message("user", "在吗", None),

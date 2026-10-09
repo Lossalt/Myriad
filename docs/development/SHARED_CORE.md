@@ -37,6 +37,7 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 
 ## 加一个调用
 
+0. 规则还在后端（`backend/`）的，先搬进纯 crate（只挪不改，后端改为 re-export 或薄包装，现有测试证明行为不变），再登记调用。回想的算术（`myriad_agent_rules::memory`）、聊天日记的门槛（`myriad_merope::diary`）、她的作息（`timing::*_at`）、聊天记录的文本（`chat_history`）就是这样进来的。
 1. 在 `src/calls/` 里它所属领域的模块（心情、说话、她自己的生活、作息、体征、说话习惯、海龟汤、连载、先开口、换装……）写调用函数，再按名字的字典序登记进 `src/calls.rs` 的 `CALLS`。函数只做 JSON 与 crate 类型之间的转换，规则本身留在原 crate。
 2. 在 `src/tests.rs` 或 `src/tests/` 的领域模块里写一组往返测试：经 C 入口的输出要和直接调 crate 函数逐字节（浮点逐位）相同。再把名字登记进该模块的 `TESTED`（或 `every_call_is_tested_and_version_lists_them` 的列表），漏登记会失败。
    - 规则本身的输出要确定：同一输入在任何平台、任何一次运行都得出同一结果。按 `HashMap` 的遍历顺序决定先后的地方要补一个确定的次序（例如 `contrast::overused` 的同分按片段本身排）。
