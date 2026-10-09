@@ -1,0 +1,179 @@
+//! Her data across sides: the golden files of `myriad-persona-sync` through
+//! the C entry point, byte for byte, as another platform runs them.
+
+use base64::Engine as _;
+use myriad_persona_sync::{EntityVersion, Kind, Rev, canonicalize, compare, hlc};
+use serde_json::{Value, json};
+
+use super::{ffi, ok};
+use crate::STATUS_BAD_INPUT;
+
+pub(super) const TESTED: &[&str] = &[
+    "sync.canonicalize",
+    "sync.compare",
+    "sync.hlc_next",
+    "sync.hlc_observe",
+    "sync.is_empty",
+    "sync.legacy_rev",
+    "sync.rig_package_id",
+];
+
+macro_rules! fixture {
+    ($path:literal) => {
+        include_bytes!(concat!("../../../myriad-persona-sync/fixtures/", $path))
+    };
+}
+
+const ENTITIES: &[(Kind, &[u8])] = &[
+    (Kind::AffectAnchor, fixture!("entities/affect_anchor.json")),
+    (Kind::AffectEvent, fixture!("entities/affect_event.json")),
+    (Kind::Diary, fixture!("entities/diary.json")),
+    (Kind::Memory, fixture!("entities/memory.json")),
+    (Kind::Outfit, fixture!("entities/outfit.json")),
+    (Kind::Persona, fixture!("entities/persona.json")),
+    (
+        Kind::SerialFollowing,
+        fixture!("entities/serial_following.json"),
+    ),
+    (Kind::SerialPast, fixture!("entities/serial_past.json")),
+    (Kind::SerialShelf, fixture!("entities/serial_shelf.json")),
+    (Kind::SerialWork, fixture!("entities/serial_work.json")),
+    (Kind::SoupGame, fixture!("entities/soup_game.json")),
+    (Kind::Sticker, fixture!("entities/sticker.json")),
+    (Kind::VitalsDay, fixture!("entities/vitals_day.json")),
+];
+
+fn golden(bytes: &[u8]) -> &str {
+    std::str::from_utf8(bytes.strip_suffix(b"\n").unwrap_or(bytes)).unwrap()
+}
+
+#[test]
+fn every_golden_entity_comes_back_in_its_own_bytes() {
+    assert_eq!(ENTITIES.len(), Kind::ALL.len());
+    let rough: Vec<Value> = ENTITIES
+        .iter()
+        .map(|(_, bytes)| {
+            let mut entity: Value = serde_json::from_slice(bytes).unwrap();
+            // A platform sends no digest; the core fills it in.
+            entity["digest"] = json!("");
+            entity
+        })
+        .collect();
+    let out = ok("sync.canonicalize", json!({ "entities": rough }));
+    let out = out["entities"].as_array().unwrap();
+    for ((kind, bytes), got) in ENTITIES.iter().zip(out) {
+        assert_eq!(got["canonical"].as_str().unwrap(), golden(bytes), "{kind}");
+        let direct = canonicalize(serde_json::from_slice::<EntityVersion>(bytes).unwrap()).unwrap();
+        assert_eq!(got["entity"], serde_json::to_value(&direct).unwrap());
+    }
+}
+
+#[test]
+fn an_entity_that_breaks_the_format_is_bad_input() {
+    let mut memory: Value = serde_json::from_slice(ENTITIES[3].1).unwrap();
+    memory["body"]["audience"]["members"] = json!(["7"]);
+    let (status, out) = ffi("sync.canonicalize", &json!({ "entities": [memory] }));
+    assert_eq!(status, STATUS_BAD_INPUT);
+    assert_eq!(out["error"]["kind"], "bad_input");
+    let (status, _) = ffi(
+        "sync.hlc_next",
+        &json!({ "last": "nope", "now": 0, "node": "site" }),
+    );
+    assert_eq!(status, STATUS_BAD_INPUT);
+}
+
+#[test]
+fn the_golden_comparison_comes_back_the_same() {
+    let local: Value = serde_json::from_slice(fixture!("compare/local.json")).unwrap();
+    let remote: Value = serde_json::from_slice(fixture!("compare/remote.json")).unwrap();
+    let out = ok(
+        "sync.compare",
+        json!({ "local": local.clone(), "remote": remote.clone() }),
+    );
+    let want: Value = serde_json::from_slice(fixture!("compare/comparison.json")).unwrap();
+    assert_eq!(out, want);
+    let direct = compare(
+        serde_json::from_value(local).unwrap(),
+        serde_json::from_value(remote).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(out, serde_json::to_value(direct).unwrap());
+    assert_eq!(out["needsSubject"], true);
+}
+
+#[test]
+fn empty_is_no_persona_and_nothing_held() {
+    let empty = |input: Value| ok("sync.is_empty", input)["empty"].as_bool().unwrap();
+    assert!(empty(
+        json!({ "persona": false, "memories": 0, "diary": 0, "affectEvents": 0 })
+    ));
+    assert!(!empty(
+        json!({ "persona": true, "memories": 0, "diary": 0, "affectEvents": 0 })
+    ));
+    assert!(!empty(
+        json!({ "persona": false, "memories": 0, "diary": 1, "affectEvents": 0 })
+    ));
+    let (status, _) = ffi("sync.is_empty", &json!({ "persona": false }));
+    assert_eq!(status, STATUS_BAD_INPUT);
+}
+
+#[test]
+fn the_clock_matches_the_crate() {
+    let node = "dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60";
+    let mut last: Option<String> = None;
+    for now in [
+        1_760_000_000_123_456_i64,
+        1_760_000_000_123_999,
+        1_700_000_000_000_000,
+    ] {
+        let got = ok(
+            "sync.hlc_next",
+            json!({ "last": last, "now": now, "node": node }),
+        )["rev"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let parsed = last.as_deref().map(|raw| raw.parse::<Rev>().unwrap());
+        assert_eq!(
+            got,
+            hlc::next(parsed.as_ref(), now, node).unwrap().to_string()
+        );
+        last = Some(got);
+    }
+    assert_eq!(
+        last.as_deref(),
+        Some("001760000000123-000002-dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60")
+    );
+    let seen = "001760000000500-000007-site";
+    let observed = ok(
+        "sync.hlc_observe",
+        json!({ "last": last, "seen": seen, "now": 1_760_000_000_200_000_i64, "node": node }),
+    );
+    assert_eq!(
+        observed["last"],
+        "001760000000500-000008-dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60"
+    );
+    assert_eq!(
+        ok(
+            "sync.legacy_rev",
+            json!({ "updatedAt": 1_760_000_000_123_456_i64, "origin": null })
+        )["rev"],
+        "001760000000123-000000-site"
+    );
+}
+
+#[test]
+fn the_golden_rig_has_its_golden_id() {
+    let manifest: Value = serde_json::from_slice(fixture!("rig/manifest.json")).unwrap();
+    let atlas = base64::engine::general_purpose::STANDARD.encode(b"atlas-pixels");
+    let out = ok(
+        "sync.rig_package_id",
+        json!({ "atlas": atlas, "manifest": manifest }),
+    );
+    assert_eq!(out["id"], golden(fixture!("rig/package-id.txt")));
+    let (status, _) = ffi(
+        "sync.rig_package_id",
+        &json!({ "atlas": "%%%", "manifest": manifest }),
+    );
+    assert_eq!(status, STATUS_BAD_INPUT);
+}

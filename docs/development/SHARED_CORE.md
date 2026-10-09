@@ -6,7 +6,7 @@
 
 ## 边界
 
-- **只收纯 crate。** 现在是 `myriad-merope` 和它依赖的 `myriad-agent-rules`。不引入 tokio、reqwest、sea-orm，也不读写文件或网络。
+- **只收纯 crate。** 现在是 `myriad-merope` 和它依赖的 `myriad-agent-rules`，以及同步她的数据用的 `myriad-persona-sync`（格式、规范字节、时钟、比对）。不引入 tokio、reqwest、sea-orm，也不读写文件或网络。
 - **每个调用都是输入的纯函数。** 现在几点、她的时区、心情这些状态都在输入里；库不读进程的时钟、时区和环境。crate 里的规则因此不用 `chrono::Local`：她的时区由调用方传入，后端传 `merope::clock::zone()`，现在就是进程时区（容器里 `TZ=Asia/Shanghai`）。
 - **一个二进制里只能有一个 Rust 静态库。** 两个 Rust staticlib 会在 std 符号上冲突。别的平台将来要用的纯 crate，都并进这一个库，不另建。
 - **密钥不进来。** 规则拿不到任何宿主密钥或凭据，错误信息里也没有。
@@ -43,6 +43,20 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
    - 规则本身的输出要确定：同一输入在任何平台、任何一次运行都得出同一结果。按 `HashMap` 的遍历顺序决定先后的地方要补一个确定的次序（例如 `contrast::overused` 的同分按片段本身排）。
 3. 改了已有调用的输入或输出形状、或删掉调用，要加 `ABI_VERSION`。只是新增调用或可选字段则不必。
 4. `cargo test -p myriad-core-ffi`，`cargo clippy -p myriad-core-ffi --all-targets -- -D warnings`。
+
+## 同步（`sync.*`）
+
+她的数据跨端时的格式只有 `myriad-persona-sync` 里的 Rust 类型这一份定义。平台把自己的记录拼成粗实体交给 `sync.canonicalize`，拿回实体和它的规范字节；存的、发的、比对的都是这份字节。`crates/myriad-persona-sync/fixtures/` 是黄金文件：每类实体一份、一份完整的信封、一组比对（`compare/local.json`、`remote.json` → `comparison.json`）、一个 rig 包（atlas 字节是 `atlas-pixels`）。别的平台按钉住的提交复制这些文件，经 C 入口逐字节比对。故意改格式时用 `MYRIAD_SYNC_BLESS=1 cargo test -p myriad-persona-sync` 重写它们。
+
+| 调用 | 输入 → 输出 |
+| --- | --- |
+| `sync.canonicalize` | `{entities:[粗实体]}` → `{entities:[{entity, canonical}]}`；`digest` 可留空，写了就必须对 |
+| `sync.compare` | `{local:[实体], remote:[实体]}` → 比对结果（各字段、各类的相同／只在一端／两端不同，`sameName`、`needsSubject`） |
+| `sync.is_empty` | `{persona, memories, diary, affectEvents}` → `{empty}` |
+| `sync.hlc_next` | `{last?, now, node}` → `{rev}` |
+| `sync.hlc_observe` | `{last?, seen, now, node}` → `{last}` |
+| `sync.legacy_rev` | `{updatedAt, origin?}` → `{rev}`（没有修订的旧行现算） |
+| `sync.rig_package_id` | `{atlas: base64, manifest}` → `{id}` |
 
 ## 别的平台怎么链接
 

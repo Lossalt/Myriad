@@ -28,8 +28,8 @@ use super::sources::{Carry, Intake, Kept, Thing};
 #[cfg(test)]
 pub(crate) use myriad_merope::serial::Held;
 use myriad_merope::serial::{
-    CATALOG, HOW, JUDGE_SCHEMA, Judged, PART_CHARS, PART_CHARS_EN, Past, Source, asks, chapter,
-    clean_aozora, clean_gutenberg, judge_schema, judge_system,
+    CATALOG, HOW, JUDGE_SCHEMA, Judged, PART_CHARS, PART_CHARS_EN, Past, Shelf, Source, asks,
+    chapter, clean_aozora, clean_gutenberg, judge_schema, judge_system,
 };
 pub use myriad_merope::serial::{Ended, Following, Guessed, Work, parts, work};
 
@@ -281,16 +281,6 @@ pub async fn open(db: &DatabaseConnection, thing: Thing) -> Option<Thing> {
         return None;
     }
     Some(chapter(&work, 0, total))
-}
-
-/// The books put out for the day, drawn at random from the library.
-#[derive(Default, Serialize, serde::Deserialize)]
-struct Shelf {
-    day: String,
-    books: Vec<Work>,
-    /// Every book put out before, so the next shelf has others.
-    #[serde(default)]
-    shown: Vec<String>,
 }
 
 async fn shelf(db: &DatabaseConnection) -> Vec<Work> {

@@ -27,6 +27,7 @@ mod serial;
 mod soup;
 mod speaking;
 mod style;
+mod sync;
 mod timing;
 mod vitals;
 
@@ -158,6 +159,13 @@ const CALLS: &[(&str, Call)] = &[
     ("style.distance", style::distance),
     ("style.noticed", style::noticed),
     ("style.unlike", style::unlike),
+    ("sync.canonicalize", sync::canonicalize),
+    ("sync.compare", sync::compare),
+    ("sync.hlc_next", sync::hlc_next),
+    ("sync.hlc_observe", sync::hlc_observe),
+    ("sync.is_empty", sync::is_empty),
+    ("sync.legacy_rev", sync::legacy_rev),
+    ("sync.rig_package_id", sync::rig_package_id),
     ("threads.section", own::threads_section),
     ("timing.asleep_at", timing::asleep_at),
     ("timing.asleep_for", timing::asleep_for),
