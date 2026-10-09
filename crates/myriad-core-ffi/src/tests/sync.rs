@@ -10,6 +10,7 @@ use crate::STATUS_BAD_INPUT;
 
 pub(super) const TESTED: &[&str] = &[
     "sync.canonicalize",
+    "sync.check_rev",
     "sync.compare",
     "sync.hlc_next",
     "sync.hlc_observe",
@@ -159,6 +160,51 @@ fn the_clock_matches_the_crate() {
             json!({ "updatedAt": 1_760_000_000_123_456_i64, "origin": null })
         )["rev"],
         "001760000000123-000000-site"
+    );
+}
+
+#[test]
+fn a_revision_too_far_ahead_of_the_site_is_not_accepted() {
+    let now = 1_760_000_000_000_000_i64;
+    let check = |rev: &str| ok("sync.check_rev", json!({ "rev": rev, "now": now }));
+    let fine = check("001760000300000-000009-dev_a");
+    assert_eq!(
+        fine,
+        json!({ "accepted": true, "aheadMs": 300_000, "maxAheadMs": 300_000 })
+    );
+    let ahead = check("001760000300001-000000-dev_a");
+    assert_eq!(
+        ahead,
+        json!({ "accepted": false, "aheadMs": 300_001, "maxAheadMs": 300_000 })
+    );
+    let rev: Rev = "001760000300001-000000-dev_a".parse().unwrap();
+    assert_eq!(
+        ahead["accepted"],
+        json!(hlc::check_ahead(&rev, now).is_ok())
+    );
+    assert_eq!(check("001759999000000-000000-site")["aheadMs"], 0);
+    let (status, _) = ffi("sync.check_rev", &json!({ "rev": "nope", "now": now }));
+    assert_eq!(status, STATUS_BAD_INPUT);
+}
+
+#[test]
+fn opaque_persona_keys_and_unreadable_pictures_in_the_golden_comparison() {
+    let want: Value = serde_json::from_slice(fixture!("compare/comparison.json")).unwrap();
+    let fields: Vec<&str> = want["persona"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field["field"].as_str().unwrap())
+        .collect();
+    for opaque in ["agentNote", "displayName", "draftSource"] {
+        assert!(!fields.contains(&opaque), "{opaque}");
+    }
+    assert_eq!(
+        want["unreadablePictures"],
+        json!({
+            "local": [],
+            "remote": [{ "field": "image", "id": "stk_gone", "kind": "sticker" }],
+        })
     );
 }
 

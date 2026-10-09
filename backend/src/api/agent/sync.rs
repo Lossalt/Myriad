@@ -1,10 +1,12 @@
 //! What a device calls to sync her (`/api/agent/sync/*`), behind
 //! `sync_device_auth`: who it is and what the site has (`hello`), reading
 //! her (`pull`, `assets`), leaving, and which end her own life happens at.
+//! `hello` and `role` need the device's clock (`X-Sync-Clock`); `leave`
+//! does not, so a device with a wrong clock can still give its token back.
 
 use super::*;
 use crate::error::HttpError;
-use crate::middleware::sync_device::SyncDevice;
+use crate::middleware::sync_device::{SyncClock, SyncDevice};
 use crate::services::persona_sync::{self, devices};
 use myriad_error::AppError;
 
@@ -18,11 +20,27 @@ pub(crate) fn owner_of(device: &SyncDevice) -> i32 {
     device.0.user_id
 }
 
+/// The device's clock, which this route needs (checked by the gate).
+fn require_clock(clock: &SyncClock) -> Result<(), HttpError> {
+    match clock.0 {
+        Some(_) => Ok(()),
+        None => Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "X-Sync-Clock is required: the revision this device's next write would get",
+                "code": "sync_clock_required",
+            })),
+        ))),
+    }
+}
+
 /// GET /api/agent/sync/hello
 pub async fn sync_hello(
     State(db): State<DatabaseConnection>,
     Extension(device): Extension<SyncDevice>,
+    Extension(clock): Extension<SyncClock>,
 ) -> Result<Json<Value>, HttpError> {
+    require_clock(&clock)?;
     let owner = owner_of(&device);
     let holdings = persona_sync::holdings(&db, owner)
         .await
@@ -47,6 +65,7 @@ pub async fn sync_hello(
             "pushMaxEntities": persona_sync::PUSH_MAX_ENTITIES,
             "pushMaxBytes": persona_sync::PUSH_MAX_BYTES,
             "assetMaxBytes": persona_sync::ASSET_MAX_BYTES,
+            "clockMaxAheadMs": myriad_persona_sync::hlc::MAX_AHEAD_MS,
         },
         "serverTime": Utc::now().timestamp_micros(),
     })))
@@ -81,8 +100,10 @@ pub struct RoleRequest {
 pub async fn sync_role(
     State(db): State<DatabaseConnection>,
     Extension(device): Extension<SyncDevice>,
+    Extension(clock): Extension<SyncClock>,
     Json(request): Json<RoleRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    require_clock(&clock)?;
     let Some(role) = devices::Role::parse(&request.role) else {
         return Err(HttpError::from((
             StatusCode::BAD_REQUEST,
@@ -277,13 +298,34 @@ mod tests {
         path: &str,
         token: Option<&str>,
     ) -> (StatusCode, Value) {
+        call_with(app, method, path, token, &[], None).await
+    }
+
+    async fn call_with(
+        app: &axum::Router,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        headers: &[(&str, String)],
+        json_body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder().method(method).uri(path);
         if let Some(token) = token {
             request = request.header("authorization", format!("Bearer {token}"));
         }
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
+        let body = match json_body {
+            Some(json_body) => {
+                request = request.header("content-type", "application/json");
+                Body::from(json_body.to_string())
+            }
+            None => Body::empty(),
+        };
         let response = app
             .clone()
-            .oneshot(request.body(Body::empty()).unwrap())
+            .oneshot(request.body(body).unwrap())
             .await
             .unwrap();
         let status = response.status();
@@ -345,8 +387,72 @@ mod tests {
         assert!(!body.to_string().contains(&token));
 
         crate::services::principal::invalidate_site_owner_cache();
-        let (status, hello) = call(&app, "GET", "/api/agent/sync/hello", Some(&token)).await;
+        // The device's clock: required on hello, refused when far ahead.
+        let clock_at = |offset_ms: i64| {
+            let now_ms = chrono::Utc::now().timestamp_millis() + offset_ms;
+            let rev = myriad_persona_sync::Rev::new(now_ms as u64, 0, "dev_test").unwrap();
+            vec![("x-sync-clock", rev.to_string())]
+        };
+        let (status, body) = call(&app, "GET", "/api/agent/sync/hello", Some(&token)).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("sync_clock_required"))
+        );
+        let (status, body) = call_with(
+            &app,
+            "GET",
+            "/api/agent/sync/hello",
+            Some(&token),
+            &[("x-sync-clock", "tomorrow".to_string())],
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("invalid_sync_clock"))
+        );
+        let (status, body) = call_with(
+            &app,
+            "GET",
+            "/api/agent/sync/hello",
+            Some(&token),
+            &clock_at(60 * 60 * 1000),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("clock_ahead")),
+            "{body}"
+        );
+        assert!(body["aheadMs"].as_u64().unwrap() > 50 * 60 * 1000);
+        assert_eq!(body["maxAheadMs"], 300_000);
+        assert!(body["serverTime"].as_i64().unwrap() > 0);
+        // A pull with a clock far ahead is refused too; without one it is not.
+        let (status, body) = call_with(
+            &app,
+            "GET",
+            "/api/agent/sync/pull",
+            Some(&token),
+            &clock_at(10 * 60 * 1000),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("clock_ahead"))
+        );
+        let (status, hello) = call_with(
+            &app,
+            "GET",
+            "/api/agent/sync/hello",
+            Some(&token),
+            &clock_at(4 * 60 * 1000),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{hello}");
+        assert_eq!(hello["limits"]["clockMaxAheadMs"], 300_000);
         assert_eq!(hello["formatVersion"], 1);
         assert_eq!(hello["empty"], true);
         assert_eq!(hello["persona"], Value::Null);
@@ -381,9 +487,53 @@ mod tests {
             (StatusCode::NOT_FOUND, Some("asset_not_found"))
         );
 
-        let (status, _) = call(&app, "POST", "/api/agent/sync/leave", Some(&token)).await;
+        // Role needs the clock too.
+        let role = Some(serde_json::json!({ "role": "parent" }));
+        let (status, body) = call_with(
+            &app,
+            "PUT",
+            "/api/agent/sync/role",
+            Some(&token),
+            &[],
+            role.clone(),
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("sync_clock_required"))
+        );
+        let (status, body) = call_with(
+            &app,
+            "PUT",
+            "/api/agent/sync/role",
+            Some(&token),
+            &clock_at(0),
+            role,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["role"], "parent");
+
+        // A wrong clock does not keep a device from leaving.
+        let (status, _) = call_with(
+            &app,
+            "POST",
+            "/api/agent/sync/leave",
+            Some(&token),
+            &clock_at(60 * 60 * 1000),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
-        let (status, body) = call(&app, "GET", "/api/agent/sync/hello", Some(&token)).await;
+        let (status, body) = call_with(
+            &app,
+            "GET",
+            "/api/agent/sync/hello",
+            Some(&token),
+            &clock_at(0),
+            None,
+        )
+        .await;
         assert_eq!(
             (status, body["code"].as_str()),
             (StatusCode::UNAUTHORIZED, Some("device_revoked"))

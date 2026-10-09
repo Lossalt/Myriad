@@ -22,8 +22,8 @@ mod rig;
 pub use canonical::{digest, write_canonical_json};
 pub use compare::{Comparison, Holdings, compare, is_empty};
 pub use entity::{
-    AssetRef, AssetType, EntityVersion, Envelope, FORMAT, FORMAT_VERSION, Kind, OWNER, State,
-    canonicalize, canonicalize_envelope,
+    AssetRef, AssetType, EntityVersion, Envelope, FORMAT, FORMAT_VERSION, Kind, OWNER, Picture,
+    State, canonicalize, canonicalize_envelope,
 };
 pub use hlc::Rev;
 pub use persona::{FieldClass, PersonaBody, PersonaField, field_class};

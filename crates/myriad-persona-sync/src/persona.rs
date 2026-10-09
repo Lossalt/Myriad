@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     SyncError,
-    entity::{AssetRef, check_asset},
+    entity::Picture,
     hlc::{Rev, check_node},
 };
 
@@ -21,10 +21,16 @@ pub enum FieldClass {
     Single,
     /// A list of strings; both sides' items are kept.
     List,
+    /// A key only some side gives a meaning to: the site's `displayName`
+    /// and `draftSource`, and whatever else a side keeps that the others do
+    /// not read. Every side keeps it and sends it back exactly as it came;
+    /// it merges like a single value. A comparison leaves it out: a side
+    /// that does not use a key has no view of it to differ on.
+    Opaque,
 }
 
-/// Fields with a known meaning. Every other field (her `visual.*` keys and
-/// whatever a newer side adds) is a single opaque value.
+/// Fields with a known meaning. Her `visual.*` keys are single values of
+/// any shape; every other field is [`FieldClass::Opaque`].
 pub const KNOWN_FIELDS: &[(&str, FieldClass)] = &[
     ("drives", FieldClass::List),
     ("language", FieldClass::Single),
@@ -62,7 +68,11 @@ pub fn field_class(field: &str) -> FieldClass {
         .iter()
         .find(|(name, _)| *name == field)
         .map(|(_, class)| *class)
-        .unwrap_or(FieldClass::Single)
+        .unwrap_or(if field.starts_with(VISUAL_PREFIX) {
+            FieldClass::Single
+        } else {
+            FieldClass::Opaque
+        })
 }
 
 /// One field: its value, and the revision and side of its last edit.
@@ -108,10 +118,10 @@ impl crate::entity::CheckBody for PersonaBody {
                     .as_array()
                     .is_some_and(|items| items.iter().all(Value::is_string)),
                 value if name == "stickerAvatar" => {
-                    let mut asset: AssetRef = serde_json::from_value(value.clone())
+                    let mut picture: Picture = serde_json::from_value(value.clone())
                         .map_err(|error| SyncError::new(format!("stickerAvatar: {error}")))?;
-                    check_asset(&mut asset)?;
-                    field.value = serde_json::to_value(asset).map_err(SyncError::from_json)?;
+                    picture.check()?;
+                    field.value = serde_json::to_value(picture).map_err(SyncError::from_json)?;
                     true
                 }
                 Value::String(_) => true,

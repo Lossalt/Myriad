@@ -661,7 +661,7 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
             "/sync/leave",
             post(super::sync::sync_leave).route_layer(from_fn_with_state(
                 app_state.clone(),
-                middleware::sync_device::sync_device_auth,
+                middleware::sync_device::sync_device_leave_auth,
             )),
         )
         .route(

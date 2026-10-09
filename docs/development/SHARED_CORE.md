@@ -51,12 +51,20 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 | 调用 | 输入 → 输出 |
 | --- | --- |
 | `sync.canonicalize` | `{entities:[粗实体]}` → `{entities:[{entity, canonical}]}`；`digest` 可留空，写了就必须对 |
-| `sync.compare` | `{local:[实体], remote:[实体]}` → 比对结果（各字段、各类的相同／只在一端／两端不同，`sameName`、`needsSubject`） |
+| `sync.check_rev` | `{rev, now}` → `{accepted, aheadMs, maxAheadMs}`：`now` 是站点的时间，`rev` 超前它 5 分钟以上就不收 |
+| `sync.compare` | `{local:[实体], remote:[实体]}` → 比对结果（各字段、各类的相同／只在一端／两端不同，`sameName`、`needsSubject`，`unreadablePictures` 两端各自读不到的图） |
 | `sync.is_empty` | `{persona, memories, diary, affectEvents}` → `{empty}` |
 | `sync.hlc_next` | `{last?, now, node}` → `{rev}` |
 | `sync.hlc_observe` | `{last?, seen, now, node}` → `{last}` |
 | `sync.legacy_rev` | `{updatedAt, origin?}` → `{rev}`（没有修订的旧行现算） |
 | `sync.rig_package_id` | `{atlas: base64, manifest}` → `{id}` |
+
+格式里几条平台要照做的规矩：
+
+- **不透明的人设键。** 人设里本端不认识的键（站点的 `displayName`、`draftSource`，以及以后别的端加的键）是 `opaque` 类：原样存下，原样传回（值和 `rev` 都不动），按单值合并。比对不列它们：不用这个键的一端谈不上和别人不同。
+- **读不到的图。** 立绘、贴纸、贴纸头像的位置上要么是图片资产，要么是 `{"unreadable": true}`：这一端有这张图，但读不出来（外链失效、文件没了）。没有可拉的文件，界面照比对里的 `unreadablePictures` 提示「站点上有张图读不到」。
+- **体征不带群。** `vitals_day` 的 `groups` 只有每个群的计数，规范化时去掉群的标识并按计数排序。
+- **时钟超前。** 站点不收超前它 5 分钟以上的 `rev`，回 409 `clock_ahead`（带 `serverTime`、`aheadMs`、`maxAheadMs`）。设备的请求头 `X-Sync-Clock` 带「下一次写会拿到的 rev」（`sync.hlc_next` 算出、不落盘），`hello` 与 `role` 必带；以后的 push 里每个实体和每个人设字段的 `rev` 都按同一规则查，有一个超前就整批不收，什么都不写、也不吸收进站点的时钟。设备收到 `clock_ahead`：停止同步并告诉用户时钟不对，outbox 留着（暂存）；时钟改对后，把时钟退回到最近一次从站点看到的 rev，按 outbox 顺序用 `sync.hlc_next` 给每条待推的写重新打 rev，再推。推之前可以用 `sync.check_rev` 按 `hello` 给的 `serverTime` 加上经过的时间自查。
 
 ## 别的平台怎么链接
 

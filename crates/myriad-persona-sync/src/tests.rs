@@ -145,6 +145,12 @@ fn two_sides() -> (Vec<EntityVersion>, Vec<EntityVersion>) {
         .remove("visual.visualIdentity");
     persona.body["fields"]["agentNote"] =
         json!({"value": "只在 Mac 上", "rev": rev, "origin": mac});
+    // Keys only the site reads, carried back as they came, or not at all.
+    persona.body["fields"]["draftSource"] = json!({"value": "fallback", "rev": rev, "origin": mac});
+    persona.body["fields"]
+        .as_object_mut()
+        .unwrap()
+        .remove("displayName");
     persona.digest.clear();
     local.push(canonicalize(persona).unwrap());
 
@@ -176,6 +182,12 @@ fn two_sides() -> (Vec<EntityVersion>, Vec<EntityVersion>) {
         .unwrap()
     };
     let mut remote = remote;
+    // A sticker whose picture the site cannot read.
+    let mut gone = by_kind[&Kind::Sticker].clone();
+    gone.id = "stk_gone".into();
+    gone.body["image"] = serde_json::to_value(Picture::unreadable()).unwrap();
+    gone.digest.clear();
+    remote.push(canonicalize(gone).unwrap());
     remote.push(own("own_1", "下午读了《吾輩は猫である》第三段。", 0.4));
     local.push(own("own_1", "下午读了《吾輩は猫である》第三段。", 0.6));
     // The same words under two ids.
@@ -223,8 +235,20 @@ fn a_comparison_of_two_sides_is_golden() {
     assert_eq!(field("likes").status, Status::Differ);
     assert_eq!(field("likes").class, FieldClass::List);
     assert_eq!(field("summary").status, Status::Same);
-    assert_eq!(field("agentNote").status, Status::OnlyLocal);
     assert_eq!(field("visual.visualIdentity").status, Status::OnlyRemote);
+    // Opaque keys are not compared: not the ones only the site has, nor
+    // the ones only this side has, nor the ones that differ.
+    for opaque in ["agentNote", "displayName", "draftSource"] {
+        assert_eq!(field_class(opaque), FieldClass::Opaque);
+        assert!(
+            comparison
+                .persona
+                .fields
+                .iter()
+                .all(|field| field.field != opaque),
+            "{opaque}"
+        );
+    }
     let counts = |category: Category| comparison.categories[&category].counts.clone();
     assert_eq!(counts(Category::Memories).same, 1);
     let experiences = counts(Category::Experiences);
@@ -240,7 +264,16 @@ fn a_comparison_of_two_sides_is_golden() {
     assert_eq!(comparison.memory_twins[0].local, "own_mac");
     assert_eq!(counts(Category::Vitals).only_local, 1);
     assert_eq!(counts(Category::Vitals).only_remote, 1);
-    assert_eq!(counts(Category::Stickers).only_remote, 1);
+    assert_eq!(counts(Category::Stickers).only_remote, 2);
+    assert!(comparison.unreadable_pictures.local.is_empty());
+    assert_eq!(
+        comparison.unreadable_pictures.remote,
+        vec![compare::PictureKey {
+            kind: Kind::Sticker,
+            id: "stk_gone".into(),
+            field: "image".into(),
+        }]
+    );
     assert_eq!(counts(Category::Serial).same, 1);
     assert_eq!(counts(Category::Serial).only_remote, 3);
     assert_eq!(counts(Category::AffectEvents).only_remote, 1);

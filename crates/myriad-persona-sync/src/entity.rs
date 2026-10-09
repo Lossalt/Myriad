@@ -366,7 +366,9 @@ fn normalize_body(kind: Kind, state: State, id: &str, body: Value) -> Result<Val
         Kind::SoupGame => typed::<soup::Game>(body)?,
         Kind::Sticker => checked::<StickerBody>(body)?,
         Kind::VitalsDay => {
-            let day: vitals::Day = serde_json::from_value(body).map_err(SyncError::from_json)?;
+            let mut day: vitals::Day =
+                serde_json::from_value(body).map_err(SyncError::from_json)?;
+            strip_groups(&mut day);
             match id.split_once('@') {
                 Some((date, origin)) if date == day.day && check_node(origin).is_ok() => {}
                 _ => {
@@ -379,6 +381,17 @@ fn normalize_body(kind: Kind, state: State, id: &str, body: Value) -> Result<Val
         }
     };
     Ok(body)
+}
+
+/// Which groups talked never leaves the side that counted them: a day
+/// crosses with each group's counts (what merging two sides' days needs),
+/// not the group's id, in an order that says nothing about which it was.
+fn strip_groups(day: &mut vitals::Day) {
+    for group in &mut day.groups {
+        group.venue.clear();
+    }
+    day.groups
+        .sort_by_key(|group| std::cmp::Reverse((group.lines, group.hers, group.others)));
 }
 
 /// A body's own rules, past its shape.
@@ -603,9 +616,63 @@ impl AssetRef {
     }
 }
 
-/// Checks an asset reference that is not inside a typed body.
-pub fn check_asset(asset: &mut AssetRef) -> Result<(), SyncError> {
-    asset.check()
+/// A picture an entity refers to: the image itself, or, when the side has
+/// a picture there but cannot read it (an outside address that no longer
+/// answers, a file gone missing), a mark saying so. A side shows the mark
+/// ("a picture on the site cannot be read") instead of fetching anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Picture {
+    Image(AssetRef),
+    Unreadable(UnreadablePicture),
+}
+
+/// `{"unreadable": true}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnreadablePicture {
+    pub unreadable: bool,
+}
+
+impl Picture {
+    /// The mark for a picture that cannot be read.
+    pub fn unreadable() -> Self {
+        Self::Unreadable(UnreadablePicture { unreadable: true })
+    }
+
+    /// The image, when there is one to fetch.
+    pub fn asset(&self) -> Option<&AssetRef> {
+        match self {
+            Self::Image(asset) => Some(asset),
+            Self::Unreadable(_) => None,
+        }
+    }
+
+    pub fn is_unreadable(&self) -> bool {
+        matches!(self, Self::Unreadable(_))
+    }
+
+    pub(crate) fn check(&mut self) -> Result<(), SyncError> {
+        match self {
+            Self::Image(asset) => {
+                asset.check()?;
+                if asset.kind != AssetType::Image {
+                    return Err(SyncError::new("a picture is an image"));
+                }
+                Ok(())
+            }
+            Self::Unreadable(mark) if mark.unreadable => Ok(()),
+            Self::Unreadable(_) => Err(SyncError::new(
+                "a picture is an image or {\"unreadable\": true}",
+            )),
+        }
+    }
+}
+
+impl From<AssetRef> for Picture {
+    fn from(asset: AssetRef) -> Self {
+        Self::Image(asset)
+    }
 }
 
 /// A saved outfit.
@@ -627,8 +694,9 @@ pub struct OutfitBody {
     /// The bust set a full-body set was drawn from.
     #[serde(default)]
     pub reference_outfit_id: Option<String>,
+    /// None when the set has no portrait of its own.
     #[serde(default)]
-    pub portrait: Option<AssetRef>,
+    pub portrait: Option<Picture>,
     #[serde(default)]
     pub rig: Option<AssetRef>,
 }
@@ -644,19 +712,14 @@ impl CheckBody for OutfitBody {
         if !self.outfit.is_object() {
             return Err(SyncError::new("an outfit's outfit is an object"));
         }
-        for asset in self.portrait.iter_mut().chain(self.rig.iter_mut()) {
-            asset.check()?;
+        if let Some(portrait) = &mut self.portrait {
+            portrait.check()?;
         }
-        if self
-            .portrait
-            .as_ref()
-            .is_some_and(|asset| asset.kind != AssetType::Image)
-            || self
-                .rig
-                .as_ref()
-                .is_some_and(|asset| asset.kind != AssetType::Rig)
-        {
-            return Err(SyncError::new("a portrait is an image and a rig is a rig"));
+        if let Some(rig) = &mut self.rig {
+            rig.check()?;
+            if rig.kind != AssetType::Rig {
+                return Err(SyncError::new("a rig is a rig"));
+            }
         }
         Ok(())
     }
@@ -674,16 +737,12 @@ pub struct StickerBody {
     /// a sticker of how she no longer looks is not offered.
     pub identity: String,
     pub created_at: i64,
-    pub image: AssetRef,
+    pub image: Picture,
 }
 
 impl CheckBody for StickerBody {
     fn check_body(&mut self) -> Result<(), SyncError> {
-        self.image.check()?;
-        if self.image.kind != AssetType::Image {
-            return Err(SyncError::new("a sticker is an image"));
-        }
-        Ok(())
+        self.image.check()
     }
 }
 
@@ -859,6 +918,81 @@ mod tests {
             .is_err()
         );
         assert!(canonicalize(entity(Kind::VitalsDay, "2026-10-08", State::Live, day)).is_err());
+    }
+
+    #[test]
+    fn a_day_crosses_with_each_groups_counts_and_not_which_group() {
+        let mut day = json!({
+            "day": "2026-10-08", "calls": 0, "failedCalls": 0, "inputTokens": 0,
+            "busiest": [], "kept": {}, "unreadable": 0, "things": 0, "ownMinutes": 0.0,
+            "lazedMinutes": 0.0, "landed": {}, "replies": 0, "replyP50": null, "replyP90": null,
+            "notesLeanOn": [], "repliesLeanOn": [], "alerts": [],
+        });
+        day["groups"] = json!([
+            {"venue": "telegram:-100123", "lines": 4, "hers": 1, "others": 2},
+            {"venue": "qq:998877", "lines": 30, "hers": 6, "others": 5},
+        ]);
+        let crossed =
+            canonicalize(entity(Kind::VitalsDay, "2026-10-08@site", State::Live, day)).unwrap();
+        assert_eq!(
+            crossed.body["groups"],
+            json!([
+                {"lines": 30, "hers": 6, "others": 5},
+                {"lines": 4, "hers": 1, "others": 2},
+            ])
+        );
+        let text = String::from_utf8(crossed.canonical_bytes()).unwrap();
+        assert!(
+            !text.contains("venue") && !text.contains("998877"),
+            "{text}"
+        );
+        // Crossing again changes nothing.
+        assert_eq!(canonicalize(crossed.clone()).unwrap(), crossed);
+    }
+
+    #[test]
+    fn a_picture_is_an_image_or_marked_unreadable() {
+        let sticker = |image: Value| {
+            json!({
+                "picture": "waving", "meaning": "hi", "identity": "abc", "createdAt": 1,
+                "image": image,
+            })
+        };
+        let gone = canonicalize(entity(
+            Kind::Sticker,
+            "s",
+            State::Live,
+            sticker(json!({"unreadable": true})),
+        ))
+        .unwrap();
+        assert_eq!(gone.body["image"], json!({"unreadable": true}));
+        for bad in [
+            json!({"unreadable": false}),
+            json!(null),
+            json!({"unreadable": true, "id": "ab"}),
+            json!({"id": "ab".repeat(32), "type": "rig", "bytes": 1, "mediaType": "x"}),
+        ] {
+            assert!(
+                canonicalize(entity(
+                    Kind::Sticker,
+                    "s",
+                    State::Live,
+                    sticker(bad.clone())
+                ))
+                .is_err(),
+                "{bad}"
+            );
+        }
+        let outfit = json!({
+            "clothingStyle": "everyday", "outfit": {}, "portrait": {"unreadable": true},
+        });
+        let outfit = canonicalize(entity(Kind::Outfit, "coat", State::Live, outfit)).unwrap();
+        let body: OutfitBody = outfit.body_as().unwrap();
+        assert!(body.portrait.unwrap().is_unreadable());
+        let persona = json!({"fields": {"stickerAvatar": {
+            "value": {"unreadable": true}, "rev": "001760000000123-000000-site", "origin": "site",
+        }}});
+        assert!(canonicalize(entity(Kind::Persona, "her", State::Live, persona)).is_ok());
     }
 
     #[test]

@@ -1696,6 +1696,9 @@
     "owner_changed",
     "asset_not_found",
     "invalid_cursor",
-    "invalid_embedding_model"
+    "invalid_embedding_model",
+    "clock_ahead",
+    "invalid_sync_clock",
+    "sync_clock_required"
   ]
 }

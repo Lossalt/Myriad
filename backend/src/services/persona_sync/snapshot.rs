@@ -349,10 +349,12 @@ async fn stickers<C: ConnectionTrait>(
         let id: String = row.try_get("", "id")?;
         let url: String = row.try_get("", "asset_id")?;
         let created_at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
-        let Some(image) = assets::image_ref(&url).await else {
-            tracing::warn!(sticker = %id, "[sync] a sticker's picture cannot be read; left out");
-            continue;
-        };
+        // A picture the site cannot read still crosses, marked so: the
+        // other side can say so instead of losing the sticker silently.
+        let image = assets::picture_at(&url).await;
+        if image.is_unreadable() {
+            tracing::warn!(sticker = %id, "[sync] a sticker's picture cannot be read");
+        }
         let body = StickerBody {
             picture: row.try_get("", "picture")?,
             meaning: row.try_get("", "meaning")?,
@@ -418,11 +420,14 @@ async fn persona<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, Db
         .as_deref()
         .map(str::trim)
         .filter(|url| !url.is_empty())
-        && let Some(asset) = assets::image_ref(avatar).await
     {
+        let picture = assets::picture_at(avatar).await;
+        if picture.is_unreadable() {
+            tracing::warn!("[sync] her sticker avatar cannot be read");
+        }
         fields.insert(
             "stickerAvatar".to_string(),
-            field(serde_json::to_value(asset).unwrap_or(Value::Null)),
+            field(serde_json::to_value(picture).unwrap_or(Value::Null)),
         );
     }
     Ok(entity(
@@ -467,7 +472,13 @@ async fn outfits<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr
                 .filter(|url| !url.trim().is_empty())
         });
         let portrait = match portrait_url {
-            Some(url) => assets::image_ref(&url).await,
+            Some(url) => {
+                let picture = assets::picture_at(&url).await;
+                if picture.is_unreadable() {
+                    tracing::warn!(outfit = %id, "[sync] an outfit's portrait cannot be read");
+                }
+                Some(picture)
+            }
             None => None,
         };
         let rig = match text(item, "rigAssetId") {
@@ -712,7 +723,8 @@ INSERT INTO agent_persona (id, name, personality, persona_json, visual_profile, 
 VALUES ('site', ' Merope ', '安静', '{{"summary":"住在站点上","likes":["雨天"]}}'::jsonb,
         '{{"clothingStyle":"everyday","activeOutfitId":"default","wardrobe":[
           {{"id":"default","clothingStyle":"everyday","outfit":{{"top":"白衬衫"}}}},
-          {{"id":"coat","name":"大衣","clothingStyle":"everyday","outfit":{{"top":"大衣"}}}}]}}'::jsonb,
+          {{"id":"coat","name":"大衣","clothingStyle":"everyday","outfit":{{"top":"大衣"}},
+            "portraitAssetId":"/media/assets/00000000-0000-0000-0000-000000000000/gone.png"}}]}}'::jsonb,
         '2026-10-09T00:00:00Z');
 INSERT INTO agent_memories (id, user_id, kind, content, speaker, source, venue, audience, concepts,
                             valid_from, invalid_at, invalid_reason, created_at, updated_at) VALUES
@@ -731,6 +743,9 @@ INSERT INTO agent_memories (id, user_id, kind, content, speaker, source, venue, 
 INSERT INTO agent_memory_embeddings (memory_id, model, digest, vector, created_at) VALUES
   ('m_owner', 'pplx', '{digest}', decode('0000803f000000bf', 'hex'), NOW()),
   ('m_own', 'pplx', 'stale-digest', decode('0000803f000000bf', 'hex'), NOW());
+INSERT INTO merope_stickers (id, picture, meaning, venue, asset_id, identity, created_at) VALUES
+  ('stk_gone', '她挥手', '你好', NULL, 'gone-picture', 'abc', '2026-10-05Z'),
+  ('stk_group', '群里的', '群', 'telegram:-1', 'gone-picture', 'abc', '2026-10-05Z');
 INSERT INTO agent_diary (id, user_id, content, source, created_at) VALUES
   ('d1', 41, '今天下雨了', 'chat', '2026-10-05Z'),
   ('d2', 42, '别人的日记', 'chat', '2026-10-05Z');
@@ -741,6 +756,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
   ('merope_vitals', 'day:2026-10-08', '{{"day":"2026-10-08","calls":3,"failedCalls":0,"inputTokens":1,
      "busiest":[],"kept":{{}},"unreadable":0,"things":0,"ownMinutes":0.0,"lazedMinutes":0.0,
      "landed":{{}},"replies":0,"replyP50":null,"replyP90":null,"notesLeanOn":[],"repliesLeanOn":[],
+     "groups":[{{"venue":"telegram:-100123","lines":4,"hers":1,"others":2}}],
      "alerts":[]}}', 9999999999, '2026-10-09Z'),
   ('merope_serial', 'past', '{{"finished":["a"],"dropped":[]}}', 9999999999, '2026-10-09Z'),
   ('merope_serial', 'reading', '[{{"id":"w1","next":1,"total":3,"started":"2026-10-01T00:00:00Z","guess":null}}]',
@@ -811,6 +827,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
                 (Kind::SerialPast, "past"),
                 (Kind::SerialWork, "w1"),
                 (Kind::SoupGame, "p:owner"),
+                (Kind::Sticker, "stk_gone"),
                 (Kind::VitalsDay, "2026-10-08@site"),
             ]
         );
@@ -851,6 +868,23 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         let anchor = by("owner");
         assert_eq!(anchor.body["at"], 1_791_507_600_000_000_i64);
         assert!(anchor.body["affect"]["mood"].as_f64().unwrap() > 40.0);
+        // Pictures the site cannot read cross marked, not dropped.
+        assert_eq!(
+            by("coat").body["portrait"],
+            serde_json::json!({ "unreadable": true })
+        );
+        assert_eq!(by("default").body["portrait"], Value::Null);
+        assert_eq!(
+            by("stk_gone").body["image"],
+            serde_json::json!({ "unreadable": true })
+        );
+        // A day's groups cross as counts, without which group.
+        let day = by("2026-10-08@site");
+        assert_eq!(
+            day.body["groups"],
+            serde_json::json!([{ "lines": 4, "hers": 1, "others": 2 }])
+        );
+        assert!(!day.canonical_bytes().windows(8).any(|w| w == b"telegram"));
         // Only the vector of the live memory's current words.
         assert_eq!(embeddings.len(), 1);
         assert_eq!(embeddings[0].memory_id, "m_owner");
@@ -874,7 +908,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         .await
         .unwrap();
         assert_eq!(rest.entities[0].id, "m_retired");
-        assert_eq!(rest.entities.len(), 9);
+        assert_eq!(rest.entities.len(), 10);
         assert!(!rest.more && rest.embeddings.is_empty());
 
         // The site's holdings count only what crosses.

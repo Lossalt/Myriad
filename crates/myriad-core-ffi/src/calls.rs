@@ -160,6 +160,7 @@ const CALLS: &[(&str, Call)] = &[
     ("style.noticed", style::noticed),
     ("style.unlike", style::unlike),
     ("sync.canonicalize", sync::canonicalize),
+    ("sync.check_rev", sync::check_rev),
     ("sync.compare", sync::compare),
     ("sync.hlc_next", sync::hlc_next),
     ("sync.hlc_observe", sync::hlc_observe),

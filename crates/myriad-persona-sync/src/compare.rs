@@ -11,13 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     SyncError,
     entity::{
-        Affect, AffectAnchorBody, EntityVersion, Kind, MemoryBody, MemoryVenue, canonicalize,
+        Affect, AffectAnchorBody, EntityVersion, Kind, MemoryBody, MemoryVenue, OutfitBody,
+        Picture, StickerBody, canonicalize,
     },
     persona::{FieldClass, PersonaBody, PersonaField, field_class},
 };
 
 /// The same thing on each side.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sides<T> {
     pub local: T,
@@ -125,8 +126,20 @@ pub struct FieldComparison {
 #[serde(rename_all = "camelCase")]
 pub struct PersonaComparison {
     pub present: Sides<bool>,
-    /// By field name.
+    /// By field name. Opaque fields ([`FieldClass::Opaque`]) are not listed:
+    /// they cross as they are and are not anyone's to compare.
     pub fields: Vec<FieldComparison>,
+}
+
+/// Where a picture is that its side cannot read.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PictureKey {
+    pub kind: Kind,
+    pub id: String,
+    /// `portrait` of an outfit, `image` of a sticker, `stickerAvatar` of
+    /// her persona.
+    pub field: String,
 }
 
 /// Her affect toward the owner as one side holds it.
@@ -161,6 +174,10 @@ pub struct Comparison {
     /// Memories each side has under a different id with the same words, in
     /// the same place. Both are kept; this only says so.
     pub memory_twins: Vec<Sides<String>>,
+    /// Pictures each side refers to but cannot read (marked
+    /// `{"unreadable": true}`): "a picture on the site cannot be read".
+    #[serde(default)]
+    pub unreadable_pictures: Sides<Vec<PictureKey>>,
 }
 
 type Side = BTreeMap<(Kind, String), EntityVersion>;
@@ -219,6 +236,45 @@ fn anchor_of(side: &Side) -> Result<Option<AnchorView>, SyncError> {
         .transpose()
 }
 
+/// The pictures a side refers to and cannot read, in key order.
+fn unreadable_pictures(side: &Side) -> Result<Vec<PictureKey>, SyncError> {
+    let mut out = Vec::new();
+    let mut mark = |entity: &EntityVersion, field: &str, picture: Option<&Picture>| {
+        if picture.is_some_and(Picture::is_unreadable) {
+            out.push(PictureKey {
+                kind: entity.kind,
+                id: entity.id.clone(),
+                field: field.to_string(),
+            });
+        }
+    };
+    for entity in side.values() {
+        if entity.state == crate::State::Deleted {
+            continue;
+        }
+        match entity.kind {
+            Kind::Outfit => {
+                let outfit: OutfitBody = entity.body_as()?;
+                mark(entity, "portrait", outfit.portrait.as_ref());
+            }
+            Kind::Sticker => {
+                let sticker: StickerBody = entity.body_as()?;
+                mark(entity, "image", Some(&sticker.image));
+            }
+            Kind::Persona => {
+                let persona: PersonaBody = entity.body_as()?;
+                let avatar = persona
+                    .fields
+                    .get("stickerAvatar")
+                    .and_then(|field| serde_json::from_value::<Picture>(field.value.clone()).ok());
+                mark(entity, "stickerAvatar", avatar.as_ref());
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
 fn words(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -259,6 +315,7 @@ pub fn compare(
     let fields = local_fields
         .keys()
         .chain(remote_fields.keys())
+        .filter(|field| field_class(field) != FieldClass::Opaque)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|field| {
@@ -366,6 +423,10 @@ pub fn compare(
         },
         categories,
         memory_twins,
+        unreadable_pictures: Sides {
+            local: unreadable_pictures(&local)?,
+            remote: unreadable_pictures(&remote)?,
+        },
     })
 }
 

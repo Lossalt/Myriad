@@ -94,6 +94,25 @@ pub(super) fn hlc_observe(raw: &[u8]) -> Result<Value, Failure> {
     Ok(json!({ "last": after.to_string() }))
 }
 
+/// Whether the site takes `rev` when its clock reads `now`: at most
+/// `maxAheadMs` ahead. A device checks itself with it against the site's
+/// time before pushing; the site checks every revision a device sends.
+pub(super) fn check_rev(raw: &[u8]) -> Result<Value, Failure> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct In {
+        rev: String,
+        now: i64,
+    }
+    let req: In = input(raw)?;
+    let rev = rev(&req.rev)?;
+    Ok(json!({
+        "accepted": hlc::check_ahead(&rev, req.now).is_ok(),
+        "aheadMs": hlc::ahead_ms(&rev, req.now),
+        "maxAheadMs": hlc::MAX_AHEAD_MS,
+    }))
+}
+
 pub(super) fn legacy_rev(raw: &[u8]) -> Result<Value, Failure> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]

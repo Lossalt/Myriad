@@ -6,6 +6,30 @@
 //! clock; the counter orders writes within one millisecond and absorbs a
 //! clock that stepped back. Every side keeps the last revision it issued or
 //! saw ([`next`], [`observe`]) and never issues one below it.
+//!
+//! A clock running ahead is the one thing this cannot absorb: a revision
+//! stamped in the future wins every edit made after it until real time
+//! catches up, and every side that observes it is pulled into the future
+//! too. So the site takes no revision more than [`MAX_AHEAD_MS`] ahead of
+//! its own clock ([`check_ahead`]); the device is told its clock is wrong
+//! (`clock_ahead`, with the site's time) and syncs again once it is right.
+//!
+//! Where the site checks: the `X-Sync-Clock` header every device request
+//! may carry (the revision the device's next write would get, `next`
+//! without keeping it), required on `hello` and `role`; and, once pushing
+//! exists, every revision in a push (each entity's `rev` and each persona
+//! field's `rev`). A push with any revision too far ahead is refused whole,
+//! before anything is written or observed, so nothing from the future lands
+//! and the site's clock is not dragged along.
+//!
+//! What a device does on `clock_ahead`: stop syncing and say so, keeping
+//! its outbox (the premise of syncing has not gone; only the clock is
+//! wrong). Once its clock is right, what it stamped while ahead is still
+//! from the future, and the site never took any of it: it sets its clock
+//! back to the latest revision it saw from the site, stamps each pending
+//! write again with [`next`] in outbox order, and pushes. Before pushing it
+//! can check itself with [`check_ahead`] against the site's time as `hello`
+//! last gave it (`serverTime`, moved on by the time since).
 
 use std::{cmp::Ordering, fmt, str::FromStr};
 
@@ -22,6 +46,8 @@ const MAX_COUNTER: u32 = 999_999;
 pub const MAX_NODE_CHARS: usize = 64;
 /// The site's node.
 pub const SITE: &str = "site";
+/// How far ahead of the site's clock a revision may be: five minutes.
+pub const MAX_AHEAD_MS: u64 = 5 * 60 * 1000;
 
 /// One revision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -191,6 +217,43 @@ pub fn observe(
     }
 }
 
+/// A revision stamped too far ahead of the clock it was checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ahead {
+    /// How far ahead, in milliseconds.
+    pub ahead_ms: u64,
+}
+
+impl fmt::Display for Ahead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the clock is {} ms ahead (at most {MAX_AHEAD_MS} ms)",
+            self.ahead_ms
+        )
+    }
+}
+
+impl std::error::Error for Ahead {}
+
+/// How far `rev` is ahead of `now_micros` (the site's clock), in
+/// milliseconds; zero when it is not.
+pub fn ahead_ms(rev: &Rev, now_micros: i64) -> u64 {
+    rev.wall_ms
+        .saturating_sub((now_micros.max(0) / 1000) as u64)
+}
+
+/// Whether the site takes `rev` at `now_micros`: at most [`MAX_AHEAD_MS`]
+/// ahead of it. A revision behind the clock is always fine.
+pub fn check_ahead(rev: &Rev, now_micros: i64) -> Result<(), Ahead> {
+    let ahead_ms = ahead_ms(rev, now_micros);
+    if ahead_ms > MAX_AHEAD_MS {
+        Err(Ahead { ahead_ms })
+    } else {
+        Ok(())
+    }
+}
+
 /// The revision of a row written before revisions existed: its last change
 /// in milliseconds, counter 0, and the side that wrote it (the site when
 /// unknown). Computed when read, never stored.
@@ -284,6 +347,27 @@ mod tests {
         // Nothing seen before.
         let fresh = observe(None, &theirs, 0, "loc_1").unwrap();
         assert_eq!(fresh.to_string(), "001760000000500-000008-loc_1");
+    }
+
+    #[test]
+    fn a_revision_more_than_five_minutes_ahead_is_refused() {
+        let now = 1_760_000_000_000_000_i64;
+        let at = |ms: u64| Rev::new(ms, 0, "dev_a").unwrap();
+        let now_ms = 1_760_000_000_000;
+        assert_eq!(check_ahead(&at(now_ms - 3_600_000), now), Ok(()));
+        assert_eq!(check_ahead(&at(now_ms), now), Ok(()));
+        assert_eq!(check_ahead(&at(now_ms + MAX_AHEAD_MS), now), Ok(()));
+        assert_eq!(
+            check_ahead(&at(now_ms + MAX_AHEAD_MS + 1), now),
+            Err(Ahead {
+                ahead_ms: MAX_AHEAD_MS + 1
+            })
+        );
+        assert_eq!(ahead_ms(&at(now_ms - 1), now), 0);
+        assert_eq!(ahead_ms(&at(5), -1), 5);
+        // A counter is no clock: the wall time alone counts.
+        let busy = Rev::new(now_ms + MAX_AHEAD_MS, 999_999, "dev_a").unwrap();
+        assert!(check_ahead(&busy, now).is_ok());
     }
 
     #[test]
