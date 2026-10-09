@@ -632,7 +632,7 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
-        // 同步她的设备：站长在站点上添加、列出、移除（会话凭据，只限站长）
+        // 同步她的设备：站长在站点上添加、列出、移除、指定母端（会话凭据，只限站长）
         .route(
             "/devices",
             get(super::devices::list_devices)
@@ -645,6 +645,13 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
         .route(
             "/devices/{device_id}",
             delete(super::devices::remove_device).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/devices/{device_id}/role",
+            put(super::devices::set_device_role).route_layer(from_fn_with_state(
                 app_state.clone(),
                 middleware::auth::auth_middleware,
             )),

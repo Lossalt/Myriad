@@ -433,6 +433,20 @@ class AgentService {
     )
   }
 
+  /**
+   * `parent` makes the device her parent end; `child` on the parent device
+   * gives it back to the site. Answers the whole list.
+   */
+  async setSyncDeviceRole(
+    id: string,
+    role: SyncDevice['role'],
+  ): Promise<SyncDeviceList> {
+    return apiService.put(
+      `${this.baseUrl}/devices/${encodeURIComponent(id)}/role`,
+      { role },
+    )
+  }
+
   async unpairQq(): Promise<{ success: boolean }> {
     return apiService.delete(`${this.baseUrl}/qq/pairing`)
   }

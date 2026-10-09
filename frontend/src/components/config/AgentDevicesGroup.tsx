@@ -88,6 +88,20 @@ export function AgentDevicesGroup() {
     [c.agentDevicesRemoveFailed, fail, load],
   )
 
+  const setRole = useCallback(
+    async (device: SyncDevice, role: SyncDevice['role']) => {
+      setWorking(true)
+      try {
+        setList(await agentService.setSyncDeviceRole(device.id, role))
+      } catch (error) {
+        fail(error, c.agentDevicesRoleFailed)
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentDevicesRoleFailed, fail],
+  )
+
   const when = useCallback(
     (at: string) => new Date(at).toLocaleString(locale || undefined),
     [locale],
@@ -146,6 +160,24 @@ export function AgentDevicesGroup() {
       actions: device.revokedAt
         ? []
         : [
+            device.role === 'parent'
+              ? {
+                  key: 'site-parent',
+                  label: c.agentDevicesMakeSiteParent,
+                  onClick: () => void setRole(device, 'child'),
+                  disabled: working,
+                  variant: 'secondary' as const,
+                }
+              : {
+                  key: 'make-parent',
+                  label: c.agentDevicesMakeParent,
+                  onClick: () => void setRole(device, 'parent'),
+                  disabled: working,
+                  variant: 'secondary' as const,
+                  confirm: format(c.agentDevicesMakeParentConfirm, {
+                    name: device.name,
+                  }),
+                },
             {
               key: 'remove',
               label: c.agentDevicesRemove,
