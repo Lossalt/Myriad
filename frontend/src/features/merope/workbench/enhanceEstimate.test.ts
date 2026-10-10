@@ -60,9 +60,23 @@ test("the worn bust's plan and which plan a status follows", () => {
   const bust = estimateEnhance('bust', status({ phase: 'bust', stage: 'generating', done: 1, total: 4 }))
   assert.deepEqual(bust.steps.map((step) => step.key), ['headGenerate', 'headDecompose', 'headFit'])
   assert.equal(bust.remainingSeconds, 3 * S.generate + 5 * S.decompose + S.fit)
-  assert.equal(enhancePlanOf(status({ phase: 'bust' }), false, true), 'bust')
-  assert.equal(enhancePlanOf(status({ phase: 'head' }), true, true), 'figure')
-  assert.equal(enhancePlanOf(status({ phase: 'figure' }), true, false), 'figurePlain')
-  assert.equal(enhancePlanOf(status({ phase: 'refit' }), true, true), 'refit')
-  assert.equal(enhancePlanOf(status({ phase: undefined }), true, true), null)
+  const both = { head: true, body: true }
+  assert.equal(enhancePlanOf(status({ phase: 'bust' }), both), 'bust')
+  assert.equal(enhancePlanOf(status({ phase: 'head' }), both), 'figure')
+  assert.equal(enhancePlanOf(status({ phase: 'figure' }), { head: true, body: false }), 'figureHead')
+  assert.equal(enhancePlanOf(status({ phase: 'figure' }), { head: false, body: true }), 'figureBody')
+  assert.equal(enhancePlanOf(status({ phase: 'refit' }), both), 'refit')
+  assert.equal(enhancePlanOf(status({ phase: undefined }), both), null)
+})
+
+test("a figure keyed by its head alone has no body step; by its body alone, its tiles are all decomposed", () => {
+  const head = estimateEnhance('figureHead', status({}))
+  assert.ok(head.steps.every((step) => step.key !== 'body'))
+  assert.equal(head.remainingSeconds, S.upscale + 3 * S.decompose + 4 * S.generate + 5 * S.decompose + S.fit + S.stitch)
+  const body = estimateEnhance('figureBody', status({ stage: 'decomposing', done: 1, total: 4 }))
+  assert.deepEqual(body.steps.map((step) => [step.key, step.state]), [
+    ['upscale', 'completed'], ['plainDecompose', 'started'], ['stitch', 'pending'], ['body', 'pending'],
+  ])
+  // Three tiles, then the body's four decompositions in the same queue, then the stitch.
+  assert.equal(body.remainingSeconds, 3 * S.decompose + 4 * S.decompose + S.stitch)
 })

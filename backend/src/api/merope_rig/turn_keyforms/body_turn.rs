@@ -267,12 +267,19 @@ const BODY_FIELDS: [(&str, &str); 2] =
 
 /// The figure's keys JSON with its body keys beside the head's (`bodyKeyforms`,
 /// `weightKeyforms`, and what each fit found in `bodyFit`, `weightFit`), those
-/// on the same picture.
+/// on the same picture. A figure whose head was not keyed (`null`) gets keys
+/// of its own on the body's canvas, the head's empty.
 pub(super) fn with_body_keys(keyforms: Vec<u8>, body: Option<&BodyKeys>) -> Vec<u8> {
     let Some(body) = body else { return keyforms };
     let Ok(mut keys) = serde_json::from_slice::<Value>(&keyforms) else {
         return keyforms;
     };
+    if keys.is_null() {
+        let Some(found) = [&body.turn, &body.weight].into_iter().flatten().next() else {
+            return keyforms;
+        };
+        keys = serde_json::json!({ "canvas": found["canvas"], "keyforms": {} });
+    }
     let canvas = keys.get("canvas").cloned();
     let Some(object) = keys.as_object_mut() else {
         return keyforms;
@@ -369,6 +376,17 @@ mod tests {
         assert!(body_of(&head).is_none());
         assert_eq!(motions_of(&merged), ["turn", "weight"]);
         assert!(motions_of(&head).is_empty());
+        // The body keyed alone: keys of its own, the head's empty.
+        let alone: Value =
+            serde_json::from_slice(&with_body_keys(b"null".to_vec(), Some(&body))).unwrap();
+        assert_eq!(alone["canvas"], serde_json::json!([1751, 4096]));
+        assert_eq!(alone["keyforms"], serde_json::json!({}));
+        assert_eq!(alone["weightKeyforms"]["topwear"]["plus"], 2);
+        let none = BodyKeys {
+            turn: None,
+            weight: None,
+        };
+        assert_eq!(with_body_keys(b"null".to_vec(), Some(&none)), b"null");
         let turn_only = BodyKeys {
             turn: Some(found(1)),
             weight: None,

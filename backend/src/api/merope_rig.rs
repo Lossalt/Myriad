@@ -107,10 +107,6 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
             post(turn_keyforms::start_full_body_turn_keyforms),
         )
         .route(
-            "/full-body/{outfit_id}/see-through/figure",
-            post(turn_keyforms::start_full_body_figure),
-        )
-        .route(
             "/full-body/{outfit_id}/see-through/figure/picture",
             get(turn_keyforms::get_full_body_figure_picture),
         )

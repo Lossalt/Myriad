@@ -6,7 +6,7 @@ import type { TurnKeyformsStatus } from '../turnKeyformsApi'
  * (`phase`: a figure's decomposing and its head's are both `decomposing`);
  * the steps and their usual lengths are known here.
  */
-export type EnhancePlan = 'bust' | 'figure' | 'figurePlain' | 'refit'
+export type EnhancePlan = 'bust' | 'figure' | 'figureHead' | 'figureBody' | 'refit'
 
 export type EnhanceStepKey =
   | 'upscale'
@@ -42,13 +42,14 @@ export interface EnhanceEstimate {
 
 /**
  * Usual lengths, seconds, measured on the Space (2026-10): a ZeroGPU
- * decomposition 210–245, a fit on its CPUs 390–660, a drawing 35–45.
+ * decomposition 180–530 (as long as its queue), a fit on its CPUs 390–1000,
+ * a drawing 35–45.
  */
 export const ENHANCE_SECONDS = {
   upscale: 60,
-  decompose: 230,
+  decompose: 300,
   generate: 45,
-  fit: 600,
+  fit: 780,
   stitch: 60,
   bodyFit: 270,
 } as const
@@ -67,26 +68,26 @@ const BODY_MOTION = {
 /** The body's turn, then its weight shift: each drawn twice, decomposed twice, fitted once. */
 const BODY_MOTIONS = ['turn', 'weight'] as const
 
+const HEAD: StepModel[] = [
+  { key: 'headGenerate', unit: ENHANCE_SECONDS.generate, units: 4 },
+  { key: 'headDecompose', unit: ENHANCE_SECONDS.decompose, units: 5 },
+  { key: 'headFit', unit: ENHANCE_SECONDS.fit, units: 1 },
+]
+const UPSCALE: StepModel = { key: 'upscale', unit: ENHANCE_SECONDS.upscale, units: 1 }
+const STITCH: StepModel = { key: 'stitch', unit: ENHANCE_SECONDS.stitch, units: 1 }
+
+/** The head's way of each plan; a figure's body keys run beside it (`withBody`). */
 const PLANS: Record<EnhancePlan, StepModel[]> = {
-  bust: [
-    { key: 'headGenerate', unit: ENHANCE_SECONDS.generate, units: 4 },
-    { key: 'headDecompose', unit: ENHANCE_SECONDS.decompose, units: 5 },
-    { key: 'headFit', unit: ENHANCE_SECONDS.fit, units: 1 },
-  ],
-  figure: [
-    { key: 'upscale', unit: ENHANCE_SECONDS.upscale, units: 1 },
-    { key: 'figureDecompose', unit: ENHANCE_SECONDS.decompose, units: 3 },
-    { key: 'headGenerate', unit: ENHANCE_SECONDS.generate, units: 4 },
-    { key: 'headDecompose', unit: ENHANCE_SECONDS.decompose, units: 5 },
-    { key: 'headFit', unit: ENHANCE_SECONDS.fit, units: 1 },
-    { key: 'stitch', unit: ENHANCE_SECONDS.stitch, units: 1 },
-  ],
-  figurePlain: [
-    { key: 'upscale', unit: ENHANCE_SECONDS.upscale, units: 1 },
-    { key: 'plainDecompose', unit: ENHANCE_SECONDS.decompose, units: 4 },
-    { key: 'stitch', unit: ENHANCE_SECONDS.stitch, units: 1 },
-  ],
+  bust: HEAD,
+  figure: [UPSCALE, { key: 'figureDecompose', unit: ENHANCE_SECONDS.decompose, units: 3 }, ...HEAD, STITCH],
+  figureHead: [UPSCALE, { key: 'figureDecompose', unit: ENHANCE_SECONDS.decompose, units: 3 }, ...HEAD, STITCH],
+  // The head not keyed, its tile is decomposed with the others.
+  figureBody: [UPSCALE, { key: 'plainDecompose', unit: ENHANCE_SECONDS.decompose, units: 4 }, STITCH],
   refit: [{ key: 'refit', unit: ENHANCE_SECONDS.fit, units: 1 }],
+}
+
+function withBody(plan: EnhancePlan): boolean {
+  return plan === 'figure' || plan === 'figureBody'
 }
 
 /** The step a status is in, for a plan; null once done (or not one of its stages). */
@@ -103,7 +104,7 @@ function currentStep(plan: EnhancePlan, status: TurnKeyformsStatus): EnhanceStep
   if (phase === 'body') return 'body'
   if (stage === 'upscaling') return 'upscale'
   if (stage === 'stitching') return 'stitch'
-  return plan === 'figure' ? 'figureDecompose' : 'plainDecompose'
+  return plan === 'figureBody' ? 'plainDecompose' : 'figureDecompose'
 }
 
 /** The body's units left, by kind, from where it stands. */
@@ -179,14 +180,15 @@ export function estimateEnhance(
     }
   })
   let bodySeconds = 0
-  if (plan === 'figure') {
+  if (withBody(plan)) {
     const left = bodyLeft(status)
     bodySeconds = left.generate * ENHANCE_SECONDS.generate +
       left.decompose * ENHANCE_SECONDS.decompose +
       left.fit * ENHANCE_SECONDS.bodyFit
     // The Space decomposes one at a time: the body's wait in the head's queue.
     const headDecomposing = models.some((model, index) =>
-      index >= headIndex && (model.key === 'figureDecompose' || model.key === 'headDecompose'))
+      index >= headIndex &&
+      (model.key === 'figureDecompose' || model.key === 'plainDecompose' || model.key === 'headDecompose'))
     if (headDecomposing) headSeconds += left.decompose * ENHANCE_SECONDS.decompose
     const body = status.body
     steps.push({
@@ -208,11 +210,13 @@ export function estimateEnhance(
   }
 }
 
-/** The plan a running job follows, from where it is reported and what the page started. */
-export function enhancePlanOf(status: TurnKeyformsStatus, figure: boolean, enhanced: boolean): EnhancePlan | null {
+/** The plan a running job follows, from where it is reported and the parts the page asked a figure for. */
+export function enhancePlanOf(status: TurnKeyformsStatus, parts: { head: boolean; body: boolean }): EnhancePlan | null {
   if (!status.phase) return null
   if (status.phase === 'refit') return 'refit'
   if (status.phase === 'load') return null
   if (status.phase === 'bust') return 'bust'
-  return figure && enhanced ? 'figure' : 'figurePlain'
+  if (parts.head && parts.body) return 'figure'
+  if (parts.head) return 'figureHead'
+  return parts.body ? 'figureBody' : null
 }

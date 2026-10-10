@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import type { SiteFace } from '../api'
 import type { RigAssetCompileEvent } from '../assets/pipeline'
-import type { RigPath } from './RigImportPanel'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { LuDownload } from 'react-icons/lu'
@@ -64,7 +63,6 @@ export function FullBodyPanel({
   const [face, setFace] = useState<SiteFace | null>(null)
   const [operation, setOperation] = useState<Operation | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [rigPath, setRigPath] = useState<RigPath>('upload')
   const uploadRef = useRef<HTMLInputElement>(null)
 
   const reload = useCallback(async () => {
@@ -84,17 +82,13 @@ export function FullBodyPanel({
     sourceGenerationFingerprint: fingerprint,
     seeThroughTokenConfigured,
     onSaveSeeThroughToken,
-    onDecomposeRigPsd: (onStatus, signal, fromArchive) =>
+    // Enlarged, decomposed in tiles and stitched on the server, as a job keying the parts chosen.
+    onDecomposeRigPsd: (onStatus, signal, fromArchive, parts) =>
       decomposeWithTurnKeyforms(
         { sourceMasterAssetId: portrait ?? '', sourceGenerationFingerprint: fingerprint },
-        { outfitId, fromArchive, onStatus, signal },
+        { outfitId, fromArchive, parts, onStatus, signal },
       ),
-    // Enlarged, decomposed in tiles and stitched on the server, as a job.
-    onDecomposePlainPsd: (signal, onStatus) =>
-      decomposeWithTurnKeyforms(
-        { sourceMasterAssetId: portrait ?? '', sourceGenerationFingerprint: fingerprint },
-        { outfitId, plain: true, onStatus, signal },
-      ),
+    bodyKeysOffered: true,
     onPreflightRigPsd: (
       file: File,
       onStage: (event: RigAssetCompileEvent) => void,
@@ -258,8 +252,6 @@ export function FullBodyPanel({
         >
           <RigImportPanel
             rig={rig}
-            rigPath={rigPath}
-            onRigPathChange={setRigPath}
             seeThroughTokenConfigured={seeThroughTokenConfigured}
             aiExpressions={[]}
             canGenerateAiExpressions={false}

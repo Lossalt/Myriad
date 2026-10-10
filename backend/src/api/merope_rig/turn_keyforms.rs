@@ -314,6 +314,25 @@ pub struct TurnKeyformsRequest {
     source_master_asset_id: String,
     #[serde(default)]
     source_generation_fingerprint: Option<String>,
+    /// A figure's head keyed for its turn; a bust's always is.
+    #[serde(default = "keyed")]
+    head: bool,
+    /// A figure's body keyed for its turn and weight shift.
+    #[serde(default = "keyed")]
+    body: bool,
+}
+
+fn keyed() -> bool {
+    true
+}
+
+/// What a figure's job keys: its head's turn, its body's turn and weight
+/// shift, each made only when chosen. Neither is not a job: a figure
+/// without keys is an uploaded PSD.
+#[derive(Clone, Copy, Debug)]
+struct FigureKeys {
+    head: bool,
+    body: bool,
 }
 
 pub async fn start_turn_keyforms(
@@ -321,7 +340,10 @@ pub async fn start_turn_keyforms(
     Extension(claims): Extension<Claims>,
     Json(payload): Json<TurnKeyformsRequest>,
 ) -> ApiResult<Json<Value>> {
-    start(db, &claims, None, payload, true).await
+    if !payload.head {
+        return Err(bad_request("A bust's enhancement keys its head"));
+    }
+    start(db, &claims, None, payload).await
 }
 
 pub async fn start_full_body_turn_keyforms(
@@ -330,19 +352,10 @@ pub async fn start_full_body_turn_keyforms(
     Path(outfit_id): Path<String>,
     Json(payload): Json<TurnKeyformsRequest>,
 ) -> ApiResult<Json<Value>> {
-    start(db, &claims, Some(outfit_id), payload, true).await
-}
-
-/// A full-body set's picture decomposed in tiles, without turn keys: the
-/// plain figure (`run_figure`). Polled and fetched as a turn keys job; its
-/// keys are `null`.
-pub async fn start_full_body_figure(
-    State(db): State<DatabaseConnection>,
-    Extension(claims): Extension<Claims>,
-    Path(outfit_id): Path<String>,
-    Json(payload): Json<TurnKeyformsRequest>,
-) -> ApiResult<Json<Value>> {
-    start(db, &claims, Some(outfit_id), payload, false).await
+    if !payload.head && !payload.body {
+        return Err(bad_request("Choose the head, the body or both to key"));
+    }
+    start(db, &claims, Some(outfit_id), payload).await
 }
 
 /// A full-body set's picture as its tiles were cut from (enlarged), for the
@@ -388,8 +401,11 @@ async fn start(
     claims: &Claims,
     outfit_id: Option<String>,
     payload: TurnKeyformsRequest,
-    turn: bool,
 ) -> ApiResult<Json<Value>> {
+    let keys = FigureKeys {
+        head: payload.head,
+        body: payload.body,
+    };
     require_merope_enabled().await?;
     let user_id = require_owner(claims, &db).await?;
     let fingerprint = payload
@@ -464,7 +480,7 @@ async fn start(
                 reference,
                 &client,
                 &space_name,
-                turn,
+                keys,
             )
             .await
         } else {
@@ -587,10 +603,12 @@ async fn run(
 /// Its picture is enlarged (the Space's `upscale`), decomposed whole, planned
 /// into three tiles (`figure_plan`: head and chest framed as a bust, waist,
 /// legs), each tile decomposed on its own canvas, and the tiles stitched on
-/// the whole (`figure_stitch`). With `turn`, the upper tile is keyed as a bust
-/// (`run`, on its own cache, its front decomposition the tile's) and the keys
-/// placed on the stitched figure (`figure_keys`). A Space without these
-/// endpoints, or a head big enough already, has the figure decomposed whole.
+/// the whole (`figure_stitch`). With the head keyed, the upper tile is keyed
+/// as a bust (`run`, on its own cache, its front decomposition the tile's)
+/// and the keys placed on the stitched figure (`figure_keys`); with the body
+/// keyed, its turn and weight shift are made alongside (`body_turn`). A Space
+/// without these endpoints, or a head big enough already, has the figure
+/// decomposed whole.
 #[allow(clippy::too_many_arguments)]
 async fn run_figure(
     id: &str,
@@ -599,7 +617,7 @@ async fn run_figure(
     reference: image_generation::ImageReference,
     client: &see_through::SeeThroughClient,
     space_name: &str,
-    turn: bool,
+    keys: FigureKeys,
 ) -> ApiResult<Made> {
     let options = see_through::DecomposeOptions::default();
     update(id, |job| {
@@ -612,7 +630,7 @@ async fn run_figure(
     update(id, |job| {
         job.stage = Stage::Decomposing;
         job.done = 0;
-        job.total = if turn { 3 } else { 4 };
+        job.total = if keys.head { 3 } else { 4 };
     });
     let whole = decomposition(
         client,
@@ -629,20 +647,10 @@ async fn run_figure(
         .figure_plan(whole.clone(), drawn.clone())
         .await
         .map_err(see_through_error)?;
-    let Some(plan) = plan else {
-        tracing::info!(job = %id, "figure decomposed whole");
-        return if turn {
-            update(id, |job| job.phase = Phase::Head);
-            run(id, user_id, generation, picture.clone(), client, &cache).await
-        } else {
-            Ok(plain(whole, drawn.1))
-        };
-    };
-    tracing::info!(job = %id, tiles = ?plan.tiles, "figure decomposed in tiles");
-    // With turn keys, the body's turn is made alongside the head's: its drawings
-    // and fit need only the figure's whole decomposition (body_turn).
+    // The body's keys are made alongside the head's work: their drawings and
+    // fit need only the figure's whole decomposition (body_turn).
     let body = async {
-        if turn {
+        if keys.body {
             Some(
                 body_turn::body_turn_keys(
                     id, user_id, generation, &reference, &picture, &whole, client, &cache,
@@ -653,6 +661,19 @@ async fn run_figure(
             None
         }
     };
+    let Some(plan) = plan else {
+        tracing::info!(job = %id, "figure decomposed whole");
+        let head = async {
+            if keys.head {
+                update(id, |job| job.phase = Phase::Head);
+                run(id, user_id, generation, picture.clone(), client, &cache).await
+            } else {
+                Ok(plain(whole.clone(), drawn.1.clone()))
+            }
+        };
+        return with_body(id, head, body).await;
+    };
+    tracing::info!(job = %id, tiles = ?plan.tiles, "figure decomposed in tiles");
     let [upper, middle, lower] = plan.crops;
     let tiles = plan.tiles;
     let head = async {
@@ -665,7 +686,7 @@ async fn run_figure(
             media_type: "image/png".to_string(),
         };
         let head_cache = TurnCache::for_master(&upper.bytes, generation, space_name, options);
-        let (upper_psd, made) = if turn {
+        let (upper_psd, made) = if keys.head {
             // The bust's front decomposition is the upper tile's.
             update(id, |job| job.phase = Phase::Head);
             let made = run(id, user_id, generation, upper, client, &head_cache).await?;
@@ -714,6 +735,16 @@ async fn run_figure(
         };
         put_back(client, made, figure, kept).await
     };
+    with_body(id, head, body).await
+}
+
+/// The head's work with the body's keys made alongside (`alongside`) and
+/// put beside the head's in its keys JSON.
+async fn with_body(
+    id: &str,
+    head: impl Future<Output = ApiResult<Made>>,
+    body: impl Future<Output = Option<body_turn::BodyKeys>>,
+) -> ApiResult<Made> {
     let (made, body) = alongside(id, head, body).await;
     let mut made = made?;
     made.files.keyforms = body_turn::with_body_keys(made.files.keyforms, body.flatten().as_ref());

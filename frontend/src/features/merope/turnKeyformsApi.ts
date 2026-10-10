@@ -7,7 +7,7 @@ import { attachTurnKeyforms, isDocumentTurnKeyforms } from './rig/turnKeyformImp
 /**
  * Where a turn-keys job stands: generating the four turned drawings,
  * decomposing all five, fitting. A standing figure's is enlarged first and
- * stitched from its tiles last (a plain figure's only that).
+ * stitched from its tiles last, its body's keys made alongside (`body`).
  */
 export interface TurnKeyformsStatus {
   jobId: string
@@ -78,8 +78,8 @@ export async function decomposeWithTurnKeyforms(
     outfitId?: string
     /** Use this kept job (fitted again, or as it was) instead of drawing and decomposing anew. */
     fromArchive?: TurnArchiveUse
-    /** A full-body set decomposed in tiles without turn keys (needs outfitId). */
-    plain?: boolean
+    /** A full-body set's parts to key: its head's turn, its body's turn and weight shift (both when absent). */
+    parts?: { head: boolean; body: boolean }
     onStatus?: (status: TurnKeyformsStatus) => void
     signal?: AbortSignal
   } = {},
@@ -87,12 +87,13 @@ export async function decomposeWithTurnKeyforms(
   const start = options.fromArchive
     ? `${ARCHIVES}/${encodeURIComponent(options.fromArchive.id)}/${options.fromArchive.refit ? 'refit' : 'load'}`
     : options.outfitId
-      ? `${PREFIX}${fullBodyPath(options.outfitId)}/see-through/${options.plain ? 'figure' : 'turn-keyforms'}`
+      ? `${PREFIX}${fullBodyPath(options.outfitId)}/see-through/turn-keyforms`
       : `${PREFIX}/see-through/turn-keyforms`
   const begin = async () => {
     const { jobId } = await apiService.post<{ jobId: string }>(start, options.fromArchive ? {} : {
       sourceMasterAssetId: input.sourceMasterAssetId,
       ...(input.sourceGenerationFingerprint ? { sourceGenerationFingerprint: input.sourceGenerationFingerprint } : {}),
+      ...(options.outfitId && options.parts ? options.parts : {}),
     })
     return `${PREFIX}/see-through/turn-keyforms/${encodeURIComponent(jobId)}`
   }

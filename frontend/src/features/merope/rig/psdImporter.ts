@@ -56,7 +56,9 @@ export async function prepareRigPsdImport(
   )
   // Keys measured on this decomposition ride into the playback, cut as it is.
   const keys = turnKeyformsFor(file)
-  const turnKeyforms = keys && placeTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
+  // A figure keyed by its body alone has no head keys: its head turns as worked out.
+  const headKeyforms = keys && placeTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
+  const turnKeyforms = headKeyforms && Object.keys(headKeyforms).length > 0 ? headKeyforms : undefined
   const bodyTurnKeyforms = keys && placeBodyTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
   const weightKeyforms = keys && placeBodyTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame, 'weightKeyforms')
   const playback = prepared.source.anime25dPlayback
@@ -65,7 +67,11 @@ export async function prepareRigPsdImport(
     if (bodyTurnKeyforms) playback.bodyTurnKeyforms = bodyTurnKeyforms
     if (weightKeyforms) playback.weightKeyforms = weightKeyforms
     // Kept with the rig, so its page shows the mode it was made in.
-    playback.enhancement = { turn: Boolean(turnKeyforms), expressions: expressions.length > 0 }
+    playback.enhancement = {
+      turn: Boolean(turnKeyforms),
+      expressions: expressions.length > 0,
+      ...(bodyTurnKeyforms ? { body: true } : {}),
+    }
   }
   return prepared
 }

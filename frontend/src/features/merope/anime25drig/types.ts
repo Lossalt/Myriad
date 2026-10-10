@@ -267,6 +267,8 @@ export interface Anime25DEnhancement {
   turn: boolean
   /** Expressions redrawn by the image model. */
   expressions: boolean
+  /** A standing figure's body turn and weight-shift keys, fitted to generated drawings. */
+  body?: boolean
 }
 
 export function anime25DPlaybackSource(): Pick<
