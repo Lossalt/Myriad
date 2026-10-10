@@ -1,9 +1,10 @@
 import type { ArmRig, ArmRigMesh } from './armRig'
 import type { ChestSpatialField } from './chestPhysics'
 import type { Anime25DDriver } from './driver'
-import type { FigurePose, FigureRest, FigureSkin } from './figureSkeleton'
+import type { FigureFrame, FigureSkin } from './figureSkeleton'
 import type { HeadTurn, HeadTurnFeature } from './headTurn'
 import type { Anime25DLayerSpringBinding } from './layerBinding'
+import type { PartSwayBinding } from './partSway'
 import type { BoundPoseCorrection } from './poseCorrections'
 import type {
   Anime25DShellMode,
@@ -147,7 +148,7 @@ export interface Anime25DSecondaryDeformationFrame {
    * A standing figure's bones and this frame's pose: they carry every layer
    * after its own deformation, in place of the shader's lean and stance.
    */
-  figure?: { rest: Readonly<FigureRest>; pose: Readonly<FigurePose> } | null
+  figure?: FigureFrame | null
 }
 
 export interface Anime25DSecondaryDeformationBinding {
@@ -193,8 +194,9 @@ export interface Anime25DSecondaryDeformationBinding {
   torsoShellMode: Anime25DTorsoShellMode | null
   /** How a standing figure's skirt or leg follows its stance. */
   standing: StandingBinding | null
-  /** Which of a standing figure's bones carry this layer. */
+  /** Which of a standing figure's bones carry this layer, and the regions of it that sway on their own. */
   figureSkin?: FigureSkin | null
+  partSways?: PartSwayBinding[] | null
 }
 
 export interface Anime25DMutableSecondaryPoint {
@@ -228,8 +230,7 @@ export function createAnime25DSecondaryDeformationBinding(input: {
   bodyTurnKeyform?: BoundTurnKeyform | null
   weightKeyform?: BoundTurnKeyform | null
   standing?: StandingBinding | null
-  figureSkin?: FigureSkin | null
-}): Anime25DSecondaryDeformationBinding {
+} & Pick<Anime25DSecondaryDeformationBinding, 'figureSkin' | 'partSways'>): Anime25DSecondaryDeformationBinding {
   return {
     ...input,
     head: input.source.group === 'head',
@@ -588,7 +589,7 @@ export function deformAnime25DSecondaryPoint(
   // only its head-follow share inherits the root, avoiding double travel.
   point.x += frame.torsoNeckOffsetX * torsoNeckFollow
   // With bones, they stand the figure (figureSkeleton).
-  if (frame.figure) return carryOnFigure(point, binding, restY, frame)
+  if (frame.figure) return carryOnFigure(point, binding, restX, restY, frame)
   // A keyed leg bends as drawn; a skirt keeps its swing.
   const stands = binding.standing && !(binding.weightKeyform && binding.standing.kind === 'leg')
   if (stands && frame.standing) applyStanding(point, binding.standing!, restX, restY, frame.standing)

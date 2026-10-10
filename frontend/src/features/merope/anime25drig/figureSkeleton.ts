@@ -1,5 +1,7 @@
+import type { PartSwayBinding } from './partSway'
 import type { Anime25DStandingFrame, StandingBinding } from './standing'
-import type { Anime25DPlaybackAnchors } from './types'
+import type { Anime25DPartProfile, Anime25DPlaybackAnchors } from './types'
+import { applyPartSways, PartSways } from './partSway'
 import { applySkirtTrail } from './standing'
 
 /**
@@ -499,18 +501,33 @@ export function figureRestOf(anchors: Readonly<Anime25DPlaybackAnchors>): Figure
   return figureRests.get(anchors) ?? null
 }
 
+/** What a frame carries of a figure: its bones, this frame's pose and its swaying parts' lags. */
+export interface FigureFrame {
+  rest: Readonly<FigureRest>
+  pose: Readonly<FigurePose>
+  sways?: { readonly lags: Readonly<Float32Array> }
+}
+
 /**
  * A layer's point at the end of its own deformation, carried on: a hem
- * trails the hips on its own, then the bones carry the point. A layer the
- * shader carries whole rides its bones in its layer transform instead.
+ * trails the hips and cloth hanging free in it trails its bone, on their
+ * own, then the bones carry the point. A layer the shader carries whole
+ * rides its bones in its layer transform instead.
  */
 export function carryOnFigure(
   point: Point,
-  binding: Readonly<{ standing: StandingBinding | null; figureSkin?: FigureSkin | null; shaderGlobalTransform: boolean }>,
+  binding: Readonly<{
+    standing: StandingBinding | null
+    figureSkin?: FigureSkin | null
+    partSways?: readonly PartSwayBinding[] | null
+    shaderGlobalTransform: boolean
+  }>,
+  restX: number,
   restY: number,
-  frame: Readonly<{ standing?: Readonly<Anime25DStandingFrame> | null; figure?: { rest: Readonly<FigureRest>; pose: Readonly<FigurePose> } | null }>,
+  frame: Readonly<{ standing?: Readonly<Anime25DStandingFrame> | null; figure?: FigureFrame | null }>,
 ): void {
   if (binding.standing && frame.standing) applySkirtTrail(point, binding.standing, restY, frame.standing)
+  if (binding.partSways && frame.figure?.sways) applyPartSways(point, restX, restY, binding.partSways, frame.figure.sways.lags)
   if (frame.figure && binding.figureSkin && !binding.shaderGlobalTransform) {
     skinFigurePoint(point, restY, binding.figureSkin, frame.figure.rest, frame.figure.pose)
   }
@@ -520,11 +537,20 @@ export function carryOnFigure(
 export class FigureBody {
   readonly pose = createFigurePose()
 
-  private constructor(readonly rest: FigureRest) {}
+  private constructor(
+    readonly rest: FigureRest,
+    /** Cloth hanging free in layers it shares, trailing its bones (partSway). */
+    readonly sways: PartSways,
+  ) {}
 
-  static of(anchors: Readonly<Anime25DPlaybackAnchors>): FigureBody | null {
+  static of(anchors: Readonly<Anime25DPlaybackAnchors>, parts?: Anime25DPartProfile): FigureBody | null {
     const rest = figureRestOf(anchors)
-    return rest ? new FigureBody(rest) : null
+    return rest ? new FigureBody(rest, new PartSways(parts)) : null
+  }
+
+  /** Steps the swaying parts after the bones moved. */
+  stepParts(dt: number, dynamic: boolean): void {
+    this.sways.step(dt, this.pose, dynamic)
   }
 
   /** Poses the bones for a sway of `body` on the stance's legs. */

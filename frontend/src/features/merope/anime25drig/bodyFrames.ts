@@ -177,7 +177,7 @@ export class Anime25DBodyFrames {
   ): void {
     this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
-    this.figure = FigureBody.of(playback.anchors)
+    this.figure = FigureBody.of(playback.anchors, playback.partProfile)
     // The bones shift a figure's weight; its weight-shift keys are not used beside them.
     this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot,
       this.figure ? undefined : playback.weightKeyforms)
@@ -416,10 +416,9 @@ export class Anime25DBodyFrames {
     hairSpringFrame.time = time
     stepAnime25DHairLayerSprings(layers, hairSpringFrame, dt)
     this.stepArms(dt, layers, time)
+    this.figure?.stepParts(dt, e.phys)
     this.stepJelly(dt)
-    if (this.standing) {
-      this.secondaryDeformationFrame.standing = this.standing.step(dt, this.current.body, this.current.phys)
-    }
+    if (this.standing) this.secondaryDeformationFrame.standing = this.standing.step(dt, this.current.body, this.current.phys)
   }
 
   /** Shared primary pose for physics substeps and the final visible mesh. */

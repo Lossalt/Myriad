@@ -31,6 +31,7 @@ import { writeIdentityLayerTransform } from './layerTransform'
 import { resolveAnime25DMouthDeformation } from './mouthDeformation'
 import { resolveAnime25DNeckSurface } from './neckSurface'
 import { canLiftNeckwearOverSkin } from './neckwearOcclusion'
+import { bindPartSways } from './partSway'
 import { bindPoseCorrections } from './poseCorrections'
 import { createAnime25DSecondaryDeformationBinding } from './secondaryDeformation'
 import {
@@ -185,6 +186,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
   // themselves, so the weight-shift keys are not used beside them.
   const figure = figureRestOf(playback.anchors)
   const figureSkin = bindFigureSkin(baseRole, source, figure)
+  const partSways = figure ? bindPartSways(playback.partProfile, source.name) : null
   // Weight-shift keys are used beside body keys only (KeyedBodyTurn).
   const weightKeyform = playback.bodyTurnKeyforms && !figure ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
@@ -274,6 +276,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     weightKeyform,
     standing,
     figureSkin,
+    partSways,
     ...armBinding(source, rest),
   })
   const layerTransform = new Float32Array(9)
