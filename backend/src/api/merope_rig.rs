@@ -143,6 +143,10 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
             post(turn_keyforms::load_turn_archive),
         )
         .route(
+            "/full-body/{outfit_id}/stance",
+            patch(pose::save_full_body_stance),
+        )
+        .route(
             "/full-body/{outfit_id}/pose-corrections",
             patch(pose::save_full_body_pose_corrections)
                 .layer(DefaultBodyLimit::max(64 * 1024)),

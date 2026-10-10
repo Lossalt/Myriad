@@ -673,6 +673,12 @@
   },
   "fullBody": {
     "description": "Ein Ganzkörper-Set ist ein eigener Eintrag im Kleiderschrank: ein stehendes Porträt von Kopf bis Fuß, in Ebenen zerlegt zu einer beweglichen Ganzkörperfigur. Es kann getragen werden; das getragene Ganzkörper-Set wird getrennt vom getragenen Brustbild gemerkt. Panel und Widget zeigen weiter die Büste, die Ganzkörperfigur siehst du in der Vorschau.",
+    "stance": "Haltung",
+    "stanceGround": "Stehen",
+    "stanceFloat": "Schweben",
+    "stanceGroundHint": "Die Sohlen bleiben stehen, die ganze Figur wiegt sich von den Füßen aus; das Standbein ist gestreckt, das andere steht auf Zehen mit gebeugtem Knie.",
+    "stanceFloatHint": "Der Oberkörper führt, der Unterkörper hängt: die Hüfte folgt verzögert, die Beine schwingen wie Pendel, das zurückgelassene beugt das Knie.",
+    "stanceFailed": "Haltung konnte nicht gespeichert werden",
     "none": "Dieses Ganzkörper-Set hat noch kein Porträt.",
     "generate": "Ganzkörperbild zeichnen",
     "regenerate": "Ganzkörperbild neu zeichnen",

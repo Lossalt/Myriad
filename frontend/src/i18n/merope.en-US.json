@@ -673,6 +673,12 @@
   },
   "fullBody": {
     "description": "A full-body set is its own entry in the wardrobe: a head-to-toe standing portrait, split into a moving full-body figure. It can be worn, and the worn full body is kept apart from the worn bust. The panel and widget keep showing the bust; view the full body in the preview.",
+    "stance": "Stance",
+    "stanceGround": "Standing",
+    "stanceFloat": "Floating",
+    "stanceGroundHint": "The soles stay put and the whole figure sways from them; the leg taking the weight straightens, the other rises onto its toes with a bent knee.",
+    "stanceFloatHint": "The upper body leads and the lower body hangs: the hips follow a beat behind, the legs swing like pendulums, and the leg left behind bends its knee.",
+    "stanceFailed": "Couldn’t save the stance",
     "none": "This full-body set has no portrait yet.",
     "generate": "Draw full-body portrait",
     "regenerate": "Redraw full-body portrait",

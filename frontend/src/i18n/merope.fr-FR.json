@@ -673,6 +673,12 @@
   },
   "fullBody": {
     "description": "Une tenue en pied est une entrée à part dans la garde-robe : un portrait debout de la tête aux pieds, découpé en calques pour devenir une silhouette animée. Elle peut être portée, et la tenue en pied portée est retenue à part de la tenue en buste portée. Le panneau et le widget gardent le buste ; la silhouette en pied se voit dans l’aperçu.",
+    "stance": "Posture",
+    "stanceGround": "Debout",
+    "stanceFloat": "En suspension",
+    "stanceGroundHint": "Les semelles restent en place, toute la silhouette se balance depuis les pieds ; la jambe d’appui est tendue, l’autre sur la pointe, genou plié.",
+    "stanceFloatHint": "Le haut du corps mène, le bas pend : les hanches suivent avec un temps de retard, les jambes oscillent comme des pendules, celle laissée en arrière plie le genou.",
+    "stanceFailed": "La posture n’a pas pu être enregistrée",
     "none": "Cette tenue en pied n’a pas encore de portrait.",
     "generate": "Dessiner le portrait en pied",
     "regenerate": "Redessiner le portrait en pied",

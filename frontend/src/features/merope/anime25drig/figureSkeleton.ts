@@ -1,6 +1,7 @@
 import type { PartSwayBinding } from './partSway'
 import type { Anime25DStandingFrame, StandingBinding } from './standing'
 import type { Anime25DPartProfile, Anime25DPlaybackAnchors } from './types'
+import { FigureFloat } from './figureFloat'
 import { applyPartSways, bindPartSways, PartSways } from './partSway'
 import { applySkirtTrail } from './standing'
 
@@ -84,6 +85,9 @@ export interface FigurePoseInput {
   bendL: number
   bendR: number
 }
+
+/** How a figure holds itself: standing on its soles, or floating with its legs hanging. */
+export type FigureStance = 'ground' | 'float'
 
 /** How a layer rides the bones. */
 export type FigureSkin =
@@ -176,7 +180,7 @@ export function createFigurePose(): FigurePose {
   }
 }
 
-function setRotationAbout(out: BoneTransform, angle: number, x: number, y: number): BoneTransform {
+export function setRotationAbout(out: BoneTransform, angle: number, x: number, y: number): BoneTransform {
   const c = Math.cos(angle)
   const s = Math.sin(angle)
   out.a = c
@@ -189,7 +193,7 @@ function setRotationAbout(out: BoneTransform, angle: number, x: number, y: numbe
 }
 
 /** out = p ∘ q. `out` may be `q`, not `p`. */
-function compose(out: BoneTransform, p: Readonly<BoneTransform>, q: Readonly<BoneTransform>): BoneTransform {
+export function compose(out: BoneTransform, p: Readonly<BoneTransform>, q: Readonly<BoneTransform>): BoneTransform {
   const a = p.a * q.a + p.c * q.b
   const b = p.b * q.a + p.d * q.b
   const c = p.a * q.c + p.c * q.d
@@ -215,7 +219,7 @@ function apply(t: Readonly<BoneTransform>, x: number, y: number, out: Point): Po
  * The transform taking the drawn segment p→q onto from→to: turned to its new
  * direction and stretched along its own length only, so its width holds.
  */
-function setSegment(out: BoneTransform, p: Point, q: Point, from: Point, to: Point): BoneTransform {
+export function setSegment(out: BoneTransform, p: Point, q: Point, from: Point, to: Point): BoneTransform {
   const rx = q.x - p.x
   const ry = q.y - p.y
   const restLength = Math.max(1e-6, Math.hypot(rx, ry))
@@ -555,20 +559,31 @@ export class FigureBody {
     readonly rest: FigureRest,
     /** Cloth hanging free in layers it shares, trailing its bones (partSway). */
     readonly sways: PartSways,
+    /** A floating figure's springs (figureFloat); a standing one has none. */
+    private readonly float: FigureFloat | null,
   ) {}
 
-  static of(anchors: Readonly<Anime25DPlaybackAnchors>, parts?: Anime25DPartProfile): FigureBody | null {
+  static of(
+    anchors: Readonly<Anime25DPlaybackAnchors>,
+    parts?: Anime25DPartProfile,
+    stance: FigureStance = 'ground',
+  ): FigureBody | null {
     const rest = figureRestOf(anchors)
-    return rest ? new FigureBody(rest, new PartSways(parts)) : null
+    return rest ? new FigureBody(rest, new PartSways(parts), stance === 'float' ? new FigureFloat(rest) : null) : null
   }
 
-  /** Steps the swaying parts after the bones moved. */
-  stepParts(dt: number, dynamic: boolean): void {
+  /** Steps a floating figure's legs and the swaying parts after the bones moved. */
+  stepParts(dt: number, body: number, dynamic: boolean): void {
+    this.float?.step(dt, body, dynamic)
     this.sways.step(dt, this.pose, dynamic)
   }
 
-  /** Poses the bones for a sway of `body` on the stance's legs. */
+  /** Poses the bones for a sway of `body`: floating, or standing on the stance's legs. */
   step(body: number, stance: Readonly<Anime25DStandingFrame> | undefined): void {
+    if (this.float) {
+      this.float.pose(body, this.pose)
+      return
+    }
     solveFigurePose(this.rest, {
       body,
       pelvisTilt: stance?.pelvisTilt ?? 0,

@@ -391,6 +391,19 @@ export async function saveFullBodyPoseCorrections(outfitId: string, assetId: str
   }
 }
 
+/** A full-body set's stance, saved into its rig as a new package (figureFloat). */
+export async function saveFullBodyStance(outfitId: string, assetId: string, stance: 'ground' | 'float'): Promise<{ manifest: MeropeRigManifest; assetId: string }> {
+  try {
+    const data = await apiService.patch<{ manifest: unknown; assetId: unknown }>(`${PREFIX}${fullBodyPath(outfitId)}/stance`, { assetId, stance })
+    if (!isRigManifest(data.manifest) || typeof data.assetId !== 'string' || !/^[0-9a-f]{64}$/u.test(data.assetId)) {
+      throw new Error(currentCopy().merope.fullBody.stanceFailed)
+    }
+    return { manifest: data.manifest, assetId: data.assetId }
+  } catch (reason) {
+    throw meropeError(reason, currentCopy().merope.fullBody.stanceFailed)
+  }
+}
+
 export async function previewMeropeRigImport(
   source: MeropeRigImportSource,
   atlas: Blob,

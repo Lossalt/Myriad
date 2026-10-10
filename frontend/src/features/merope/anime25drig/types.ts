@@ -262,6 +262,8 @@ export interface Anime25DPlayback {
   enhancement?: Anime25DEnhancement
   /** The parts that move on their own, as the import's vision inventory named them; absent before it ran. */
   partProfile?: Anime25DPartProfile
+  /** A full figure stands on its soles (the default) or floats with its legs hanging (figureFloat). */
+  figureStance?: 'ground' | 'float'
 }
 
 /**

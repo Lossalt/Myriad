@@ -12,10 +12,12 @@ import { userFacingError } from '../../../utils/userFacingError'
 import {
   generateFullBodyPortrait,
   getFullBodyFace,
+  saveFullBodyStance,
   uploadFullBodyPortrait,
 } from '../api'
 import { commitFullBodyPsdAsset, preflightFullBodyPsdAsset } from '../assets/pipeline'
 import { decomposeWithTurnKeyforms } from '../turnKeyformsApi'
+import { FaceTabs } from './FaceTabs'
 import { RigImportPanel, RigModeTags } from './RigImportPanel'
 import { activeRigMode } from './rigMode'
 import { useRigImport } from './useRigImport'
@@ -39,7 +41,7 @@ interface Props {
   trailing?: ReactNode
 }
 
-type Operation = 'generate' | 'upload' | 'wear'
+type Operation = 'generate' | 'upload' | 'wear' | 'stance'
 
 /**
  * A full-body set's page: its picture drawn or uploaded, then split into
@@ -149,6 +151,18 @@ export function FullBodyPanel({
 
   const wear = () => run('wear', onWear, labels.wardrobeApplyFailed)
 
+  // How the figure holds itself, kept in its rig: standing on its soles, or floating.
+  const stance = face?.manifest?.anime25dPlayback?.figureStance ?? 'ground'
+  const setStance = (next: 'ground' | 'float') => {
+    const assetId = face?.assetId
+    if (!assetId || next === stance) return
+    void run('stance', async () => {
+      await saveFullBodyStance(outfitId, assetId, next)
+      await reload()
+      onChanged?.()
+    }, copy.stanceFailed)
+  }
+
   const upload = (file: File) =>
     run(
       'upload',
@@ -250,6 +264,21 @@ export function FullBodyPanel({
           description={labels.rigGroupDescription}
           id="merope-motion-full-body-rig"
         >
+          {activeMode ? (
+            <div className="merope-motion-rig">
+              <FaceTabs
+                className="merope-motion-rig__tabs"
+                ariaLabel={copy.stance}
+                value={stance}
+                options={[
+                  { value: 'ground', label: copy.stanceGround },
+                  { value: 'float', label: copy.stanceFloat },
+                ]}
+                onChange={(next) => { if (!operation) setStance(next) }}
+              />
+              <p className="merope-motion-rig__hint">{stance === 'float' ? copy.stanceFloatHint : copy.stanceGroundHint}</p>
+            </div>
+          ) : null}
           <RigImportPanel
             rig={rig}
             seeThroughTokenConfigured={seeThroughTokenConfigured}
