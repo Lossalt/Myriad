@@ -22,7 +22,7 @@ import type {
 } from './torsoDeformation'
 import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, resolveDirectedArmIntent } from './armChoreography'
-import { ArmDrape, ArmPendulum, ArmSegment, FOREARM, HAND, REACH } from './armPendulum'
+import { ARM_INERTIA_GAIN, ArmDrape, ArmPendulum, ArmSegment, FIGURE_ARM_INERTIA_GAIN, FIGURE_ARM_SLACK, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
 import { headRidesBody, KeyedBodyTurn } from './bodyTurnKeyforms'
 import {
@@ -610,6 +610,7 @@ export class Anime25DBodyFrames {
     if (!e.phys) this.prepareHeadFrame(time)
     // Which way is down for an arm: the chest it hangs from.
     const bodyRoll = this.figure ? this.figure.pose.chestAngle : e.body * BODY_ROLL_RADIANS
+    const [inertiaGain, slack] = this.figure ? [FIGURE_ARM_INERTIA_GAIN, FIGURE_ARM_SLACK] : [ARM_INERTIA_GAIN, undefined]
     const sleeves = {
       L: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'L'),
       R: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'R'),
@@ -622,8 +623,9 @@ export class Anime25DBodyFrames {
         open: e.armY,
         sway: e.armPos,
         headTurn: e.angleX,
-        // The weight is on the leg the hips move over.
-        weight: this.standing ? this.standing.weight(e.body) : null,
+        // The weight is on the leg the hips move over; a figure's hips go
+        // with its chest, so no hip juts out against an arm.
+        weight: this.standing && !this.figure ? this.standing.weight(e.body) : null,
         dynamic: e.phys,
       },
       this.armElbows,
@@ -641,7 +643,7 @@ export class Anime25DBodyFrames {
       const raised = side === 'L' ? e.armRaiseL : e.armRaiseR
       const swung = side === 'L' ? e.armSwingL : e.armSwingR
       const intent = resolveDirectedArmIntent(own, e.armPos, raised, swung, raiseShare, swingShare, this.armElbows[side])
-      const input = { open: intent.open, sway: intent.sway, bodyRoll, dynamic: e.phys }
+      const input = { open: intent.open, sway: intent.sway, bodyRoll, dynamic: e.phys, inertiaGain, slack }
       const angle = this.armPendulums[side].step(input, joint, dt)
       const drape = this.armDrapes[side].step(angle, input.bodyRoll, input.dynamic, dt)
       // Away from the body is the arm's own outward turn.

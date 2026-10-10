@@ -33,6 +33,8 @@ interface SwaySpring {
   anchorY: number
   frequency: number
   damping: number
+  /** Its lag gives out softly past this. */
+  reach: number
   x: number
   y: number
   vx: number
@@ -86,6 +88,13 @@ function swayTuning(part: Readonly<Anime25DPart>): { frequency: number; damping:
   }
 }
 
+/**
+ * A region's lag gives out softly at this share of its length: a sudden lurch
+ * otherwise drags a panel off what it is drawn against (a sleeve), and what
+ * was never drawn under it shows. Idling stays well within it.
+ */
+const LAG_REACH = 0.02
+
 /** The lag of each moving part's region behind its bone, for a figure. */
 export class PartSways {
   /** x, y of each part's lag, by its index in the profile (zero for parts that do not sway). */
@@ -97,7 +106,10 @@ export class PartSways {
     this.lags = new Float32Array(parts.length * 2)
     this.springs = parts.map((part) => part.motion === 'rigid' || part.separate
       ? null
-      : { bone: boneOf(part), anchorX: part.anchor[0], anchorY: part.anchor[1], ...swayTuning(part), x: 0, y: 0, vx: 0, vy: 0, settled: false })
+      : {
+          bone: boneOf(part), anchorX: part.anchor[0], anchorY: part.anchor[1], ...swayTuning(part),
+          reach: Math.max(1, LAG_REACH * (part.box[3] - part.anchor[1])), x: 0, y: 0, vx: 0, vy: 0, settled: false,
+        })
   }
 
   /** Steps each spring towards where the bones carry its anchor now. */
@@ -119,8 +131,12 @@ export class PartSways {
         spring.x += spring.vx * dt
         spring.y += spring.vy * dt
       }
-      this.lags[index * 2] = spring.x - tx
-      this.lags[index * 2 + 1] = spring.y - ty
+      const lagX = spring.x - tx
+      const lagY = spring.y - ty
+      const lag = Math.hypot(lagX, lagY)
+      const keep = lag > 0 ? (spring.reach * Math.tanh(lag / spring.reach)) / lag : 1
+      this.lags[index * 2] = lagX * keep
+      this.lags[index * 2 + 1] = lagY * keep
     })
   }
 }

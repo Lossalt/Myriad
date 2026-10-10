@@ -54,7 +54,8 @@ test('moved by its bone, the region trails it, then settles', () => {
   assert.equal(sways.lags[0], 0)
   pose.chest.tx = 30
   sways.step(1 / 60, pose, true)
-  assert.ok(sways.lags[0] < -20, `it trails: ${sways.lags[0]}`)
+  assert.ok(sways.lags[0] < -5, `it trails: ${sways.lags[0]}`)
+  assert.ok(sways.lags[0] >= -0.02 * 400, `a lurch drags it only so far off: ${sways.lags[0]}`)
   for (let i = 0; i < 600; i++) sways.step(1 / 60, pose, true)
   assert.ok(Math.abs(sways.lags[0]) < 0.5, `it settles: ${sways.lags[0]}`)
   const point = { x: 200, y: 900 }
