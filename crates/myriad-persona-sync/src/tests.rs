@@ -151,6 +151,8 @@ fn two_sides() -> (Vec<EntityVersion>, Vec<EntityVersion>) {
         .as_object_mut()
         .unwrap()
         .remove("displayName");
+    // The same sticker avatar, its size stated otherwise: the same picture.
+    persona.body["fields"]["stickerAvatar"]["value"]["bytes"] = json!(1);
     persona.digest.clear();
     local.push(canonicalize(persona).unwrap());
 
@@ -199,7 +201,15 @@ fn two_sides() -> (Vec<EntityVersion>, Vec<EntityVersion>) {
     day.origin = mac.into();
     local.push(canonicalize(day).unwrap());
 
-    for kind in [Kind::Outfit, Kind::SerialPast, Kind::SoupGame] {
+    // The same outfit, its rig and portrait sized and typed otherwise: an
+    // asset is its content id.
+    let mut outfit = by_kind[&Kind::Outfit].clone();
+    outfit.body["rig"]["bytes"] = json!(3_412_000);
+    outfit.body["rig"]["mediaType"] = json!("application/octet-stream");
+    outfit.body["portrait"]["bytes"] = json!(482_000);
+    outfit.digest.clear();
+    local.push(canonicalize(outfit).unwrap());
+    for kind in [Kind::SerialPast, Kind::SoupGame] {
         local.push(by_kind[&kind].clone());
     }
     (local, remote)
@@ -274,6 +284,9 @@ fn a_comparison_of_two_sides_is_golden() {
             field: "image".into(),
         }]
     );
+    assert_eq!(counts(Category::Wardrobe).same, 1);
+    assert_eq!(counts(Category::Wardrobe).differ, 0);
+    assert_eq!(field("stickerAvatar").status, Status::Same);
     assert_eq!(counts(Category::Serial).same, 1);
     assert_eq!(counts(Category::Serial).only_remote, 3);
     assert_eq!(counts(Category::AffectEvents).only_remote, 1);
@@ -300,6 +313,35 @@ fn the_same_name_needs_no_choice_and_one_side_alone_is_not_a_comparison_of_two()
     let alone = compare(Vec::new(), remote).unwrap();
     assert!(!alone.needs_subject);
     assert!(!alone.persona.present.local && alone.persona.present.remote);
+}
+
+#[test]
+fn an_asset_counts_by_its_content_id_alone() {
+    use compare::Category;
+    let outfit = canonicalize(entity_fixture(Kind::Outfit)).unwrap();
+    let with = |change: &dyn Fn(&mut Value)| {
+        let mut other = outfit.clone();
+        change(&mut other.body);
+        other.digest.clear();
+        canonicalize(other).unwrap()
+    };
+    let wardrobe = |other: EntityVersion| {
+        compare(vec![outfit.clone()], vec![other])
+            .unwrap()
+            .categories[&Category::Wardrobe]
+            .counts
+            .clone()
+    };
+    let resized = with(&|body| {
+        body["rig"]["bytes"] = json!(7);
+        body["portrait"]["mediaType"] = json!("image/png");
+    });
+    assert_ne!(resized.digest, outfit.digest);
+    assert_eq!(wardrobe(resized).same, 1);
+    let another_rig = with(&|body| body["rig"]["id"] = json!("e".repeat(64)));
+    assert_eq!(wardrobe(another_rig).differ, 1);
+    let another_portrait = with(&|body| body["portrait"]["id"] = json!("e".repeat(64)));
+    assert_eq!(wardrobe(another_portrait).differ, 1);
 }
 
 #[test]

@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     SyncError,
+    canonical::digest,
     entity::{
-        Affect, AffectAnchorBody, EntityVersion, Kind, MemoryBody, MemoryVenue, OutfitBody,
-        Picture, StickerBody, canonicalize,
+        Affect, AffectAnchorBody, AssetRef, EntityVersion, Kind, MemoryBody, MemoryVenue,
+        OutfitBody, Picture, StickerBody, canonicalize,
     },
     persona::{FieldClass, PersonaBody, PersonaField, field_class},
 };
@@ -275,12 +276,70 @@ fn unreadable_pictures(side: &Side) -> Result<Vec<PictureKey>, SyncError> {
     Ok(out)
 }
 
+/// An asset as a comparison sees it: its content id and type. The id is
+/// the hash of the content (a rig's package id, an image's sha256), so two
+/// sides with the same id have the same file; the size and media type each
+/// side states are not what differs (R8).
+fn by_content(asset: &mut AssetRef) {
+    asset.bytes = 0;
+    asset.media_type.clear();
+}
+
+fn picture_by_content(picture: &mut Picture) {
+    if let Picture::Image(asset) = picture {
+        by_content(asset);
+    }
+}
+
+/// The digest a comparison goes by: the entity's own, except that the
+/// assets an outfit or a sticker refers to count by content id alone.
+fn compared_digest(entity: &EntityVersion) -> Result<String, SyncError> {
+    if entity.state == crate::State::Deleted {
+        return Ok(entity.digest.clone());
+    }
+    let body = match entity.kind {
+        Kind::Outfit => {
+            let mut outfit: OutfitBody = entity.body_as()?;
+            if let Some(portrait) = &mut outfit.portrait {
+                picture_by_content(portrait);
+            }
+            if let Some(rig) = &mut outfit.rig {
+                by_content(rig);
+            }
+            serde_json::to_value(outfit)
+        }
+        Kind::Sticker => {
+            let mut sticker: StickerBody = entity.body_as()?;
+            picture_by_content(&mut sticker.image);
+            serde_json::to_value(sticker)
+        }
+        _ => return Ok(entity.digest.clone()),
+    }
+    .map_err(SyncError::from_json)?;
+    Ok(digest(&body))
+}
+
+/// A persona field's value as a comparison sees it: her sticker avatar by
+/// content id alone, everything else as it is.
+fn compared_value(field: &str, value: &serde_json::Value) -> serde_json::Value {
+    if field == "stickerAvatar"
+        && let Ok(mut picture) = serde_json::from_value::<Picture>(value.clone())
+    {
+        picture_by_content(&mut picture);
+        return serde_json::to_value(picture).unwrap_or_else(|_| value.clone());
+    }
+    value.clone()
+}
+
 fn words(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Compares this side (`local`) with the other (`remote`). Each list is a
-/// whole snapshot; every entity is checked and canonicalized first.
+/// whole snapshot; every entity is checked and canonicalized first. An
+/// asset (a rig, a portrait, a sticker, her sticker avatar) counts by its
+/// content id alone: two sides that state its size or media type
+/// differently still have the same file.
 pub fn compare(
     local: Vec<EntityVersion>,
     remote: Vec<EntityVersion>,
@@ -321,7 +380,12 @@ pub fn compare(
         .map(|field| {
             let (local, remote) = (local_fields.get(field), remote_fields.get(field));
             let status = match (local, remote) {
-                (Some(local), Some(remote)) if local.value == remote.value => Status::Same,
+                (Some(local), Some(remote))
+                    if compared_value(field, &local.value)
+                        == compared_value(field, &remote.value) =>
+                {
+                    Status::Same
+                }
                 (Some(_), Some(_)) => Status::Differ,
                 (Some(_), None) => Status::OnlyLocal,
                 _ => Status::OnlyRemote,
@@ -359,7 +423,8 @@ pub fn compare(
         };
         let status = match (here, there) {
             (Some(here), Some(there))
-                if here.digest == there.digest && here.state == there.state =>
+                if here.state == there.state
+                    && compared_digest(here)? == compared_digest(there)? =>
             {
                 Status::Same
             }

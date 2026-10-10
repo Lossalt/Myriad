@@ -390,8 +390,9 @@ async fn persona_row<C: ConnectionTrait>(db: &C) -> Result<Option<PersonaRow>, D
 }
 
 /// Keys of her visual profile that are not persona fields: the wardrobe
-/// crosses as outfits, and which outfit she wears is each side's own (Q12).
-const VISUAL_NOT_FIELDS: [&str; 2] = ["wardrobe", "activeOutfitId"];
+/// crosses as outfits, and which outfit she wears, bust or full body, is
+/// each side's own (Q12, R6).
+const VISUAL_NOT_FIELDS: [&str; 3] = ["wardrobe", "activeOutfitId", "activeFullBodyOutfitId"];
 
 async fn persona<C: ConnectionTrait>(
     db: &C,
@@ -733,7 +734,7 @@ mod tests {
 INSERT INTO users (id, username) VALUES (41, 'owner41'), (42, 'guest42');
 INSERT INTO agent_persona (id, name, personality, persona_json, visual_profile, updated_at)
 VALUES ('site', ' Merope ', '安静', '{{"summary":"住在站点上","likes":["雨天"]}}'::jsonb,
-        '{{"clothingStyle":"everyday","activeOutfitId":"default","wardrobe":[
+        '{{"clothingStyle":"everyday","activeOutfitId":"default","activeFullBodyOutfitId":"coat","wardrobe":[
           {{"id":"default","clothingStyle":"everyday","outfit":{{"top":"白衬衫"}}}},
           {{"id":"coat","name":"大衣","clothingStyle":"everyday","outfit":{{"top":"大衣"}},
             "portraitAssetId":"/media/assets/00000000-0000-0000-0000-000000000000/gone.png"}}]}}'::jsonb,
@@ -870,11 +871,9 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
             persona.body["fields"]["visual.clothingStyle"]["value"],
             "everyday"
         );
-        assert!(
-            persona.body["fields"]
-                .get("visual.activeOutfitId")
-                .is_none()
-        );
+        for worn in ["visual.activeOutfitId", "visual.activeFullBodyOutfitId"] {
+            assert!(persona.body["fields"].get(worn).is_none(), "{worn}");
+        }
         assert!(persona.body["fields"].get("visual.wardrobe").is_none());
         // Mood settled to the later settle time, an hour on for mood.
         let anchor = by("owner");
