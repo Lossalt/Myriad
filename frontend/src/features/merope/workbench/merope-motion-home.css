@@ -359,10 +359,25 @@ html.dark .merope-motion-page {
   font-size: 12px;
 }
 
-.merope-persona-history__copy p {
+.merope-persona-history__value {
   margin: 2px 0 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.merope-persona-history__value dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.merope-persona-history__value dt {
+  color: var(--merope-muted, #667085);
+  font-size: 12px;
+}
+
+.merope-persona-history__value dd {
+  margin: 0 0 4px;
 }
 
 .merope-motion-rig {

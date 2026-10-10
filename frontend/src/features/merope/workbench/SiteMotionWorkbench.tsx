@@ -34,6 +34,7 @@ import { useRigPreviewMotionLifecycle } from '../motion/useRigMotionLifecycle'
 import { applyOutfit, isFullBodyItem, sortWardrobe, wardrobeItemLabel } from '../persona/wardrobe'
 import { decomposeWithTurnKeyforms } from '../turnKeyformsApi'
 import Anime25DWorkbench from './Anime25DWorkbench'
+import FieldHistory from './FieldHistory'
 import { FullBodyStageSwitch } from './FullBodyStageSwitch'
 import { OutfitDetail } from './OutfitDetail'
 import OutfitWardrobe from './OutfitWardrobe'
@@ -43,10 +44,12 @@ import { activeRigMode } from './rigMode'
 import { useAddressee } from './useAddressee'
 import { useAiExpressions } from './useAiExpressions'
 import { useFullBodyStage } from './useFullBodyStage'
+import { usePersonaRestore } from './usePersonaRestore'
 import { usePersonaWardrobe } from './usePersonaWardrobe'
 import { useSeeThroughToken } from './useSeeThroughToken'
 import { useSiteFace } from './useSiteFace'
 import { useStickerAvatar } from './useStickerAvatar'
+import VisualHistory from './VisualHistory'
 import { wardrobeOverview } from './wardrobeOverview'
 import { WorkbenchOverview } from './WorkbenchOverview'
 import { downloadPicture, reportMeropeError, toMeropeActivity } from './workbenchShared'
@@ -96,6 +99,12 @@ export default function SiteMotionWorkbench({
     setManagingOutfitId,
     generating,
   } = persona
+  const restore = usePersonaRestore({
+    persona: personaSnapshot,
+    setPersona: persona.setPersonaSnapshot,
+    reload: persona.reload,
+    loadFace,
+  })
   const addressee = useAddressee(
     persona.setPersonaSnapshot,
     t.errors.addresseeSaveFailed,
@@ -303,6 +312,18 @@ export default function SiteMotionWorkbench({
         saveLabel={o.doneEditing}
         busy={generating}
         onIdentity={(next) => void persona.saveCharacter(next)}
+        historyLabel={t.merope.personaHistory}
+        renderHistory={(close) => (
+          <VisualHistory
+            profile={personaSnapshot?.visualProfile}
+            identity={visualIdentity}
+            labels={visualLabels}
+            busy={generating}
+            onIdentity={(next) => void persona.saveCharacter(next)}
+            onKey={(key, value) => void restore.restoreVisual(key, value)}
+            onClose={close}
+          />
+        )}
       />
     ) : null
 
@@ -340,6 +361,26 @@ export default function SiteMotionWorkbench({
       sticker={sticker}
       hasPortrait={Boolean(portraitUrl)}
       addressee={addressee}
+      renderNameHistory={(close) => (
+        <FieldHistory
+          fields={['name']}
+          busy={generating}
+          display={(entry) =>
+            typeof entry.value === 'string' ? entry.value : null
+          }
+          canRestore={(entry) =>
+            typeof entry.value === 'string' &&
+            entry.value.trim() !== '' &&
+            entry.value.trim() !== personaSnapshot?.name.trim()
+          }
+          onRestore={(entry) => {
+            if (typeof entry.value === 'string') {
+              void restore.restoreName(entry.value)
+            }
+          }}
+          onClose={close}
+        />
+      )}
     />
   )
 

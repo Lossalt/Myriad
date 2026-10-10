@@ -6,6 +6,7 @@ import { useI18n } from '../../../contexts/I18nContext'
 import { agentService } from '../../../services/agent'
 import { emitAppEvent } from '../../../utils/appEvents'
 import { userFacingError } from '../../../utils/userFacingError'
+import FieldHistory from './FieldHistory'
 import { reportMeropeError } from './workbenchShared'
 
 interface Props {
@@ -40,55 +41,91 @@ export default function PersonaZoneField({
   const zones = useMemo(knownZones, [])
   const [draft, setDraft] = useState(zone)
   const [saving, setSaving] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   useEffect(() => setDraft(zone), [zone])
   const changed = draft.trim() !== zone.trim()
 
+  /** Saves `next` as her zone; empty is the site's own. */
+  const save = (next: string) => {
+    setSaving(true)
+    agentService
+      .putPersona({
+        name: persona.name,
+        personality: persona.personality ?? '',
+        zone: next.trim() || null,
+      })
+      .then((saved) => {
+        onSaved(saved.zone ?? '')
+        emitAppEvent('arael-persona-updated')
+      })
+      .catch((reason: unknown) => {
+        reportMeropeError(userFacingError(reason, m.zoneSaveFailed))
+      })
+      .finally(() => setSaving(false))
+  }
+
   return (
-    <div className="merope-motion-persona__zone">
-      <Field label={m.zoneLabel} hint={m.zoneHint}>
-        <TextInput
-          value={draft}
-          list={listId}
-          placeholder={m.zoneFollowSite}
-          spellCheck={false}
-          autoComplete="off"
-          disabled={busy || saving}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <datalist id={listId}>
-          {zones.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-      </Field>
-      {changed ? (
+    <>
+      <div className="merope-motion-persona__zone">
+        <Field label={m.zoneLabel} hint={m.zoneHint}>
+          <TextInput
+            value={draft}
+            list={listId}
+            placeholder={m.zoneFollowSite}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={busy || saving}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <datalist id={listId}>
+            {zones.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </Field>
+        {changed ? (
+          <SettingsButton
+            type="button"
+            size="sm"
+            variant="primary"
+            disabled={busy || saving}
+            loading={saving}
+            onClick={() => save(draft)}
+          >
+            {m.zoneSave}
+          </SettingsButton>
+        ) : null}
         <SettingsButton
           type="button"
           size="sm"
-          variant="primary"
           disabled={busy || saving}
-          loading={saving}
-          onClick={() => {
-            setSaving(true)
-            agentService
-              .putPersona({
-                name: persona.name,
-                personality: persona.personality ?? '',
-                zone: draft.trim() || null,
-              })
-              .then((saved) => {
-                onSaved(saved.zone ?? '')
-                emitAppEvent('arael-persona-updated')
-              })
-              .catch((reason: unknown) => {
-                reportMeropeError(userFacingError(reason, m.zoneSaveFailed))
-              })
-              .finally(() => setSaving(false))
-          }}
+          aria-expanded={historyOpen}
+          aria-label={`${m.personaHistory} · ${m.zoneLabel}`}
+          onClick={() => setHistoryOpen((open) => !open)}
         >
-          {m.zoneSave}
+          {m.personaHistory}
         </SettingsButton>
+      </div>
+      {historyOpen ? (
+        <FieldHistory
+          fields={['zone']}
+          busy={busy || saving}
+          // An unset zone is the site's own.
+          display={(entry) =>
+            typeof entry.value === 'string' && entry.value.trim()
+              ? entry.value
+              : m.historyZoneSite
+          }
+          canRestore={(entry) =>
+            (entry.value === null || typeof entry.value === 'string') &&
+            ((entry.value as string | null) ?? '').trim() !== zone.trim()
+          }
+          onRestore={(entry) =>
+            save(typeof entry.value === 'string' ? entry.value : '')
+          }
+          onClose={() => setHistoryOpen(false)}
+        />
       ) : null}
-    </div>
+    </>
   )
 }

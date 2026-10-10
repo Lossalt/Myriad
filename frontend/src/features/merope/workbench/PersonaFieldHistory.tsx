@@ -1,11 +1,6 @@
 import type { StructuredPersona } from '../../../components/agent/onboarding/onboardingTypes'
-import type { PersonaFieldHistoryEntry } from '../../../services/agent/agentApi'
-import { useEffect, useState } from 'react'
 import { joinList } from '../../../components/agent/onboarding/onboardingTypes'
-import { SettingsButton } from '../../../components/settings'
-import { useI18n } from '../../../contexts/I18nContext'
-import { agentService } from '../../../services/agent'
-import { userFacingError } from '../../../utils/userFacingError'
+import FieldHistory from './FieldHistory'
 
 type Field = keyof StructuredPersona
 
@@ -53,87 +48,17 @@ export default function PersonaFieldHistory({
   onPersona,
   onClose,
 }: Props) {
-  const { t, locale } = useI18n()
-  const m = t.merope
-  const [entries, setEntries] = useState<PersonaFieldHistoryEntry[] | null>(
-    null,
-  )
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let live = true
-    agentService
-      .getPersonaHistory(field)
-      .then((loaded) => {
-        if (live) setEntries(loaded)
-      })
-      .catch((reason: unknown) => {
-        if (live) setError(userFacingError(reason, m.personaHistoryFailed))
-      })
-    return () => {
-      live = false
-    }
-  }, [field, m.personaHistoryFailed])
-
-  const when = (at: string) => {
-    const date = new Date(at)
-    return Number.isNaN(date.getTime())
-      ? at
-      : date.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
-  }
-
   return (
-    <div
-      className="merope-persona-history"
-      role="region"
-      aria-label={m.personaHistory}
-    >
-      <div className="merope-persona-history__head">
-        <span>{m.personaHistory}</span>
-        <SettingsButton type="button" size="sm" onClick={onClose}>
-          {m.personaHistoryClose}
-        </SettingsButton>
-      </div>
-      {error ? (
-        <p className="merope-motion-home__help" role="alert">
-          {error}
-        </p>
-      ) : entries === null ? (
-        <p className="merope-motion-home__help">{m.personaHistoryLoading}</p>
-      ) : entries.length === 0 ? (
-        <p className="merope-motion-home__help">{m.personaHistoryEmpty}</p>
-      ) : (
-        <ol className="merope-persona-history__list">
-          {entries.map((entry) => (
-            <li key={entry.id} className="merope-persona-history__item">
-              <div className="merope-persona-history__copy">
-                <small>
-                  {m.personaHistoryReplacedAt.replace(
-                    '{time}',
-                    when(entry.replacedAt),
-                  )}
-                  {entry.origin === 'site'
-                    ? ''
-                    : ` · ${m.personaHistoryFromDevice}`}
-                </small>
-                <p>{display(field, entry.value) || '—'}</p>
-              </div>
-              <SettingsButton
-                type="button"
-                size="sm"
-                disabled={busy || !restored(persona, field, entry.value)}
-                onClick={() => {
-                  const next = restored(persona, field, entry.value)
-                  if (next) onPersona(next)
-                  onClose()
-                }}
-              >
-                {m.personaHistoryRestore}
-              </SettingsButton>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
+    <FieldHistory
+      fields={[field]}
+      busy={busy}
+      display={(entry) => display(field, entry.value)}
+      canRestore={(entry) => restored(persona, field, entry.value) !== null}
+      onRestore={(entry) => {
+        const next = restored(persona, field, entry.value)
+        if (next) onPersona(next)
+      }}
+      onClose={onClose}
+    />
   )
 }
