@@ -86,6 +86,8 @@ mod archive;
 mod body_turn;
 mod cache;
 mod figure_picture;
+mod hair_misfit;
+mod judge;
 use archive::{ArchiveFiles, ArchiveMeta, FigureFiles, FigureMeta};
 use cache::{CACHE_KEEP, TurnCache, cache_root, prune_cache};
 
@@ -578,8 +580,42 @@ async fn run(
             redrawn.push((*side).to_string());
         }
     }
-    let decompositions: [Vec<u8>; 5] = decompositions.try_into().expect("five decompositions");
+    let mut decompositions: [Vec<u8>; 5] = decompositions.try_into().expect("five decompositions");
+    let mut pictures = pictures;
+    // A turn that redrew what a turn keeps is drawn once more before the fit.
+    let judged = judge::judge_turns(
+        id,
+        user_id,
+        generation,
+        &reference,
+        (width, height),
+        client,
+        cache,
+        options,
+        &mut decompositions,
+        &mut pictures,
+        &mut redrawn,
+    )
+    .await?;
+    update(id, |job| job.stage = Stage::Fitting);
     let output = fit(client, &decompositions, &pictures).await?;
+    let (decompositions, pictures, output) = redraw_misfit(
+        id,
+        user_id,
+        generation,
+        &reference,
+        (width, height),
+        client,
+        cache,
+        options,
+        (decompositions, pictures, output),
+        &mut redrawn,
+    )
+    .await?;
+    let output = see_through::TurnKeyformsOutput {
+        keyforms: judge::with_judgements(output.keyforms, &judged),
+        ..output
+    };
     let [front, turned @ ..] = pictures;
     let master_media_type = front.1.clone();
     Ok(Made {
@@ -857,7 +893,8 @@ async fn tile_decomposition(
 }
 
 /// The head's keys placed on the figure (`figure_keys`), with the figure's
-/// own decomposition: the head's parts were only what the keys were fitted on.
+/// own decomposition but the head's hair (`figure_hair`): the head's other
+/// parts were only what the keys were fitted on.
 async fn put_back(
     client: &see_through::SeeThroughClient,
     made: Made,
@@ -873,6 +910,27 @@ async fn put_back(
         )
         .await
         .map_err(see_through_error)?;
+    // The keys were fitted on the head's hair as the head's decomposition
+    // split it (side locks in the front hair, the front hair in locks): the
+    // figure takes that hair. Should the Space not manage, the figure keeps
+    // its own, as before.
+    let kept = match client
+        .figure_hair(
+            kept.decomposition.clone(),
+            made.files.baked.clone(),
+            keyforms.clone(),
+        )
+        .await
+    {
+        Ok(decomposition) => FigureFiles {
+            decomposition,
+            ..kept
+        },
+        Err(error) => {
+            tracing::warn!(%error, "the figure keeps its own hair");
+            kept
+        }
+    };
     Ok(Made {
         files: ArchiveFiles {
             keyforms,
@@ -1008,6 +1066,114 @@ async fn redraw_bad_turns(
         }
     }
     turned
+}
+
+/// Draws once more the turn whose front hair the fit could not follow
+/// (hair_misfit), decomposes and fits it again, and keeps whichever fit
+/// follows that turn's front hair better. Once per drawing set: a cache
+/// marker keeps a rerun from drawing it yet again.
+#[allow(clippy::too_many_arguments)]
+async fn redraw_misfit(
+    id: &str,
+    user_id: i32,
+    generation: &image_generation::ImageGenerationConfig,
+    reference: &image_generation::ImageReference,
+    (width, height): (u32, u32),
+    client: &see_through::SeeThroughClient,
+    cache: &TurnCache,
+    options: see_through::DecomposeOptions,
+    (decompositions, pictures, output): (
+        [Vec<u8>; 5],
+        [(Vec<u8>, String); 5],
+        see_through::TurnKeyformsOutput,
+    ),
+    redrawn: &mut Vec<String>,
+) -> ApiResult<(
+    [Vec<u8>; 5],
+    [(Vec<u8>, String); 5],
+    see_through::TurnKeyformsOutput,
+)> {
+    let Some(index) = hair_misfit::misfit_side(&output.keyforms) else {
+        return Ok((decompositions, pictures, output));
+    };
+    let side = TURN_SIDES[index];
+    let marker = format!("turned-{index}.hair-retried");
+    if cache.read(&marker).await.is_some() {
+        return Ok((decompositions, pictures, output));
+    }
+    cache.write(&marker, b"retried").await;
+    let before = hair_misfit::hair_outline(&output.keyforms, side).unwrap_or(f64::INFINITY);
+    tracing::info!(
+        side,
+        before,
+        "turned drawing's front hair not followed; drawing it again"
+    );
+    let png = match draw_turn(
+        user_id,
+        generation,
+        &turn_prompts()[index],
+        reference,
+        width,
+        height,
+    )
+    .await
+    {
+        Ok(png) => png,
+        Err(error) => {
+            tracing::warn!(side, ?error, "turned drawing could not be drawn again");
+            return Ok((decompositions, pictures, output));
+        }
+    };
+    update(id, |job| {
+        job.stage = Stage::Decomposing;
+        job.done = 0;
+        job.total = 1;
+    });
+    // Decomposed apart from the cached one, which stays the drawing's until this one wins.
+    let bytes = axum::body::Bytes::from(png.clone());
+    let psd = decompose_checked(client, &bytes, "image/png", options, &TURNED_REDOS, None)
+        .await?
+        .0;
+    let mut retried_decompositions = decompositions.clone();
+    retried_decompositions[index + 1] = psd.clone();
+    let mut retried_pictures = pictures.clone();
+    retried_pictures[index + 1] = (png.clone(), "image/png".to_string());
+    update(id, |job| {
+        job.stage = Stage::Fitting;
+        job.done = 0;
+        job.total = 1;
+    });
+    let retried = fit(client, &retried_decompositions, &retried_pictures).await?;
+    let after = hair_misfit::hair_outline(&retried.keyforms, side).unwrap_or(f64::INFINITY);
+    if after >= before {
+        tracing::info!(
+            side,
+            before,
+            after,
+            "the turn drawn again was no better; kept the first"
+        );
+        return Ok((decompositions, pictures, output));
+    }
+    tracing::info!(
+        side,
+        before,
+        after,
+        "the turn drawn again is followed better; kept it"
+    );
+    cache.write(&format!("turned-{index}.png"), &png).await;
+    cache
+        .write(&format!("decomposition-{}.psd", index + 1), &psd)
+        .await;
+    cache
+        .write(&format!("decomposition-{}.checked", index + 1), b"checked")
+        .await;
+    cache
+        .write(&format!("turned-{index}.redrawn"), b"redrawn")
+        .await;
+    if !redrawn.iter().any(|known| known == side) {
+        redrawn.push(side.to_string());
+    }
+    Ok((retried_decompositions, retried_pictures, retried))
 }
 
 /// A drawing's decomposition, checked (decompose_checked) and kept in the cache.
