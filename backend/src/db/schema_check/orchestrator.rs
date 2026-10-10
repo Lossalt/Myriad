@@ -28,7 +28,8 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `SUPPORT_FLOOR_SCHEMA_MARK`。
 /// 2026.10.09.1：同步她的设备表（`agent_sync_devices`，随 004 与
 /// `ensure_persona_sync_tables` 一起建）。
-pub const SCHEMA_VERSION: &str = "2026.10.09.1";
+/// 2026.10.10.1：她的时区 `agent_persona.zone`（空是站点自己的时区），旧库走通用 ADD。
+pub const SCHEMA_VERSION: &str = "2026.10.10.1";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

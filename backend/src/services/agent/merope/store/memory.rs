@@ -263,9 +263,9 @@ pub(crate) fn as_known(note: &crate::services::agent::memory::unified::MemoryRec
     if content.is_empty() {
         return content;
     }
-    // When she came to know it, on the site's clock: what happened "last
-    // week" is placed in time; the year only when it is not this one.
-    let known = note.created_at.with_timezone(&chrono::Local);
+    // When she came to know it, on her clock: what happened "last week" is
+    // placed in time; the year only when it is not this one.
+    let known = note.created_at.with_timezone(&super::super::clock::zone());
     let when = if known.year() == super::super::clock::local_now().year() {
         known.format("%m-%d")
     } else {

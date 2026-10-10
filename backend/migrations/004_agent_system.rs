@@ -464,7 +464,8 @@ CREATE TABLE IF NOT EXISTS agent_persona (
     avatar_asset_id TEXT,
     avatar_generation JSONB,
     updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    zone VARCHAR(64) NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS agent_addressee_state (

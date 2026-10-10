@@ -207,6 +207,7 @@ fn changing_generation_inputs_invalidates_portrait_contract() {
         avatar_generation: None,
         updated_by: Some(1),
         updated_at: Utc::now().into(),
+        zone: String::new(),
     };
     let active = apply_persona_update(
         existing,
@@ -271,6 +272,7 @@ fn changing_spoken_persona_keeps_confirmed_visual_assets() {
         avatar_generation: None,
         updated_by: Some(1),
         updated_at: Utc::now().into(),
+        zone: String::new(),
     };
     let active = apply_persona_update(
         existing,
@@ -330,6 +332,7 @@ fn persona_with_avatar() -> agent_persona::Model {
         avatar_generation: Some(json!({ "fingerprint": "b".repeat(64) })),
         updated_by: Some(1),
         updated_at: Utc::now().into(),
+        zone: String::new(),
     }
 }
 
@@ -444,6 +447,7 @@ fn onboarding_seeds_do_not_invalidate_portrait() {
         avatar_generation: None,
         updated_by: Some(1),
         updated_at: Utc::now().into(),
+        zone: String::new(),
     };
     let active = apply_persona_update(
         existing,
@@ -499,6 +503,7 @@ async fn portrait_generation_lease_preserves_concurrent_persona_and_rejects_visu
         avatar_generation: Set(None),
         updated_by: Set(None),
         updated_at: Set(Utc::now().into()),
+        zone: Set(String::new()),
     }
     .insert(&transaction)
     .await
@@ -600,4 +605,49 @@ fn in_a_group_what_is_about_someone_else_says_whose_it_is() {
         super::about_someone_else("[2026-09-28] 周五要加班", "老周"),
         "[2026-09-28] 周五要加班 (this is about 老周, not the one talking to you)"
     );
+}
+
+/// Her zone is stored as named, kept by a save that does not name one, and
+/// empty again (the site's own) when cleared. On a real database (an isolated
+/// schema; skipped without a test database).
+#[tokio::test]
+async fn her_zone_is_kept_until_named_otherwise() {
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        db,
+        "INSERT INTO users (id, username) VALUES (1, 'owner1')",
+    )
+    .await
+    .unwrap();
+    let save = |zone: Option<&str>| {
+        upsert_persona_on(
+            db,
+            "Nova".to_string(),
+            "curious".to_string(),
+            PortraitUpdate::Keep,
+            PersonaContractUpdate {
+                zone: zone.map(str::to_string),
+                ..PersonaContractUpdate::default()
+            },
+            1,
+        )
+    };
+    assert_eq!(save(None).await.unwrap().zone, "");
+    // The process zone in tests is Asia/Shanghai, so naming it changes
+    // nothing else running alongside.
+    assert_eq!(
+        save(Some(" Asia/Shanghai ")).await.unwrap().zone,
+        "Asia/Shanghai"
+    );
+    assert_eq!(save(None).await.unwrap().zone, "Asia/Shanghai");
+    let read = get_persona_on(db).await.unwrap().unwrap();
+    assert_eq!(
+        super::super::clock::Zone::named(&read.zone),
+        Some(super::super::clock::Zone::Named(chrono_tz::Asia::Shanghai))
+    );
+    assert_eq!(save(Some("")).await.unwrap().zone, "");
+    fixture.close().await;
 }

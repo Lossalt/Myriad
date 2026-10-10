@@ -224,6 +224,7 @@ mod tests {
             avatar_generation: None,
             updated_by: None,
             updated_at: chrono::Utc::now().fixed_offset(),
+            zone: String::new(),
         };
         let original = master_from_persona(&persona).unwrap();
         persona.name = "Renamed".into();
@@ -265,6 +266,7 @@ mod tests {
             avatar_generation: None,
             updated_by: None,
             updated_at: chrono::Utc::now().fixed_offset(),
+            zone: String::new(),
         };
         let full = master_for(&persona, MasterSlot::FullBody("w-full")).unwrap();
         assert_eq!(full.profile, CharacterAssetProfile::FullBody);

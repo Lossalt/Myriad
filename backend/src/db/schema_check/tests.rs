@@ -595,12 +595,15 @@ VALUES
     );
 
     // The generic path puts back a missing index, in its declared shape, and
-    // a database that ran 004 before the sync devices table gets it.
+    // a database that ran 004 before the sync devices table gets it. A
+    // persona row from before her zone gets the column, empty (the site's).
     db.execute_unprepared(
         r#"
 DROP INDEX idx_phantasi_items_source_recent;
 DROP INDEX idx_metadata_history_user_date;
 DROP TABLE agent_sync_devices;
+INSERT INTO agent_persona (id, name, updated_at) VALUES ('site', 'Merope', NOW());
+ALTER TABLE agent_persona DROP COLUMN zone;
 "#,
     )
     .await
@@ -632,9 +635,21 @@ DROP TABLE agent_sync_devices;
             .unwrap()
             .contains("WHERE")
     );
+    let zone = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT zone FROM agent_persona WHERE id = 'site'",
+        ))
+        .await
+        .unwrap()
+        .expect("the persona row is kept");
+    assert_eq!(zone.try_get::<String>("", "zone").unwrap(), "");
     ensure_schema(&db)
         .await
         .expect("a second startup changes nothing");
+    db.execute_unprepared("DELETE FROM agent_persona WHERE id = 'site'")
+        .await
+        .expect("remove fixture persona");
     db.execute_unprepared("DELETE FROM users WHERE id = 2147483647")
         .await
         .expect("remove fixture user");

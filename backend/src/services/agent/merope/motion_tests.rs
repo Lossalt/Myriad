@@ -238,6 +238,7 @@ fn motion_persona_payload_carries_temperament() {
         avatar_generation: None,
         updated_by: None,
         updated_at: chrono::Utc::now().into(),
+        zone: String::new(),
     };
     let payload = motion_persona_payload(Some(&blank), "restrained");
     assert_eq!(payload["name"], "瞳");

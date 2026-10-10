@@ -305,6 +305,18 @@ html.dark .merope-motion-page {
   gap: 16px;
 }
 
+.merope-motion-persona__zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.merope-motion-persona__zone > .merope-ob-field {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
 .merope-motion-rig {
   display: grid;
   gap: 12px;

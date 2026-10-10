@@ -112,6 +112,18 @@ impl crate::entity::CheckBody for PersonaBody {
                 return Err(SyncError::new(format!("field name {name:?}")));
             }
             check_node(&field.origin)?;
+            // Her zone is an IANA name, or unset (each side's own): blank is
+            // unset, so two sides that leave it blank agree.
+            if name == "zone"
+                && let Value::String(zone) = &field.value
+            {
+                let zone = zone.trim();
+                field.value = if zone.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(zone.to_string())
+                };
+            }
             let fine = match &field.value {
                 Value::Null => true,
                 value if field_class(name) == FieldClass::List => value

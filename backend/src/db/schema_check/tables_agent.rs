@@ -476,6 +476,10 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     default_value: None,
                     not_null: false,
                 },
+                // Her zone, an IANA name; empty is the site's own (`TZ`).
+                ColumnDef::new("zone", "character varying")
+                    .not_null()
+                    .default_value("''"),
             ],
         },
         TableDef {

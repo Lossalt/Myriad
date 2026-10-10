@@ -27,6 +27,9 @@ pub struct Model {
     #[sea_orm(nullable)]
     pub updated_by: Option<i32>,
     pub updated_at: DateTimeWithTimeZone,
+    /// Her zone, an IANA name (`Asia/Shanghai`); empty is the site's own
+    /// (the process zone, `TZ`). See `merope::clock::zone`.
+    pub zone: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

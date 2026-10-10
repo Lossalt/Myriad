@@ -37,6 +37,7 @@ import Anime25DWorkbench from './Anime25DWorkbench'
 import { FullBodyStageSwitch } from './FullBodyStageSwitch'
 import { OutfitDetail } from './OutfitDetail'
 import OutfitWardrobe from './OutfitWardrobe'
+import PersonaZoneField from './PersonaZoneField'
 import { activeRigMode } from './rigMode'
 import { useAddressee } from './useAddressee'
 import { useAiExpressions } from './useAiExpressions'
@@ -376,6 +377,17 @@ export default function SiteMotionWorkbench({
       ) : (
         <p className="merope-motion-home__help">{t.merope.personaEmpty}</p>
       )}
+      {personaSnapshot ? (
+        <PersonaZoneField
+          persona={personaSnapshot}
+          busy={generating}
+          onSaved={(zone) =>
+            persona.setPersonaSnapshot((current) =>
+              current ? { ...current, zone } : current,
+            )
+          }
+        />
+      ) : null}
     </div>
   )
 

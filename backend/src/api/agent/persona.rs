@@ -45,6 +45,10 @@ pub struct PutPersonaRequest {
     /// Absent preserves the document, explicit `null` clears it.
     #[serde(default, deserialize_with = "present_option")]
     pub visual_profile: Option<Option<Value>>,
+    /// Her zone, an IANA name. Absent keeps it; `null` or empty is the
+    /// site's own.
+    #[serde(default, deserialize_with = "present_option")]
+    pub zone: Option<Option<String>>,
 }
 
 fn present_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -186,6 +190,7 @@ pub async fn get_persona(
         body["persona"] = persona.persona_json.unwrap_or(Value::Null);
         body["visualProfile"] = persona.visual_profile.unwrap_or(Value::Null);
         body["portraitGeneration"] = persona.portrait_generation.unwrap_or(Value::Null);
+        body["zone"] = json!(persona.zone);
     }
     Ok(Json(body))
 }
@@ -214,6 +219,22 @@ pub async fn put_persona(
 ) -> Result<Json<Value>, HttpError> {
     require_merope_enabled().await?;
     let user_id = require_site_owner(&claims, &db).await?;
+    let zone = match body.zone {
+        None => None,
+        Some(zone) => {
+            let zone = zone.unwrap_or_default().trim().to_string();
+            if !merope::clock::Zone::is_valid_name(&zone) {
+                return Err(HttpError::from((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "Unknown time zone",
+                        "code": "invalid_zone"
+                    })),
+                )));
+            }
+            Some(zone)
+        }
+    };
     let transaction = db
         .begin()
         .await
@@ -270,6 +291,7 @@ pub async fn put_persona(
     let contract = merope::PersonaContractUpdate {
         persona,
         visual_profile,
+        zone,
         ..merope::PersonaContractUpdate::default()
     };
     let saved = merope::upsert_persona_on(
@@ -342,6 +364,7 @@ pub async fn put_persona(
         "portraitGeneration": saved.portrait_generation,
         "portraitAssetId": saved.portrait_asset_id,
         "hasCustomPersona": merope::has_custom_persona(&saved),
+        "zone": saved.zone,
     })))
 }
 

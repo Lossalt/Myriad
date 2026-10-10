@@ -418,6 +418,16 @@ async fn persona<C: ConnectionTrait>(
             fields.insert(key.clone(), field(value.clone()));
         }
     }
+    // Her zone: empty is the site's own, which crosses as unset.
+    let zone = row.zone.trim();
+    fields.insert(
+        "zone".to_string(),
+        field(if zone.is_empty() {
+            Value::Null
+        } else {
+            Value::String(zone.to_string())
+        }),
+    );
     if let Some(Value::Object(visual)) = &row.visual_profile {
         for (key, value) in visual {
             if !VISUAL_NOT_FIELDS.contains(&key.as_str()) {
@@ -732,8 +742,8 @@ mod tests {
         let fixture_sql = format!(
             r#"
 INSERT INTO users (id, username) VALUES (41, 'owner41'), (42, 'guest42');
-INSERT INTO agent_persona (id, name, personality, persona_json, visual_profile, updated_at)
-VALUES ('site', ' Merope ', '安静', '{{"summary":"住在站点上","likes":["雨天"]}}'::jsonb,
+INSERT INTO agent_persona (id, name, personality, zone, persona_json, visual_profile, updated_at)
+VALUES ('site', ' Merope ', '安静', 'Asia/Tokyo', '{{"summary":"住在站点上","likes":["雨天"]}}'::jsonb,
         '{{"clothingStyle":"everyday","activeOutfitId":"default","activeFullBodyOutfitId":"coat","wardrobe":[
           {{"id":"default","clothingStyle":"everyday","outfit":{{"top":"白衬衫"}}}},
           {{"id":"coat","name":"大衣","clothingStyle":"everyday","outfit":{{"top":"大衣"}},
@@ -863,6 +873,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         assert_eq!(by("m_own").body["audience"]["venue"], "own");
         let persona = by("her");
         assert_eq!(persona.body["fields"]["name"]["value"], " Merope ");
+        assert_eq!(persona.body["fields"]["zone"]["value"], "Asia/Tokyo");
         assert_eq!(
             persona.body["fields"]["likes"]["value"],
             serde_json::json!(["雨天"])

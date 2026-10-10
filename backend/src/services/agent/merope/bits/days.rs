@@ -42,7 +42,8 @@ pub async fn go_over_stretch(
         .date_naive()
         .and_hms_opt(0, 0, 0)
         .and_then(|midnight| {
-            chrono::TimeZone::from_local_datetime(&chrono::Local, &midnight).earliest()
+            chrono::TimeZone::from_local_datetime(&super::super::clock::zone(), &midnight)
+                .earliest()
         })
         .map(|midnight| midnight.fixed_offset());
     let Some(today) = today else {

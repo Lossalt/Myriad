@@ -213,6 +213,8 @@ export interface AgentPersona {
   persona?: Record<string, unknown> | null
   visualProfile?: Record<string, unknown> | null
   portraitGeneration?: Record<string, unknown> | null
+  /** Her zone, an IANA name; empty is the site's own. Owner only. */
+  zone?: string
   mood?: number
   moodRevision?: number
   arousal?: number
@@ -1181,6 +1183,8 @@ class AgentService {
     portraitAssetId?: string | null
     persona?: Record<string, unknown> | null
     visualProfile?: Record<string, unknown> | null
+    /** Absent keeps it; null or empty is the site's own zone. */
+    zone?: string | null
   }): Promise<AgentPersona> {
     return apiService.put(`${this.baseUrl}/persona`, body)
   }

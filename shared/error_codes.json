@@ -1699,6 +1699,7 @@
     "invalid_embedding_model",
     "clock_ahead",
     "invalid_sync_clock",
-    "sync_clock_required"
+    "sync_clock_required",
+    "invalid_zone"
   ]
 }

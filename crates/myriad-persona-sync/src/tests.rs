@@ -345,6 +345,24 @@ fn an_asset_counts_by_its_content_id_alone() {
 }
 
 #[test]
+fn her_zone_is_a_name_or_unset_and_blank_is_unset() {
+    let with_zone = |zone: Value| {
+        let mut persona = entity_fixture(Kind::Persona);
+        persona.body["fields"]["zone"]["value"] = zone;
+        persona.digest.clear();
+        canonicalize(persona)
+    };
+    let zone_of = |zone: Value| with_zone(zone).unwrap().body["fields"]["zone"]["value"].clone();
+    assert_eq!(zone_of(json!("  ")), Value::Null);
+    assert_eq!(zone_of(json!(" Asia/Tokyo ")), json!("Asia/Tokyo"));
+    assert_eq!(
+        with_zone(json!("")).unwrap().digest,
+        with_zone(Value::Null).unwrap().digest
+    );
+    assert!(with_zone(json!(8)).is_err());
+}
+
+#[test]
 fn a_side_listing_an_entity_twice_is_refused() {
     let one = canonicalize(entity_fixture(Kind::Diary)).unwrap();
     assert!(compare(vec![one.clone(), one], Vec::new()).is_err());
