@@ -650,21 +650,18 @@ mod live {
     /// One night's going over, on a real day from the site's database, read
     /// only, printed and never kept: MEROPE_NIGHT_USER (default 1) for a
     /// private day; MEROPE_NIGHT_DAY
-    /// (YYYY-MM-DD, local, default yesterday).
+    /// (YYYY-MM-DD in her zone, default yesterday).
     #[tokio::test]
     #[ignore = "reads the site's database and asks its model"]
     async fn a_night_on_the_site() {
         let db = crate::services::agent::semantic_eval::load_configured_lite().await;
+        // Her zone, as her persona names it.
+        let _ = super::super::get_persona(&db).await;
         let day = std::env::var("MEROPE_NIGHT_DAY")
             .ok()
             .and_then(|day| chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d").ok())
-            .unwrap_or_else(|| chrono::Local::now().date_naive() - chrono::Duration::days(1));
-        let start = day
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(chrono::Local)
-            .unwrap()
-            .fixed_offset();
+            .unwrap_or_else(|| super::super::clock::today() - chrono::Duration::days(1));
+        let start = super::super::clock::day_start(day).unwrap();
         let end = start + chrono::Duration::days(1);
         // A group is gone over while its talk is at hand, not at night (see
         // `go_over_stretch`): only a person's day can be read back here.

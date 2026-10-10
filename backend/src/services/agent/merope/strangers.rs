@@ -129,7 +129,7 @@ pub async fn reply(
         super::group_speaking_section(&stranger.name),
         myriad_merope::speaking::chat_app_section().to_string(),
         section(&stranger.name, note.as_deref()),
-        super::speaking_prompts::format_now_section(chrono::Local::now()),
+        super::speaking_prompts::format_now_section(super::clock::local_now()),
     ];
     // Whom she takes them for, if anyone: a guess, nothing more.
     if let Some(block) = super::recognizing::guess_section(db, venue, stranger).await {

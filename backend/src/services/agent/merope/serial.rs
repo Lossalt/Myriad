@@ -284,7 +284,7 @@ pub async fn open(db: &DatabaseConnection, thing: Thing) -> Option<Thing> {
 }
 
 async fn shelf(db: &DatabaseConnection) -> Vec<Work> {
-    let today = chrono::Local::now().date_naive().to_string();
+    let today = super::clock::today().to_string();
     let mut shelf: Shelf = crate::services::runtime_registry::get(db, NAMESPACE, SHELF)
         .await
         .ok()

@@ -255,7 +255,7 @@ pub async fn look_back(db: &DatabaseConnection, owner: i32) {
     }
     // Once a night: a look back that gives no story that holds is tried
     // again the next night, not every half hour of this one.
-    let today = chrono::Local::now().date_naive();
+    let today = super::clock::today();
     match TRIED_ON.lock() {
         Ok(mut tried) if *tried != Some(today) => *tried = Some(today),
         _ => return,

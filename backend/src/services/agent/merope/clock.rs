@@ -17,6 +17,11 @@ tokio::task_local! {
     static AT: DateTime<Utc>;
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    static IN_ZONE: Zone;
+}
+
 /// Now, as this turn is put together.
 pub fn now() -> DateTime<Utc> {
     AT.try_with(|at| *at).unwrap_or_else(|_| Utc::now())
@@ -24,14 +29,39 @@ pub fn now() -> DateTime<Utc> {
 
 /// The zone her day runs in: the one her persona names, or the site's own,
 /// which is the process's (`TZ`). The rules in `myriad_merope` take it as an
-/// input and never read the process zone themselves.
+/// input and never read the process zone themselves; nor does anything else
+/// of hers here: every day, night and month of hers is in this zone.
 pub fn zone() -> Zone {
+    #[cfg(test)]
+    if let Ok(zone) = IN_ZONE.try_with(|zone| *zone) {
+        return zone;
+    }
     ZONE.read().map(|zone| *zone).unwrap_or(Zone::Site)
 }
 
 /// [`now`], in her zone.
 pub fn local_now() -> DateTime<Zone> {
     now().with_timezone(&zone())
+}
+
+/// Today's date in her zone (midnight to midnight; her own day, which turns
+/// when she gets up, is `timing::her_date`).
+pub fn today() -> NaiveDate {
+    local_now().date_naive()
+}
+
+/// The date `at` falls on in her zone.
+pub fn date_of<Tz: TimeZone>(at: &DateTime<Tz>) -> NaiveDate {
+    at.with_timezone(&zone()).date_naive()
+}
+
+/// When `day` begins in her zone: its first midnight (the earlier one when
+/// the clocks go back), none when the clocks skip it.
+pub fn day_start(day: NaiveDate) -> Option<DateTime<FixedOffset>> {
+    zone()
+        .from_local_datetime(&day.and_hms_opt(0, 0, 0)?)
+        .earliest()
+        .map(|start| start.fixed_offset())
 }
 
 /// The zone her persona row names, as it was last read or written: every
@@ -146,6 +176,13 @@ pub(crate) async fn as_of<F: std::future::Future>(at: DateTime<Utc>, work: F) ->
     AT.scope(at, work).await
 }
 
+/// Run `work` with her day in `zone`, whatever her persona names: the zone
+/// is otherwise one for the whole process, which tests share.
+#[cfg(test)]
+pub(crate) async fn in_zone<F: std::future::Future>(zone: Zone, work: F) -> F::Output {
+    IN_ZONE.scope(zone, work).await
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Datelike, Timelike};
@@ -190,5 +227,107 @@ mod tests {
         let start = berlin.from_local_datetime(&midnight).earliest().unwrap();
         assert_eq!(start.naive_local(), midnight);
         assert_eq!(start.timezone(), berlin);
+    }
+
+    /// Her today, as each place that counts her days reads it, at one moment.
+    async fn her_days_at(at: DateTime<Utc>, zone: Zone) -> serde_json::Value {
+        use super::super::{chat_remember, life, pace, stickers, vitals};
+        in_zone(
+            zone,
+            as_of(at, async {
+                let today = today();
+                let day = |bounds: Option<(DateTime<FixedOffset>, DateTime<FixedOffset>)>| {
+                    bounds.map(|(start, end)| [start.to_rfc3339(), end.to_rfc3339()])
+                };
+                let extract: serde_json::Value =
+                    serde_json::from_str(&chat_remember::extract_input(
+                        "hi",
+                        "hello",
+                        &super::super::TurnContext::default(),
+                        local_now(),
+                    ))
+                    .unwrap();
+                serde_json::json!({
+                    "today": today.to_string(),
+                    "dateOfNow": date_of(&now()).to_string(),
+                    "starts": day_start(today).map(|start| start.to_rfc3339()),
+                    "pace": day(pace::bounds(today)),
+                    "vitals": day(vitals::bounds(today, today)),
+                    "life": day(life::day_bounds(today)),
+                    "night": life::is_night(&local_now()),
+                    "month": local_now().format("%Y-%m").to_string(),
+                    "stickersFrom": stickers::month_start().map(|start| start.to_rfc3339()),
+                    "extractToday": extract["today"],
+                })
+            }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn her_day_turns_in_her_zone_wherever_it_is_counted() {
+        // 13:00 on 31 July in Los Angeles is 05:00 on 1 August in Tokyo:
+        // another day, another month, and her night there.
+        let at = Utc.with_ymd_and_hms(2026, 7, 31, 20, 0, 0).unwrap();
+        let la = her_days_at(at, Zone::named("America/Los_Angeles").unwrap()).await;
+        let day = ["2026-07-31T07:00:00+00:00", "2026-08-01T07:00:00+00:00"];
+        assert_eq!(
+            la,
+            serde_json::json!({
+                "today": "2026-07-31",
+                "dateOfNow": "2026-07-31",
+                "starts": "2026-07-31T00:00:00-07:00",
+                "pace": ["2026-07-31T00:00:00-07:00", "2026-08-01T00:00:00-07:00"],
+                "vitals": ["2026-07-31T00:00:00-07:00", "2026-08-01T00:00:00-07:00"],
+                "life": ["2026-07-31T00:00:00-07:00", "2026-08-01T00:00:00-07:00"],
+                "night": false,
+                "month": "2026-07",
+                "stickersFrom": "2026-07-01T07:00:00+00:00",
+                "extractToday": "2026-07-31 (Friday)",
+            })
+        );
+        let la_day = la["pace"].as_array().unwrap();
+        for (bound, utc) in la_day.iter().zip(day) {
+            assert_eq!(
+                DateTime::parse_from_rfc3339(bound.as_str().unwrap()).unwrap(),
+                DateTime::parse_from_rfc3339(utc).unwrap()
+            );
+        }
+        let tokyo = her_days_at(at, Zone::named("Asia/Tokyo").unwrap()).await;
+        assert_eq!(
+            tokyo,
+            serde_json::json!({
+                "today": "2026-08-01",
+                "dateOfNow": "2026-08-01",
+                "starts": "2026-08-01T00:00:00+09:00",
+                "pace": ["2026-08-01T00:00:00+09:00", "2026-08-02T00:00:00+09:00"],
+                "vitals": ["2026-08-01T00:00:00+09:00", "2026-08-02T00:00:00+09:00"],
+                "life": ["2026-08-01T00:00:00+09:00", "2026-08-02T00:00:00+09:00"],
+                "night": true,
+                "month": "2026-08",
+                "stickersFrom": "2026-07-31T15:00:00+00:00",
+                "extractToday": "2026-08-01 (Saturday)",
+            })
+        );
+        // With no zone of her own, the site's: what the process clock says.
+        let site = her_days_at(at, Zone::Site).await;
+        let here = at.with_timezone(&Local);
+        let midnight = |day: NaiveDate| {
+            Local
+                .from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap())
+                .earliest()
+                .unwrap()
+                .to_rfc3339()
+        };
+        let today = here.date_naive();
+        assert_eq!(site["today"], today.to_string());
+        assert_eq!(site["starts"], midnight(today));
+        assert_eq!(
+            site["pace"],
+            serde_json::json!([midnight(today), midnight(today.succ_opt().unwrap())])
+        );
+        assert_eq!(site["vitals"], site["pace"]);
+        assert_eq!(site["month"], here.format("%Y-%m").to_string());
+        assert_eq!(site["night"], (3..=5).contains(&here.hour()));
     }
 }

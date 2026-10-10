@@ -97,7 +97,7 @@ pub(super) fn forget() {
 /// Go over her own time and let views grow or change. Once a night, and only
 /// when she has done something since she last did.
 pub async fn go_over(db: &DatabaseConnection, owner: i32) {
-    let today = chrono::Local::now().date_naive();
+    let today = super::clock::today();
     match DONE_ON.lock() {
         Ok(mut done) => match *done {
             Some((day, tries)) if day == today && tries >= TRIES_A_NIGHT => return,
