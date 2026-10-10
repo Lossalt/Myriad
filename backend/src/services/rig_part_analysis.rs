@@ -7,6 +7,10 @@
 //! those parts: where each is fixed, which bone carries it, how it moves and
 //! what it is made of. The result is persisted in playback JSON as
 //! `partProfile`; rendering never calls AI and derives the swing from it.
+//! The small hanging parts the page will cut out of the layers they share are
+//! then looked at again, close up (close_up).
+
+mod close_up;
 
 use std::collections::HashSet;
 
@@ -345,7 +349,10 @@ pub async fn inventory(playback: &Value, reference: &ImageReference) -> Option<V
             ),
         }
     }
-    profile
+    // What the page will cut out of a shared layer is placed exactly first.
+    let mut profile = profile?;
+    close_up::look_closer(&mut profile, &context, &config, reference).await;
+    Some(profile)
 }
 
 /// Whether a playback's part profile is one the vision model gave.
