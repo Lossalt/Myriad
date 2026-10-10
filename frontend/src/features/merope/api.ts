@@ -331,11 +331,13 @@ async function decomposeWithSeeThrough(
   }
 }
 
+/** The composite goes along: the moving parts are looked for from it after the import. */
 export async function importMeropeRig(
   source: MeropeRigImportSource,
   atlas: Blob,
+  analysisReference?: Blob,
 ): Promise<MeropeRigManifest> {
-  return submitMeropeRigImport('/import', source, atlas, 'import')
+  return submitMeropeRigImport('/import', source, atlas, 'import', analysisReference)
 }
 
 /** Previews and stores packages for one full-body set. */

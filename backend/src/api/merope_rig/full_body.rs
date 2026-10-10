@@ -21,21 +21,20 @@ use uuid::Uuid;
 
 use super::{
     ApiResult, bad_request,
-    import::{import_rig, preview_rig},
+    import::{import_rig, preview_rig, spawn_part_inventory},
     internal_error,
     master::{MasterProvenance, MasterSlot, master_for},
     not_found,
-    package::{figure_json, load_stored_manifest},
+    package::figure_json,
     portrait::{drawable_visual_profile, merope_style_reference},
     portrait_generation_config_error, portrait_generation_provider_error,
     portrait_upload::{persist_uploaded_portrait, read_portrait_upload},
-    pose::rewrite_playback,
     require_merope_enabled, require_owner,
 };
 use crate::{
     middleware::auth::Claims,
     models::entities::agent_persona,
-    services::{agent::merope, image_generation, rig_part_analysis},
+    services::{agent::merope, image_generation},
 };
 
 /// One full figure at a time: a second request would draw over the first.
@@ -356,63 +355,6 @@ pub async fn preview_full_body_rig(
     preview_rig(&db, &claims, multipart, MasterSlot::FullBody(&outfit_id)).await
 }
 
-/// The set's moving parts (rig_part_analysis), looked for after its import so
-/// a slow vision model never holds the import up, then saved into its rig as
-/// a new package, which takes over only while the imported one is still the
-/// set's.
-async fn find_moving_parts(
-    db: DatabaseConnection,
-    user_id: i32,
-    outfit_id: String,
-    asset_id: String,
-    master: MasterProvenance,
-    reference: Vec<u8>,
-) {
-    let Ok(reference) = image_generation::ImageReference::new(reference, "image/png") else {
-        return;
-    };
-    let Ok(manifest) = load_stored_manifest(&asset_id).await else {
-        return;
-    };
-    let Some(playback) = manifest.anime25d_playback.as_ref() else {
-        return;
-    };
-    let Some(profile) = crate::services::ai_cost_ledger::with_site_ai_ledger(
-        user_id,
-        "merope",
-        "rig-part-analysis",
-        rig_part_analysis::inventory(playback, &reference),
-    )
-    .await
-    else {
-        return;
-    };
-    let parts = profile["parts"].as_array().map_or(0, Vec::len);
-    let saved = match rewrite_playback(&asset_id, &master, |playback| {
-        playback
-            .as_object_mut()
-            .ok_or_else(|| bad_request("Anime2.5D playback is missing"))?
-            .insert("partProfile".to_string(), profile);
-        Ok(())
-    })
-    .await
-    {
-        Ok((_, saved)) => saved,
-        Err((status, _)) => {
-            tracing::warn!(%status, outfit = %outfit_id, "moving parts could not be saved into the rig");
-            return;
-        }
-    };
-    match bind_full_body_rig(&db, user_id, &outfit_id, &saved, &master, Some(&asset_id)).await {
-        Ok(_) => {
-            tracing::info!(outfit = %outfit_id, parts, "moving parts found and saved into the rig")
-        }
-        Err((status, _)) => {
-            tracing::warn!(%status, outfit = %outfit_id, "the rig changed before its moving parts were saved")
-        }
-    }
-}
-
 pub async fn import_full_body_rig(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
@@ -429,21 +371,7 @@ pub async fn import_full_body_rig(
         None,
     )
     .await?;
-    let found = imported
-        .manifest
-        .anime25d_playback
-        .as_ref()
-        .is_some_and(rig_part_analysis::has_inventory);
-    if let (false, Some(reference)) = (found, imported.analysis_reference.clone()) {
-        tokio::spawn(find_moving_parts(
-            db.clone(),
-            imported.user_id,
-            outfit_id.clone(),
-            imported.asset_id.clone(),
-            imported.master.clone(),
-            reference,
-        ));
-    }
+    spawn_part_inventory(&db, &imported, Some(outfit_id.clone()));
     Ok(Json(
         json!({ "manifest": imported.manifest, "assetId": imported.asset_id }),
     ))

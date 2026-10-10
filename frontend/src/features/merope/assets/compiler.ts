@@ -113,7 +113,7 @@ function copyPreviewPlaybackProfiles(
 
 export async function persistRigAsset(
   preflight: RigAssetPreflight,
-  upload: (source: Parameters<typeof importMeropeRig>[0], atlas: Blob, analysisReference?: Blob) => ReturnType<typeof importMeropeRig>,
+  upload: typeof importMeropeRig,
   onStage?: (event: RigAssetCompileEvent) => void,
 ): Promise<ImportedRigAsset> {
   emit(onStage, 'persist-manifest', 'started')

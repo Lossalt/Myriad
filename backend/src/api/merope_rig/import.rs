@@ -19,9 +19,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    ApiError, ApiResult, bad_request, internal_error,
+    ApiError, ApiResult, bad_request,
+    full_body::bind_full_body_rig,
+    internal_error,
     master::{MasterProvenance, MasterSlot, require_master_match, valid_generation_fingerprint},
-    package::{bind_and_activate_outfit_rig, rewrite_texture_urls},
+    package::{bind_and_activate_outfit_rig, load_stored_manifest, rewrite_texture_urls},
+    pose::rewrite_playback,
     require_merope_enabled, require_owner,
 };
 use crate::{
@@ -371,9 +374,96 @@ pub async fn import_site_rig(
         None,
     )
     .await?;
+    spawn_part_inventory(&db, &imported, None);
     Ok(Json(
         json!({ "manifest": imported.manifest, "assetId": imported.asset_id }),
     ))
+}
+
+/// Looks for the moving parts of a rig just imported and bound, in the
+/// background, when the import brought none along (rig_part_analysis):
+/// `outfit` names a full-body set, none the worn bust.
+pub(super) fn spawn_part_inventory(
+    db: &DatabaseConnection,
+    imported: &ImportedRig,
+    outfit: Option<String>,
+) {
+    let found = imported
+        .manifest
+        .anime25d_playback
+        .as_ref()
+        .is_some_and(rig_part_analysis::has_inventory);
+    let Some(reference) = imported.analysis_reference.clone().filter(|_| !found) else {
+        return;
+    };
+    tokio::spawn(find_moving_parts(
+        db.clone(),
+        imported.user_id,
+        outfit,
+        imported.asset_id.clone(),
+        imported.master.clone(),
+        reference,
+    ));
+}
+
+/// The rig's moving parts, looked for after its import so a slow vision
+/// model never holds the import up, then saved into it as a new package,
+/// which takes over only while the imported one is still the slot's.
+async fn find_moving_parts(
+    db: DatabaseConnection,
+    user_id: i32,
+    outfit: Option<String>,
+    asset_id: String,
+    master: MasterProvenance,
+    reference: Vec<u8>,
+) {
+    let Ok(reference) = image_generation::ImageReference::new(reference, "image/png") else {
+        return;
+    };
+    let Ok(manifest) = load_stored_manifest(&asset_id).await else {
+        return;
+    };
+    let Some(playback) = manifest.anime25d_playback.as_ref() else {
+        return;
+    };
+    let Some(profile) = crate::services::ai_cost_ledger::with_site_ai_ledger(
+        user_id,
+        "merope",
+        "rig-part-analysis",
+        rig_part_analysis::inventory(playback, &reference),
+    )
+    .await
+    else {
+        return;
+    };
+    let parts = profile["parts"].as_array().map_or(0, Vec::len);
+    let saved = match rewrite_playback(&asset_id, &master, |playback| {
+        playback
+            .as_object_mut()
+            .ok_or_else(|| bad_request("Anime2.5D playback is missing"))?
+            .insert("partProfile".to_string(), profile);
+        Ok(())
+    })
+    .await
+    {
+        Ok((_, saved)) => saved,
+        Err((status, _)) => {
+            tracing::warn!(%status, ?outfit, "moving parts could not be saved into the rig");
+            return;
+        }
+    };
+    let bound = match &outfit {
+        Some(id) => bind_full_body_rig(&db, user_id, id, &saved, &master, Some(&asset_id))
+            .await
+            .map(|_| ()),
+        None => bind_and_activate_outfit_rig(&db, user_id, &saved, &master, Some(&asset_id)).await,
+    };
+    match bound {
+        Ok(()) => tracing::info!(?outfit, parts, "moving parts found and saved into the rig"),
+        Err((status, _)) => {
+            tracing::warn!(%status, ?outfit, "the rig changed before its moving parts were saved")
+        }
+    }
 }
 
 /// A compiled, stored package not yet bound to the outfit it was made for.
