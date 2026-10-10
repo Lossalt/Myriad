@@ -136,34 +136,11 @@ async fn prepare_import_chest_profile(
     .await;
 }
 
-/// The rig's moving parts (rig_part_analysis): looked for once in preview,
-/// carried into the import, never asked again.
-async fn prepare_import_part_profile(
-    user_id: i32,
-    source: &mut ImportRigSourceRequest,
-    analysis_reference: Option<&[u8]>,
-) {
-    let Some(playback) = source.anime25d_playback.as_mut() else {
-        return;
-    };
-    let reference = analysis_reference.and_then(|bytes| {
-        image_generation::ImageReference::new(bytes.to_vec(), "image/png")
-            .inspect_err(|error| tracing::warn!(%error, "could not load the rig reference for the part inventory"))
-            .ok()
-    });
-    match reference {
-        Some(reference) => {
-            crate::services::ai_cost_ledger::with_site_ai_ledger(
-                user_id,
-                "merope",
-                "rig-part-analysis",
-                rig_part_analysis::analyze_once(playback, &reference),
-            )
-            .await;
-        }
-        None => {
-            rig_part_analysis::ensure_profile(playback);
-        }
+/// The rig's moving parts (rig_part_analysis): one found already rides along;
+/// none is looked for here, where the import waits.
+fn prepare_import_part_profile(source: &mut ImportRigSourceRequest) {
+    if let Some(playback) = source.anime25d_playback.as_mut() {
+        rig_part_analysis::ensure_profile(playback);
     }
 }
 
@@ -374,7 +351,8 @@ pub(super) async fn preview_rig(
         Some(&analysis_reference_bytes),
     )
     .await;
-    prepare_import_part_profile(user_id, &mut source, Some(&analysis_reference_bytes)).await;
+    // The moving parts are looked for after the import, off its path (full_body).
+    prepare_import_part_profile(&mut source);
     let (_, manifest) = compile_imported_rig(source, "preview://rig-atlas".to_owned()).await?;
     Ok(Json(json!({ "manifest": manifest, "persisted": false })))
 }
@@ -404,6 +382,8 @@ pub(super) struct ImportedRig {
     pub(super) master: MasterProvenance,
     pub(super) manifest: RigManifest,
     pub(super) asset_id: String,
+    /// The rig at rest as the page composed it, when sent: what the vision model looks at.
+    pub(super) analysis_reference: Option<Vec<u8>>,
 }
 
 /// Compiles and stores an import of a master portrait.
@@ -418,7 +398,7 @@ pub(super) async fn import_rig(
     let ParsedRigImport {
         mut source,
         atlas_bytes,
-        ..
+        analysis_reference_bytes,
     } = parse_rig_import(multipart, slot.profile()).await?;
     let source_master_asset_id = source.source_master_asset_id.clone();
     let source_generation_fingerprint = source.source_generation_fingerprint.clone();
@@ -430,7 +410,7 @@ pub(super) async fn import_rig(
     )
     .await?;
     prepare_import_chest_profile(user_id, &mut source, &master.gender, false, None).await;
-    prepare_import_part_profile(user_id, &mut source, None).await;
+    prepare_import_part_profile(&mut source);
     let (_, manifest) = compile_imported_rig(source, "asset://atlas".to_owned()).await?;
     let asset_id =
         merope_rig::package_id_for_manifest(&atlas_bytes, &manifest).map_err(internal_error)?;
@@ -444,5 +424,6 @@ pub(super) async fn import_rig(
         master,
         manifest,
         asset_id,
+        analysis_reference: analysis_reference_bytes,
     })
 }

@@ -171,7 +171,7 @@ pub async fn save_full_body_stance(
 }
 
 /// The stored package with its playback edited, saved as a new package.
-async fn rewrite_playback(
+pub(super) async fn rewrite_playback(
     previous: &str,
     master: &MasterProvenance,
     edit: impl FnOnce(&mut Value) -> ApiResult<()>,

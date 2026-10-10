@@ -28,8 +28,8 @@ const PROMPT_VERSION: &str = "anime25d-part-inventory-v1";
 const MAX_PARTS: usize = 10;
 const MAX_NAME: usize = 40;
 const MAX_MATERIAL: usize = 20;
-/// The import preview waits on the inventory no longer than this.
-const INVENTORY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+/// A vision model gets this long to answer.
+const INVENTORY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
 /// The picture is sent no larger than this on its long side: a standing
 /// figure's composite is thousands of pixels tall, which only slows the model.
 const MAX_SIDE: u32 = 1600;
@@ -300,23 +300,16 @@ pub fn ensure_profile(playback: &mut Value) -> bool {
     insert_profile(playback, empty_profile())
 }
 
-/// Calls one configured vision model at most once and persists what it found.
-pub async fn analyze_once(playback: &mut Value, reference: &ImageReference) -> bool {
-    let Some(context) = context(playback) else {
-        return false;
-    };
-    if playback.get("partProfile").is_some_and(|profile| {
-        valid_profile(profile, &context)
-            && profile.get("source").and_then(Value::as_str) == Some("ai-vision")
-    }) {
-        return true;
-    }
+/// Asks one configured vision model for the rig's moving parts: an
+/// `ai-vision` profile, or none when no model is set or its answer is unusable.
+/// It runs after the import, off its path, so a slow model only delays it.
+pub async fn inventory(playback: &Value, reference: &ImageReference) -> Option<Value> {
+    let context = context(playback)?;
     let Ok(config) = get_ai_config_for_tier(ModelTier::Standard).await else {
         tracing::warn!("part inventory skipped because no Standard AI model is configured");
-        return insert_profile(playback, empty_profile());
+        return None;
     };
     let prompt = prompt(&context);
-    // The import waits on this: a slow answer is no answer.
     let small = smaller(reference);
     let response = tokio::time::timeout(
         INVENTORY_TIMEOUT,
@@ -342,18 +335,27 @@ pub async fn analyze_once(playback: &mut Value, reference: &ImageReference) -> b
         .ok()
         .and_then(parse_json_object)
         .and_then(|value| serde_json::from_value::<AiInventory>(value).ok())
-        .map(|inventory| profile_from(&context, inventory))
-        .unwrap_or_else(|| {
-            match &response {
-                Err(error) => tracing::warn!(%error, "part inventory failed"),
-                Ok(raw) => tracing::warn!(
-                    raw = %raw.chars().take(1500).collect::<String>(),
-                    "part inventory response was unusable"
-                ),
-            }
-            empty_profile()
-        });
-    insert_profile(playback, profile)
+        .map(|inventory| profile_from(&context, inventory));
+    if profile.is_none() {
+        match &response {
+            Err(error) => tracing::warn!(%error, "part inventory failed"),
+            Ok(raw) => tracing::warn!(
+                raw = %raw.chars().take(1500).collect::<String>(),
+                "part inventory response was unusable"
+            ),
+        }
+    }
+    profile
+}
+
+/// Whether a playback's part profile is one the vision model gave.
+pub fn has_inventory(playback: &Value) -> bool {
+    context(playback).is_some_and(|context| {
+        playback.get("partProfile").is_some_and(|profile| {
+            valid_profile(profile, &context)
+                && profile.get("source").and_then(Value::as_str) == Some("ai-vision")
+        })
+    })
 }
 
 fn empty_profile() -> Value {

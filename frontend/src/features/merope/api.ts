@@ -354,11 +354,13 @@ export function fullBodyRigImport(outfitId: string) {
         'preview',
         analysisReference,
       ),
+    // The composite goes along: the moving parts are looked for from it after the import.
     commit: (
       source: MeropeRigImportSource,
       atlas: Blob,
+      analysisReference?: Blob,
     ): Promise<MeropeRigManifest> =>
-      submitMeropeRigImport(`${path}/import`, source, atlas, 'import'),
+      submitMeropeRigImport(`${path}/import`, source, atlas, 'import', analysisReference),
   }
 }
 
