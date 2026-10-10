@@ -45,6 +45,8 @@ export interface TurnArchive {
   /** Turned drawings drawn again after the Space's check. */
   redrawn: string[]
   bytes: number
+  /** A figure's body motions keyed beside its head; null for a bust or a figure kept before they were recorded. */
+  bodyMotions?: Array<'turn' | 'weight'> | null
   /** Whether its portrait is still the slot's current one (only then can it be refitted and imported). */
   current: boolean
 }

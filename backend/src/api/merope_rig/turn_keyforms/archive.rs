@@ -69,6 +69,10 @@ pub(super) struct ArchiveMeta {
     /// A standing figure keyed by its head: the figure it goes back into.
     #[serde(default)]
     pub figure: Option<FigureMeta>,
+    /// A figure's: the body motions keyed beside its head ("turn", "weight").
+    /// None for a bust, and for figures kept before it was recorded.
+    #[serde(default)]
+    pub body_motions: Option<Vec<String>>,
 }
 
 /// One job's files, in memory.
@@ -341,6 +345,7 @@ mod tests {
             redrawn: vec![],
             bytes: 0,
             figure: None,
+            body_motions: None,
         }
     }
 

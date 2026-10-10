@@ -273,6 +273,10 @@ async fn finish(
                 master_media_type: made.master_media_type.clone(),
                 redrawn: made.redrawn.clone(),
                 figure: made.figure.clone(),
+                body_motions: made
+                    .figure
+                    .is_some()
+                    .then(|| body_turn::motions_of(&made.files.keyforms)),
                 ..meta
             };
             let archive_id = match made.keep.then_some(()) {
@@ -447,6 +451,7 @@ async fn start(
         redrawn: Vec::new(),
         bytes: 0,
         figure: None,
+        body_motions: None,
     };
     let task_id = id.clone();
     let standing = outfit_id.is_some();

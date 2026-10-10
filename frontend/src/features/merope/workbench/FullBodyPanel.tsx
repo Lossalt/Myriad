@@ -252,7 +252,7 @@ export function FullBodyPanel({
       {portrait ? (
         <SettingGroup
           title={labels.rigGroup}
-          titleExtra={<RigModeTags rig={rig} activeMode={activeMode} figure="fullBody" />}
+          titleExtra={<RigModeTags rig={rig} activeMode={activeMode} figure="fullBody" ready={activeMode !== null} />}
           description={labels.rigGroupDescription}
           id="merope-motion-full-body-rig"
         >

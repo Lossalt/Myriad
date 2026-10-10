@@ -58,7 +58,7 @@ export function RigModeTags({
   return (
     <>
       {ready ? (
-        <SettingTitleTag variant="muted" title={labels.rigReadyHint}>
+        <SettingTitleTag variant="muted" title={figure === 'bust' ? labels.rigReadyHint : labels.rigReadyFullBodyHint}>
           {labels.rigReadyTitle}
         </SettingTitleTag>
       ) : null}
@@ -208,7 +208,7 @@ export function RigImportPanel({
       <p className="merope-motion-rig__hint">
         {enhancing
           ? labels.rigModeEnhancedHint
-          : uploadOnly ? labels.rigModePlainBustHint : labels.rigModePlainHint}
+          : uploadOnly ? labels.rigModePlainBustHint : figure === 'bust' ? labels.rigModePlainHint : labels.rigModePlainFullBodyHint}
       </p>
       {enhancing || uploadOnly ? null : (
         <FaceTabs
@@ -253,8 +253,8 @@ export function RigImportPanel({
           {seeThroughSetup}
           <CheckboxItem
             itemKey="rig-enhance-turn"
-            label={labels.rigEnhanceTurn}
-            description={labels.rigEnhanceTurnHint}
+            label={figure === 'bust' ? labels.rigEnhanceTurn : labels.rigEnhanceTurnFullBody}
+            description={figure === 'bust' ? labels.rigEnhanceTurnHint : labels.rigEnhanceTurnFullBodyHint}
             value={rig.enhanceTurn}
             onChange={rig.setEnhanceTurn}
             disabled={importing}

@@ -293,6 +293,19 @@ pub(super) fn with_body_keys(keyforms: Vec<u8>, body: Option<&BodyKeys>) -> Vec<
     serde_json::to_vec(&keys).unwrap_or(keyforms)
 }
 
+/// The body motions a figure's keys JSON carries ("turn", "weight"), listed with its archive.
+pub(super) fn motions_of(keyforms: &[u8]) -> Vec<String> {
+    let Ok(keys) = serde_json::from_slice::<Value>(keyforms) else {
+        return Vec::new();
+    };
+    BODY_FIELDS
+        .iter()
+        .zip([Motion::Turn, Motion::Weight])
+        .filter(|((keys_field, _), _)| keys.get(*keys_field).is_some())
+        .map(|(_, motion)| motion.mode().to_string())
+        .collect()
+}
+
 /// The body keys of a figure's keys JSON, to keep across a refit of the head's.
 pub(super) fn body_of(keyforms: &[u8]) -> Option<BodyKeys> {
     let keys: Value = serde_json::from_slice(keyforms).ok()?;
@@ -354,6 +367,8 @@ mod tests {
         assert_eq!(keys["bodyFit"]["knees"]["L"], 2600);
         assert_eq!(body_of(&merged).unwrap(), body);
         assert!(body_of(&head).is_none());
+        assert_eq!(motions_of(&merged), ["turn", "weight"]);
+        assert!(motions_of(&head).is_empty());
         let turn_only = BodyKeys {
             turn: Some(found(1)),
             weight: None,

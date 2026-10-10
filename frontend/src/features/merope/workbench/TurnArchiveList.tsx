@@ -1,3 +1,4 @@
+import type { TranslationKeys } from '../../../i18n'
 import type { TurnArchive } from '../turnKeyformsApi'
 import { useEffect, useState } from 'react'
 import { SettingsButton } from '../../../components/settings'
@@ -75,6 +76,7 @@ export function TurnArchiveList({ outfitId, masterAssetId, busy, onRefit, onLoad
             {new Date(archive.createdAt).toLocaleString()}
             {archive.parent ? ` · ${labels.turnArchiveRefitted}` : ''}
             {archive.redrawn.length > 0 ? ` · ${format(labels.turnArchiveRedrawn, { count: String(archive.redrawn.length) })}` : ''}
+            {archive.bodyMotions ? ` · ${bodyMotionsLabel(labels, archive.bodyMotions)}` : ''}
             {` · ${(archive.bytes / 1024 / 1024).toFixed(0)} MB`}
           </span>
           <span className="merope-turn-archives__actions">
@@ -127,4 +129,10 @@ export function TurnArchiveList({ outfitId, masterAssetId, busy, onRefit, onLoad
       ) : null}
     </section>
   )
+}
+
+/** What a figure's archive keyed beside its head: the body's turn and weight shift, or the head alone. */
+function bodyMotionsLabel(labels: TranslationKeys['merope'], motions: ReadonlyArray<'turn' | 'weight'>): string {
+  if (motions.length === 0) return labels.turnArchiveHeadOnly
+  return motions.map((motion) => (motion === 'turn' ? labels.rigEnhanceBodyTurn : labels.rigEnhanceBodyWeight)).join(' / ')
 }
