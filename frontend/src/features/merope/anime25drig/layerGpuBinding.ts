@@ -80,6 +80,8 @@ export interface Anime25DGpuLayer extends Anime25DRenderableLayer {
   /** A keyed accessory's own turn, less what its host's key already carries it at the anchor. */
   attachmentTurn?: AttachmentTurn | null
   earwearPhysics?: EarwearPhysics | null
+  /** A piece cut out of its host bends from its cut by its swing: each vertex's share (bindHangBend). */
+  hangBend?: Float32Array | null
   /** A hanging piece cut out of the layer it shared draws its own pixels (partSplit); released with the layer. */
   cutTexture?: Anime25DOwnTexture | null
   neckwearBridge?: Anime25DNeckwearBridge | null

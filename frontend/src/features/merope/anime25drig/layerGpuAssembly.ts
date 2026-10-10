@@ -18,7 +18,7 @@ import {
   createAnime25DLayerDeformationPlan,
   resolveAnime25DDeformationDependencies,
 } from './deformationDependencies'
-import { bindEarwearPhysics, bindHangingPhysics } from './earwearPhysics'
+import { bindEarwearPhysics, bindHangBend, bindHangingPhysics } from './earwearPhysics'
 import { resolveAnime25DExpressionDeformation } from './expressionDeformation'
 import { bindFigureLayer } from './figureSkeleton'
 import { bindHairRootMotion } from './hairRootMotion'
@@ -31,7 +31,6 @@ import { writeIdentityLayerTransform } from './layerTransform'
 import { resolveAnime25DMouthDeformation } from './mouthDeformation'
 import { resolveAnime25DNeckSurface } from './neckSurface'
 import { canLiftNeckwearOverSkin } from './neckwearOcclusion'
-import { cutFrom } from './partSplit'
 import { bindPoseCorrections } from './poseCorrections'
 import { createAnime25DSecondaryDeformationBinding } from './secondaryDeformation'
 import {
@@ -474,7 +473,6 @@ export function bindLayerAttachments(
       chestWeightField,
       playback.pixelCanvas.width,
       readBindingPixels,
-      cutFrom(layer.source),
     )
     if (layer.neckwearBridge) {
       // A keyed bridge rides the neck at its upper anchor.
@@ -484,6 +482,7 @@ export function bindLayerAttachments(
       // A piece that hangs and swings is rigid: it rides its anchor and turns
       // with its swing, not by a key warping it like a patch of its host.
       layer.earwearPhysics = bindHangingPhysics(layer.source, layer.attachment, playback, readBindingPixels)
+      bindHangBend(layer, playback.partProfile)
       const { hostSource } = layer.attachment
       layer.attachmentTurn = layer.earwearPhysics ? null : bindAttachmentTurn(playback.turnKeyforms, layer.source, layer.rest, hostSource, layer.attachment)
       if (layer.attachmentTurn) layer.deformed = layer.rest.slice()

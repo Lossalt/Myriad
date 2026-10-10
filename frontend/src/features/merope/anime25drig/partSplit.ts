@@ -24,16 +24,34 @@ export interface SplitPart {
 const MAX_AREA_SHARE = 0.03
 /** A pixel this far (sum of channel differences) from the colour around the piece is the piece. */
 const PIECE_DISTANCE = 72
-/** The piece must be between these shares of the opaque pixels in its box. */
-const PIECE_SHARE = [0.02, 0.85] as const
+/** A piece is at least this share of its box, and at most this share of the opaque pixels looked at. */
+const PIECE_SHARE = [0.01, 0.85] as const
+/** A piece takes this many rows of what it hangs by along, over its cut. */
+const OVERLAP = 4
+/** Within this many px of its host's plain cloth, a pixel is the cloth's. */
+const CLOTH_GAP = 4
 /** Lines this thin (px either side) are outlines, not pieces. */
 const OUTLINE = 2
+/** A hanging piece has open space on both sides in this share of its rows, over at least this share of its length. */
+const SIDE_OPEN = 0.75
+const MIN_FREE = 0.4
+/** This many rows in a row against its host, and what is above them is the host's. */
+const AGAINST_ROWS = 4
+/** A string this long (px) or shorter, too thin to keep, still ties what hangs from it on. */
+const STRING = 16
+/** A part kept is at least this share of the biggest that hangs there. */
+const STRUNG_SHARE = 0.2
 /** A piece reaches up to within this share of its box of where it hangs from. */
 const HANG_GAP = 0.08
-/** A hanging piece is at least this tall for its width. */
+/** A hanging piece is at least this tall for its width, and what it hangs by at least this. */
 const HANG_ASPECT = 0.8
-/** The inventory's boxes are often off by this much of their size: look there too. */
-const BOX_SHIFTS = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75]
+const SEED_ASPECT = 0.5
+/** The inventory's boxes are often off by this much of their size: look that far around. */
+const BOX_SLACK = 0.75
+/** The window looks this share of its box above where it hangs. */
+const ABOVE_ANCHOR = 0.15
+/** Where it hangs from may be lower than the inventory says, by these shares of its box. */
+const ANCHOR_DROPS = [0, 0.08, 0.16, 0.24, 0.32]
 /** Layers a piece may be drawn into. */
 const HOST_ROLES = new Set(['front-hair', 'back-hair', 'headwear', 'neckwear', 'neck', 'topwear', 'bottomwear', 'legwear', 'footwear', 'handwear', 'objects'])
 /** Layers that go with the head; a piece hung from the head is drawn in one of them, and only such a piece. */
@@ -86,16 +104,48 @@ function hostOf(
   return null
 }
 
+/** Where a piece lies in its host's pixels, before it is cut out. */
+interface PieceMask {
+  mask: Uint8Array
+  x0: number
+  y0: number
+  w: number
+  h: number
+  size: number
+}
+
 /**
  * Cuts one piece out of its host's pixels. `box` is in the host's pixels.
- * Returns the piece's pixels (around the box, at x, y) and the host's, filled; null when the
+ * Returns the piece's pixels (as big as it is, at x, y) and the host's, filled; null when the
  * piece is not told apart from what is around it.
  */
 export function cutPiece(
   art: Readonly<CroppedLayerPixels>,
   box: readonly [number, number, number, number],
   anchorY = box[1],
-): { piece: CroppedLayerPixels; x: number; y: number; host: CroppedLayerPixels } | null {
+): CutPiece | null {
+  const found = pieceMask(art, box, anchorY, colourOf(art, box))
+  return found ? applyCut(art, found) : null
+}
+
+interface CutPiece {
+  piece: CroppedLayerPixels
+  x: number
+  y: number
+  size: number
+  host: CroppedLayerPixels
+}
+
+/** Which of a box's pixels are a piece hanging from row `anchorY`; null when none can be told apart. */
+function pieceMask(
+  art: Readonly<CroppedLayerPixels>,
+  box: readonly [number, number, number, number],
+  anchorY: number,
+  cloth: readonly number[] | null,
+  height = box[3] - box[1],
+  /** The piece's own box's area, when `box` is a wider window around it. */
+  area = (box[2] - box[0]) * (box[3] - box[1]),
+): PieceMask | null {
   // The inventory's boxes are loose: look a little around it.
   const margin = Math.max(2, 0.1 * Math.max(box[2] - box[0], box[3] - box[1]))
   const [x0, y0, x1, y1] = [
@@ -120,46 +170,65 @@ export function cutPiece(
   const median = (values: number[]) => values.sort((a, b) => a - b)[values.length >> 1] ?? 0
   const around = rim[0].length ? rim.map(median) : null
   const mask = new Uint8Array(w * h)
+  const solid = new Uint8Array(w * h)
+  const plain = new Uint8Array(w * h)
   let opaque = 0
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = at(x0 + x, y0 + y)
       if (px[i + 3] < 64) continue
       opaque += 1
+      solid[y * w + x] = 1
+      // Hanging over nothing, all of it is the piece; over the host, what
+      // differs from it there and from its cloth as a whole (a box's rim may
+      // be mostly a frill, and then a lit edge of the cloth differs from that).
+      const differs = (!around || distance(px, i, around) > PIECE_DISTANCE) && (!cloth || distance(px, i, cloth) > PIECE_DISTANCE)
+      if (!differs) plain[y * w + x] = 1
       // What is above where it hangs from is what it hangs from.
-      if (y0 + y < anchorY) continue
-      // Hanging over nothing, all of it is the piece; over the host, what differs from it.
-      const differs = !around || Math.abs(px[i] - around[0]) + Math.abs(px[i + 1] - around[1]) + Math.abs(px[i + 2] - around[2]) > PIECE_DISTANCE
-      if (differs) mask[y * w + x] = 1
+      else if (y0 + y >= anchorY) mask[y * w + x] = 1
     }
   }
+  // Plain colour is the cloth only where it runs on from the cloth: out of the
+  // box or above where the piece hangs. An island of it below is a facet of
+  // the piece that happens to share the cloth's colour.
+  const clothBody = plainCloth(plain, w, h, Math.max(0, Math.ceil(anchorY - y0)))
+  for (let k = 0; k < mask.length; k++) {
+    if (plain[k] && !clothBody[k] && y0 + Math.floor(k / w) >= anchorY) mask[k] = 1
+  }
+  // What lies right against the cloth is the cloth's (its lit edge, its seam):
+  // it does not tie a piece on.
+  const onCloth = morph(clothBody, w, h, CLOTH_GAP, true)
+  const loose = mask.map((value, k) => value & (1 - onCloth[k]))
   // What differs and runs on out of the box, to the sides or below, is the
   // host's own: a frill, an outline, a stripe. Where the host's art ends, the
   // piece may end too. A thin outline the piece is drawn across does not
   // carry it off with it: what is that thin is set aside first, and the
   // piece then takes back its own edge.
-  const core = morph(morph(mask, w, h, OUTLINE, false), w, h, OUTLINE, true)
+  const core = morph(morph(loose, w, h, OUTLINE, false), w, h, OUTLINE, true)
   keepEnclosed(core, w, h, { left: x0 > 0, right: x1 < art.width, bottom: y1 < art.height })
-  // One piece, hanging from where it hangs: what reaches up to there, and
-  // not what merely lies near it.
-  if (!keepHanging(core, w, h, anchorY - y0 + Math.max(3, HANG_GAP * (box[3] - box[1])))) return null
-  const near = morph(core, w, h, OUTLINE + 1, true)
+  // What hangs from where it hangs, and not what merely lies near it.
+  // (Less what it has given back to the cloth and its outline there.)
+  const from = anchorY - y0
+  if (!keepHanging(core, solid, w, h, from, from + Math.max(3, HANG_GAP * height) + CLOTH_GAP + OUTLINE)) return null
+  // The piece is what is drawn there: out from its core over what is not the
+  // cloth, as far as was set aside, and its own outline with it.
+  const piece = spread(core, mask, w, h, CLOTH_GAP + OUTLINE + 1)
+  const outline = morph(core, w, h, OUTLINE + 1, true)
   let count = 0
-  const bounds = [w, h, -1, -1]
   for (let k = 0; k < mask.length; k++) {
-    mask[k] &= near[k]
-    if (!mask[k]) continue
-    count += 1
-    const x = k % w
-    const y = (k - x) / w
-    bounds[0] = Math.min(bounds[0], x)
-    bounds[1] = Math.min(bounds[1], y)
-    bounds[2] = Math.max(bounds[2], x)
-    bounds[3] = Math.max(bounds[3], y)
+    mask[k] = (piece[k] | (outline[k] & solid[k])) & (y0 + Math.floor(k / w) >= anchorY ? 1 : 0)
+    count += mask[k]
   }
-  if (!opaque || count < PIECE_SHARE[0] * opaque || count > PIECE_SHARE[1] * opaque) return null
-  // What hangs is drawn out by its weight; a flat run is part of the host.
-  if (bounds[3] - bounds[1] < HANG_ASPECT * (bounds[2] - bounds[0])) return null
+  // All of it differing from what is around it is a misread, unless nothing is around it.
+  if (!opaque || count < PIECE_SHARE[0] * area || (around && count > PIECE_SHARE[1] * opaque)) return null
+  return { mask, x0, y0, w, h, size: count }
+}
+
+/** Takes a found piece out of its host: its pixels, and the host's with the hole filled. */
+function applyCut(art: Readonly<CroppedLayerPixels>, found: Readonly<PieceMask>): CutPiece {
+  const { mask, x0, y0, w, h } = found
+  const px = art.pixels
+  const at = (x: number, y: number) => (y * art.width + x) * 4
   // Its soft edge too: opaque pixels next to it.
   const grown = mask.slice()
   for (let y = 0; y < h; y++) {
@@ -170,15 +239,49 @@ export function cutPiece(
       }
     }
   }
-  const piece = new Uint8ClampedArray(w * h * 4)
+  // Where it was cut from what it hangs by, it takes a few rows of that along
+  // (left in the host too): swinging, it covers its cut instead of opening it.
+  const lap = new Uint8Array(w * h)
+  for (let x = 0; x < w; x++) {
+    // Where its column starts; above it, what it was cut from, if anything.
+    let start = -1
+    for (let y = 0; y < h; y++) {
+      if (grown[y * w + x]) {
+        start = y
+        break
+      }
+    }
+    if (start < 0) continue
+    // Only as far as it goes on in its own colour: not a line drawn across it.
+    const own = Array.from(px.subarray(at(x0 + x, y0 + start), at(x0 + x, y0 + start) + 3))
+    for (let y = start - 1; y >= Math.max(0, start - OVERLAP); y--) {
+      const i = at(x0 + x, y0 + y)
+      if (grown[y * w + x] || px[i + 3] < 16 || distance(px, i, own) > PIECE_DISTANCE) break
+      lap[y * w + x] = 1
+    }
+  }
+  // Its own layer is just as big as it is.
+  const bounds = [w, h, 0, 0]
+  for (let k = 0; k < grown.length; k++) {
+    if (!grown[k] && !lap[k]) continue
+    const x = k % w
+    const y = (k - x) / w
+    bounds[0] = Math.min(bounds[0], x)
+    bounds[1] = Math.min(bounds[1], y)
+    bounds[2] = Math.max(bounds[2], x + 1)
+    bounds[3] = Math.max(bounds[3], y + 1)
+  }
+  const pw = Math.max(1, bounds[2] - bounds[0])
+  const ph = Math.max(1, bounds[3] - bounds[1])
+  const piece = new Uint8ClampedArray(pw * ph * 4)
   const host = new Uint8ClampedArray(px)
   const known = new Uint8Array(w * h)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = at(x0 + x, y0 + y)
-      if (grown[y * w + x]) {
-        piece.set(px.subarray(i, i + 4), (y * w + x) * 4)
-      } else if (px[i + 3] >= 128) {
+      if (grown[y * w + x] || lap[y * w + x]) piece.set(px.subarray(i, i + 4), ((y - bounds[1]) * pw + x - bounds[0]) * 4)
+      if (grown[y * w + x]) continue
+      if (px[i + 3] >= 128) {
         known[y * w + x] = 1
       }
     }
@@ -218,33 +321,72 @@ export function cutPiece(
       if (grown[y * w + x] && !known[y * w + x]) host[at(x0 + x, y0 + y) + 3] = 0
     }
   }
-  return { piece: { pixels: piece, width: w, height: h }, x: x0, y: y0, host: { pixels: host, width: art.width, height: art.height } }
+  return { piece: { pixels: piece, width: pw, height: ph }, x: x0 + bounds[0], y: y0 + bounds[1], size: found.size, host: { pixels: host, width: art.width, height: art.height } }
 }
 
 const NEIGHBOURS = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const
 
+/** Sum of channel differences between a pixel and a colour. */
+function distance(px: Readonly<Uint8ClampedArray>, i: number, colour: readonly number[]): number {
+  return Math.abs(px[i] - colour[0]) + Math.abs(px[i + 1] - colour[1]) + Math.abs(px[i + 2] - colour[2])
+}
+
 /**
- * Keeps, of a w×h mask, the biggest connected part that reaches up to row
- * `reach`; clears the rest. False when none does.
+ * A layer's cloth colour: the median of its opaque pixels, sampled, away from
+ * `away` (a piece's box, widened by half), so a big piece in a small layer
+ * does not make itself the cloth.
  */
-function keepHanging(mask: Uint8Array, w: number, h: number, reach: number): boolean {
+function colourOf(art: Readonly<CroppedLayerPixels>, away?: readonly [number, number, number, number]): number[] | null {
+  const channels: number[][] = [[], [], []]
+  const step = Math.max(1, Math.floor(Math.sqrt((art.width * art.height) / 20000)))
+  const [ax0, ay0, ax1, ay1] = away ?? [0, 0, 0, 0]
+  const padX = (ax1 - ax0) / 2
+  const padY = (ay1 - ay0) / 2
+  for (let y = 0; y < art.height; y += step) {
+    for (let x = 0; x < art.width; x += step) {
+      if (away && x > ax0 - padX && x < ax1 + padX && y > ay0 - padY && y < ay1 + padY) continue
+      const i = (y * art.width + x) * 4
+      if (art.pixels[i + 3] < 128) continue
+      for (let c = 0; c < 3; c++) channels[c].push(art.pixels[i + c])
+    }
+  }
+  if (channels[0].length < 50) return null
+  return channels.map((values) => values.sort((a, b) => a - b)[values.length >> 1])
+}
+
+/**
+ * Keeps, of a w×h mask, the connected parts that hang from row `from`: that
+ * reach up to it (by row `reach`, allowing for what was set aside), are drawn out downward by their weight (a flat run is part
+ * of the host) and hang in the open on both sides (`solid` is the host's
+ * opaque pixels): a pendant hangs free, a frill, a stripe or the lit edge of
+ * a leg lies on its cloth. What hangs in the open a few pixels below a kept
+ * part, by a string too thin to keep, goes with it. Clears the rest; returns
+ * how many parts it kept.
+ */
+function keepHanging(mask: Uint8Array, solid: Readonly<Uint8Array>, w: number, h: number, from: number, reach: number): number {
   const label = new Int32Array(mask.length)
-  let best = 0
-  let bestSize = 0
+  const hanging = new Set<number>()
+  /** Parts hanging free, by how big they are. */
+  const free = new Map<number, number>()
+  const members: number[] = []
+  let biggest = 0
   let next = 0
   for (let start = 0; start < mask.length; start++) {
     if (!mask[start] || label[start]) continue
     next += 1
     label[start] = next
+    members.length = 0
     const queue = [start]
-    let size = 0
-    let top = h
+    const bounds = [w, h, -1, -1]
     while (queue.length) {
       const k = queue.pop()!
+      members.push(k)
       const x = k % w
       const y = (k - x) / w
-      size += 1
-      top = Math.min(top, y)
+      bounds[0] = Math.min(bounds[0], x)
+      bounds[1] = Math.min(bounds[1], y)
+      bounds[2] = Math.max(bounds[2], x)
+      bounds[3] = Math.max(bounds[3], y)
       for (const [dx, dy] of NEIGHBOURS) {
         const nx = x + dx
         const ny = y + dy
@@ -254,38 +396,184 @@ function keepHanging(mask: Uint8Array, w: number, h: number, reach: number): boo
         queue.push(n)
       }
     }
-    if (top <= reach && size > bestSize) {
-      best = next
-      bestSize = size
+    const freeFrom = hangsFreeFrom(members, solid, w, from)
+    if (freeFrom < 0) continue
+    // Above where it hangs free it lies against its host, and stays with it.
+    bounds[0] = w
+    bounds[1] = h
+    bounds[2] = -1
+    for (const k of members) {
+      const x = k % w
+      const y = (k - x) / w
+      if (y < freeFrom) {
+        mask[k] = 0
+        label[k] = 0
+        continue
+      }
+      bounds[0] = Math.min(bounds[0], x)
+      bounds[1] = Math.min(bounds[1], y)
+      bounds[2] = Math.max(bounds[2], x)
+    }
+    // What it hangs by hangs too: a clasp spread flat across it is the host's.
+    const kept = members.filter((k) => mask[k]).length
+    if (bounds[3] - bounds[1] < SEED_ASPECT * (bounds[2] - bounds[0])) continue
+    free.set(next, kept)
+    if (bounds[1] <= reach) {
+      hanging.add(next)
+      biggest = Math.max(biggest, kept)
     }
   }
-  for (let k = 0; k < mask.length; k++) mask[k] = label[k] === best && best > 0 ? 1 : 0
-  return best > 0
+  // Not a crumb of its host the cut left loose.
+  for (const id of hanging) {
+    if ((free.get(id) ?? 0) < STRUNG_SHARE * biggest) hanging.delete(id)
+  }
+  // What hangs from a kept part by a thin string.
+  for (let hop = 0; hop < 3 && hanging.size; hop++) {
+    const kept = new Uint8Array(mask.length)
+    for (let k = 0; k < mask.length; k++) kept[k] = hanging.has(label[k]) ? 1 : 0
+    const near = morph(kept, w, h, STRING, true)
+    const before = hanging.size
+    for (let k = 0; k < mask.length; k++) {
+      if (near[k] && (free.get(label[k]) ?? 0) >= STRUNG_SHARE * biggest) hanging.add(label[k])
+    }
+    if (hanging.size === before) break
+  }
+  const bounds = [w, h, -1, -1]
+  for (let k = 0; k < mask.length; k++) {
+    mask[k] = hanging.has(label[k]) ? 1 : 0
+    if (!mask[k]) continue
+    const x = k % w
+    const y = (k - x) / w
+    bounds[0] = Math.min(bounds[0], x)
+    bounds[1] = Math.min(bounds[1], y)
+    bounds[2] = Math.max(bounds[2], x)
+    bounds[3] = Math.max(bounds[3], y)
+  }
+  // Together it is drawn out downward by its weight; a flat run is part of the host.
+  if (!hanging.size || bounds[3] - bounds[1] < HANG_ASPECT * (bounds[2] - bounds[0])) return 0
+  return hanging.size
 }
+
+/**
+ * Where a part starts to hang in the open: the row from which, down to its
+ * end, most rows have open space (not its host) a little way out on both
+ * sides, past its own outline. Above it, the part lies against its host. -1
+ * when it hangs free for too little of itself: a frill, a stripe or the lit
+ * edge of a leg lies on its cloth all the way.
+ */
+function hangsFreeFrom(members: readonly number[], solid: Readonly<Uint8Array>, w: number, from: number): number {
+  const left = new Map<number, number>()
+  const right = new Map<number, number>()
+  for (const k of members) {
+    const x = k % w
+    const y = (k - x) / w
+    if (y < from) continue
+    left.set(y, Math.min(left.get(y) ?? x, x))
+    right.set(y, Math.max(right.get(y) ?? x, x))
+  }
+  const rows = [...left.keys()].sort((a, b) => a - b)
+  if (!rows.length) return -1
+  const openAt = (y: number, x: number, step: -1 | 1) => {
+    for (let d = 1; d <= REACH_OUT; d++) {
+      const nx = x + step * d
+      if (nx < 0 || nx >= w) return false
+      if (!solid[y * w + nx]) return true
+    }
+    return false
+  }
+  // It hangs free below the last stretch of rows where it lies against its host.
+  let start = 0
+  let against = 0
+  const isOpen = rows.map((y) => openAt(y, left.get(y)!, -1) && openAt(y, right.get(y)!, 1))
+  isOpen.forEach((open, i) => {
+    against = open ? 0 : against + 1
+    if (against >= AGAINST_ROWS) start = i + 1
+  })
+  const free = isOpen.slice(start)
+  const length = rows[rows.length - 1] - rows[0] + 1
+  if (!free.length || rows[rows.length - 1] - rows[start] + 1 < MIN_FREE * length) return -1
+  return free.filter(Boolean).length >= SIDE_OPEN * free.length ? rows[start] : -1
+}
+
+/** How far out (px) past its own outline a piece is looked at for open space. */
+const REACH_OUT = 12
 
 /** A w×h mask grown (or shrunk) by a square of radius r. */
 function morph(mask: Uint8Array, w: number, h: number, r: number, grow: boolean): Uint8Array {
-  // Separable: along rows, then along columns.
+  // Separable, along rows then along columns, each a running count over the
+  // window: as fast for any radius. Outside the box counts as unset.
   const pass = (from: Uint8Array, along: 'x' | 'y') => {
     const to = new Uint8Array(from.length)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let hit = grow ? 0 : 1
-        for (let d = -r; d <= r; d++) {
-          const nx = along === 'x' ? x + d : x
-          const ny = along === 'y' ? y + d : y
-          const value = nx < 0 || ny < 0 || nx >= w || ny >= h ? 0 : from[ny * w + nx]
-          if (grow ? value : !value) {
-            hit = grow ? 1 : 0
-            break
-          }
-        }
-        to[y * w + x] = hit
+    const lines = along === 'x' ? h : w
+    const length = along === 'x' ? w : h
+    const stride = along === 'x' ? 1 : w
+    const full = 2 * r + 1
+    for (let line = 0; line < lines; line++) {
+      const base = along === 'x' ? line * w : line
+      let count = 0
+      for (let i = 0; i <= Math.min(r, length - 1); i++) count += from[base + i * stride] ? 1 : 0
+      for (let i = 0; i < length; i++) {
+        to[base + i * stride] = (grow ? count > 0 : count === full) ? 1 : 0
+        if (i - r >= 0 && from[base + (i - r) * stride]) count -= 1
+        if (i + r + 1 < length && from[base + (i + r + 1) * stride]) count += 1
       }
     }
     return to
   }
   return pass(pass(mask, 'x'), 'y')
+}
+
+/** The plain pixels of a w×h box that run on from its edges or from above row `top`. */
+function plainCloth(plain: Readonly<Uint8Array>, w: number, h: number, top: number): Uint8Array {
+  const cloth = new Uint8Array(plain.length)
+  const queue: number[] = []
+  const reach = (k: number) => {
+    if (!plain[k] || cloth[k]) return
+    cloth[k] = 1
+    queue.push(k)
+  }
+  for (let k = 0; k < plain.length; k++) {
+    const x = k % w
+    const y = (k - x) / w
+    if (y < top || x === 0 || y === 0 || x === w - 1 || y === h - 1) reach(k)
+  }
+  while (queue.length) {
+    const k = queue.pop()!
+    const x = k % w
+    const y = (k - x) / w
+    for (const [dx, dy] of NEIGHBOURS) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h) reach(ny * w + nx)
+    }
+  }
+  return cloth
+}
+
+/** From `seed`, over `through`, out to `steps` px: what a piece spreads back over. */
+function spread(seed: Readonly<Uint8Array>, through: Readonly<Uint8Array>, w: number, h: number, steps: number): Uint8Array {
+  const out = seed.slice()
+  let front: number[] = []
+  for (let k = 0; k < seed.length; k++) {
+    if (seed[k]) front.push(k)
+  }
+  for (let step = 0; step < steps && front.length; step++) {
+    const next: number[] = []
+    for (const k of front) {
+      const x = k % w
+      const y = (k - x) / w
+      for (const [dx, dy] of NEIGHBOURS) {
+        const nx = x + dx
+        const ny = y + dy
+        const n = ny * w + nx
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h || out[n] || !through[n]) continue
+        out[n] = 1
+        next.push(n)
+      }
+    }
+    front = next
+  }
+  return out
 }
 
 /** Clears the parts of a w×h mask that reach the given edges; returns how much is left. */
@@ -318,21 +606,25 @@ function keepEnclosed(mask: Uint8Array, w: number, h: number, edges: { left: boo
 
 /**
  * A part's piece where the inventory put it, or near there: its boxes are
- * often off by a good share of their size. The nearest box with a piece
- * hanging in it wins.
+ * often off by a good share of their size, so it is looked for in a wider
+ * window; and where it hangs from may be a knot whose loops belong to the
+ * host, so lower hanging lines are tried too. The line that frees the most of
+ * it wins.
  */
 function findPiece(art: Readonly<CroppedLayerPixels>, part: Readonly<Anime25DPart>, toX: (x: number) => number, toY: (y: number) => number) {
   const [x0, y0, x1, y1] = [toX(part.box[0]), toY(part.box[1]), toX(part.box[2]), toY(part.box[3])]
+  const padX = BOX_SLACK * (x1 - x0)
+  const padY = BOX_SLACK * (y1 - y0)
   const anchorY = toY(part.anchor[1])
-  const shifts = BOX_SHIFTS.flatMap((dx) => BOX_SHIFTS.map((dy) => [dx, dy] as const))
-    .sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]))
-  for (const [dx, dy] of shifts) {
-    const ox = dx * (x1 - x0)
-    const oy = dy * (y1 - y0)
-    const result = cutPiece(art, [x0 + ox, y0 + oy, x1 + ox, y1 + oy], anchorY + oy)
-    if (result) return result
+  // Above where it hangs is only what it hangs from: the window starts just over it.
+  const window = [x0 - padX, Math.max(y0 - padY, Math.min(y0, anchorY) - ABOVE_ANCHOR * (y1 - y0)), x1 + padX, y1 + padY] as const
+  const cloth = colourOf(art, [x0, y0, x1, y1])
+  let best: PieceMask | null = null
+  for (const drop of ANCHOR_DROPS) {
+    const found = pieceMask(art, window, anchorY + drop * (y1 - y0), cloth, y1 - y0, (x1 - x0) * (y1 - y0))
+    if (found && (!best || found.size > best.size)) best = found
   }
-  return null
+  return best && applyCut(art, best)
 }
 
 /** The hanging pieces of a package's inventory, cut out of the layers they share. */
