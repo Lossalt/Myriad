@@ -12,6 +12,7 @@ import { applyCropBoundary } from './cropBoundary'
 import { cryTearHorizontalOffset, cryTearVerticalOffset } from './cryMotion'
 import { markAnime25DLayerGeometryUpdated, shouldUpdateAnime25DLayerGeometry } from './deformationDependencies'
 import { deformAnime25DExpressionPoint } from './expressionDeformation'
+import { figureAffineAt, multiplyAffine } from './figureSkeleton'
 import { constrainHairSurface } from './hairSurface'
 import { jellyDisplacement } from './jellyVolume'
 import { keyedGazeShift } from './keyedGaze'
@@ -104,7 +105,16 @@ export function writeRigidLayerTransform(
     m[6] += m[0] * shift.x + m[3] * shift.y
     m[7] += m[1] * shift.x + m[4] * shift.y
   }
+  const figure = secondaryDeformationFrame.figure
+  const skin = layer.secondaryDeformation.figureSkin
+  if (figure && skin) {
+    // Then the bones carry it, as drawn at its middle.
+    figureAffineAt(source.y + source.h / 2, skin, figure.rest, figure.pose, figureCarry)
+    multiplyAffine(layer.layerTransform, figureCarry, layer.layerTransform)
+  }
 }
+
+const figureCarry = new Float32Array(9)
 
 /**
  * Run every vertex of one layer through the deformation chain: face features,

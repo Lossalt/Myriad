@@ -20,6 +20,7 @@ import {
 } from './deformationDependencies'
 import { bindEarwearPhysics } from './earwearPhysics'
 import { resolveAnime25DExpressionDeformation } from './expressionDeformation'
+import { bindFigureSkin, figureRestOf } from './figureSkeleton'
 import { bindHairRootMotion } from './hairRootMotion'
 import { bindHairSurface } from './hairSurface'
 import { bindKeyedGaze } from './keyedGaze'
@@ -180,8 +181,12 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
   const standing = bindStanding(baseRole, baseRole === 'bottomwear' ? skirtSpan(playback.layers, source) : source, playback.anchors)
   const kneeY = standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined
   const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest, kneeY)
+  // A standing figure's bones carry every layer; they shift its weight
+  // themselves, so the weight-shift keys are not used beside them.
+  const figure = figureRestOf(playback.anchors)
+  const figureSkin = bindFigureSkin(baseRole, source, figure)
   // Weight-shift keys are used beside body keys only (KeyedBodyTurn).
-  const weightKeyform = playback.bodyTurnKeyforms ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
+  const weightKeyform = playback.bodyTurnKeyforms && !figure ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
     standing: Boolean(standing),
     // A part on a standing leg goes with the leg, not with the body as a whole.
@@ -268,6 +273,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     bodyTurnKeyform,
     weightKeyform,
     standing,
+    figureSkin,
     ...armBinding(source, rest),
   })
   const layerTransform = new Float32Array(9)

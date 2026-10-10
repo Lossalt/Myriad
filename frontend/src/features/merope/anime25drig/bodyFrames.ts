@@ -39,6 +39,8 @@ import {
   stepChestSpring,
   topwearMotionAtChest,
 } from './chestPhysics'
+import { writeCollarMotion } from './collarRuntime'
+import { FigureBody } from './figureSkeleton'
 import { stepAnime25DHairLayerSprings } from './hairPhysics'
 import { writeHairRootMotion } from './hairRootMotion'
 import { createHeadTurn, headTurnRadians, updateHeadTurn } from './headTurn'
@@ -156,6 +158,8 @@ export class Anime25DBodyFrames {
   private standing: Anime25DStanding | null = null
   /** A keyed body turn (bodyTurnKeyforms); without one the torso is a cylinder. */
   private keyedBodyTurn: KeyedBodyTurn | null = null
+  /** A standing figure's bones (figureSkeleton); a bust has none. */
+  private figure: FigureBody | null = null
 
   constructor(
     /** The composed driver; the body only reads it. */
@@ -172,7 +176,10 @@ export class Anime25DBodyFrames {
   ): void {
     this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
-    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot, playback.weightKeyforms)
+    this.figure = FigureBody.of(playback.anchors)
+    // The bones shift a figure's weight; its weight-shift keys are not used beside them.
+    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot,
+      this.figure ? undefined : playback.weightKeyforms)
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -254,8 +261,10 @@ export class Anime25DBodyFrames {
       shellActivation: 0,
       shellRotation: this.shellRotation,
       standing: null,
+      figure: this.figure,
     }
-    this.standing = Anime25DStanding.of(anchors)
+    // With bones the figure sways from its feet, hips and shoulders together.
+    this.standing = Anime25DStanding.of(anchors, Boolean(this.figure))
     this.collarMotion = {
       neckPivotX: anchors.neckPivot.x,
       neckPivotY: anchors.neckPivot.y,
@@ -432,8 +441,8 @@ export class Anime25DBodyFrames {
       depth: this.shellProfile.torso.enabled ? Math.min(this.shellProfile.torso.radiusZ, span * 0.45) : 0,
       shoulderY: anchors.neckBottom,
       groundY: this.standing?.groundY ?? anchors.bodyPivot.y,
-      // Keyed, the weight shift moves the hips itself.
-      stanceShift: this.keyedBodyTurn?.weighted ? 0 : (this.standing?.shift(e.body) ?? 0),
+      // Keyed, the weight shift moves the hips itself; with bones, the pelvis does.
+      stanceShift: this.keyedBodyTurn?.weighted || this.figure ? 0 : (this.standing?.shift(e.body) ?? 0),
     })
     this.renderFrame.bodyLift = this.bodyLiftField
     frame.headAngleY = e.angleY
@@ -459,8 +468,11 @@ export class Anime25DBodyFrames {
     this.renderFrame.bodyPivotX = anchors.bodyPivot.x
     this.renderFrame.bodyPivotY = anchors.bodyPivot.y
     this.renderFrame.bodyBendHeight = frame.bodyBendHeight ?? 0
-    this.renderFrame.bodyRotationCosine = Math.cos(e.body * BODY_ROLL_RADIANS)
-    this.renderFrame.bodyRotationSine = Math.sin(e.body * BODY_ROLL_RADIANS)
+    // With bones, they sway the figure as each layer's own deformation ends.
+    this.figure?.step(e.body, this.standing?.frame)
+    const lean = this.figure ? 0 : e.body * BODY_ROLL_RADIANS
+    this.renderFrame.bodyRotationCosine = Math.cos(lean)
+    this.renderFrame.bodyRotationSine = Math.sin(lean)
     frame.bodyRotationCosine = this.renderFrame.bodyRotationCosine
     frame.bodyRotationSine = this.renderFrame.bodyRotationSine
   }
@@ -506,18 +518,7 @@ export class Anime25DBodyFrames {
 
   /** The collar follows the head and torso the same way their layers do. */
   prepareCollarMotion(): CollarMotionPose {
-    const e = this.current
-    const secondaryDeformationFrame = this.secondaryDeformationFrame
-    const collarMotion = this.collarMotion
-    collarMotion.angleX = e.angleX
-    collarMotion.angleY = e.angleY
-    collarMotion.headRotationCosine = secondaryDeformationFrame.headRotationCosine
-    collarMotion.headRotationSine = secondaryDeformationFrame.headRotationSine
-    collarMotion.bodyBreathOffset = secondaryDeformationFrame.bodyBreathOffset
-    collarMotion.headBreathOffset = secondaryDeformationFrame.headBreathOffset
-    collarMotion.torsoShellBlend = secondaryDeformationFrame.torsoShellBlend
-    collarMotion.torsoNeckOffsetX = secondaryDeformationFrame.torsoNeckOffsetX
-    return collarMotion
+    return writeCollarMotion(this.collarMotion, this.current, this.secondaryDeformationFrame)
   }
 
   /** Where a point drawn on the head is now, head carry and body lean included. */
@@ -563,7 +564,8 @@ export class Anime25DBodyFrames {
     const frame = this.secondaryDeformationFrame
     this.writeHeadWorldTransform(this.headWorldTransform)
     // Directions in the drawing turn with the head and body roll.
-    const roll = (frame.headRoll ?? 0) + Math.atan2(frame.bodyRotationSine, frame.bodyRotationCosine)
+    const roll = (frame.headRoll ?? 0) + Math.atan2(frame.bodyRotationSine, frame.bodyRotationCosine) +
+      (this.figure?.pose.chestAngle ?? 0)
     const downX = -Math.sin(roll)
     const downY = Math.cos(roll)
     this.headWorldPoint(element.anchorX, element.anchorY, this.jellyAnchor)
@@ -587,6 +589,8 @@ export class Anime25DBodyFrames {
       breathOffset: f.headBreathOffset,
     }, m)
     m[6] += f.torsoNeckOffsetX
+    // The head hangs from the chest.
+    this.figure?.carryHead(m)
   }
 
   /** A head point through `headWorldTransform`, then the body lean the shoulders take. */
@@ -604,7 +608,8 @@ export class Anime25DBodyFrames {
     const e = this.current
     const frame = this.secondaryDeformationFrame
     if (!e.phys) this.prepareHeadFrame(time)
-    const bodyRoll = e.body * BODY_ROLL_RADIANS
+    // Which way is down for an arm: the chest it hangs from.
+    const bodyRoll = this.figure ? this.figure.pose.chestAngle : e.body * BODY_ROLL_RADIANS
     const sleeves = {
       L: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'L'),
       R: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'R'),
@@ -617,8 +622,8 @@ export class Anime25DBodyFrames {
         open: e.armY,
         sway: e.armPos,
         headTurn: e.angleX,
-        // The hips go against the lean: their weight is on the leg they move over.
-        weight: this.standing ? -e.body : null,
+        // The weight is on the leg the hips move over.
+        weight: this.standing ? this.standing.weight(e.body) : null,
         dynamic: e.phys,
       },
       this.armElbows,
