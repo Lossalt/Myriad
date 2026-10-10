@@ -25,7 +25,7 @@ use crate::{
 
 const PROFILE_VERSION: u8 = 1;
 const PROMPT_VERSION: &str = "anime25d-part-inventory-v1";
-const MAX_PARTS: usize = 16;
+const MAX_PARTS: usize = 10;
 const MAX_NAME: usize = 40;
 const MAX_MATERIAL: usize = 20;
 /// The import preview waits on the inventory no longer than this.

@@ -576,9 +576,13 @@ pub(crate) async fn request_estimate(
             })
             .map(str::to_string)
             .ok_or_else(|| "Gemini vision response contained no text".to_string()),
-        AiProvider::OpenAI => openai_text(&value)
-            .map(str::to_string)
-            .ok_or_else(|| "OpenAI-compatible vision response contained no text".to_string()),
+        AiProvider::OpenAI => openai_text(&value).map(str::to_string).ok_or_else(|| {
+            format!(
+                "OpenAI-compatible vision response contained no text (finish_reason={}, refusal={})",
+                value.pointer("/choices/0/finish_reason").unwrap_or(&Value::Null),
+                value.pointer("/choices/0/message/refusal").unwrap_or(&Value::Null),
+            )
+        }),
         AiProvider::OpenAIResponses | AiProvider::Anthropic => {
             crate::services::analyzer::text_protocol::response_text(config.provider, &value)
                 .map_err(|error| error.to_string())

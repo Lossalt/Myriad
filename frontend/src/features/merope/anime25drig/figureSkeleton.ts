@@ -1,7 +1,7 @@
 import type { PartSwayBinding } from './partSway'
 import type { Anime25DStandingFrame, StandingBinding } from './standing'
 import type { Anime25DPartProfile, Anime25DPlaybackAnchors } from './types'
-import { applyPartSways, PartSways } from './partSway'
+import { applyPartSways, bindPartSways, PartSways } from './partSway'
 import { applySkirtTrail } from './standing'
 
 /**
@@ -487,6 +487,20 @@ export function bindFigureSkin(
     return { kind: 'leg', side: layer.x + layer.w / 2 < rest.hips.x ? 'L' : 'R' }
   }
   return { kind: 'torso' }
+}
+
+/** A layer of a package on its figure: the bones, which of them carry it, and its regions that sway. */
+export function bindFigureLayer(
+  baseRole: string,
+  layer: Parameters<typeof bindFigureSkin>[1] & { name: string },
+  playback: { anchors: Readonly<Anime25DPlaybackAnchors>; partProfile?: Anime25DPartProfile },
+): { figure: FigureRest | null; figureSkin: FigureSkin | null; partSways: PartSwayBinding[] | null } {
+  const figure = figureRestOf(playback.anchors)
+  return {
+    figure,
+    figureSkin: bindFigureSkin(baseRole, layer, figure),
+    partSways: figure ? bindPartSways(playback.partProfile, layer.name) : null,
+  }
 }
 
 /** Parts that hang from the shoulders and neck, carried whole by the chest. */

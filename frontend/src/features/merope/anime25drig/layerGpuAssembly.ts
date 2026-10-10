@@ -20,7 +20,7 @@ import {
 } from './deformationDependencies'
 import { bindEarwearPhysics, bindHangingPhysics } from './earwearPhysics'
 import { resolveAnime25DExpressionDeformation } from './expressionDeformation'
-import { bindFigureSkin, figureRestOf } from './figureSkeleton'
+import { bindFigureLayer } from './figureSkeleton'
 import { bindHairRootMotion } from './hairRootMotion'
 import { bindHairSurface } from './hairSurface'
 import { bindKeyedGaze } from './keyedGaze'
@@ -31,7 +31,6 @@ import { writeIdentityLayerTransform } from './layerTransform'
 import { resolveAnime25DMouthDeformation } from './mouthDeformation'
 import { resolveAnime25DNeckSurface } from './neckSurface'
 import { canLiftNeckwearOverSkin } from './neckwearOcclusion'
-import { bindPartSways } from './partSway'
 import { bindPoseCorrections } from './poseCorrections'
 import { createAnime25DSecondaryDeformationBinding } from './secondaryDeformation'
 import {
@@ -184,9 +183,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
   const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest, kneeY)
   // A standing figure's bones carry every layer; they shift its weight
   // themselves, so the weight-shift keys are not used beside them.
-  const figure = figureRestOf(playback.anchors)
-  const figureSkin = bindFigureSkin(baseRole, source, figure)
-  const partSways = figure ? bindPartSways(playback.partProfile, source.name) : null
+  const { figure, figureSkin, partSways } = bindFigureLayer(baseRole, source, playback)
   // Weight-shift keys are used beside body keys only (KeyedBodyTurn).
   const weightKeyform = playback.bodyTurnKeyforms && !figure ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
@@ -482,8 +479,11 @@ export function bindLayerAttachments(
       const { upper } = layer.neckwearBridge
       layer.attachmentTurn = bindAttachmentTurn(playback.turnKeyforms, layer.source, layer.rest, upper.hostSource, upper)
     } else if (layer.attachment) {
-      layer.attachmentTurn = bindAttachmentTurn(playback.turnKeyforms, layer.source, layer.rest,
-        layer.attachment.hostSource, layer.attachment)
+      // A piece that hangs and swings is rigid: it rides its anchor and turns
+      // with its swing, not by a key warping it like a patch of its host.
+      layer.earwearPhysics = bindHangingPhysics(layer.source, layer.attachment, playback, readBindingPixels)
+      const { hostSource } = layer.attachment
+      layer.attachmentTurn = layer.earwearPhysics ? null : bindAttachmentTurn(playback.turnKeyforms, layer.source, layer.rest, hostSource, layer.attachment)
       if (layer.attachmentTurn) layer.deformed = layer.rest.slice()
     }
     for (const attachment of [layer.attachment, layer.neckwearBridge?.upper, layer.neckwearBridge?.lower]) {
@@ -493,7 +493,6 @@ export function bindLayerAttachments(
           Float32Array.of(attachment.x, attachment.y, attachment.x + 1, attachment.y))
       }
     }
-    layer.earwearPhysics = bindHangingPhysics(layer.source, layer.attachment, playback, readBindingPixels)
   }
   shareEarringHosts(layers, playback, readBindingPixels)
   for (const child of layers) {
@@ -631,6 +630,7 @@ function shareEarringHosts(
       member.attachment = { ...lead.attachment! }
       member.earwearPhysics = bindEarwearPhysics(member.source, member.attachment,
         readBindingPixels(member.source), playback.anchors.face.y1 - playback.anchors.face.y0)
+      if (member.earwearPhysics) member.attachmentTurn = null
     }
   }
 }
