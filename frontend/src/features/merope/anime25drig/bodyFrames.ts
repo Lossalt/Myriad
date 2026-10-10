@@ -172,7 +172,7 @@ export class Anime25DBodyFrames {
   ): void {
     this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
-    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot)
+    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot, playback.weightKeyforms)
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -432,7 +432,8 @@ export class Anime25DBodyFrames {
       depth: this.shellProfile.torso.enabled ? Math.min(this.shellProfile.torso.radiusZ, span * 0.45) : 0,
       shoulderY: anchors.neckBottom,
       groundY: this.standing?.groundY ?? anchors.bodyPivot.y,
-      stanceShift: this.standing?.shift(e.body) ?? 0,
+      // Keyed, the weight shift moves the hips itself.
+      stanceShift: this.keyedBodyTurn?.weighted ? 0 : (this.standing?.shift(e.body) ?? 0),
     })
     this.renderFrame.bodyLift = this.bodyLiftField
     frame.headAngleY = e.angleY

@@ -178,8 +178,10 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
       : null
   // A skirt cut in pieces (its lining behind the legs) swings as the one skirt.
   const standing = bindStanding(baseRole, baseRole === 'bottomwear' ? skirtSpan(playback.layers, source) : source, playback.anchors)
-  const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest,
-    standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined)
+  const kneeY = standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined
+  const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest, kneeY)
+  // Weight-shift keys are used beside body keys only (KeyedBodyTurn).
+  const weightKeyform = playback.bodyTurnKeyforms ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
     standing: Boolean(standing),
     // A part on a standing leg goes with the leg, not with the body as a whole.
@@ -193,7 +195,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     shellDeformation: Boolean(
       shellMode && shellProfile.enabled && shellProfile.blend > 0,
     ),
-    torsoShellDeformation: Boolean(bodyTurnKeyform) || Boolean(
+    torsoShellDeformation: Boolean(bodyTurnKeyform || weightKeyform) || Boolean(
       torsoShellMode &&
       shellProfile.enabled &&
       shellProfile.blend > 0 &&
@@ -264,6 +266,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     turnFeature: turnFeatures.get(source) ?? null,
     turnKeyform: bindTurnKeyform(playback.turnKeyforms, source, rest),
     bodyTurnKeyform,
+    weightKeyform,
     standing,
     ...armBinding(source, rest),
   })

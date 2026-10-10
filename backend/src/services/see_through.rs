@@ -693,13 +693,15 @@ impl SeeThroughClient {
     /// A standing figure's body turn keys (`/body_keys`): its decomposition
     /// fitted onto decompositions of it drawn turned toward image right and
     /// left, placed on `picture`, the picture that decomposition was made of.
-    /// JSON `{canvas, keyforms, drift, knees}`.
+    /// JSON `{canvas, keyforms, drift, knees}`. `mode` "weight": the two are
+    /// the figure's weight on its right and left leg instead.
     pub async fn body_keys(
         &self,
         (picture, media_type): (Vec<u8>, String),
         figure: Vec<u8>,
         turned: [Vec<u8>; 2],
         turned_pictures: [Vec<u8>; 2],
+        mode: &str,
     ) -> Result<Vec<u8>, SeeThroughError> {
         validate_psd(&figure)?;
         for psd in &turned {
@@ -731,6 +733,7 @@ impl SeeThroughClient {
             file(right_png, "right.png"),
             file(left_png, "left.png"),
             file(picture, &name),
+            mode,
         ]);
         let event_id = self.start("body_keys", data).await?;
         let data = self

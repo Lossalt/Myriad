@@ -22,7 +22,7 @@ import type {
 } from './types'
 import { anime25DLayerUsesFaceSurface } from '../rig/anime25dLayerSemantics'
 import { ARM_CUT_BAND, ARM_SHRUG, armDrapeWeight, armSegmentShares } from './armRig'
-import { addBodyTurn } from './bodyTurnKeyforms'
+import { addBodyTurn, weightShift } from './bodyTurnKeyforms'
 import { chestDeformationWeight } from './chestPhysics'
 import {
   BODY_HEAD_FOLLOW,
@@ -163,6 +163,8 @@ export interface Anime25DSecondaryDeformationBinding {
   turnKeyform?: BoundTurnKeyform | null
   /** The part's keyed body turn per vertex; it then takes no torso cylinder. */
   bodyTurnKeyform?: BoundTurnKeyform | null
+  /** The part's keyed weight shift per vertex; a leg then takes no computed bend. */
+  weightKeyform?: BoundTurnKeyform | null
   /**
    * Where a neck stops going with the head, if not at the neck's bottom: the
    * top of the strip that fades into the skin drawn on the body below, which
@@ -214,6 +216,7 @@ export function createAnime25DSecondaryDeformationBinding(input: {
   turnFeature?: HeadTurnFeature | null
   turnKeyform?: BoundTurnKeyform | null
   bodyTurnKeyform?: BoundTurnKeyform | null
+  weightKeyform?: BoundTurnKeyform | null
   standing?: StandingBinding | null
 }): Anime25DSecondaryDeformationBinding {
   return {
@@ -457,6 +460,7 @@ export function deformAnime25DSecondaryPoint(
   }
   // The neck and collar take the body's share of the torso's turn.
   const torsoWeight = binding.torsoShellMode === 'collar' || binding.torsoShellMode === 'neck' ? collarBodyWeight : 1
+  if (binding.weightKeyform && frame.standing) addBodyTurn(point, binding.weightKeyform, vertex, weightShift(frame.standing))
   if (binding.bodyTurnKeyform) {
     // Measured, not projected.
     addBodyTurn(point, binding.bodyTurnKeyform, vertex, (frame.bodyTurn ?? 0) * torsoWeight)
@@ -572,7 +576,9 @@ export function deformAnime25DSecondaryPoint(
   // The neck's lower part already receives its cylinder projection above;
   // only its head-follow share inherits the root, avoiding double travel.
   point.x += frame.torsoNeckOffsetX * torsoNeckFollow
-  if (binding.standing && frame.standing) applyStanding(point, binding.standing, restX, restY, frame.standing)
+  // A keyed leg bends as drawn; a skirt keeps its swing.
+  const stands = binding.standing && !(binding.weightKeyform && binding.standing.kind === 'leg')
+  if (stands && frame.standing) applyStanding(point, binding.standing!, restX, restY, frame.standing)
 }
 
 /** A fully reached forearm is drawn this much shorter, and its hand this much larger. */

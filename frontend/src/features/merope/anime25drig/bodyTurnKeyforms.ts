@@ -131,32 +131,66 @@ function smooth(value: number): number {
 
 /**
  * A figure's keyed body turn: how far through it the torso is, and how far
- * that carries the head (its 'head' key at the neck pivot).
+ * that carries the head (its 'head' key at the neck pivot). With weight-shift
+ * keys too (weightKeyforms, kept only beside body keys), the head also rides
+ * the weight's 'head' key, and the hips' computed shift is left out (weighted).
  */
 export class KeyedBodyTurn {
   private readonly carry = { x: 0, y: 0 }
+  private readonly weightCarry = { x: 0, y: 0 }
 
-  private constructor(private readonly head: BoundTurnKeyform | null) {}
+  private constructor(
+    private readonly head: BoundTurnKeyform | null,
+    private readonly weightHead: BoundTurnKeyform | null,
+    readonly weighted: boolean,
+  ) {}
 
   static bind(
     keyforms: Readonly<Anime25DTurnKeyforms> | undefined,
     neckPivot: { x: number; y: number },
+    weightKeyforms?: Readonly<Anime25DTurnKeyforms>,
   ): KeyedBodyTurn | null {
     if (!keyforms) return null
-    return new KeyedBodyTurn(keyforms.head ? bindTurnKey(keyforms.head, Float32Array.of(neckPivot.x, neckPivot.y)) : null)
+    const at = Float32Array.of(neckPivot.x, neckPivot.y)
+    return new KeyedBodyTurn(
+      keyforms.head ? bindTurnKey(keyforms.head, at) : null,
+      weightKeyforms?.head ? bindTurnKey(weightKeyforms.head, at) : null,
+      Boolean(weightKeyforms),
+    )
   }
 
   /**
    * Writes how far through the keyed turn the body is (frame.bodyTurn) and
-   * returns the head's sideways carry in it, or null without a head key.
+   * returns the head's sideways carry in it and in the weight shift, or null
+   * without a head key.
    */
-  step(frame: { bodyTurn?: number }, rotation: Readonly<Anime25DTorsoShellRotation>, activation: number): number | null {
+  step(
+    frame: { bodyTurn?: number; standing?: Readonly<StandingBends> | null },
+    rotation: Readonly<Anime25DTorsoShellRotation>,
+    activation: number,
+  ): number | null {
     const amount = bodyTurnAmount(rotation, activation)
     frame.bodyTurn = amount
     if (!this.head) return null
     turnKeyformOffset(this.head, 0, amount, this.carry)
-    return this.carry.x
+    if (!this.weightHead || !frame.standing) return this.carry.x
+    turnKeyformOffset(this.weightHead, 0, weightShift(frame.standing), this.weightCarry)
+    return this.carry.x + this.weightCarry.x
   }
+}
+
+interface StandingBends {
+  bendL: number
+  bendR: number
+}
+
+/**
+ * How far through the keyed weight shift a standing figure is (−1…1): +1 with
+ * the weight on the leg on the right of the picture, the left one free and
+ * bent (the stance's springs, so the keys pass from leg to leg as they do).
+ */
+export function weightShift(standing: Readonly<StandingBends>): number {
+  return Math.max(-1, Math.min(1, standing.bendL - standing.bendR))
 }
 
 /** How far through the keyed turn the body is (−1…1), from the torso's yaw. */

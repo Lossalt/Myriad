@@ -586,10 +586,12 @@ async fn run_figure(
     // and fit need only the figure's whole decomposition (body_turn).
     let body = async {
         if turn {
-            body_turn::body_turn_keys(
-                id, user_id, generation, &reference, &picture, &whole, client, &cache,
+            Some(
+                body_turn::body_turn_keys(
+                    id, user_id, generation, &reference, &picture, &whole, client, &cache,
+                )
+                .await,
             )
-            .await
         } else {
             None
         }

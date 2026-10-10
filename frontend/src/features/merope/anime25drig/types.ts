@@ -253,6 +253,8 @@ export interface Anime25DPlayback {
   turnKeyforms?: Anime25DTurnKeyforms
   /** A standing figure's body turn as keyed shapes per body part (bodyTurnKeyforms); absent, the torso is a cylinder. */
   bodyTurnKeyforms?: Anime25DTurnKeyforms
+  /** Its weight shift onto either leg as keyed shapes ('plus': onto the right of the picture); used beside body keys. */
+  weightKeyforms?: Anime25DTurnKeyforms
   /**
    * What generated drawings this rig was enhanced with when imported; absent
    * on rigs imported before it was recorded (then turn keys alone tell).
@@ -304,7 +306,8 @@ export function isAnime25DPlayback(value: unknown): value is Anime25DPlayback {
     isAnime25DChestProfile(chestProfile, canvas.width, canvas.height) &&
     isAnime25DShellProfile(shellProfile, canvas.width, canvas.height) &&
     (record.turnKeyforms === undefined || isAnime25DTurnKeyforms(record.turnKeyforms)) &&
-    (record.bodyTurnKeyforms === undefined || isAnime25DTurnKeyforms(record.bodyTurnKeyforms))
+    (record.bodyTurnKeyforms === undefined || isAnime25DTurnKeyforms(record.bodyTurnKeyforms)) &&
+    (record.weightKeyforms === undefined || isAnime25DTurnKeyforms(record.weightKeyforms))
   )
 }
 
