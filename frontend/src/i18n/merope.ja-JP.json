@@ -405,6 +405,7 @@
   "turnArchivesHint": "強化のたびに振り向き画像・分解レイヤー・キーフォームを保存します。立ち絵ごとに最新 {keep} 件を保持します。素材から再フィットすると画像生成も分解もせず、現在のフィットだけをやり直します。",
   "turnArchivesEmpty": "この立ち絵の強化素材はまだありません",
   "turnArchiveDownload": "ダウンロード",
+  "turnArchiveLoad": "取り込んで事前検証",
   "turnArchiveRefit": "素材から再フィットして事前検証",
   "turnArchiveDelete": "削除",
   "turnArchiveDeleteConfirm": "この強化素材を削除しますか？元に戻せません。",

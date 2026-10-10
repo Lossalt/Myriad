@@ -2,7 +2,7 @@ import type { UpperBodyVisualIdentityKey } from '../../../components/agent/onboa
 import type { PoseCorrection } from '../anime25drig/poseCorrections'
 import type { RigCharacterHandle } from '../character/RigCharacter'
 import type { WardrobeItem } from '../persona/wardrobe'
-import type { TurnKeyformsStatus } from '../turnKeyformsApi'
+import type { TurnArchiveUse, TurnKeyformsStatus } from '../turnKeyformsApi'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { activityKey, moodBand } from '../../../components/agent/meropeVitals'
@@ -187,7 +187,7 @@ export default function SiteMotionWorkbench({
   const decomposeRigPsd = useCallback(async (
     onStatus: (status: TurnKeyformsStatus) => void,
     signal: AbortSignal,
-    fromArchive?: string,
+    fromArchive?: TurnArchiveUse,
   ) => {
     if (!portraitUrl) throw new Error(t.merope.assetNeedsPortrait)
     return decomposeWithTurnKeyforms(

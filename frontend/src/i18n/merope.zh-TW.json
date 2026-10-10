@@ -405,6 +405,7 @@
   "turnArchivesHint": "每次增強生成的轉頭圖、拆層和關鍵形都會保存下來，每張立繪保留最近 {keep} 份。用素材重新擬合不再生圖和拆層，只用現在的擬合重做一次。",
   "turnArchivesEmpty": "這張立繪還沒有增強素材",
   "turnArchiveDownload": "下載",
+  "turnArchiveLoad": "匯入並預檢",
   "turnArchiveRefit": "用素材重新擬合並預檢",
   "turnArchiveDelete": "刪除",
   "turnArchiveDeleteConfirm": "刪除這份增強素材？刪除後無法恢復。",

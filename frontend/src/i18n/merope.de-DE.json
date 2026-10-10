@@ -405,6 +405,7 @@
   "turnArchivesHint": "Jede Erweiterung behält ihre gedrehten Zeichnungen, Zerlegungen und Schlüssel; pro Porträt bleiben die neuesten {keep}. Daraus neu anzupassen zeichnet und zerlegt nichts: nur die aktuelle Anpassung läuft erneut.",
   "turnArchivesEmpty": "Für dieses Porträt gibt es noch kein Erweiterungsmaterial",
   "turnArchiveDownload": "Herunterladen",
+  "turnArchiveLoad": "Importieren und vorprüfen",
   "turnArchiveRefit": "Daraus neu anpassen und vorprüfen",
   "turnArchiveDelete": "Löschen",
   "turnArchiveDeleteConfirm": "Dieses Erweiterungsmaterial löschen? Das kann nicht rückgängig gemacht werden.",

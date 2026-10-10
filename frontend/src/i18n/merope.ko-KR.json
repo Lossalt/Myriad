@@ -405,6 +405,7 @@
   "turnArchivesHint": "강화할 때마다 고개 돌린 그림, 분리 레이어, 키폼을 보관합니다. 초상화마다 최근 {keep}개를 유지합니다. 소재로 다시 맞추면 이미지 생성과 분리 없이 현재 피팅만 다시 실행합니다.",
   "turnArchivesEmpty": "이 초상화의 강화 소재가 아직 없습니다",
   "turnArchiveDownload": "다운로드",
+  "turnArchiveLoad": "가져와서 프리플라이트",
   "turnArchiveRefit": "소재로 다시 맞추고 프리플라이트",
   "turnArchiveDelete": "삭제",
   "turnArchiveDeleteConfirm": "이 강화 소재를 삭제할까요? 되돌릴 수 없습니다.",

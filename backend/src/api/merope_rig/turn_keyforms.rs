@@ -1198,6 +1198,43 @@ pub async fn delete_turn_archive(
     Ok(Json(json!({ "deleted": id })))
 }
 
+/// A kept job handed to the importer again as it was: a finished job made of
+/// its decomposition and keys, fetched as any job. For a job whose page went
+/// away before it was imported; its master must still be the slot's current one.
+pub async fn load_turn_archive(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_merope_enabled().await?;
+    require_owner(&claims, &db).await?;
+    let kept = archive::read_meta(&id).await.ok_or_else(missing_archive)?;
+    require_master_match(
+        &db,
+        slot_of(kept.outfit_id.as_deref()),
+        &kept.source_master_asset_id,
+        kept.source_generation_fingerprint.as_deref(),
+    )
+    .await?;
+    let (baked, keyforms) = archive::read_result(&kept).await.map_err(internal_error)?;
+    let (job_id, new) = claim_job(
+        &kept.outfit_id,
+        &kept.source_master_asset_id,
+        Stage::Done,
+        1,
+    )?;
+    if new {
+        update(&job_id, |job| {
+            job.done = 1;
+            job.psd = Some(Arc::new(baked));
+            job.keyforms = Some(Arc::new(keyforms));
+            job.archive_id = Some(kept.id.clone());
+        });
+        tracing::info!(job = %job_id, archive = %kept.id, "turn keyforms loaded from an archive");
+    }
+    Ok(Json(json!({ "jobId": job_id })))
+}
+
 /// Fits a kept job again with the Space's current fit: no drawing, no
 /// decomposition. Its master must still be the slot's current one, as the
 /// import requires; the result is kept as a new archive and fetched as any job.

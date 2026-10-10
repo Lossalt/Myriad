@@ -2,7 +2,7 @@ import type {
   RigAssetCompileEvent,
   RigAssetPreflight,
 } from '../assets/pipeline'
-import type { TurnKeyformsStatus } from '../turnKeyformsApi'
+import type { TurnArchiveUse, TurnKeyformsStatus } from '../turnKeyformsApi'
 import { useEffect, useRef, useState } from 'react'
 import { generationFailureMessage } from '../../../components/agent/onboarding/generationError'
 import { useI18n } from '../../../contexts/I18nContext'
@@ -32,11 +32,11 @@ export interface RigImportSource {
   sourceGenerationFingerprint?: string
   seeThroughTokenConfigured: boolean
   onSaveSeeThroughToken: (token: string) => Promise<void>
-  /** Splits the portrait with turn keys; with `fromArchive`, fits that kept job again instead. */
+  /** Splits the portrait with turn keys; with `fromArchive`, uses that kept job instead (fitted again, or as it was). */
   onDecomposeRigPsd: (
     onStatus: (status: TurnKeyformsStatus) => void,
     signal: AbortSignal,
-    fromArchive?: string,
+    fromArchive?: TurnArchiveUse,
   ) => Promise<File>
   /** Splits the portrait without turn keys (a standing figure's in tiles, as a job it reports on). */
   onDecomposePlainPsd: (
@@ -222,7 +222,7 @@ export function useRigImport({
    * enhanced one fits turn keys (or refits a kept job) and redraws the
    * expressions as chosen, the two at once, then uses what was made.
    */
-  const decomposePsd = async (fromArchive?: string) => {
+  const decomposePsd = async (fromArchive?: TurnArchiveUse) => {
     if (importing || !sourceMasterAssetId || !seeThroughTokenConfigured) {
       return
     }

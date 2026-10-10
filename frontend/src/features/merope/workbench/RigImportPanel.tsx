@@ -291,7 +291,8 @@ export function RigImportPanel({
               outfitId={archiveOutfitId}
               masterAssetId={rig.sourceMasterAssetId}
               busy={importing}
-              onRefit={(archiveId) => void rig.decomposePsd(archiveId)}
+              onRefit={(archiveId) => void rig.decomposePsd({ id: archiveId, refit: true })}
+              onLoad={(archiveId) => void rig.decomposePsd({ id: archiveId, refit: false })}
             />
           ) : null}
         </section>

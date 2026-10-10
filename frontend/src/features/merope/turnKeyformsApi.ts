@@ -36,6 +36,12 @@ export interface TurnArchive {
   current: boolean
 }
 
+/** A kept job to use: fitted again with the Space's current fit, or loaded as it was. */
+export interface TurnArchiveUse {
+  id: string
+  refit: boolean
+}
+
 const ARCHIVES = `${PREFIX}/see-through/turn-archives`
 
 const TURN_KEYFORMS_POLL_MS = 5000
@@ -55,8 +61,8 @@ export async function decomposeWithTurnKeyforms(
   input: Pick<SeeThroughDecomposeInput, 'sourceMasterAssetId' | 'sourceGenerationFingerprint'>,
   options: {
     outfitId?: string
-    /** Fit this kept job again instead of drawing and decomposing anew. */
-    fromArchive?: string
+    /** Use this kept job (fitted again, or as it was) instead of drawing and decomposing anew. */
+    fromArchive?: TurnArchiveUse
     /** A full-body set decomposed in tiles without turn keys (needs outfitId). */
     plain?: boolean
     onStatus?: (status: TurnKeyformsStatus) => void
@@ -64,7 +70,7 @@ export async function decomposeWithTurnKeyforms(
   } = {},
 ): Promise<File> {
   const start = options.fromArchive
-    ? `${ARCHIVES}/${encodeURIComponent(options.fromArchive)}/refit`
+    ? `${ARCHIVES}/${encodeURIComponent(options.fromArchive.id)}/${options.fromArchive.refit ? 'refit' : 'load'}`
     : options.outfitId
       ? `${PREFIX}${fullBodyPath(options.outfitId)}/see-through/${options.plain ? 'figure' : 'turn-keyforms'}`
       : `${PREFIX}/see-through/turn-keyforms`

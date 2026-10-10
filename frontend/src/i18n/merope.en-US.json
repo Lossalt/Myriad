@@ -405,6 +405,7 @@
   "turnArchivesHint": "Each enhancement keeps its turned drawings, decompositions and keys; the latest {keep} per portrait are kept. Refitting from them draws and decomposes nothing: only the current fit runs again.",
   "turnArchivesEmpty": "No enhancement assets for this portrait yet",
   "turnArchiveDownload": "Download",
+  "turnArchiveLoad": "Import and preflight",
   "turnArchiveRefit": "Refit from these and preflight",
   "turnArchiveDelete": "Delete",
   "turnArchiveDeleteConfirm": "Delete these enhancement assets? This cannot be undone.",

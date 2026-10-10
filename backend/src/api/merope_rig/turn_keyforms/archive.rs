@@ -260,6 +260,15 @@ async fn read_files_in(root: &Path, meta: &ArchiveMeta) -> std::io::Result<Archi
     })
 }
 
+/// What a kept job hands the importer: its decomposition and its keys.
+pub(super) async fn read_result(meta: &ArchiveMeta) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    let dir = archive_root().join(&meta.id);
+    Ok((
+        tokio::fs::read(dir.join(BAKED)).await?,
+        tokio::fs::read(dir.join(KEYFORMS)).await?,
+    ))
+}
+
 pub(super) async fn delete(id: &str) -> std::io::Result<bool> {
     if !valid_id(id) {
         return Ok(false);

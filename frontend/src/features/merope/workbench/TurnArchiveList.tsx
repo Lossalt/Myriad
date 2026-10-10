@@ -12,13 +12,16 @@ interface Props {
   /** Another rig action is running: nothing can be refitted meanwhile. */
   busy: boolean
   onRefit: (archiveId: string) => void
+  /** Hands a kept job to the importer as it was (a job whose page went away before it was imported). */
+  onLoad: (archiveId: string) => void
 }
 
 /**
- * The slot's kept turn-keys jobs: download one whole, fit one again with the
- * Space's current fit (no drawing, no decomposing), or delete it.
+ * The slot's kept turn-keys jobs: import one as it was, download one whole,
+ * fit one again with the Space's current fit (no drawing, no decomposing), or
+ * delete it.
  */
-export function TurnArchiveList({ outfitId, masterAssetId, busy, onRefit }: Props) {
+export function TurnArchiveList({ outfitId, masterAssetId, busy, onRefit, onLoad }: Props) {
   const { t, format } = useI18n()
   const labels = t.merope
   const [archives, setArchives] = useState<TurnArchive[] | null>(null)
@@ -75,6 +78,14 @@ export function TurnArchiveList({ outfitId, masterAssetId, busy, onRefit }: Prop
             {` · ${(archive.bytes / 1024 / 1024).toFixed(0)} MB`}
           </span>
           <span className="merope-turn-archives__actions">
+            <SettingsButton
+              type="button"
+              size="sm"
+              disabled={busy || working !== null || !archive.current}
+              onClick={() => onLoad(archive.id)}
+            >
+              {labels.turnArchiveLoad}
+            </SettingsButton>
             <SettingsButton
               type="button"
               size="sm"
