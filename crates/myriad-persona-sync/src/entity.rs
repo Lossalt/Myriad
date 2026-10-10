@@ -845,6 +845,21 @@ mod tests {
         assert_eq!(retired.body["invalidReason"], "superseded");
     }
 
+    /// A side that kept a memory as retired without saying when (native
+    /// rows from before retirement times) gives its last write time as
+    /// `invalidAt` (R9), with or without a reason, even the moment it was
+    /// written; the format takes it like any other retirement.
+    #[test]
+    fn a_retirement_time_taken_from_the_last_write_is_a_retirement_time() {
+        let mut body = memory("own", json!([]));
+        body["createdAt"] = json!(1_760_000_000_000_000_i64);
+        body["validFrom"] = json!(1_760_000_000_000_000_i64);
+        body["invalidAt"] = json!(1_760_000_000_000_000_i64);
+        let retired = canonicalize(entity(Kind::Memory, "m", State::Retired, body)).unwrap();
+        assert_eq!(retired.body["invalidAt"], 1_760_000_000_000_000_i64);
+        assert_eq!(retired.body["invalidReason"], Value::Null);
+    }
+
     #[test]
     fn missing_optionals_and_key_order_do_not_change_the_digest() {
         let terse = canonicalize(entity(

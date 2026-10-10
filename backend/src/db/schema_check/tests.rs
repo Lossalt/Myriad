@@ -604,6 +604,9 @@ DROP INDEX idx_metadata_history_user_date;
 DROP TABLE agent_sync_devices;
 INSERT INTO agent_persona (id, name, updated_at) VALUES ('site', 'Merope', NOW());
 ALTER TABLE agent_persona DROP COLUMN zone;
+INSERT INTO agent_memories (id, kind, content, source, venue, valid_from, created_at, updated_at)
+VALUES ('own_schema_fixture', 'doing', '去河边走了一圈', 'own', 'own', NOW(), NOW(), NOW());
+ALTER TABLE agent_memories DROP COLUMN superseded_by, DROP COLUMN origin;
 "#,
     )
     .await
@@ -644,9 +647,27 @@ ALTER TABLE agent_persona DROP COLUMN zone;
         .unwrap()
         .expect("the persona row is kept");
     assert_eq!(zone.try_get::<String>("", "zone").unwrap(), "");
+    let memory = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT origin, superseded_by FROM agent_memories WHERE id = 'own_schema_fixture'",
+        ))
+        .await
+        .unwrap()
+        .expect("the memory row is kept");
+    assert_eq!(memory.try_get::<String>("", "origin").unwrap(), "site");
+    assert_eq!(
+        memory
+            .try_get::<Option<String>>("", "superseded_by")
+            .unwrap(),
+        None
+    );
     ensure_schema(&db)
         .await
         .expect("a second startup changes nothing");
+    db.execute_unprepared("DELETE FROM agent_memories WHERE id = 'own_schema_fixture'")
+        .await
+        .expect("remove fixture memory");
     db.execute_unprepared("DELETE FROM agent_persona WHERE id = 'site'")
         .await
         .expect("remove fixture persona");

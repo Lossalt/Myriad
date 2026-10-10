@@ -103,7 +103,19 @@ fn entity<B: Serialize>(
     state: State,
     body: &B,
 ) -> Option<EntityVersion> {
-    match EntityVersion::new(kind, id, rev, hlc::SITE, state, body) {
+    entity_from(kind, id, rev, hlc::SITE, state, body)
+}
+
+/// [`entity`], written by `origin`.
+fn entity_from<B: Serialize>(
+    kind: Kind,
+    id: &str,
+    rev: Rev,
+    origin: &str,
+    state: State,
+    body: &B,
+) -> Option<EntityVersion> {
+    match EntityVersion::new(kind, id, rev, origin, state, body) {
         Ok(entity) => Some(entity),
         Err(error) => {
             // A row her own code cannot read is left out, not sent broken.
@@ -228,7 +240,8 @@ async fn memories<C: ConnectionTrait>(
         .query_all_raw(statement(
             &format!(
                 "SELECT id, kind, content, evidence, speaker, source, venue, concepts, importance, \
-                 valid_from, invalid_at, invalid_reason, created_at, updated_at \
+                 valid_from, invalid_at, invalid_reason, superseded_by, origin, created_at, \
+                 updated_at \
                  FROM agent_memories WHERE {SYNCED_MEMORY}{} \
                  ORDER BY id COLLATE \"C\" LIMIT $2",
                 after_clause(after, "id", 3)
@@ -271,21 +284,23 @@ fn memory(row: &QueryResult) -> Result<Option<EntityVersion>, DbErr> {
         created_at: created_at.timestamp_micros(),
         invalid_at: invalid_at.map(|at| at.timestamp_micros()),
         invalid_reason: row.try_get("", "invalid_reason")?,
-        // Supersession edges are not kept yet.
-        superseded_by: None,
+        superseded_by: row.try_get("", "superseded_by")?,
     };
     let state = if invalid_at.is_some() {
         State::Retired
     } else {
         State::Live
     };
-    Ok(entity(
-        Kind::Memory,
-        &id,
-        site_rev(updated_at),
-        state,
-        &body,
-    ))
+    // Written here or by a device: the revision is that side's.
+    let origin: String = row.try_get("", "origin")?;
+    let rev = match hlc::legacy(updated_at.timestamp_micros(), Some(&origin)) {
+        Ok(rev) => rev,
+        Err(error) => {
+            tracing::warn!(%error, id, "[sync] a memory's origin is not a side; left out");
+            return Ok(None);
+        }
+    };
+    Ok(entity_from(Kind::Memory, &id, rev, &origin, state, &body))
 }
 
 async fn diary<C: ConnectionTrait>(
@@ -763,6 +778,7 @@ INSERT INTO agent_memories (id, user_id, kind, content, speaker, source, venue, 
    '2026-10-03Z', NULL, NULL, '2026-10-03Z', '2026-10-03Z'),
   ('m_group', 41, 'fact', '群里的梗', 'user', 'chat', 'group:telegram:-1', '[41]', '[]',
    '2026-10-03Z', NULL, NULL, '2026-10-03Z', '2026-10-03Z');
+UPDATE agent_memories SET superseded_by = 'm_owner' WHERE id = 'm_retired';
 INSERT INTO agent_memory_embeddings (memory_id, model, digest, vector, created_at) VALUES
   ('m_owner', 'pplx', '{digest}', decode('0000803f000000bf', 'hex'), NOW()),
   ('m_own', 'pplx', 'stale-digest', decode('0000803f000000bf', 'hex'), NOW());
@@ -870,6 +886,8 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         assert_eq!(by("m_owner").body["concepts"][0]["aliases"][0], "rain");
         assert_eq!(by("m_retired").state, State::Retired);
         assert_eq!(by("m_retired").body["invalidReason"], "superseded");
+        assert_eq!(by("m_retired").body["supersededBy"], "m_owner");
+        assert_eq!(by("m_owner").body["supersededBy"], Value::Null);
         assert_eq!(by("m_own").body["audience"]["venue"], "own");
         let persona = by("her");
         assert_eq!(persona.body["fields"]["name"]["value"], " Merope ");

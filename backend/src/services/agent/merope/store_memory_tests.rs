@@ -28,6 +28,8 @@ async fn seed_fact_at(
         invalid_reason: Set(None),
         created_at: Set(at),
         updated_at: Set(at),
+        superseded_by: Set(None),
+        origin: Set(crate::services::agent::memory::unified::ORIGIN_SITE.into()),
     }
     .insert(db)
     .await
@@ -231,6 +233,18 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
         .unwrap();
     assert_eq!(retired.invalid_reason.as_deref(), Some("superseded"));
     assert_eq!(retired.content, "喜欢咖啡");
+    // The corrected row names what holds the fact now.
+    let corrected = agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.eq(user_id))
+        .filter(agent_memories::Column::Content.eq("现在不喝咖啡"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        retired.superseded_by.as_deref(),
+        Some(corrected.id.as_str())
+    );
     assert_eq!(retired.created_at, old.created_at);
     assert_eq!(
         recall_remembered(&db, other_user, None, 8).await.unwrap(),

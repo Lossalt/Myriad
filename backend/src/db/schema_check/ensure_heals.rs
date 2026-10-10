@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     invalid_at TIMESTAMPTZ,
     invalid_reason VARCHAR(16),
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    superseded_by VARCHAR(64),
+    origin VARCHAR(64) NOT NULL DEFAULT 'site'
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memories_user_created
     ON agent_memories (user_id, created_at DESC);

@@ -301,9 +301,10 @@ pub async fn look_back(db: &DatabaseConnection, owner: i32) {
         .collect::<Vec<_>>()
         .join("\n");
     let evidence = json!({ "claims": claims, "since": since, "until": now }).to_string();
-    if let Ok(Some(_)) = unified::remember_own(db, &content, &evidence, Vec::new(), SOURCE).await {
+    if let Ok(Some(new)) = unified::remember_own(db, &content, &evidence, Vec::new(), SOURCE).await
+    {
         if let Some((id, ..)) = last {
-            let _ = unified::retire_own(db, &id, "superseded").await;
+            let _ = unified::retire_own_in_favor_of(db, &id, "superseded", Some(&new)).await;
         }
         tracing::info!(
             claims = claims.len(),

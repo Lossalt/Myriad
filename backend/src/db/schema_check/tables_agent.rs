@@ -900,6 +900,12 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     default_value: None,
                     not_null: false,
                 },
+                // The row that took this one's place (on the old row).
+                ColumnDef::new("superseded_by", "character varying"),
+                // Which side wrote it: `site` or a device.
+                ColumnDef::new("origin", "character varying")
+                    .not_null()
+                    .default_value("'site'"),
             ],
         },
         TableDef {
