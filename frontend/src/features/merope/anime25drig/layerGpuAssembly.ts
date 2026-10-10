@@ -31,6 +31,7 @@ import { writeIdentityLayerTransform } from './layerTransform'
 import { resolveAnime25DMouthDeformation } from './mouthDeformation'
 import { resolveAnime25DNeckSurface } from './neckSurface'
 import { canLiftNeckwearOverSkin } from './neckwearOcclusion'
+import { cutFrom } from './partSplit'
 import { bindPoseCorrections } from './poseCorrections'
 import { createAnime25DSecondaryDeformationBinding } from './secondaryDeformation'
 import {
@@ -473,6 +474,7 @@ export function bindLayerAttachments(
       chestWeightField,
       playback.pixelCanvas.width,
       readBindingPixels,
+      cutFrom(layer.source),
     )
     if (layer.neckwearBridge) {
       // A keyed bridge rides the neck at its upper anchor.

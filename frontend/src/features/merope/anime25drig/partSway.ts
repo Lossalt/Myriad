@@ -1,5 +1,6 @@
 import type { BoneTransform, FigurePose } from './figureSkeleton'
 import type { Anime25DPart, Anime25DPartProfile } from './types'
+import { cutsOut } from './partSplit'
 
 /**
  * Cloth that hangs free inside a layer it shares with other drawing: an open
@@ -40,10 +41,15 @@ interface SwaySpring {
 }
 
 /** The regions of a layer that sway, from the parts drawn in it with other drawing. */
-export function bindPartSways(profile: Anime25DPartProfile | undefined, layer: string): PartSwayBinding[] | null {
+export function bindPartSways(
+  profile: Anime25DPartProfile | undefined,
+  layer: string,
+  canvas: { width: number; height: number },
+): PartSwayBinding[] | null {
   const sways: PartSwayBinding[] = []
   profile?.parts.forEach((part, spring) => {
-    if (part.layer !== layer || part.separate || part.motion === 'rigid') return
+    // A hanging piece is cut out to a layer of its own and swings there (partSplit).
+    if (part.layer !== layer || part.separate || part.motion === 'rigid' || cutsOut(part, canvas)) return
     const [x0, y0, x1, y1] = part.box
     if (!(x1 > x0 && y1 > y0)) return
     sways.push({ spring, x0, y0, x1, y1, anchorY: Math.max(y0, Math.min(part.anchor[1], y1)), gain: swayGain(part) })

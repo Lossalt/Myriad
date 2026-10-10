@@ -497,13 +497,13 @@ export function bindFigureSkin(
 export function bindFigureLayer(
   baseRole: string,
   layer: Parameters<typeof bindFigureSkin>[1] & { name: string },
-  playback: { anchors: Readonly<Anime25DPlaybackAnchors>; partProfile?: Anime25DPartProfile },
+  playback: { anchors: Readonly<Anime25DPlaybackAnchors>; partProfile?: Anime25DPartProfile; pixelCanvas: { width: number; height: number } },
 ): { figure: FigureRest | null; figureSkin: FigureSkin | null; partSways: PartSwayBinding[] | null } {
   const figure = figureRestOf(playback.anchors)
   return {
     figure,
     figureSkin: bindFigureSkin(baseRole, layer, figure),
-    partSways: figure ? bindPartSways(playback.partProfile, layer.name) : null,
+    partSways: figure ? bindPartSways(playback.partProfile, layer.name, playback.pixelCanvas) : null,
   }
 }
 

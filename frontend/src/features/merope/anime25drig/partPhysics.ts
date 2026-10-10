@@ -1,4 +1,5 @@
 import type { Anime25DPart, Anime25DPartProfile } from './types'
+import { partOfLayer } from './partSplit'
 
 /**
  * How a part swings, from what it is made of: the tuning of a hanging
@@ -18,9 +19,11 @@ export interface PendulumTuning {
 /** An earring's tuning when nothing else is known. */
 export const PENDULUM_DEFAULT: Readonly<PendulumTuning> = { stiffness: 1, damping: 0.65, reach: 1 }
 
-/** The part drawn alone in `layer`, if the inventory named one that moves. */
+/** The part drawn alone in `layer` (or cut out to it, partSplit), if the inventory named one that moves. */
 export function movingPartIn(profile: Anime25DPartProfile | undefined, layer: string): Anime25DPart | null {
-  return profile?.parts.find((part) => part.layer === layer && part.motion !== 'rigid') ?? null
+  const cut = /^part:\d+:/.test(layer) ? partOfLayer(profile, layer) : null
+  const part = cut ?? profile?.parts.find((found) => found.layer === layer && found.motion !== 'rigid') ?? null
+  return part && part.motion !== 'rigid' ? part : null
 }
 
 /** A hanging part's pendulum tuning. */
