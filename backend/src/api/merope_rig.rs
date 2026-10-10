@@ -28,6 +28,7 @@ mod full_body;
 mod import;
 mod master;
 mod package;
+mod parts;
 mod portrait;
 mod portrait_upload;
 mod pose;
@@ -145,6 +146,14 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
         .route(
             "/full-body/{outfit_id}/stance",
             patch(pose::save_full_body_stance),
+        )
+        .route(
+            "/full-body/{outfit_id}/parts",
+            post(parts::find_full_body_parts).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
+        .route(
+            "/parts",
+            post(parts::find_site_rig_parts).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
         .route(
             "/full-body/{outfit_id}/pose-corrections",

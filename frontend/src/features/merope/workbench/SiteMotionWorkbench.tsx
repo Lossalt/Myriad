@@ -22,12 +22,14 @@ import { siteMediaUrl } from '../../../utils/siteMediaUrl'
 import { isAnime25DPlayback } from '../anime25drig/types'
 import {
   decomposeSitePortraitWithSeeThrough,
+  findMovingParts,
   saveFullBodyPoseCorrections,
   saveRigPoseCorrections,
   uploadFullBodyPortrait,
   uploadOutfitPortrait,
 } from '../api'
 import { commitRigPsdAsset, preflightRigPsdAsset } from '../assets/pipeline'
+import { composeRestReference } from '../assets/restReference'
 import RigCharacter from '../character/RigCharacter'
 import { notifyFaceUpdated } from '../events/updates'
 import { useRigPreviewMotionLifecycle } from '../motion/useRigMotionLifecycle'
@@ -248,6 +250,16 @@ export default function SiteMotionWorkbench({
     await saveFullBodyPoseCorrections(stagedSet.id, assetId, corrections)
     // The set now names its new package; the stage loads it.
     await reload()
+  }
+
+  // The figure on stage's moving parts, looked for again in the background.
+  const findStagedMovingParts = async () => {
+    const manifest = staged ? staged.manifest : rigManifest
+    const assetId = staged ? staged.assetId : rigAssetId
+    const playback = manifest?.anime25dPlayback
+    const atlasUrl = manifest?.textures[0]?.url
+    if (!assetId || !playback || !isAnime25DPlayback(playback) || !atlasUrl) throw new Error(t.merope.rigPartsRefreshFailed)
+    await findMovingParts(assetId, await composeRestReference(playback, atlasUrl), stagedSet?.id)
   }
 
   /** The owner uploaded a new master portrait for the worn outfit. */
@@ -604,6 +616,7 @@ export default function SiteMotionWorkbench({
             ? format(t.merope.poseCorrection.targetFullBody, { name: wardrobeItemLabel(stagedSet, o.clothingStyle) })
             : format(t.merope.poseCorrection.targetBust, { name: wornLabel })}
           onSavePoseCorrections={stagedSet ? saveFullBodyCorrections : savePoseCorrections}
+          onFindMovingParts={findStagedMovingParts}
         />
       </div>
       {portraitUrl && motionEnabled && studioHost

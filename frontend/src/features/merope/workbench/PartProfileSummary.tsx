@@ -4,13 +4,13 @@ import { useI18n } from '../../../contexts/I18nContext'
 type Labels = ReturnType<typeof useI18n>['t']['merope']
 
 /** The parts the import's vision inventory found moving on their own, and how each moves. */
-export function PartProfileSummary({ profile }: { profile: Anime25DPartProfile | undefined }) {
+export function PartProfileSummary({ profile, titled = true }: { profile: Anime25DPartProfile | undefined; titled?: boolean }) {
   const { t, format } = useI18n()
   const labels = t.merope
   if (!profile?.parts.length) return null
   return (
     <div className="merope-motion-rig__checks">
-      <b>{labels.rigPartsTitle}</b>
+      {titled ? <b>{labels.rigPartsTitle}</b> : null}
       <p className="merope-motion-rig__hint">{labels.rigPartsHint}</p>
       <ul className="merope-motion-rig__issues">
         {profile.parts.map((part) => (

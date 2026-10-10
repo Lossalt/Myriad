@@ -422,6 +422,22 @@ export async function previewMeropeRigImport(
   )
 }
 
+/**
+ * Looks for a package's moving parts again, in the background (the worn bust,
+ * or a full-body set): for a package made before they were looked for, or
+ * when that failed. The new package takes over when it is done.
+ */
+export async function findMovingParts(assetId: string, analysisReference: Blob, outfitId?: string): Promise<void> {
+  const body = new FormData()
+  body.append('assetId', assetId)
+  body.append('analysisReference', analysisReference, 'rig-analysis.png')
+  try {
+    await apiService.post(`${PREFIX}${outfitId ? fullBodyPath(outfitId) : ''}/parts`, body, { timeout: RIG_MUTATION_TIMEOUT_MS })
+  } catch (reason) {
+    throw meropeError(reason, currentCopy().merope.rigPartsRefreshFailed)
+  }
+}
+
 async function submitMeropeRigImport(
   path: string,
   source: MeropeRigImportSource,

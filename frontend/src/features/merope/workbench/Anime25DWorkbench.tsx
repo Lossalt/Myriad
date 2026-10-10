@@ -42,6 +42,8 @@ interface Props extends RigImportSource {
   correctionAssetId?: string | null
   correctionTarget?: string
   onSavePoseCorrections?: (corrections: PoseCorrection[]) => Promise<void>
+  /** Looks for the staged figure's moving parts again (MovingPartsPanel). */
+  onFindMovingParts?: () => Promise<void>
 }
 
 type FacePanel = 'overview' | 'persona' | 'mind' | 'wardrobe' | 'motion'
@@ -64,6 +66,7 @@ export default function Anime25DWorkbench({
   correctionAssetId,
   correctionTarget,
   onSavePoseCorrections,
+  onFindMovingParts,
   ...source
 }: Props) {
   const { t } = useI18n()
@@ -174,6 +177,7 @@ export default function Anime25DWorkbench({
           correctionAssetId={correctionAssetId}
           correctionTarget={correctionTarget}
           onSavePoseCorrections={onSavePoseCorrections}
+          onFindMovingParts={onFindMovingParts}
         />
       ) : null}
       </div>

@@ -34,7 +34,7 @@ use crate::{
 
 const MAX_RIG_IMPORT_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RIG_IMPORT_ATLAS_BYTES: usize = 20 * 1024 * 1024;
-const MAX_RIG_ANALYSIS_REFERENCE_BYTES: usize = 10 * 1024 * 1024;
+pub(super) const MAX_RIG_ANALYSIS_REFERENCE_BYTES: usize = 10 * 1024 * 1024;
 
 fn rig_motion_seed(source_master_asset_id: &str) -> u32 {
     let mut hash: u32 = 2166136261;
@@ -299,7 +299,7 @@ async fn parse_rig_import(
     })
 }
 
-fn png_validation_error(error: merope_rig::PngValidationError) -> ApiError {
+pub(super) fn png_validation_error(error: merope_rig::PngValidationError) -> ApiError {
     match error {
         merope_rig::PngValidationError::Invalid(message) => bad_request(&message),
         merope_rig::PngValidationError::Busy => (
@@ -409,7 +409,7 @@ pub(super) fn spawn_part_inventory(
 /// The rig's moving parts, looked for after its import so a slow vision
 /// model never holds the import up, then saved into it as a new package,
 /// which takes over only while the imported one is still the slot's.
-async fn find_moving_parts(
+pub(super) async fn find_moving_parts(
     db: DatabaseConnection,
     user_id: i32,
     outfit: Option<String>,
