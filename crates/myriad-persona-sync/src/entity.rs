@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::{
     SyncError,
+    affect::AffectImpulse,
     canonical::{canonical_bytes, digest},
     hlc::{Rev, check_node},
     persona::PersonaBody,
@@ -537,19 +538,6 @@ pub struct Baseline {
     pub arousal: f64,
 }
 
-/// What moved her: an appraisal of what was said or done, or music heard.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub enum Impulse {
-    Appraisal {
-        emotion: f64,
-        arousal: f64,
-        scale: f64,
-    },
-    #[serde(rename_all = "camelCase")]
-    Music { listened_seconds: i64 },
-}
-
 /// One change of her affect toward the owner. Appended, never edited.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -558,7 +546,7 @@ pub struct AffectEventBody {
     pub subject: String,
     pub at: i64,
     pub cause: String,
-    pub impulse: Impulse,
+    pub impulse: AffectImpulse,
     /// The baseline used then.
     pub baseline: Baseline,
     /// For audit and display; replay reads neither.

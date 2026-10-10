@@ -939,5 +939,40 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("revoked_reason", "character varying"),
             ],
         },
+        TableDef {
+            name: "agent_affect_events".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "character varying").not_null(),
+                ColumnDef::new("user_id", "integer").not_null(),
+                ColumnDef::new("at", "timestamp with time zone").not_null(),
+                ColumnDef::new("cause", "character varying").not_null(),
+                ColumnDef::new("impulse", "jsonb").not_null(),
+                ColumnDef::new("baseline_mood", "double precision").not_null(),
+                ColumnDef::new("baseline_arousal", "double precision").not_null(),
+                ColumnDef::new("before", "jsonb").not_null(),
+                ColumnDef::new("after", "jsonb").not_null(),
+                ColumnDef::new("late", "boolean")
+                    .not_null()
+                    .default_value("false"),
+                ColumnDef::new("origin", "character varying")
+                    .not_null()
+                    .default_value("'site'"),
+                ColumnDef::new("rev", "character varying"),
+                ColumnDef::new("created_at", "timestamp with time zone").not_null(),
+            ],
+        },
+        TableDef {
+            name: "agent_affect_anchor".to_string(),
+            columns: vec![
+                ColumnDef::new("user_id", "integer").not_null(),
+                ColumnDef::new("mood", "double precision").not_null(),
+                ColumnDef::new("arousal", "double precision").not_null(),
+                ColumnDef::new("emotion", "double precision").not_null(),
+                ColumnDef::new("emotion_arousal", "double precision").not_null(),
+                ColumnDef::new("at", "timestamp with time zone").not_null(),
+                ColumnDef::new("through_event", "character varying"),
+                ColumnDef::new("rev", "character varying").not_null(),
+            ],
+        },
     ]
 }

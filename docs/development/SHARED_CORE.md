@@ -50,6 +50,8 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 
 | 调用 | 输入 → 输出 |
 | --- | --- |
+| `sync.affect_fold` | `{anchor, events:[变化], upto}` → `{anchor}`：把 `upto`（含）以前的变化折进锚点，锚点停在最后一条之后并记下它（`throughEvent`）；只有站点写锚点 |
+| `sync.affect_replay` | `{anchor, events:[变化], now, baselineNow}` → `{affect}`：她对站长现在的心情 |
 | `sync.canonicalize` | `{entities:[粗实体]}` → `{entities:[{entity, canonical}]}`；`digest` 可留空，写了就必须对 |
 | `sync.check_rev` | `{rev, now}` → `{accepted, aheadMs, maxAheadMs}`：`now` 是站点的时间，`rev` 超前它 5 分钟以上就不收 |
 | `sync.compare` | `{local:[实体], remote:[实体]}` → 比对结果（各字段、各类的相同／只在一端／两端不同，`sameName`、`needsSubject`，`unreadablePictures` 两端各自读不到的图） |
@@ -64,6 +66,7 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 - **不透明的人设键。** 人设里本端不认识的键（站点的 `displayName`、`draftSource`，以及以后别的端加的键）是 `opaque` 类：原样存下，原样传回（值和 `rev` 都不动），按单值合并。比对不列它们：不用这个键的一端谈不上和别人不同。
 - **读不到的图。** 立绘、贴纸、贴纸头像的位置上要么是图片资产，要么是 `{"unreadable": true}`：这一端有这张图，但读不出来（外链失效、文件没了）。没有可拉的文件，界面照比对里的 `unreadablePictures` 提示「站点上有张图读不到」。站点上外链的图（`http`/`https`）在第一次被设备读到时，经出站守卫下载、存进站点的媒体库，她的人设、衣柜立绘、贴纸头像和贴纸改指向这份副本；之后外链失效也不影响。下载失败的地址 10 分钟后再试，这期间带标记。rig 以某个地址为母图时，那个地址保留不改，图从副本读。图按字节的 sha256 跨端，换地址不改变跨端的任何内容。
 - **她的时区。** 人设字段 `zone` 是 IANA 名（`Asia/Shanghai`），或空（`null`）：没设时各端用自己的时区（站点是进程的 `TZ`）。规范化时去掉首尾空白，空串记为 `null`。站点存在 `agent_persona.zone`，核心调用里的 `zone` 参数就该传它（没设时传本机时区）。
+- **心情按变化重放。** 每次心情变化记一条 `affect_event`：`at`（这次写入盖的时刻）、`baseline`（这次之前她往哪里回落）、`impulse`（`{"appraisal":{emotion, arousal, scale}}`、`{"music":{listenedSeconds}}` 或 `"none"`：只是又过了一会儿）。重放：从锚点出发，按 `(at, id)` 逐条先按整秒数回落到这一条的 `at`，再施加冲量，四个值夹到 0–100；最后回落到 `now`。锚点及以前的变化已经在锚点里，不再施加。变化可以只给 `{id, at, baseline, impulse}`，事件 body 加上 id 也行（别的字段不读）。站点记下的变化与站点自己读出的心情逐位相同。收到比锚点还早的变化（在它的时刻被折进锚点之后才到）时，收的一端把 `at` 改成锚点的时刻并标 `late`，再保存。
 - **取代边。** 记忆被别的记忆取代（`superseded`，以及 `changed_mind`、`forgiven` 等换成新行的退役）时，旧行的 `supersededBy` 写新行的 id，与退役同一次写入；多条旧行可以指向同一条新行，新内容已经有别的行在说时指向那一行，只是收回、没有新行时为空。`faded` 等没有新行的退役不写边。
 - **没有停用时间的旧记忆（R9）。** 一端有些记忆只记了「已停用」、没记什么时候：上线时按退役处理，`invalidAt` 取这条记录最后一次写入的时间，`invalidReason` 可空。格式照常接受（`retired` 当且仅当有 `invalidAt`，不要求晚于 `validFrom` 或 `createdAt`）；这条换算由那一端在拼粗实体时做，核心不猜。
 - **在穿哪一套各端各自。** `visual.activeOutfitId` 与 `visual.activeFullBodyOutfitId` 不是人设字段（Q12、R6）：站点不发，别的端也不要发；衣柜本身照常同步。

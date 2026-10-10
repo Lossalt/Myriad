@@ -82,7 +82,7 @@ pub use motion::{
 };
 pub use outfit_overlay::{apply_model_wear_directive, chat_wardrobe_section, overlay_outfit_id};
 pub use store::{
-    JsonDocumentUpdate, PersonaContractUpdate, PortraitUpdate, acquire_avatar_generation,
+    AffectChange, JsonDocumentUpdate, PersonaContractUpdate, PortraitUpdate, acquire_avatar_generation,
     acquire_portrait_generation, avatar_generation_is_pending, clear_persona_on,
     complete_avatar_generation, complete_portrait_generation, credit_music_listening,
     get_or_create_state, get_persona, get_persona_on, insert_diary, latest_diary,
@@ -164,9 +164,12 @@ pub async fn note_user_turn(
         return None;
     }
     let (praised, scolded) = detect_mood_cue(text);
-    let (previous, saved) = update_affect(db, user_id, true, |affect| {
-        apply_user_utterance(affect, utterance_index, praised, scolded);
-    })
+    let (previous, saved) = update_affect(
+        db,
+        user_id,
+        true,
+        AffectChange::utterance(utterance_index, praised, scolded),
+    )
     .await
     .ok()?;
     let after = store::affect_from_state(&saved);
@@ -353,8 +356,8 @@ pub use gates::{IngestSight, decide_ingest};
 #[cfg(test)]
 pub use state::Affect;
 pub use state::{
-    MUSIC_LISTENING_MIN_SECS, MoodTransition, apply_task_outcome, apply_user_utterance, clamp_mood,
-    detect_mood_cue, effective_activity, is_extremely_low, mood_band,
+    MUSIC_LISTENING_MIN_SECS, MoodTransition, clamp_mood, detect_mood_cue, effective_activity,
+    is_extremely_low, mood_band,
 };
 
 /// The activity to act on, with a stale one read as idle.

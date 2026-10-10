@@ -134,6 +134,12 @@ pub async fn tick(db: DatabaseConnection) {
     super::wants::let_fade(&db).await;
     super::making_sense::let_fade(&db).await;
     super::others::let_fade(&db).await;
+    // How her affect moved long ago is folded into where its replay starts.
+    match super::store::fold_old_affect_changes(&db, Some(owner)).await {
+        Ok(folded) if folded > 0 => tracing::info!(folded, "[Merope] old affect changes folded"),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "[Merope] could not fold old affect changes"),
+    }
     // Yesterday in numbers, once: kept to see how she is changing.
     super::vitals::go_over(&db).await;
     fill_old_concepts(&db, owner).await;

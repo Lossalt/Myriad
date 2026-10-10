@@ -12,6 +12,7 @@
 
 use std::fmt;
 
+pub mod affect;
 pub mod canonical;
 pub mod compare;
 pub mod entity;
@@ -19,6 +20,7 @@ pub mod hlc;
 pub mod persona;
 mod rig;
 
+pub use affect::AffectImpulse;
 pub use canonical::{digest, write_canonical_json};
 pub use compare::{Comparison, Holdings, compare, is_empty};
 pub use entity::{

@@ -9,6 +9,8 @@ use super::{ffi, ok};
 use crate::STATUS_BAD_INPUT;
 
 pub(super) const TESTED: &[&str] = &[
+    "sync.affect_fold",
+    "sync.affect_replay",
     "sync.canonicalize",
     "sync.check_rev",
     "sync.compare",
@@ -220,6 +222,49 @@ fn the_golden_rig_has_its_golden_id() {
     let (status, _) = ffi(
         "sync.rig_package_id",
         &json!({ "atlas": "%%%", "manifest": manifest }),
+    );
+    assert_eq!(status, STATUS_BAD_INPUT);
+}
+
+/// The golden affect event, replayed from the golden anchor through the C
+/// entry, is what the crate gives; folding it in and replaying the rest is
+/// the same.
+#[test]
+fn her_affect_is_replayed_and_folded_as_the_crate_does() {
+    let anchor: EntityVersion =
+        serde_json::from_slice(fixture!("entities/affect_anchor.json")).unwrap();
+    let event: EntityVersion =
+        serde_json::from_slice(fixture!("entities/affect_event.json")).unwrap();
+    let mut change = event.body.clone();
+    change["id"] = json!(event.id);
+    let now = 1_760_003_600_400_000_i64;
+    let baseline = json!({ "mood": 70.0, "arousal": 48.0 });
+    let replayed = ok(
+        "sync.affect_replay",
+        json!({ "anchor": anchor.body, "events": [change], "now": now, "baselineNow": baseline }),
+    );
+    let expected = myriad_persona_sync::affect::replay(
+        &serde_json::from_value(anchor.body.clone()).unwrap(),
+        &[serde_json::from_value(change.clone()).unwrap()],
+        now,
+        serde_json::from_value(baseline.clone()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(replayed["affect"], serde_json::to_value(expected).unwrap());
+    let folded = ok(
+        "sync.affect_fold",
+        json!({ "anchor": anchor.body, "events": [change], "upto": now }),
+    );
+    assert_eq!(folded["anchor"]["throughEvent"], json!(event.id));
+    let again = ok(
+        "sync.affect_replay",
+        json!({ "anchor": folded["anchor"], "events": [change], "now": now, "baselineNow": baseline }),
+    );
+    assert_eq!(again, replayed);
+    // Unknown fields of the call itself are refused.
+    let (status, _) = ffi(
+        "sync.affect_replay",
+        &json!({ "anchor": anchor.body, "now": now, "baselineNow": baseline, "extra": 1 }),
     );
     assert_eq!(status, STATUS_BAD_INPUT);
 }

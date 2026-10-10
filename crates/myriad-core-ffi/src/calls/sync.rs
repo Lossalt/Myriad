@@ -6,8 +6,11 @@
 use base64::Engine as _;
 use myriad_merope::RigManifest;
 use myriad_persona_sync::{
-    EntityVersion, Holdings, Rev, canonicalize as canonical_entity, compare as compare_sides, hlc,
-    is_empty as holds_nothing, rig_package_id as package_id,
+    EntityVersion, Holdings, Rev,
+    affect::{self, Change},
+    canonicalize as canonical_entity, compare as compare_sides,
+    entity::{AffectAnchorBody, Baseline},
+    hlc, is_empty as holds_nothing, rig_package_id as package_id,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -140,4 +143,41 @@ pub(super) fn rig_package_id(raw: &[u8]) -> Result<Value, Failure> {
         .map_err(|_| refused("atlas is not base64"))?;
     let id = package_id(&atlas, &req.manifest).map_err(refused)?;
     Ok(json!({ "id": id }))
+}
+
+/// Her affect toward the owner now: the anchor with every change after it
+/// replayed in `(at, id)` order, settled to `now` toward `baselineNow`.
+/// A change is `{id, at, baseline, impulse}`; an affect event's body with its
+/// id alongside will do (the rest of it is not read).
+pub(super) fn affect_replay(raw: &[u8]) -> Result<Value, Failure> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct In {
+        anchor: AffectAnchorBody,
+        #[serde(default)]
+        events: Vec<Change>,
+        now: i64,
+        baseline_now: Baseline,
+    }
+    let req: In = input(raw)?;
+    let affect =
+        affect::replay(&req.anchor, &req.events, req.now, req.baseline_now).map_err(refused)?;
+    Ok(json!({ "affect": affect }))
+}
+
+/// The anchor with every change up to `upto` (inclusive) folded in, standing
+/// right after the last of them. Only the site writes the anchor; this is
+/// the rule it folds by.
+pub(super) fn affect_fold(raw: &[u8]) -> Result<Value, Failure> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct In {
+        anchor: AffectAnchorBody,
+        #[serde(default)]
+        events: Vec<Change>,
+        upto: i64,
+    }
+    let req: In = input(raw)?;
+    let anchor = affect::fold(&req.anchor, &req.events, req.upto).map_err(refused)?;
+    Ok(json!({ "anchor": anchor }))
 }

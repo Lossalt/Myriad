@@ -16,8 +16,9 @@ use chrono::{DateTime, FixedOffset};
 use myriad_persona_sync::{
     AssetRef, EntityVersion, Kind, OWNER, Rev, State,
     entity::{
-        Affect, AffectAnchorBody, Concept, DiaryBody, Embedding, EmbeddingModel, MemoryAudience,
-        MemoryBody, MemoryVenue, OutfitBody, PERSONA_ID, SOUP_GAME_ID, StickerBody,
+        Affect, AffectAnchorBody, AffectEventBody, Baseline, Concept, DiaryBody, Embedding,
+        EmbeddingModel, MemoryAudience, MemoryBody, MemoryVenue, OutfitBody, PERSONA_ID,
+        SOUP_GAME_ID, StickerBody,
     },
     hlc,
     persona::{PersonaBody, PersonaField, VISUAL_PREFIX},
@@ -181,8 +182,7 @@ async fn of_kind<C: ConnectionTrait>(
 ) -> Result<Vec<EntityVersion>, DbErr> {
     let mut found = match kind {
         Kind::AffectAnchor => anchor(db, owner).await?.into_iter().collect(),
-        // Affect events are not kept yet.
-        Kind::AffectEvent => Vec::new(),
+        Kind::AffectEvent => return affect_events(db, owner, after, limit).await,
         Kind::Diary => return diary(db, owner, after, limit).await,
         Kind::Memory => return memories(db, owner, after, limit).await,
         Kind::Outfit => outfits(db, pictures).await?,
@@ -640,10 +640,89 @@ async fn vitals<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr>
         .collect())
 }
 
-/// Her affect toward the owner, both parts settled to the later of their
-/// two settle times: the one point the anchor stands at. Read only; an
-/// owner she has no state with has no anchor.
+/// How her affect toward the owner moved, each change after the anchor's
+/// last as it was recorded (`store/addressee.rs`), in id order.
+async fn affect_events<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<EntityVersion>, DbErr> {
+    let mut values: Vec<sea_orm::Value> = vec![owner.into(), (limit as i64).into()];
+    if let Some(after) = after {
+        values.push(after.into());
+    }
+    let rows = db
+        .query_all_raw(statement(
+            &format!(
+                "SELECT id, at, cause, impulse, baseline_mood, baseline_arousal, before, after, \
+                 late, origin, rev, created_at FROM agent_affect_events WHERE user_id = $1{} \
+                 ORDER BY id COLLATE \"C\" LIMIT $2",
+                after_clause(after, "id", 3)
+            ),
+            values,
+        ))
+        .await?;
+    let mut out = Vec::new();
+    for row in &rows {
+        let id: String = row.try_get("", "id")?;
+        let at: DateTime<FixedOffset> = row.try_get("", "at")?;
+        let created_at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
+        let origin: String = row.try_get("", "origin")?;
+        let affect = |column: &str| -> Result<Option<Affect>, DbErr> {
+            Ok(serde_json::from_value(row.try_get::<Value>("", column)?).ok())
+        };
+        let (Some(before), Some(after), Ok(impulse)) = (
+            affect("before")?,
+            affect("after")?,
+            serde_json::from_value(row.try_get::<Value>("", "impulse")?),
+        ) else {
+            tracing::warn!(id, "[sync] an affect event does not read; left out");
+            continue;
+        };
+        let body = AffectEventBody {
+            subject: OWNER.to_string(),
+            at: at.timestamp_micros(),
+            cause: row.try_get("", "cause")?,
+            impulse,
+            baseline: Baseline {
+                mood: row.try_get("", "baseline_mood")?,
+                arousal: row.try_get("", "baseline_arousal")?,
+            },
+            before,
+            after,
+            late: row.try_get("", "late")?,
+        };
+        let stored: Option<String> = row.try_get("", "rev")?;
+        let rev = match stored.as_deref().map(str::parse::<Rev>) {
+            Some(Ok(rev)) => Ok(rev),
+            _ => hlc::legacy(created_at.timestamp_micros(), Some(&origin)),
+        };
+        match rev {
+            Ok(rev) => out.extend(entity_from(
+                Kind::AffectEvent,
+                &id,
+                rev,
+                &origin,
+                State::Live,
+                &body,
+            )),
+            Err(error) => {
+                tracing::warn!(%error, id, "[sync] an affect event's origin is not a side")
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Where replaying her affect toward the owner starts: the anchor kept since
+/// her first recorded change, or, before any, her state with both parts
+/// settled to the later of their two settle times (the one point it stands
+/// at). Read only; an owner she has no state with has no anchor.
 async fn anchor<C: ConnectionTrait>(db: &C, owner: i32) -> Result<Option<EntityVersion>, DbErr> {
+    if let Some(kept) = kept_anchor(db, owner).await? {
+        return Ok(Some(kept));
+    }
     let Some(state) = crate::models::entities::agent_addressee_state::Entity::find_by_id(owner)
         .one(db)
         .await?
@@ -688,6 +767,38 @@ async fn anchor<C: ConnectionTrait>(db: &C, owner: i32) -> Result<Option<EntityV
         State::Live,
         &body,
     ))
+}
+
+async fn kept_anchor<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+) -> Result<Option<EntityVersion>, DbErr> {
+    let Some(row) = db
+        .query_one_raw(statement(
+            "SELECT mood, arousal, emotion, emotion_arousal, at, through_event, rev \
+             FROM agent_affect_anchor WHERE user_id = $1",
+            vec![owner.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let at: DateTime<FixedOffset> = row.try_get("", "at")?;
+    let body = AffectAnchorBody {
+        affect: Affect {
+            mood: row.try_get("", "mood")?,
+            arousal: row.try_get("", "arousal")?,
+            emotion: row.try_get("", "emotion")?,
+            emotion_arousal: row.try_get("", "emotion_arousal")?,
+        },
+        at: at.timestamp_micros(),
+        through_event: row.try_get("", "through_event")?,
+    };
+    let rev = row
+        .try_get::<String>("", "rev")?
+        .parse()
+        .unwrap_or_else(|_| site_rev(at));
+    Ok(entity(Kind::AffectAnchor, OWNER, rev, State::Live, &body))
 }
 
 /// Vectors of the page's live memories, when the side asking uses the same
@@ -788,6 +899,15 @@ INSERT INTO merope_stickers (id, picture, meaning, venue, asset_id, identity, cr
 INSERT INTO agent_diary (id, user_id, content, source, created_at) VALUES
   ('d1', 41, '今天下雨了', 'chat', '2026-10-05Z'),
   ('d2', 42, '别人的日记', 'chat', '2026-10-05Z');
+INSERT INTO agent_affect_events (id, user_id, at, cause, impulse, baseline_mood, baseline_arousal,
+                                 before, after, created_at) VALUES
+  ('6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b', 41, '2026-10-08T12:00:00Z', 'user_praise',
+   '{{"appraisal":{{"emotion":82.0,"arousal":58.0,"scale":0.8}}}}', 70, 48,
+   '{{"mood":63.25,"arousal":48.0,"emotion":71.3,"emotionArousal":55.5}}',
+   '{{"mood":64.1,"arousal":49.2,"emotion":75.0,"emotionArousal":56.0}}', '2026-10-08T12:00:00Z'),
+  ('7a0d3c8f-0000-4000-8000-000000000042', 42, '2026-10-08T12:00:00Z', 'user_turn', '"none"',
+   70, 48, '{{"mood":70,"arousal":48,"emotion":50,"emotionArousal":50}}',
+   '{{"mood":70,"arousal":48,"emotion":50,"emotionArousal":50}}', '2026-10-08T12:00:00Z');
 INSERT INTO agent_addressee_state (user_id, mood, arousal, emotion, emotion_arousal,
        mood_settled_at, emotion_settled_at, updated_at)
 VALUES (41, 40, 50, 60, 50, '2026-10-09T00:00:00Z', '2026-10-09T01:00:00Z', '2026-10-09T01:00:00Z');
@@ -855,6 +975,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
             keys,
             vec![
                 (Kind::AffectAnchor, "owner"),
+                (Kind::AffectEvent, "6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b"),
                 (Kind::Diary, "d1"),
                 (Kind::Memory, "m_own"),
                 (Kind::Memory, "m_owner"),
@@ -908,6 +1029,12 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         let anchor = by("owner");
         assert_eq!(anchor.body["at"], 1_791_507_600_000_000_i64);
         assert!(anchor.body["affect"]["mood"].as_f64().unwrap() > 40.0);
+        // Only the owner's changes cross, as recorded.
+        let event = by("6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b");
+        assert_eq!(event.body["subject"], "owner");
+        assert_eq!(event.body["cause"], "user_praise");
+        assert_eq!(event.body["impulse"]["appraisal"]["scale"], 0.8);
+        assert_eq!(event.body["after"]["emotionArousal"], 56.0);
         // Pictures the site cannot read cross marked, not dropped.
         assert_eq!(
             by("coat").body["portrait"],
@@ -949,12 +1076,41 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         .unwrap();
         assert_eq!(rest.entities[0].id, "m_retired");
         assert_eq!(rest.entities.len(), 10);
+
+        // Once her first change is recorded, the anchor is the one kept.
+        db.execute_unprepared(
+            "INSERT INTO agent_affect_anchor (user_id, mood, arousal, emotion, emotion_arousal, \
+             at, through_event, rev) VALUES (41, 64.1, 49.2, 75, 56, '2026-10-08T12:00:00Z', \
+             '6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b', '001791460800000-000000-site')",
+        )
+        .await
+        .unwrap();
+        let kept = of_kind(
+            db,
+            &assets::Pictures::new(db, 41),
+            41,
+            Kind::AffectAnchor,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].body["affect"]["mood"], 64.1);
+        assert_eq!(
+            kept[0].body["throughEvent"],
+            "6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b"
+        );
+        assert_eq!(kept[0].rev.to_string(), "001791460800000-000000-site");
         assert!(!rest.more && rest.embeddings.is_empty());
 
         // The site's holdings count only what crosses.
         let holdings = super::super::holdings(db, 41).await.unwrap();
         assert!(holdings.persona);
-        assert_eq!((holdings.memories, holdings.diary), (3, 1));
+        assert_eq!(
+            (holdings.memories, holdings.diary, holdings.affect_events),
+            (3, 1, 1)
+        );
 
         fixture.close().await;
     }

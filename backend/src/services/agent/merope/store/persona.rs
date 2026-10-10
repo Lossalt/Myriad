@@ -299,6 +299,9 @@ where
     agent_addressee_state::Entity::delete_many()
         .exec(db)
         .await?;
+    // How her affect toward each of them moved, and where its replay starts.
+    db.execute_unprepared("DELETE FROM agent_affect_events; DELETE FROM agent_affect_anchor;")
+        .await?;
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
         .exec(db)
         .await?;

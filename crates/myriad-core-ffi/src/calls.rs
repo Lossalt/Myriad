@@ -159,6 +159,8 @@ const CALLS: &[(&str, Call)] = &[
     ("style.distance", style::distance),
     ("style.noticed", style::noticed),
     ("style.unlike", style::unlike),
+    ("sync.affect_fold", sync::affect_fold),
+    ("sync.affect_replay", sync::affect_replay),
     ("sync.canonicalize", sync::canonicalize),
     ("sync.check_rev", sync::check_rev),
     ("sync.compare", sync::compare),

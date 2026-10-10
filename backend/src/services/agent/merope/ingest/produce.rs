@@ -8,7 +8,7 @@ use super::super::gates::{decide_ingest, is_valuable_event};
 use super::super::store::{
     affect_from_state, get_or_create_state, recently_spoke_event, update_affect,
 };
-use super::super::{apply_task_outcome, is_extremely_low, is_logged_in_addressee};
+use super::super::{is_extremely_low, is_logged_in_addressee};
 use super::{
     SAME_EVENT_MINUTES, compact_summary, current_sight, is_enabled, is_trivial_line, log_skip,
     persist_persona_remember,
@@ -307,9 +307,12 @@ async fn apply_task_mood(db: &DatabaseConnection, user_id: i32, event_key: &str)
     let Some(succeeded) = task_mood_outcome(event_key) else {
         return;
     };
-    let Ok((previous, saved)) = update_affect(db, user_id, false, |affect| {
-        apply_task_outcome(affect, succeeded);
-    })
+    let Ok((previous, saved)) = update_affect(
+        db,
+        user_id,
+        false,
+        super::super::store::AffectChange::task(succeeded),
+    )
     .await
     else {
         return;

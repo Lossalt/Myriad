@@ -37,7 +37,9 @@ pub async fn holdings<C: ConnectionTrait>(db: &C, owner: i32) -> Result<Holdings
                 "SELECT \
                  EXISTS (SELECT 1 FROM agent_persona WHERE id = 'site') AS persona, \
                  (SELECT COUNT(*) FROM agent_memories WHERE {SYNCED_MEMORY})::BIGINT AS memories, \
-                 (SELECT COUNT(*) FROM agent_diary WHERE user_id = $1)::BIGINT AS diary"
+                 (SELECT COUNT(*) FROM agent_diary WHERE user_id = $1)::BIGINT AS diary, \
+                 (SELECT COUNT(*) FROM agent_affect_events WHERE user_id = $1)::BIGINT \
+                 AS affect_events"
             ),
             [owner.into()],
         ))
@@ -47,8 +49,7 @@ pub async fn holdings<C: ConnectionTrait>(db: &C, owner: i32) -> Result<Holdings
         persona: row.try_get("", "persona")?,
         memories: row.try_get::<i64>("", "memories")?.max(0) as u64,
         diary: row.try_get::<i64>("", "diary")?.max(0) as u64,
-        // Affect events are not kept yet.
-        affect_events: 0,
+        affect_events: row.try_get::<i64>("", "affect_events")?.max(0) as u64,
     })
 }
 

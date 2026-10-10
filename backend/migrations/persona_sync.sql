@@ -24,3 +24,41 @@ CREATE INDEX IF NOT EXISTS idx_agent_sync_devices_user_created
     ON agent_sync_devices (user_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sync_devices_one_parent
     ON agent_sync_devices (user_id) WHERE role = 'parent' AND revoked_at IS NULL;
+
+-- What moved her affect toward each person, one row per change, appended in
+-- the same transaction as the change itself (store/addressee.rs). `at` is
+-- the moment the change is stamped with; `baseline_*` what she settled
+-- toward before it; `before`/`after` are for audit and display, replay
+-- reads neither. Everyone's are kept (folded at night); only the owner's
+-- cross to other sides.
+CREATE TABLE IF NOT EXISTS agent_affect_events (
+    id VARCHAR(40) PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    at TIMESTAMPTZ NOT NULL,
+    cause VARCHAR(32) NOT NULL,
+    impulse JSONB NOT NULL,
+    baseline_mood DOUBLE PRECISION NOT NULL,
+    baseline_arousal DOUBLE PRECISION NOT NULL,
+    before JSONB NOT NULL,
+    after JSONB NOT NULL,
+    late BOOLEAN NOT NULL DEFAULT false,
+    origin VARCHAR(64) NOT NULL DEFAULT 'site',
+    rev VARCHAR(96),
+    created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_affect_events_user_at
+    ON agent_affect_events (user_id, at);
+
+-- Where replaying her affect toward a person starts: the affect right after
+-- the change `through_event`, at `at`. Written with the first change and
+-- moved forward when old changes are folded in; only the site writes it.
+CREATE TABLE IF NOT EXISTS agent_affect_anchor (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    mood DOUBLE PRECISION NOT NULL,
+    arousal DOUBLE PRECISION NOT NULL,
+    emotion DOUBLE PRECISION NOT NULL,
+    emotion_arousal DOUBLE PRECISION NOT NULL,
+    at TIMESTAMPTZ NOT NULL,
+    through_event VARCHAR(40),
+    rev VARCHAR(96) NOT NULL
+);

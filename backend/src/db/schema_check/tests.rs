@@ -48,6 +48,8 @@ fn test_folded_extension_tables_in_expected_schema() {
         "heartbeat_claims",
         "agent_memory_embeddings",
         "agent_sync_devices",
+        "agent_affect_events",
+        "agent_affect_anchor",
         "agent_intentions",
         "agent_autonomy_grants",
         // 005 扩展
@@ -602,6 +604,8 @@ VALUES
 DROP INDEX idx_phantasi_items_source_recent;
 DROP INDEX idx_metadata_history_user_date;
 DROP TABLE agent_sync_devices;
+DROP TABLE agent_affect_anchor;
+DROP TABLE agent_affect_events;
 INSERT INTO agent_persona (id, name, updated_at) VALUES ('site', 'Merope', NOW());
 ALTER TABLE agent_persona DROP COLUMN zone;
 INSERT INTO agent_memories (id, kind, content, source, venue, valid_from, created_at, updated_at)
@@ -638,6 +642,19 @@ ALTER TABLE agent_memories DROP COLUMN superseded_by, DROP COLUMN origin;
             .unwrap()
             .contains("WHERE")
     );
+    for table in ["agent_affect_events", "agent_affect_anchor"] {
+        assert!(
+            db.query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                format!("SELECT to_regclass('{table}')::text AS name"),
+            ))
+            .await
+            .unwrap()
+            .and_then(|row| row.try_get::<Option<String>>("", "name").ok().flatten())
+            .is_some(),
+            "the heal creates {table}"
+        );
+    }
     let zone = db
         .query_one_raw(Statement::from_string(
             DatabaseBackend::Postgres,

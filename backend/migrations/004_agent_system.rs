@@ -599,7 +599,7 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             )
             .await?;
 
-        // 同步她：设备凭据。schema_check::ensure_persona_sync_tables 跑同一份文件。
+        // 同步她：设备凭据、心情变化与锚点。schema_check::ensure_persona_sync_tables 跑同一份文件。
         manager
             .get_connection()
             .execute_unprepared(include_str!("persona_sync.sql"))
@@ -613,6 +613,8 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             .get_connection()
             .execute_unprepared(
                 r#"
+DROP TABLE IF EXISTS agent_affect_anchor;
+DROP TABLE IF EXISTS agent_affect_events;
 DROP TABLE IF EXISTS agent_sync_devices;
 DROP TABLE IF EXISTS merope_stickers;
 DROP TABLE IF EXISTS agent_memory_embeddings;
