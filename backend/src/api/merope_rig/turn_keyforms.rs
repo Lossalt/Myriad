@@ -116,12 +116,57 @@ impl Stage {
     }
 }
 
+/// Which part of a job's work its stage belongs to, so a page can tell where
+/// the whole stands (a figure's decomposing and its head's are both
+/// `decomposing`) and how long is left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// The worn bust's turn keys.
+    Bust,
+    /// A standing figure: enlarging, decomposing whole and in tiles, stitching.
+    Figure,
+    /// A standing figure's head, keyed as a bust.
+    Head,
+    /// A standing figure's head done, its body's keys still being made.
+    Body,
+    /// A kept job fitted again.
+    Refit,
+    /// A kept job handed over as it was.
+    Load,
+}
+
+impl Phase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Bust => "bust",
+            Self::Figure => "figure",
+            Self::Head => "head",
+            Self::Body => "body",
+            Self::Refit => "refit",
+            Self::Load => "load",
+        }
+    }
+}
+
+/// Where a standing figure's body keys stand, made alongside its head's.
+#[derive(Clone, Copy, Debug)]
+struct BodyProgress {
+    /// "turn" or "weight".
+    motion: &'static str,
+    stage: Stage,
+    done: u8,
+    total: u8,
+}
+
 struct Job {
     id: String,
     /// None: the worn bust; Some: a full-body set.
     outfit_id: Option<String>,
     master_asset_id: String,
     stage: Stage,
+    phase: Phase,
+    /// A standing figure's body keys, made alongside: none until they start.
+    body: Option<BodyProgress>,
     done: u8,
     total: u8,
     error: Option<Value>,
@@ -178,6 +223,12 @@ fn claim_job(
         outfit_id: outfit_id.clone(),
         master_asset_id: master_asset_id.to_owned(),
         stage,
+        phase: if outfit_id.is_some() {
+            Phase::Figure
+        } else {
+            Phase::Bust
+        },
+        body: None,
         done: 0,
         total,
         error: None,
@@ -576,6 +627,7 @@ async fn run_figure(
     let Some(plan) = plan else {
         tracing::info!(job = %id, "figure decomposed whole");
         return if turn {
+            update(id, |job| job.phase = Phase::Head);
             run(id, user_id, generation, picture.clone(), client, &cache).await
         } else {
             Ok(plain(whole, drawn.1))
@@ -610,6 +662,7 @@ async fn run_figure(
         let head_cache = TurnCache::for_master(&upper.bytes, generation, space_name, options);
         let (upper_psd, made) = if turn {
             // The bust's front decomposition is the upper tile's.
+            update(id, |job| job.phase = Phase::Head);
             let made = run(id, user_id, generation, upper, client, &head_cache).await?;
             (made.files.decompositions[0].clone(), Some(made))
         } else {
@@ -627,6 +680,7 @@ async fn run_figure(
         };
         prune_cache(cache_root(), CACHE_KEEP).await;
         update(id, |job| {
+            job.phase = Phase::Figure;
             job.stage = Stage::Stitching;
             job.done = 0;
             job.total = 1;
@@ -685,6 +739,7 @@ async fn alongside<B: Future>(
         Some(out) => out,
         None => {
             update(id, |job| {
+                job.phase = Phase::Body;
                 job.stage = Stage::Fitting;
                 job.done = 0;
                 job.total = 1;
@@ -754,16 +809,15 @@ async fn tile_decomposition(
     if let Some(psd) = cache.read(&file).await.filter(|psd| !psd.is_empty()) {
         return Ok(psd);
     }
-    let output = client
-        .decompose(
-            axum::body::Bytes::from(picture),
-            "image/png",
-            see_through::DecomposeOptions::default(),
-        )
-        .await
-        .map_err(see_through_error)?;
-    cache.write(&file, &output.psd).await;
-    Ok(output.psd)
+    let psd = decompose_waiting(
+        client,
+        axum::body::Bytes::from(picture),
+        "image/png",
+        see_through::DecomposeOptions::default(),
+    )
+    .await?;
+    cache.write(&file, &psd).await;
+    Ok(psd)
 }
 
 /// The head's keys placed on the figure (`figure_keys`), with the figure's
@@ -1079,6 +1133,13 @@ pub async fn get_turn_keyforms(
         "outfitId": job.outfit_id,
         "sourceMasterAssetId": job.master_asset_id,
         "stage": job.stage.as_str(),
+        "phase": job.phase.as_str(),
+        "body": job.body.map(|body| json!({
+            "motion": body.motion,
+            "stage": body.stage.as_str(),
+            "done": body.done,
+            "total": body.total,
+        })),
         "done": job.done,
         "total": job.total,
         "seconds": job.started.elapsed().as_secs(),
@@ -1273,6 +1334,7 @@ pub async fn load_turn_archive(
     )?;
     if new {
         update(&job_id, |job| {
+            job.phase = Phase::Load;
             job.done = 1;
             job.psd = Some(Arc::new(baked));
             job.keyforms = Some(Arc::new(keyforms));
@@ -1312,6 +1374,7 @@ pub async fn refit_turn_archive(
     if !new {
         return Ok(Json(json!({ "jobId": job_id })));
     }
+    update(&job_id, |job| job.phase = Phase::Refit);
     tracing::info!(job = %job_id, archive = %kept.id, "turn keyforms fitted again from an archive");
     let meta = ArchiveMeta {
         id: archive::new_id(),

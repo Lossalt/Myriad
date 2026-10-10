@@ -13,7 +13,10 @@ use std::io::Cursor;
 
 use serde_json::Value;
 
-use super::{ApiResult, TurnCache, draw_turn, internal_error, see_through_error};
+use super::{
+    ApiResult, BodyProgress, Stage, TurnCache, decompose_waiting, draw_turn, internal_error,
+    see_through_error, update,
+};
 use crate::services::{image_generation, see_through};
 
 /// Image generators draw a standing figure on a 2:3 canvas; a figure padded to
@@ -41,7 +44,7 @@ impl Motion {
         }
     }
 
-    /// The Space's mode for `/body_keys`.
+    /// The Space's mode for `/body_keys`, and the job's name for it.
     fn mode(self) -> &'static str {
         match self {
             Self::Turn => "turn",
@@ -108,6 +111,14 @@ pub(super) async fn body_turn_keys(
             Ok(keys) => Some(keys),
             Err((_, axum::Json(error))) => {
                 tracing::warn!(job = %id, ?motion, ?error, "body keys could not be made; the figure goes without them");
+                update(id, |job| {
+                    job.body = Some(BodyProgress {
+                        motion: motion.mode(),
+                        stage: Stage::Failed,
+                        done: 0,
+                        total: 1,
+                    })
+                });
                 None
             }
         }
@@ -133,6 +144,17 @@ async fn make(
     cache: &TurnCache,
 ) -> ApiResult<Value> {
     tracing::info!(job = %id, ?motion, "body keys: drawing");
+    let report = |stage: Stage, done: u8, total: u8| {
+        update(id, |job| {
+            job.body = Some(BodyProgress {
+                motion: motion.mode(),
+                stage,
+                done,
+                total,
+            })
+        })
+    };
+    report(Stage::Generating, 0, 2);
     let (padded, size, place) = padded(&master.bytes)?;
     let padded = image_generation::ImageReference {
         bytes: axum::body::Bytes::from(padded),
@@ -159,29 +181,33 @@ async fn make(
             }
         };
         drawn.push(png);
+        report(Stage::Generating, drawn.len() as u8, 2);
     }
     tracing::info!(job = %id, ?motion, "body keys: decomposing");
+    report(Stage::Decomposing, 0, 2);
     let mut turned = Vec::new();
     for (side, png) in BODY_SIDES.iter().zip(&drawn) {
         let file = format!("{}-{side}.psd", motion.cache());
         let psd = match cache.read(&file).await.filter(|psd| !psd.is_empty()) {
             Some(psd) => psd,
             None => {
-                let output = client
-                    .decompose(
-                        axum::body::Bytes::from(png.clone()),
-                        "image/png",
-                        see_through::DecomposeOptions::default(),
-                    )
-                    .await
-                    .map_err(see_through_error)?;
-                cache.write(&file, &output.psd).await;
-                output.psd
+                // The head's decompositions run meanwhile; this one waits its turn on the Space.
+                let psd = decompose_waiting(
+                    client,
+                    axum::body::Bytes::from(png.clone()),
+                    "image/png",
+                    see_through::DecomposeOptions::default(),
+                )
+                .await?;
+                cache.write(&file, &psd).await;
+                psd
             }
         };
         turned.push(psd);
+        report(Stage::Decomposing, turned.len() as u8, 2);
     }
     tracing::info!(job = %id, ?motion, "body keys: fitting");
+    report(Stage::Fitting, 0, 1);
     let [right_psd, left_psd]: [Vec<u8>; 2] = turned.try_into().expect("two sides");
     let [right_png, left_png]: [Vec<u8>; 2] = drawn.try_into().expect("two sides");
     let keys = client
@@ -195,6 +221,7 @@ async fn make(
         .await
         .map_err(see_through_error)?;
     tracing::info!(job = %id, ?motion, "body keys: keyed");
+    report(Stage::Done, 1, 1);
     serde_json::from_slice(&keys).map_err(internal_error)
 }
 

@@ -18,6 +18,19 @@ export interface TurnKeyformsStatus {
   error?: { error?: string; code?: string } | null
   /** The archive the finished job was kept as. */
   archiveId?: string | null
+  /**
+   * Which part of the work the stage belongs to: the worn bust's, a standing
+   * figure's own or its head's, waiting on its body, a refit, a loaded archive.
+   * Absent from a server before it was reported.
+   */
+  phase?: 'bust' | 'figure' | 'head' | 'body' | 'refit' | 'load'
+  /** A standing figure's body keys, made alongside its head's: none until they start. */
+  body?: {
+    motion: 'turn' | 'weight'
+    stage: 'generating' | 'decomposing' | 'fitting' | 'done' | 'failed'
+    done: number
+    total: number
+  } | null
 }
 
 /** A finished turn-keys job kept on the server: its drawings, decompositions and keys. */

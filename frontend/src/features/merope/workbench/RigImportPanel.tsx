@@ -14,6 +14,8 @@ import {
   ANIME25D_PROJECT_URL,
   PERSONA_UPSTREAM_THANKS,
 } from '../anime25drig/credit'
+import { enhancePlanOf } from './enhanceEstimate'
+import { EnhanceProgress } from './EnhanceProgress'
 import { FaceTabs } from './FaceTabs'
 import { aiExpressionLabel, turnKeysProgress } from './rigImportCopy'
 import { RigImportProgress } from './RigImportProgress'
@@ -177,6 +179,20 @@ export function RigImportPanel({
       {nothingChosen ? labels.rigEnhanceNone : decomposeLabel}
     </SettingsButton>
   )
+  const progressPlan = rig.decomposeStatus ? enhancePlanOf(rig.decomposeStatus, figure !== 'bust', enhancing) : null
+  // A loading button shows only its spinner: the job's steps and time left are shown beside it.
+  const decomposeControl = (
+    <>
+      {decomposeButton}
+      {operation === 'decompose' && rig.decomposeStatus && progressPlan ? (
+        <EnhanceProgress plan={progressPlan} status={rig.decomposeStatus} />
+      ) : operation === 'decompose' ? (
+        <p className="merope-motion-rig__hint" role="status" aria-live="polite">
+          {decomposeLabel}
+        </p>
+      ) : null}
+    </>
+  )
   return (
     <div className="merope-motion-rig">
       {/* With a rig, its mode's tags sit beside the group's title (RigModeTags). */}
@@ -270,7 +286,7 @@ export function RigImportPanel({
             </p>
           ) : null}
           <span className="merope-turn-archives__actions">
-            {decomposeButton}
+            {decomposeControl}
             {canGenerateAiExpressions && rig.enhanceExpressions && aiExpressions.length > 0 ? (
               <SettingsButton
                 type="button"
@@ -313,7 +329,7 @@ export function RigImportPanel({
       ) : (
         <section className="merope-motion-rig__path">
           {seeThroughSetup}
-          {decomposeButton}
+          {decomposeControl}
         </section>
       )}
       <input
