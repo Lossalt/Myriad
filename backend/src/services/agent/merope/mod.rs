@@ -488,6 +488,7 @@ mod tests {
             updated_by: None,
             updated_at: chrono::Utc::now().into(),
             zone: String::new(),
+            field_revs: serde_json::json!({}),
         };
         assert!(super::format_persona(&blank).is_none());
         assert!(!super::has_custom_persona(&blank));

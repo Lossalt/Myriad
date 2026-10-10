@@ -33,7 +33,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `origin`（默认 `site`），旧库走通用 ADD。
 /// 2026.10.10.3：她的心情变化记录 `agent_affect_events` 与锚点 `agent_affect_anchor`（随
 /// 004 与 `ensure_persona_sync_tables` 一起建）。
-pub const SCHEMA_VERSION: &str = "2026.10.10.3";
+/// 2026.10.10.4：人设逐字段的修订 `agent_persona.field_revs`（旧库走通用 ADD）与字段历史
+/// `agent_persona_field_history`（随 004 与 `ensure_persona_sync_tables` 一起建）。
+pub const SCHEMA_VERSION: &str = "2026.10.10.4";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

@@ -7,6 +7,7 @@
 
 pub mod assets;
 pub mod devices;
+pub mod fields;
 mod outside;
 pub mod snapshot;
 

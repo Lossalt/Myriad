@@ -51,8 +51,9 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
 );
 "#;
 
-/// Syncing her with other platforms: the device table and her affect's
-/// changes and anchor, for databases that ran 004 before they were in it. Same file as 004 (`migrations/persona_sync.sql`),
+/// Syncing her with other platforms: the device table, her affect's changes
+/// and anchor, and her persona's field history, for databases that ran 004
+/// before they were in it. Same file as 004 (`migrations/persona_sync.sql`),
 /// so the shapes cannot drift; every statement is `IF NOT EXISTS`.
 pub(crate) async fn ensure_persona_sync_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(include_str!("../../../migrations/persona_sync.sql"))

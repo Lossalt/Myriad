@@ -168,6 +168,7 @@ const CALLS: &[(&str, Call)] = &[
     ("sync.hlc_observe", sync::hlc_observe),
     ("sync.is_empty", sync::is_empty),
     ("sync.legacy_rev", sync::legacy_rev),
+    ("sync.persona_diff", sync::persona_diff),
     ("sync.rig_package_id", sync::rig_package_id),
     ("threads.section", own::threads_section),
     ("timing.asleep_at", timing::asleep_at),

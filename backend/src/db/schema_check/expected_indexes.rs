@@ -620,6 +620,12 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             columns: vec!["user_id".into(), "at".into()],
             is_unique: false,
         },
+        IndexDef {
+            name: "idx_agent_persona_field_history_field".into(),
+            table: "agent_persona_field_history".into(),
+            columns: vec!["field".into(), "replaced_at".into()],
+            is_unique: false,
+        },
         // agent_diary / agent_proactive_messages 索引
         IndexDef {
             name: "idx_agent_diary_user_created".into(),

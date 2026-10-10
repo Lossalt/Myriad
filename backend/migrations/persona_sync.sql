@@ -62,3 +62,19 @@ CREATE TABLE IF NOT EXISTS agent_affect_anchor (
     through_event VARCHAR(40),
     rev VARCHAR(96) NOT NULL
 );
+
+-- Values her persona's fields held until an edit replaced them, to look back
+-- on and put back (putting one back is one more edit). `rev`/`origin` are
+-- the replaced value's; `reason`: edit | lww | subject | trimmed.
+CREATE TABLE IF NOT EXISTS agent_persona_field_history (
+    id BIGSERIAL PRIMARY KEY,
+    field VARCHAR(64) NOT NULL,
+    value JSONB,
+    rev VARCHAR(96) NOT NULL,
+    origin VARCHAR(64) NOT NULL,
+    replaced_at TIMESTAMPTZ NOT NULL,
+    replaced_by_rev VARCHAR(96) NOT NULL,
+    reason VARCHAR(16) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_persona_field_history_field
+    ON agent_persona_field_history (field, replaced_at DESC);

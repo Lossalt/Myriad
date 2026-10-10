@@ -317,6 +317,54 @@ html.dark .merope-motion-page {
   min-width: 0;
 }
 
+.merope-persona-history {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--merope-accent, #6b7cff) 6%, transparent);
+}
+
+.merope-persona-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.merope-persona-history__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.merope-persona-history__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.merope-persona-history__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.merope-persona-history__copy small {
+  color: var(--merope-muted, #667085);
+  font-size: 12px;
+}
+
+.merope-persona-history__copy p {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .merope-motion-rig {
   display: grid;
   gap: 12px;

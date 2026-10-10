@@ -228,6 +228,7 @@ fn changing_generation_inputs_invalidates_portrait_contract() {
         updated_by: Some(1),
         updated_at: Utc::now().into(),
         zone: String::new(),
+        field_revs: serde_json::json!({}),
     };
     let active = apply_persona_update(
         existing,
@@ -293,6 +294,7 @@ fn changing_spoken_persona_keeps_confirmed_visual_assets() {
         updated_by: Some(1),
         updated_at: Utc::now().into(),
         zone: String::new(),
+        field_revs: serde_json::json!({}),
     };
     let active = apply_persona_update(
         existing,
@@ -353,6 +355,7 @@ fn persona_with_avatar() -> agent_persona::Model {
         updated_by: Some(1),
         updated_at: Utc::now().into(),
         zone: String::new(),
+        field_revs: serde_json::json!({}),
     }
 }
 
@@ -468,6 +471,7 @@ fn onboarding_seeds_do_not_invalidate_portrait() {
         updated_by: Some(1),
         updated_at: Utc::now().into(),
         zone: String::new(),
+        field_revs: serde_json::json!({}),
     };
     let active = apply_persona_update(
         existing,
@@ -524,6 +528,7 @@ async fn portrait_generation_lease_preserves_concurrent_persona_and_rejects_visu
         updated_by: Set(None),
         updated_at: Set(Utc::now().into()),
         zone: Set(String::new()),
+        field_revs: Set(serde_json::json!({})),
     }
     .insert(&transaction)
     .await
@@ -836,4 +841,75 @@ async fn her_affect_replayed_from_its_changes_is_what_she_feels() {
     let after = at(40 * 86_400 + 3_600, 0);
     assert_eq!(replayed(after).await, feels(after).await);
     isolated.drop().await;
+}
+
+/// Each write of her persona gives the fields it changed a new revision and
+/// keeps the values they held; a field it did not touch keeps its revision;
+/// putting an old value back is one more edit. On a real database (an
+/// isolated schema; skipped without a test database).
+#[tokio::test]
+async fn her_persona_edits_keep_each_fields_revision_and_what_it_replaced() {
+    use crate::services::persona_sync::fields;
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &fixture.db;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        db,
+        "INSERT INTO users (id, username) VALUES (1, 'owner1')",
+    )
+    .await
+    .unwrap();
+    let save = |summary: &str| {
+        upsert_persona_on(
+            db,
+            "Nova".to_string(),
+            "curious".to_string(),
+            PortraitUpdate::Keep,
+            PersonaContractUpdate {
+                persona: JsonDocumentUpdate::Set(json!({
+                    "summary": summary,
+                    "likes": ["雨天"],
+                })),
+                ..PersonaContractUpdate::default()
+            },
+            1,
+        )
+    };
+    let first = save("住在站点上").await.unwrap();
+    let revs = fields::revs(&first);
+    assert!(revs.contains_key("summary") && revs.contains_key("name"));
+    assert!(fields::history(db, "summary", 10).await.unwrap().is_empty());
+
+    let second = save("搬到了海边").await.unwrap();
+    let after = fields::revs(&second);
+    assert!(after["summary"].rev > revs["summary"].rev);
+    assert_eq!(
+        after["likes"], revs["likes"],
+        "untouched fields keep theirs"
+    );
+    assert_eq!(after["name"], revs["name"]);
+    let kept = fields::history(db, "summary", 10).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].value, json!("住在站点上"));
+    assert_eq!(kept[0].rev, revs["summary"].rev.to_string());
+    assert_eq!(kept[0].reason, "edit");
+    // Read back as stored, too.
+    assert_eq!(
+        fields::revs(&get_persona_on(db).await.unwrap().unwrap()),
+        after
+    );
+
+    // Putting the old value back is an edit like any other.
+    let third = save("住在站点上").await.unwrap();
+    assert!(fields::revs(&third)["summary"].rev > after["summary"].rev);
+    let kept = fields::history(db, "summary", 10).await.unwrap();
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[0].value, json!("搬到了海边"));
+
+    // The same write again changes nothing.
+    let same = save("住在站点上").await.unwrap();
+    assert_eq!(fields::revs(&same), fields::revs(&third));
+    assert_eq!(fields::history(db, "summary", 10).await.unwrap().len(), 2);
+    fixture.close().await;
 }

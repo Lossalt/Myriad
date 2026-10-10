@@ -480,6 +480,10 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("zone", "character varying")
                     .not_null()
                     .default_value("''"),
+                // Each field's last edit: `{field: {rev, origin}}`.
+                ColumnDef::new("field_revs", "jsonb")
+                    .not_null()
+                    .default_value("'{}'::jsonb"),
             ],
         },
         TableDef {
@@ -959,6 +963,19 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     .default_value("'site'"),
                 ColumnDef::new("rev", "character varying"),
                 ColumnDef::new("created_at", "timestamp with time zone").not_null(),
+            ],
+        },
+        TableDef {
+            name: "agent_persona_field_history".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "bigint").not_null(),
+                ColumnDef::new("field", "character varying").not_null(),
+                ColumnDef::new("value", "jsonb"),
+                ColumnDef::new("rev", "character varying").not_null(),
+                ColumnDef::new("origin", "character varying").not_null(),
+                ColumnDef::new("replaced_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("replaced_by_rev", "character varying").not_null(),
+                ColumnDef::new("reason", "character varying").not_null(),
             ],
         },
         TableDef {

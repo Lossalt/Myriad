@@ -225,6 +225,7 @@ mod tests {
             updated_by: None,
             updated_at: chrono::Utc::now().fixed_offset(),
             zone: String::new(),
+            field_revs: serde_json::json!({}),
         };
         let original = master_from_persona(&persona).unwrap();
         persona.name = "Renamed".into();
@@ -267,6 +268,7 @@ mod tests {
             updated_by: None,
             updated_at: chrono::Utc::now().fixed_offset(),
             zone: String::new(),
+            field_revs: serde_json::json!({}),
         };
         let full = master_for(&persona, MasterSlot::FullBody("w-full")).unwrap();
         assert_eq!(full.profile, CharacterAssetProfile::FullBody);

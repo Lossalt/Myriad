@@ -148,3 +148,99 @@ impl crate::entity::CheckBody for PersonaBody {
         Ok(())
     }
 }
+
+/// The revision and side of one field's last edit, as a side keeps it beside
+/// her persona (the site's `agent_persona.field_revs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldRev {
+    pub rev: Rev,
+    pub origin: String,
+}
+
+/// A value a field held until an edit replaced it: kept, so it can be put
+/// back (which is one more edit).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReplacedValue {
+    pub field: String,
+    pub value: Value,
+    /// The revision and side of the value replaced.
+    pub rev: Rev,
+    pub origin: String,
+    /// The revision of the edit that replaced it.
+    pub replaced_by_rev: Rev,
+    /// `edit` (on this side), `lww` (a later edit from another side won),
+    /// `subject` (the other side was chosen as her), `trimmed` (a list past
+    /// its limit).
+    pub reason: String,
+}
+
+/// What one write did to her persona, field by field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaDiff {
+    /// The fields whose value changed, by name.
+    pub changed: Vec<String>,
+    /// Every field's revision after the write: the changed ones at `rev`,
+    /// the rest as they were.
+    pub revs: BTreeMap<String, FieldRev>,
+    /// The values the write replaced (not those that were unset).
+    pub history: Vec<ReplacedValue>,
+}
+
+/// Compares her persona before and after one write by `origin` at `rev`:
+/// which fields changed (a field gone is a field set to `null`), their new
+/// revisions, and the values replaced, each with the revision it had. A field
+/// with no revision yet (written before revisions were kept) had `legacy`,
+/// from `site`.
+pub fn persona_diff(
+    before: &BTreeMap<String, Value>,
+    after: &BTreeMap<String, Value>,
+    revs: &BTreeMap<String, FieldRev>,
+    legacy: &Rev,
+    rev: &Rev,
+    origin: &str,
+    reason: &str,
+) -> Result<PersonaDiff, SyncError> {
+    check_node(origin)?;
+    if reason.is_empty() || reason.chars().count() > 16 {
+        return Err(SyncError::new("a reason is 1 to 16 characters"));
+    }
+    let mut out = PersonaDiff {
+        changed: Vec::new(),
+        revs: revs.clone(),
+        history: Vec::new(),
+    };
+    let names: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    for name in names {
+        let old = before.get(name).unwrap_or(&Value::Null);
+        let new = after.get(name).unwrap_or(&Value::Null);
+        if old == new {
+            continue;
+        }
+        let had = revs.get(name).cloned().unwrap_or_else(|| FieldRev {
+            rev: legacy.clone(),
+            origin: crate::hlc::SITE.to_string(),
+        });
+        if !old.is_null() {
+            out.history.push(ReplacedValue {
+                field: name.clone(),
+                value: old.clone(),
+                rev: had.rev,
+                origin: had.origin,
+                replaced_by_rev: rev.clone(),
+                reason: reason.to_string(),
+            });
+        }
+        out.changed.push(name.clone());
+        out.revs.insert(
+            name.clone(),
+            FieldRev {
+                rev: rev.clone(),
+                origin: origin.to_string(),
+            },
+        );
+    }
+    Ok(out)
+}

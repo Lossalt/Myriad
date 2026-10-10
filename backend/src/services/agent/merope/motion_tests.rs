@@ -239,6 +239,7 @@ fn motion_persona_payload_carries_temperament() {
         updated_by: None,
         updated_at: chrono::Utc::now().into(),
         zone: String::new(),
+        field_revs: serde_json::json!({}),
     };
     let payload = motion_persona_payload(Some(&blank), "restrained");
     assert_eq!(payload["name"], "瞳");

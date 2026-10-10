@@ -1700,6 +1700,7 @@
     "clock_ahead",
     "invalid_sync_clock",
     "sync_clock_required",
-    "invalid_zone"
+    "invalid_zone",
+    "persona_field_required"
   ]
 }

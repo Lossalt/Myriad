@@ -162,7 +162,12 @@ pub async fn upsert_persona_on<C>(
 where
     C: ConnectionTrait,
 {
-    let saved = write_persona_on(db, name, personality, portrait, contract, updated_by).await?;
+    let (before, saved) =
+        write_persona_on(db, name, personality, portrait, contract, updated_by).await?;
+    // Each field changed gets this write's revision; what it held is kept.
+    let saved =
+        crate::services::persona_sync::fields::record_write_on(db, before.as_ref(), saved, "edit")
+            .await?;
     super::super::clock::note_zone(Some(&saved.zone));
     Ok(saved)
 }
@@ -174,13 +179,14 @@ async fn write_persona_on<C>(
     portrait: PortraitUpdate,
     contract: PersonaContractUpdate,
     updated_by: i32,
-) -> Result<agent_persona::Model, anyhow::Error>
+) -> Result<(Option<agent_persona::Model>, agent_persona::Model), anyhow::Error>
 where
     C: ConnectionTrait,
 {
     memory_jobs::lock(db).await?;
     let (name, personality) = normalize_persona_fields(&name, &personality);
     if let Some(existing) = get_persona_on(db).await? {
+        let before = existing.clone();
         let saved = apply_persona_update(
             existing,
             name,
@@ -192,7 +198,7 @@ where
         .update(db)
         .await?;
         resync_persona_avatar_snapshots(db, saved.avatar_asset_id.as_deref()).await?;
-        return Ok(saved);
+        return Ok((Some(before), saved));
     }
     let active = agent_persona::ActiveModel {
         id: Set(PERSONA_ROW_ID.to_string()),
@@ -221,14 +227,16 @@ where
             .map(str::trim)
             .unwrap_or_default()
             .to_string()),
+        field_revs: Set(serde_json::json!({})),
     };
     match active.insert(db).await {
-        Ok(model) => Ok(model),
+        Ok(model) => Ok((None, model)),
         Err(err) if is_unique_conflict(&err) => {
             let existing = get_persona_on(db)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!(err))?;
-            Ok(apply_persona_update(
+            let before = existing.clone();
+            let saved = apply_persona_update(
                 existing,
                 name,
                 personality,
@@ -237,7 +245,8 @@ where
                 updated_by,
             )
             .update(db)
-            .await?)
+            .await?;
+            Ok((Some(before), saved))
         }
         Err(err) => Err(err.into()),
     }
@@ -299,9 +308,13 @@ where
     agent_addressee_state::Entity::delete_many()
         .exec(db)
         .await?;
-    // How her affect toward each of them moved, and where its replay starts.
-    db.execute_unprepared("DELETE FROM agent_affect_events; DELETE FROM agent_affect_anchor;")
-        .await?;
+    // How her affect toward each of them moved, and where its replay starts;
+    // and what her persona's fields held before.
+    db.execute_unprepared(
+        "DELETE FROM agent_affect_events; DELETE FROM agent_affect_anchor; \
+         DELETE FROM agent_persona_field_history;",
+    )
+    .await?;
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
         .exec(db)
         .await?;

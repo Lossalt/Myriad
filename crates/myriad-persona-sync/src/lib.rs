@@ -28,7 +28,10 @@ pub use entity::{
     State, canonicalize, canonicalize_envelope,
 };
 pub use hlc::Rev;
-pub use persona::{FieldClass, PersonaBody, PersonaField, field_class};
+pub use persona::{
+    FieldClass, FieldRev, PersonaBody, PersonaDiff, PersonaField, ReplacedValue, field_class,
+    persona_diff,
+};
 pub use rig::rig_package_id;
 
 /// Why an entity or input was refused: what, and why. Her data holds no

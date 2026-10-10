@@ -6,7 +6,7 @@
 use base64::Engine as _;
 use myriad_merope::RigManifest;
 use myriad_persona_sync::{
-    EntityVersion, Holdings, Rev,
+    EntityVersion, FieldRev, Holdings, Rev,
     affect::{self, Change},
     canonicalize as canonical_entity, compare as compare_sides,
     entity::{AffectAnchorBody, Baseline},
@@ -180,4 +180,40 @@ pub(super) fn affect_fold(raw: &[u8]) -> Result<Value, Failure> {
     let req: In = input(raw)?;
     let anchor = affect::fold(&req.anchor, &req.events, req.upto).map_err(refused)?;
     Ok(json!({ "anchor": anchor }))
+}
+
+/// One write to her persona, field by field: `before` and `after` as
+/// `{field: value}` (a field gone is `null`), `revs` the fields' revisions
+/// before it (`{field: {rev, origin}}`; one missing had `legacyRev`), the
+/// write's `rev` and `origin`. Gives the changed fields, every field's
+/// revision after it, and the values it replaced, to keep as her history.
+pub(super) fn persona_diff(raw: &[u8]) -> Result<Value, Failure> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct In {
+        before: std::collections::BTreeMap<String, Value>,
+        after: std::collections::BTreeMap<String, Value>,
+        #[serde(default)]
+        revs: std::collections::BTreeMap<String, FieldRev>,
+        legacy_rev: String,
+        rev: String,
+        origin: String,
+        #[serde(default = "edit")]
+        reason: String,
+    }
+    fn edit() -> String {
+        "edit".into()
+    }
+    let req: In = input(raw)?;
+    let diff = myriad_persona_sync::persona_diff(
+        &req.before,
+        &req.after,
+        &req.revs,
+        &rev(&req.legacy_rev)?,
+        &rev(&req.rev)?,
+        &req.origin,
+        &req.reason,
+    )
+    .map_err(refused)?;
+    serde_json::to_value(diff).map_err(refused)
 }

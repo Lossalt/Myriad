@@ -363,6 +363,76 @@ fn her_zone_is_a_name_or_unset_and_blank_is_unset() {
 }
 
 #[test]
+fn a_persona_write_gives_each_changed_field_its_revision_and_keeps_what_it_replaced() {
+    let fields = |pairs: &[(&str, Value)]| -> std::collections::BTreeMap<String, Value> {
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect()
+    };
+    let rev = |raw: &str| -> Rev { raw.parse().unwrap() };
+    let legacy = rev("001760000000000-000000-site");
+    let edit = rev("001760000005000-000000-site");
+    let mac = "dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60";
+    let revs = [(
+        "summary".to_string(),
+        FieldRev {
+            rev: rev("001760000001000-000003-dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60"),
+            origin: mac.into(),
+        },
+    )]
+    .into_iter()
+    .collect();
+    let before = fields(&[
+        ("name", json!("Merope")),
+        ("summary", json!("住在站点上的她。")),
+        ("likes", json!(["雨天"])),
+        ("zone", Value::Null),
+    ]);
+    let after = fields(&[
+        ("name", json!("Merope")),
+        ("summary", json!("搬到了海边。")),
+        ("likes", json!(["雨天", "旧书"])),
+        ("zone", json!("Asia/Tokyo")),
+    ]);
+    let diff = persona_diff(&before, &after, &revs, &legacy, &edit, "site", "edit").unwrap();
+    assert_eq!(diff.changed, vec!["likes", "summary", "zone"]);
+    assert_eq!(diff.revs["summary"].rev, edit);
+    assert_eq!(diff.revs["zone"].origin, "site");
+    assert!(!diff.revs.contains_key("name"));
+    // What was replaced keeps the revision it had: the Mac's, or the legacy
+    // one for a field written before revisions; an unset field has none.
+    let replaced: Vec<(&str, &str)> = diff
+        .history
+        .iter()
+        .map(|old| (old.field.as_str(), old.origin.as_str()))
+        .collect();
+    assert_eq!(replaced, vec![("likes", "site"), ("summary", mac)]);
+    assert_eq!(diff.history[0].rev, legacy);
+    assert_eq!(diff.history[1].value, json!("住在站点上的她。"));
+    assert_eq!(diff.history[1].replaced_by_rev, edit);
+    // Gone is set to null; the same again changes nothing.
+    let cleared = persona_diff(
+        &after,
+        &fields(&[("name", json!("Merope"))]),
+        &diff.revs,
+        &legacy,
+        &edit,
+        "site",
+        "edit",
+    )
+    .unwrap();
+    assert_eq!(cleared.changed, vec!["likes", "summary", "zone"]);
+    assert!(
+        persona_diff(&after, &after, &diff.revs, &legacy, &edit, "site", "edit")
+            .unwrap()
+            .changed
+            .is_empty()
+    );
+    assert!(persona_diff(&before, &after, &revs, &legacy, &edit, "", "edit").is_err());
+}
+
+#[test]
 fn a_side_listing_an_entity_twice_is_refused() {
     let one = canonicalize(entity_fixture(Kind::Diary)).unwrap();
     assert!(compare(vec![one.clone(), one], Vec::new()).is_err());

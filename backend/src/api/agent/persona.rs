@@ -368,6 +368,44 @@ pub async fn put_persona(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PersonaHistoryQuery {
+    pub field: String,
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+/// GET /api/agent/persona/history?field=summary
+///
+/// The values one field of her persona held before edits replaced them,
+/// newest first. Putting one back is an ordinary PUT of the persona.
+pub async fn get_persona_history(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    axum::extract::Query(query): axum::extract::Query<PersonaHistoryQuery>,
+) -> Result<Json<Value>, HttpError> {
+    require_merope_enabled().await?;
+    let _user_id = require_site_owner(&claims, &db).await?;
+    let field = query.field.trim();
+    if field.is_empty() || field.chars().count() > 64 {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Which field of her persona",
+                "code": "persona_field_required"
+            })),
+        )));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(
+        1,
+        crate::services::persona_sync::fields::HISTORY_KEPT as u64,
+    );
+    let entries = crate::services::persona_sync::fields::history(&db, field, limit)
+        .await
+        .map_err(|error| persona_store_http("load persona history", error))?;
+    Ok(Json(json!({ "field": field, "entries": entries })))
+}
+
 /// DELETE /api/agent/persona
 pub async fn delete_persona(
     State(db): State<DatabaseConnection>,

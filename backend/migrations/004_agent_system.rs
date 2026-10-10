@@ -465,7 +465,8 @@ CREATE TABLE IF NOT EXISTS agent_persona (
     avatar_generation JSONB,
     updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    zone VARCHAR(64) NOT NULL DEFAULT ''
+    zone VARCHAR(64) NOT NULL DEFAULT '',
+    field_revs JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS agent_addressee_state (
@@ -599,7 +600,7 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             )
             .await?;
 
-        // 同步她：设备凭据、心情变化与锚点。schema_check::ensure_persona_sync_tables 跑同一份文件。
+        // 同步她：设备凭据、心情变化与锚点、人设字段历史。schema_check::ensure_persona_sync_tables 跑同一份文件。
         manager
             .get_connection()
             .execute_unprepared(include_str!("persona_sync.sql"))
@@ -613,6 +614,7 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             .get_connection()
             .execute_unprepared(
                 r#"
+DROP TABLE IF EXISTS agent_persona_field_history;
 DROP TABLE IF EXISTS agent_affect_anchor;
 DROP TABLE IF EXISTS agent_affect_events;
 DROP TABLE IF EXISTS agent_sync_devices;

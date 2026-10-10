@@ -18,6 +18,7 @@ pub(super) const TESTED: &[&str] = &[
     "sync.hlc_observe",
     "sync.is_empty",
     "sync.legacy_rev",
+    "sync.persona_diff",
     "sync.rig_package_id",
 ];
 
@@ -267,4 +268,27 @@ fn her_affect_is_replayed_and_folded_as_the_crate_does() {
         &json!({ "anchor": anchor.body, "now": now, "baselineNow": baseline, "extra": 1 }),
     );
     assert_eq!(status, STATUS_BAD_INPUT);
+}
+
+#[test]
+fn a_persona_write_is_diffed_field_by_field() {
+    let diff = ok(
+        "sync.persona_diff",
+        json!({
+            "before": { "name": "Merope", "summary": "住在站点上的她。" },
+            "after": { "name": "Merope", "summary": "搬到了海边。", "zone": "Asia/Tokyo" },
+            "revs": {},
+            "legacyRev": "001760000000000-000000-site",
+            "rev": "001760000005000-000001-dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60",
+            "origin": "dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60",
+        }),
+    );
+    assert_eq!(diff["changed"], json!(["summary", "zone"]));
+    assert_eq!(diff["history"][0]["value"], "住在站点上的她。");
+    assert_eq!(diff["history"][0]["rev"], "001760000000000-000000-site");
+    assert_eq!(diff["history"][0]["reason"], "edit");
+    assert_eq!(
+        diff["revs"]["zone"]["origin"],
+        "dev_8c1e0d5a6f2b4c3d9e7a1b2c3d4e5f60"
+    );
 }

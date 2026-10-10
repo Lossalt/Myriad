@@ -204,6 +204,18 @@ export interface McpConfigSnapshot {
   runtimePolicy?: { localStdioAllowed: boolean; gatewayConfigured: boolean }
 }
 
+/** A value a persona field held until an edit replaced it. */
+export interface PersonaFieldHistoryEntry {
+  id: number
+  field: string
+  value: unknown
+  rev: string
+  /** `site`, or the device that wrote it. */
+  origin: string
+  replacedAt: string
+  reason: string
+}
+
 export interface AgentPersona {
   name: string
   portraitAssetId: string | null
@@ -1187,6 +1199,14 @@ class AgentService {
     zone?: string | null
   }): Promise<AgentPersona> {
     return apiService.put(`${this.baseUrl}/persona`, body)
+  }
+
+  /** Values one field of her persona held before edits replaced them, newest first. */
+  async getPersonaHistory(field: string): Promise<PersonaFieldHistoryEntry[]> {
+    const body = await apiService.get<{ entries: PersonaFieldHistoryEntry[] }>(
+      `${this.baseUrl}/persona/history?field=${encodeURIComponent(field)}`,
+    )
+    return Array.isArray(body.entries) ? body.entries : []
   }
 
   async deletePersona(): Promise<void> {
