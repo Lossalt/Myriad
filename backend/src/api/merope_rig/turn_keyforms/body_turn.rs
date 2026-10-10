@@ -3,14 +3,15 @@
 //! （头整体、脖子、上衣、下装、左右大腿小腿、左右鞋、左右手臂）拟合到两张图
 //! 上（`/body_keys`），只留下左右方向相反的那部分位移，放到全身的图上。
 //!
-//! 两张图与两份拆层按全身的图存在缓存里；拟合每次重做。拿不到身体关键形时，
-//! 全身照常只带头部关键形：这一步的失败不让整个任务失败。
+//! 和头部的半身流程同时跑（不改任务进度）。两张图与两份拆层按全身的图存在缓存
+//! 里；拟合每次重做。拿不到身体关键形时，全身照常只带头部关键形：这一步的失败
+//! 不让整个任务失败。
 
 use std::io::Cursor;
 
 use serde_json::Value;
 
-use super::{ApiResult, Stage, TurnCache, draw_turn, internal_error, see_through_error, update};
+use super::{ApiResult, TurnCache, draw_turn, internal_error, see_through_error};
 use crate::services::{image_generation, see_through};
 
 /// Bump when the body turn's prompt or framing changes: cached drawings go with it.
@@ -72,11 +73,7 @@ async fn make(
     client: &see_through::SeeThroughClient,
     cache: &TurnCache,
 ) -> ApiResult<Value> {
-    update(id, |job| {
-        job.stage = Stage::Generating;
-        job.done = 0;
-        job.total = 2;
-    });
+    tracing::info!(job = %id, "body turn: drawing");
     let (padded, size, place) = padded(&master.bytes)?;
     let padded = image_generation::ImageReference {
         bytes: axum::body::Bytes::from(padded),
@@ -103,13 +100,8 @@ async fn make(
             }
         };
         drawn.push(png);
-        update(id, |job| job.done += 1);
     }
-    update(id, |job| {
-        job.stage = Stage::Decomposing;
-        job.done = 0;
-        job.total = 2;
-    });
+    tracing::info!(job = %id, "body turn: decomposing");
     let mut turned = Vec::new();
     for (side, png) in BODY_SIDES.iter().zip(&drawn) {
         let file = format!("{BODY_CACHE}-{side}.psd");
@@ -129,13 +121,8 @@ async fn make(
             }
         };
         turned.push(psd);
-        update(id, |job| job.done += 1);
     }
-    update(id, |job| {
-        job.stage = Stage::Fitting;
-        job.done = 0;
-        job.total = 1;
-    });
+    tracing::info!(job = %id, "body turn: fitting");
     let [right_psd, left_psd]: [Vec<u8>; 2] = turned.try_into().expect("two sides");
     let [right_png, left_png]: [Vec<u8>; 2] = drawn.try_into().expect("two sides");
     let keys = client
@@ -147,7 +134,7 @@ async fn make(
         )
         .await
         .map_err(see_through_error)?;
-    update(id, |job| job.done += 1);
+    tracing::info!(job = %id, "body turn: keyed");
     serde_json::from_slice(&keys).map_err(internal_error)
 }
 

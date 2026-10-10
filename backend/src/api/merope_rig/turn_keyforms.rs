@@ -582,69 +582,115 @@ async fn run_figure(
         };
     };
     tracing::info!(job = %id, tiles = ?plan.tiles, "figure decomposed in tiles");
+    // With turn keys, the body's turn is made alongside the head's: its drawings
+    // and fit need only the figure's whole decomposition (body_turn).
+    let body = async {
+        if turn {
+            body_turn::body_turn_keys(
+                id, user_id, generation, &reference, &picture, &whole, client, &cache,
+            )
+            .await
+        } else {
+            None
+        }
+    };
     let [upper, middle, lower] = plan.crops;
-    let middle = tile_decomposition(client, &cache, "middle", middle).await?;
-    update(id, |job| job.done += 1);
-    let lower = tile_decomposition(client, &cache, "lower", lower).await?;
-    update(id, |job| job.done += 1);
-    let upper = image_generation::ImageReference {
-        bytes: axum::body::Bytes::from(upper),
-        media_type: "image/png".to_string(),
-    };
-    let head_cache = TurnCache::for_master(&upper.bytes, generation, space_name, options);
-    let (upper_psd, made) = if turn {
-        // The bust's front decomposition is the upper tile's.
-        let made = run(id, user_id, generation, upper, client, &head_cache).await?;
-        (made.files.decompositions[0].clone(), Some(made))
-    } else {
-        let psd = decomposition(
-            client,
-            &head_cache,
-            0,
-            &upper.bytes,
-            &upper.media_type,
-            options,
-        )
-        .await?;
+    let tiles = plan.tiles;
+    let head = async {
+        let middle = tile_decomposition(client, &cache, "middle", middle).await?;
         update(id, |job| job.done += 1);
-        (psd, None)
+        let lower = tile_decomposition(client, &cache, "lower", lower).await?;
+        update(id, |job| job.done += 1);
+        let upper = image_generation::ImageReference {
+            bytes: axum::body::Bytes::from(upper),
+            media_type: "image/png".to_string(),
+        };
+        let head_cache = TurnCache::for_master(&upper.bytes, generation, space_name, options);
+        let (upper_psd, made) = if turn {
+            // The bust's front decomposition is the upper tile's.
+            let made = run(id, user_id, generation, upper, client, &head_cache).await?;
+            (made.files.decompositions[0].clone(), Some(made))
+        } else {
+            let psd = decomposition(
+                client,
+                &head_cache,
+                0,
+                &upper.bytes,
+                &upper.media_type,
+                options,
+            )
+            .await?;
+            update(id, |job| job.done += 1);
+            (psd, None)
+        };
+        prune_cache(cache_root(), CACHE_KEEP).await;
+        update(id, |job| {
+            job.stage = Stage::Stitching;
+            job.done = 0;
+            job.total = 1;
+        });
+        let stitched = client
+            .figure_stitch(
+                drawn.clone(),
+                whole.clone(),
+                [upper_psd, middle, lower],
+                &tiles,
+            )
+            .await
+            .map_err(see_through_error)?;
+        update(id, |job| job.done += 1);
+        let Some(made) = made else {
+            return Ok(plain(stitched, drawn.1.clone()));
+        };
+        let figure = FigureMeta {
+            master: String::new(),
+            master_media_type: drawn.1.clone(),
+            crop_box: tiles.upper,
+        };
+        let kept = FigureFiles {
+            master: drawn.0.clone(),
+            decomposition: stitched,
+        };
+        put_back(client, made, figure, kept).await
     };
-    prune_cache(cache_root(), CACHE_KEEP).await;
-    update(id, |job| {
-        job.stage = Stage::Stitching;
-        job.done = 0;
-        job.total = 1;
-    });
-    let stitched = client
-        .figure_stitch(
-            drawn.clone(),
-            whole.clone(),
-            [upper_psd, middle, lower],
-            &plan.tiles,
-        )
-        .await
-        .map_err(see_through_error)?;
-    update(id, |job| job.done += 1);
-    let Some(made) = made else {
-        return Ok(plain(stitched, drawn.1));
-    };
-    let figure = FigureMeta {
-        master: String::new(),
-        master_media_type: drawn.1.clone(),
-        crop_box: plan.tiles.upper,
-    };
-    let kept = FigureFiles {
-        master: drawn.0,
-        decomposition: stitched,
-    };
-    let mut made = put_back(client, made, figure, kept).await?;
-    // The body turns on the figure's whole decomposition, the canvas its turned drawings are decomposed on.
-    let body = body_turn::body_turn_keys(
-        id, user_id, generation, &reference, &picture, &whole, client, &cache,
-    )
-    .await;
-    made.files.keyforms = body_turn::with_body_keys(made.files.keyforms, body.as_ref());
+    let (made, body) = alongside(id, head, body).await;
+    let mut made = made?;
+    made.files.keyforms = body_turn::with_body_keys(made.files.keyforms, body.flatten().as_ref());
     Ok(made)
+}
+
+/// The head's work and the body's turn, run together. The job reports the
+/// head's stages; done first, it then waits on the body as fitting. A failed
+/// head does not wait: the body is dropped with it.
+async fn alongside<B: Future>(
+    id: &str,
+    head: impl Future<Output = ApiResult<Made>>,
+    body: B,
+) -> (ApiResult<Made>, Option<B::Output>) {
+    tokio::pin!(head);
+    tokio::pin!(body);
+    let mut body_out = None;
+    let head_out = loop {
+        tokio::select! {
+            out = &mut body, if body_out.is_none() => body_out = Some(out),
+            out = &mut head => break out,
+        }
+    };
+    if head_out.is_err() {
+        return (head_out, None);
+    }
+    let body_out = match body_out {
+        Some(out) => out,
+        None => {
+            update(id, |job| {
+                job.stage = Stage::Fitting;
+                job.done = 0;
+                job.total = 1;
+            });
+            body.await
+        }
+    };
+    (head_out, Some(body_out))
 }
 
 /// A plain figure: its decomposition, no keys (`null`), nothing kept.
@@ -1334,6 +1380,40 @@ fn missing_job() -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn made() -> Made {
+        plain(Vec::new(), "image/png".to_string())
+    }
+
+    #[tokio::test]
+    async fn the_body_turn_runs_alongside_the_head_and_is_waited_for() {
+        let (id, _) = claim_job(&Some("alongside-a".into()), "m", Stage::Decomposing, 3).unwrap();
+        // The head is done first: the job then waits on the body as fitting.
+        let body = async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            7
+        };
+        let (head, body) = alongside(&id, async { Ok(made()) }, body).await;
+        assert!(head.is_ok());
+        assert_eq!(body, Some(7));
+        let stage = JOB.lock().unwrap().as_ref().map(|job| job.stage);
+        assert_eq!(stage, Some(Stage::Fitting));
+        update(&id, |job| job.stage = Stage::Done);
+        // The body is done first: kept until the head is.
+        let head = async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            Ok(made())
+        };
+        let (head, body) = alongside(&id, head, async { 8 }).await;
+        assert!(head.is_ok());
+        assert_eq!(body, Some(8));
+        // A failed head does not wait for the body.
+        let failed = async { Err::<Made, ApiError>(missing_job()) };
+        let (head, body) = alongside(&id, failed, std::future::pending::<u8>()).await;
+        assert!(head.is_err());
+        assert_eq!(body, None);
+        update(&id, |job| job.stage = Stage::Done);
+    }
 
     #[test]
     fn prompts_turn_right_left_then_raise_and_lower() {
