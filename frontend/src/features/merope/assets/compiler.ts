@@ -108,6 +108,7 @@ function copyPreviewPlaybackProfiles(
   if (!playback || !source.anime25dPlayback) return
   source.anime25dPlayback.chestProfile = { ...playback.chestProfile }
   source.anime25dPlayback.shellProfile = structuredClone(playback.shellProfile)
+  if (playback.partProfile) source.anime25dPlayback.partProfile = structuredClone(playback.partProfile)
 }
 
 export async function persistRigAsset(

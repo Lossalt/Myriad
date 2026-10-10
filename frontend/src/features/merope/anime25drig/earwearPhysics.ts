@@ -2,7 +2,26 @@ import type {
   Anime25DAttachmentPixels,
   Anime25DLayerAttachment,
 } from './layerAttachment'
-import type { Anime25DPlaybackLayer } from './types'
+import type { PendulumTuning } from './partPhysics'
+import type { Anime25DPart, Anime25DPlayback, Anime25DPlaybackLayer } from './types'
+import { movingPartIn, PENDULUM_DEFAULT, pendulumTuning } from './partPhysics'
+
+/**
+ * What swings from a layer's attachment: a part the inventory says hangs
+ * swings by what it is made of; an earring it said nothing of still swings
+ * when its drawing hangs.
+ */
+export function bindHangingPhysics(
+  source: Anime25DPlaybackLayer,
+  attachment: Pick<Anime25DLayerAttachment, 'x' | 'y'> | null,
+  playback: Pick<Anime25DPlayback, 'partProfile' | 'anchors'>,
+  readPixels: (source: Anime25DPlaybackLayer) => Anime25DAttachmentPixels | null,
+): EarwearPhysics | null {
+  const faceHeight = playback.anchors.face.y1 - playback.anchors.face.y0
+  const part = movingPartIn(playback.partProfile, source.name)
+  if (part && attachment) return bindPartPhysics(source, attachment, part, faceHeight, playback.anchors.face.cx)
+  return source.role === 'earwear' ? bindEarwearPhysics(source, attachment, readPixels(source), faceHeight) : null
+}
 
 /** A rigid pendant, not a deformable strand. No asset/schema migration needed. */
 export function bindEarwearPhysics(
@@ -52,6 +71,24 @@ export function bindEarwearPhysics(
 }
 
 /**
+ * A part the import's inventory says hangs and swings (partPhysics), whatever
+ * its layer: its pendulum runs from its anchor to the bottom of its drawing,
+ * tuned by what it is made of.
+ */
+export function bindPartPhysics(
+  source: Anime25DPlaybackLayer,
+  attachment: Pick<Anime25DLayerAttachment, 'x' | 'y'> | null,
+  part: Readonly<Anime25DPart>,
+  faceHeight: number,
+  centerX: number,
+): EarwearPhysics | null {
+  if (!attachment || faceHeight <= 0) return null
+  const length = Math.max(source.y + source.h, part.box[3]) - attachment.y
+  if (!(length > faceHeight * 0.05)) return null
+  return new EarwearPhysics(length, faceHeight, attachment.x < centerX ? -1 : 1, pendulumTuning(part))
+}
+
+/**
  * Damped angular pendula driven by support acceleration, with a rigid 3D projection.
  * Cubism's input/model/output separation is retained; constants are artistic, not
  * measured jewellery properties. There is no wind/random forcing at rest.
@@ -74,6 +111,7 @@ export class EarwearPhysics {
     private readonly length: number,
     private readonly faceHeight: number,
     private readonly side: number,
+    private readonly tuning: Readonly<PendulumTuning> = PENDULUM_DEFAULT,
   ) {}
 
   /**
@@ -124,8 +162,10 @@ export class EarwearPhysics {
       const az = this.hasVelocity
         ? clamp((vz - this.vz) / dt, -limit, limit)
         : 0
-      const omega2 = clamp((this.faceHeight / this.length) * 24, 36, 180)
-      const damping = 0.65 * Math.sqrt(omega2)
+      const omega2 = clamp((this.faceHeight / this.length) * 24, 36, 180) * this.tuning.stiffness
+      const damping = this.tuning.damping * Math.sqrt(omega2)
+      const rollLimit = 0.65 * this.tuning.reach
+      const pitchLimit = 0.55 * this.tuning.reach
       const count = Math.ceil(dt * 240)
       const h = dt / count
       for (let i = 0; i < count; i++) {
@@ -143,12 +183,12 @@ export class EarwearPhysics {
           h
         this.roll += this.rollVelocity * h
         this.pitch += this.pitchVelocity * h
-        if (Math.abs(this.roll) > 0.65) {
-          this.roll = clamp(this.roll, -0.65, 0.65)
+        if (Math.abs(this.roll) > rollLimit) {
+          this.roll = clamp(this.roll, -rollLimit, rollLimit)
           this.rollVelocity = 0
         }
-        if (Math.abs(this.pitch) > 0.55) {
-          this.pitch = clamp(this.pitch, -0.55, 0.55)
+        if (Math.abs(this.pitch) > pitchLimit) {
+          this.pitch = clamp(this.pitch, -pitchLimit, pitchLimit)
           this.pitchVelocity = 0
         }
       }

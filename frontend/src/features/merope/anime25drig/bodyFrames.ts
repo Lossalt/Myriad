@@ -57,6 +57,7 @@ import {
   SLEEVE_JELLY,
 } from './jellyVolume'
 import { writeAnime25DLayerGlobalTransform } from './layerTransform'
+import { movingPartIn, skirtTuning } from './partPhysics'
 import { writePoseCorrectionWeights } from './poseCorrections'
 import { BODY_ROLL_RADIANS, HEAD_ROLL_RADIANS } from './poseScale'
 import { deformAnime25DSecondaryPoint, shellTurnBlend } from './secondaryDeformation'
@@ -264,7 +265,7 @@ export class Anime25DBodyFrames {
       figure: this.figure,
     }
     // With bones the figure sways from its feet, hips and shoulders together.
-    this.standing = Anime25DStanding.of(anchors, Boolean(this.figure))
+    this.standing = Anime25DStanding.of(anchors, Boolean(this.figure), skirtTuning(movingPartIn(playback.partProfile, 'bottomwear')))
     this.collarMotion = {
       neckPivotX: anchors.neckPivot.x,
       neckPivotY: anchors.neckPivot.y,

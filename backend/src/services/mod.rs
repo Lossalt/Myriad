@@ -153,6 +153,7 @@ pub mod qq_bot; // QQ C2C Gateway worker
 pub mod qq_pairing; // QQ C2C pairing codes + user_identities
 pub mod qq_work; // QQ C2C send adapter + Work entry
 pub mod rig_chest_analysis; // One-shot vision profile for Anime2.5D chest motion
+pub mod rig_part_analysis; // One-shot vision inventory of a rig's moving parts
 pub mod rsshub_service;
 pub mod telegram_bot; // Telegram DM getUpdates worker
 pub mod telegram_pairing; // Telegram DM pairing codes + user_identities

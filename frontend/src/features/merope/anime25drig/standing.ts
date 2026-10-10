@@ -143,13 +143,20 @@ export class Anime25DStanding {
      * (a figure with bones), rather than against it.
      */
     private readonly withLean: boolean,
+    /** The skirt's trail as its material sets it (partPhysics). */
+    private readonly skirtSpring: Readonly<{ frequency: number; damping: number }>,
   ) {}
 
   /** A standing figure's stance, or none for a bust. */
-  static of(anchors: Readonly<Anime25DPlaybackAnchors>, withLean = false): Anime25DStanding | null {
+  static of(
+    anchors: Readonly<Anime25DPlaybackAnchors>,
+    withLean = false,
+    skirt: Readonly<{ frequency: number; damping: number }> | null = null,
+  ): Anime25DStanding | null {
     return anchors.groundY === undefined
       ? null
-      : new Anime25DStanding(anchors.groundY, anchors.bodyPivot.y, withLean)
+      : new Anime25DStanding(anchors.groundY, anchors.bodyPivot.y, withLean,
+        skirt ?? { frequency: SKIRT_FREQUENCY, damping: SKIRT_DAMPING })
   }
 
   /** How far the hips move at a lean of `body`. */
@@ -178,7 +185,7 @@ export class Anime25DStanding {
       settle(this.knees.L, free.L)
       settle(this.knees.R, free.R)
     } else {
-      stepSpring(this.skirt, hips, dt, SKIRT_FREQUENCY, SKIRT_DAMPING)
+      stepSpring(this.skirt, hips, dt, this.skirtSpring.frequency, this.skirtSpring.damping)
       stepSpring(this.knees.L, free.L, dt, LEG_FREQUENCY, LEG_DAMPING)
       stepSpring(this.knees.R, free.R, dt, LEG_FREQUENCY, LEG_DAMPING)
     }

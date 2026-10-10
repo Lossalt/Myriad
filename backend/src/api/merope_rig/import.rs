@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     middleware::auth::Claims,
-    services::{image_generation, merope_rig, rig_chest_analysis},
+    services::{image_generation, merope_rig, rig_chest_analysis, rig_part_analysis},
 };
 
 const MAX_RIG_IMPORT_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -134,6 +134,37 @@ async fn prepare_import_chest_profile(
         rig_chest_analysis::analyze_once_or_fallback(playback, &reference),
     )
     .await;
+}
+
+/// The rig's moving parts (rig_part_analysis): looked for once in preview,
+/// carried into the import, never asked again.
+async fn prepare_import_part_profile(
+    user_id: i32,
+    source: &mut ImportRigSourceRequest,
+    analysis_reference: Option<&[u8]>,
+) {
+    let Some(playback) = source.anime25d_playback.as_mut() else {
+        return;
+    };
+    let reference = analysis_reference.and_then(|bytes| {
+        image_generation::ImageReference::new(bytes.to_vec(), "image/png")
+            .inspect_err(|error| tracing::warn!(%error, "could not load the rig reference for the part inventory"))
+            .ok()
+    });
+    match reference {
+        Some(reference) => {
+            crate::services::ai_cost_ledger::with_site_ai_ledger(
+                user_id,
+                "merope",
+                "rig-part-analysis",
+                rig_part_analysis::analyze_once(playback, &reference),
+            )
+            .await;
+        }
+        None => {
+            rig_part_analysis::ensure_profile(playback);
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,6 +374,7 @@ pub(super) async fn preview_rig(
         Some(&analysis_reference_bytes),
     )
     .await;
+    prepare_import_part_profile(user_id, &mut source, Some(&analysis_reference_bytes)).await;
     let (_, manifest) = compile_imported_rig(source, "preview://rig-atlas".to_owned()).await?;
     Ok(Json(json!({ "manifest": manifest, "persisted": false })))
 }
@@ -398,6 +430,7 @@ pub(super) async fn import_rig(
     )
     .await?;
     prepare_import_chest_profile(user_id, &mut source, &master.gender, false, None).await;
+    prepare_import_part_profile(user_id, &mut source, None).await;
     let (_, manifest) = compile_imported_rig(source, "asset://atlas".to_owned()).await?;
     let asset_id =
         merope_rig::package_id_for_manifest(&atlas_bytes, &manifest).map_err(internal_error)?;

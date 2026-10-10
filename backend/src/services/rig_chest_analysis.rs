@@ -442,7 +442,7 @@ Return exactly one JSON object and no Markdown:
     )
 }
 
-async fn request_estimate(
+pub(crate) async fn request_estimate(
     config: &AiConfig,
     reference: &ImageReference,
     prompt: &str,
@@ -598,7 +598,7 @@ fn openai_text(value: &Value) -> Option<&str> {
     })
 }
 
-fn parse_json_object(raw: &str) -> Option<Value> {
+pub(crate) fn parse_json_object(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
     if let Ok(value @ Value::Object(_)) = serde_json::from_str::<Value>(trimmed) {
         return Some(value);

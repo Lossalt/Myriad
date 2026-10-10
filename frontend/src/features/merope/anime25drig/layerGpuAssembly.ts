@@ -18,7 +18,7 @@ import {
   createAnime25DLayerDeformationPlan,
   resolveAnime25DDeformationDependencies,
 } from './deformationDependencies'
-import { bindEarwearPhysics } from './earwearPhysics'
+import { bindEarwearPhysics, bindHangingPhysics } from './earwearPhysics'
 import { resolveAnime25DExpressionDeformation } from './expressionDeformation'
 import { bindFigureSkin, figureRestOf } from './figureSkeleton'
 import { bindHairRootMotion } from './hairRootMotion'
@@ -490,10 +490,7 @@ export function bindLayerAttachments(
           Float32Array.of(attachment.x, attachment.y, attachment.x + 1, attachment.y))
       }
     }
-    if (layer.source.role === 'earwear') {
-      layer.earwearPhysics = bindEarwearPhysics(layer.source, layer.attachment,
-        readBindingPixels(layer.source), playback.anchors.face.y1 - playback.anchors.face.y0)
-    }
+    layer.earwearPhysics = bindHangingPhysics(layer.source, layer.attachment, playback, readBindingPixels)
   }
   shareEarringHosts(layers, playback, readBindingPixels)
   for (const child of layers) {
