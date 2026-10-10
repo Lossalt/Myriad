@@ -14,16 +14,16 @@ test("a figure's enhancement starts with every step ahead, the body's alongside"
     ['headFit', 'pending'], ['stitch', 'pending'], ['body', 'pending'],
   ])
   assert.ok(estimate.steps.at(-1)!.parallel)
-  // The head's way, plus the body's four decompositions queued on the same Space.
+  // The head's way, plus the body's two decompositions queued on the same Space.
   const head = S.upscale + 3 * S.decompose + 4 * S.generate + 5 * S.decompose + S.fit + S.stitch
-  assert.equal(estimate.remainingSeconds, head + 4 * S.decompose)
+  assert.equal(estimate.remainingSeconds, head + 2 * S.decompose)
   assert.equal(estimate.fraction, 0)
 })
 
 test("the head's decomposing counts down and the body's turn reports where it is", () => {
   const estimate = estimateEnhance('figure', status({
     phase: 'head', stage: 'decomposing', done: 2, total: 5, seconds: 1200,
-    body: { motion: 'weight', stage: 'decomposing', done: 1, total: 2 },
+    body: { motion: 'turn', stage: 'decomposing', done: 1, total: 2 },
   }), 100)
   const byKey = Object.fromEntries(estimate.steps.map((step) => [step.key, step]))
   assert.equal(byKey.figureDecompose.state, 'completed')
@@ -37,7 +37,7 @@ test("the head's decomposing counts down and the body's turn reports where it is
 
 test('with the head done, what is left is the body', () => {
   const estimate = estimateEnhance('figure', status({
-    phase: 'body', stage: 'fitting', seconds: 2700, body: { motion: 'weight', stage: 'fitting', done: 0, total: 1 },
+    phase: 'body', stage: 'fitting', seconds: 2700, body: { motion: 'turn', stage: 'fitting', done: 0, total: 1 },
   }))
   assert.ok(estimate.steps.slice(0, -1).every((step) => step.state === 'completed'))
   assert.equal(estimate.steps.at(-1)!.state, 'started')
@@ -77,6 +77,6 @@ test("a figure keyed by its head alone has no body step; by its body alone, its 
   assert.deepEqual(body.steps.map((step) => [step.key, step.state]), [
     ['upscale', 'completed'], ['plainDecompose', 'started'], ['stitch', 'pending'], ['body', 'pending'],
   ])
-  // Three tiles, then the body's four decompositions in the same queue, then the stitch.
-  assert.equal(body.remainingSeconds, 3 * S.decompose + 4 * S.decompose + S.stitch)
+  // Three tiles, then the body's two decompositions in the same queue, then the stitch.
+  assert.equal(body.remainingSeconds, 3 * S.decompose + 2 * S.decompose + S.stitch)
 })

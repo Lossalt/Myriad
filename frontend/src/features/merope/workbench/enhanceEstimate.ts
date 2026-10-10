@@ -65,8 +65,8 @@ const BODY_MOTION = {
   generate: 2,
   decompose: 2,
 } as const
-/** The body's turn, then its weight shift: each drawn twice, decomposed twice, fitted once. */
-const BODY_MOTIONS = ['turn', 'weight'] as const
+/** The body's turn: drawn twice, decomposed twice, fitted once. Its weight shift is the bones'. */
+const BODY_MOTIONS = ['turn'] as const
 
 const HEAD: StepModel[] = [
   { key: 'headGenerate', unit: ENHANCE_SECONDS.generate, units: 4 },
@@ -111,7 +111,7 @@ function currentStep(plan: EnhancePlan, status: TurnKeyformsStatus): EnhanceStep
 function bodyLeft(status: TurnKeyformsStatus): { generate: number; decompose: number; fit: number } {
   const left = { generate: 0, decompose: 0, fit: 0 }
   const body = status.body
-  const started = body ? BODY_MOTIONS.indexOf(body.motion) : -1
+  const started = body ? BODY_MOTIONS.indexOf(body.motion as typeof BODY_MOTIONS[number]) : -1
   BODY_MOTIONS.forEach((motion, index) => {
     if (body && (body.stage === 'failed' || index < started)) return
     if (!body || index > started) {
@@ -138,7 +138,7 @@ function bodyState(status: TurnKeyformsStatus, headDone: boolean): EnhanceStepSt
   const body = status.body
   if (status.stage === 'done') return 'completed'
   if (body?.stage === 'failed') return 'failed'
-  if (body?.motion === 'weight' && body.stage === 'done') return 'completed'
+  if (body && body.motion === BODY_MOTIONS[BODY_MOTIONS.length - 1] && body.stage === 'done') return 'completed'
   if (body || headDone) return 'started'
   return 'pending'
 }

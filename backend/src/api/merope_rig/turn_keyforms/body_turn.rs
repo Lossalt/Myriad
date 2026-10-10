@@ -123,12 +123,12 @@ pub(super) async fn body_turn_keys(
             }
         }
     };
-    let turn = keyed(Motion::Turn).await;
-    let weight = match turn {
-        Some(_) => keyed(Motion::Weight).await,
-        None => None,
-    };
-    BodyKeys { turn, weight }
+    // The weight shift is the figure's bones' now (Myriad's figureSkeleton):
+    // its keys would go unused, so none are drawn for it.
+    BodyKeys {
+        turn: keyed(Motion::Turn).await,
+        weight: None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
