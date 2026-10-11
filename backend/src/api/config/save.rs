@@ -73,9 +73,8 @@ pub async fn update_config(
     // 3. 更新全局动态配置缓存
     match config_service.load_config().await {
         Ok(new_config) => {
-            // 内存节约档：立即收紧并发/缓存/Argon2；DB 池在下次建连/重启后生效
-            crate::services::memory_profile::apply_from_saver_flag(new_config.memory_saver_enabled);
-            *dynamic_config.write().await = new_config;
+            crate::services::config_service::install_dynamic_config(&dynamic_config, new_config)
+                .await;
             crate::services::ai_config::invalidate_ai_config_cache().await;
             tracing::info!("✅ Dynamic configuration cache updated");
 
@@ -831,6 +830,15 @@ pub(crate) fn collect_database_updates_with_vendor(
             "precise_location_enabled" => {
                 let enabled = field.value == "true";
                 ("precise_location_enabled", JsonValue::Bool(enabled))
+            }
+            "outbound_fake_ip_ranges" => {
+                let ranges = crate::services::outbound_security::parse_configured_fake_ip_ranges(
+                    &JsonValue::String(field.value.clone()),
+                )?;
+                // Empty is meaningful: clear the exceptions rather than keep
+                // the previous list (or revive the legacy enabled switch).
+                updates.insert("outbound_fake_ip_ranges".to_string(), json!(ranges));
+                continue;
             }
             "merope_enabled" => {
                 let enabled = field.value == "true";

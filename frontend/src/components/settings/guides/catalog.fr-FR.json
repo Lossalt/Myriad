@@ -878,6 +878,12 @@
       "frontend": "Aucun. Une synchronisation de plateforme nationale plus fluide peut venir de ceci.",
       "notes": "Séparez plusieurs entrées par des virgules ; peut inclure des adresses locales."
     },
+    "outboundFakeIpRanges": {
+      "what": "Plages DNS fake-IP personnalisées admises par les contrôles des requêtes sortantes.",
+      "chain": "1) Saisissez les CIDR IPv4/IPv6 attribués par votre proxy, un par ligne ou séparés par des virgules.\n2) Seules les réponses DNS correspondantes sont admises ; les adresses non publiques non listées restent bloquées.\n3) L’enregistrement prend effet immédiatement ; vider la liste rétablit les contrôles par défaut.",
+      "frontend": "Le proxy d'images ne renvoie plus « Cannot proxy unsafe URLs ».",
+      "notes": "Un proxy de confiance doit gérer ces plages. La plateforme ne peut pas vérifier la destination finale ; laissez vide sans proxy fake-IP. Les plages chevauchant les adresses de bouclage, locales au lien, de multidiffusion ou réservées sont refusées. Les IP non publiques dans les URL restent bloquées."
+    },
     "geminiBaseUrl": {
       "what": "URL racine des appels API Google Gemini (la plupart des gens laissent vide).",
       "chain": "1) Utilisée quand la config IA choisit des modèles liés à Gemini.\n2) Vide = URL officielle.\n3) Ne remplissez que pour votre propre proxy/miroir ; de mauvaises valeurs cassent les appels Gemini.\n4) Distinct des champs URL de base par fournisseur sur la page IA — c’est le défaut global avancé.",

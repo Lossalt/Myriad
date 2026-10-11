@@ -878,6 +878,12 @@
       "frontend": "None. Smoother domestic platform sync may be thanks to this.",
       "notes": "Separate multiple entries with commas; can include local addresses."
     },
+    "outboundFakeIpRanges": {
+      "what": "Custom fake-IP DNS ranges accepted by outbound safety checks.",
+      "chain": "1) Enter the IPv4/IPv6 CIDRs allocated by your proxy, one per line or separated by commas.\n2) Only matching DNS answers are admitted; unlisted non-public addresses remain blocked.\n3) Saving applies immediately; clearing restores the default public-address checks.",
+      "frontend": "The image proxy stops returning \"Cannot proxy unsafe URLs\".",
+      "notes": "A trusted proxy must handle these ranges. The platform cannot prove the final destination; leave empty without a fake-IP proxy. Loopback, link-local, multicast, reserved addresses and ranges overlapping them are rejected. Non-public IP literals remain blocked."
+    },
     "geminiBaseUrl": {
       "what": "Root URL for Google Gemini API calls (most people leave empty).",
       "chain": "1) Used when AI config selects Gemini-related models.\n2) Empty = official URL.\n3) Fill only for your own proxy/mirror; wrong values break Gemini calls.\n4) Separate from per-provider Base URL fields on the AI page — this is the advanced global default.",

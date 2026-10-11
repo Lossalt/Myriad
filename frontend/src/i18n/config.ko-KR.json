@@ -972,6 +972,8 @@
   "proxyUrlPlaceholder": "http://127.0.0.1:7890 또는 socks5://127.0.0.1:1080",
   "proxyBypass": "프록시 우회 목록",
   "proxyBypassHint": "프록시를 타지 않을 도메인, 쉼표로 구분. Bilibili 같은 국내 서비스에 권장",
+  "outboundFakeIpRanges": "fake-IP DNS 대역",
+  "outboundFakeIpRangesHint": "신뢰하는 로컬 프록시가 사용하는 IPv4/IPv6 CIDR을 한 줄에 하나씩 또는 쉼표로 구분해 입력하세요. 비워 두면 비활성화됩니다. 예: 198.18.0.0/15. DNS 응답만 허용하며 URL에 직접 적은 비공개 IP는 계속 차단됩니다. 루프백, 링크 로컬, 멀티캐스트와 겹치는 대역은 금지됩니다. 최대 64개입니다.",
   "geminiBaseUrl": "Gemini API Base URL",
   "geminiBaseUrlHint": "비우면 공식 엔드포인트. 아니면 외부 프록시 URL",
   "githubApiBaseUrl": "GitHub API Base URL",

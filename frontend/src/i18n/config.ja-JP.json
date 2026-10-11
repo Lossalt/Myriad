@@ -972,6 +972,8 @@
   "proxyUrlPlaceholder": "http://127.0.0.1:7890 または socks5://127.0.0.1:1080",
   "proxyBypass": "プロキシバイパスリスト",
   "proxyBypassHint": "プロキシを使用しないドメインをカンマ区切りで指定。Bilibiliなどの国内サービスに推奨",
+  "outboundFakeIpRanges": "fake-IP DNS 範囲",
+  "outboundFakeIpRangesHint": "信頼するローカルプロキシが使う IPv4/IPv6 CIDR を、1 行に 1 件またはカンマ区切りで入力します。空欄で無効化。例：198.18.0.0/15。DNS 応答だけを許可し、URL に直接記載した非公開 IP は拒否します。ループバック、リンクローカル、マルチキャストと重なる範囲は禁止。最大 64 件。",
   "geminiBaseUrl": "Gemini APIベースURL",
   "geminiBaseUrlHint": "空欄の場合は公式エンドポイント、またはサードパーティプロキシサービスURLを入力",
   "githubApiBaseUrl": "GitHub APIベースURL",
