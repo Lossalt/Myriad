@@ -91,12 +91,11 @@ test('a part on a lower leg goes with that leg; hands and the skirt do not', () 
 })
 
 test('standing idle settles on one leg, holds, then moves to the other', () => {
-  // As a full-body Live2D idle does: about a second to move, one to two and a
-  // half held, and no hold parked dead still.
-  const samples = Array.from({ length: 300 }, (_, i) => standingWeightShift(i * 0.1))
-  assert.ok(samples.some((value) => value > 0.5) && samples.some((value) => value < -0.5))
+  // Day to day it holds a lean for seconds at a time, moving off it slowly.
+  const samples = Array.from({ length: 300 }, (_, i) => standingWeightShift(i * 0.2))
+  assert.ok(samples.some((value) => value > 0.4) && samples.some((value) => value < -0.4))
   assert.equal(standingWeightShift(0), 0, 'it starts standing straight')
-  const held = [standingWeightShift(1.2), standingWeightShift(1.7)]
+  const held = [standingWeightShift(3), standingWeightShift(5)]
   assert.ok(held[0] !== held[1] && Math.abs(held[0] - held[1]) < 0.1, `${held}`)
   for (let i = 1; i < samples.length; i++) {
     assert.ok(Math.abs(samples[i] - samples[i - 1]) <= 0.35, 'moves smoothly')

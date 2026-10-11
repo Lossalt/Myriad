@@ -46,9 +46,9 @@ const LEG_DAMPING = 0.75
  * weight over to the other: these holds, in seconds, and leans (as `body`),
  * alternating sides, then again. Each move takes this long.
  */
-const WEIGHT_HOLDS = [1.8, 1.2, 2.4, 1.2, 1.5, 2.2, 1.3, 1.2, 2.0, 1.4] as const
-const WEIGHT_LEANS = [0.85, 0.55, 1.0, 0.45, 0.75, 0.95, 0.6, 0.8, 0.5, 0.9] as const
-const WEIGHT_MOVE = 0.9
+const WEIGHT_HOLDS = [7.5, 5.5, 9, 6.5, 8, 6] as const
+const WEIGHT_LEANS = [0.55, 0.5, 0.45, 0.6, 0.42, 0.52] as const
+const WEIGHT_MOVE = 1.4
 /** A held lean is not parked: it keeps going this much further, slowly, over the hold. */
 const WEIGHT_GLIDE = 0.12
 const WEIGHT_CYCLE = WEIGHT_HOLDS.reduce((sum, hold) => sum + hold, 0)
@@ -61,9 +61,18 @@ function weightLean(index: number): number {
 /**
  * A standing figure's head tips with its weight shift, this much `angleZ` at a
  * full lean, the way the body leans: on top of the chest's own lean it comes
- * to about 14 degrees, as in a full-body Live2D idle.
+ * to about 14 degrees at the rig's full range.
  */
 export const STANDING_HEAD_ROLL = 0.7
+
+/**
+ * A figure's `body` = ±1 is its rig's full range, as a full-body Live2D model
+ * shows it off: turned about 20 degrees, swayed about a tenth of its height.
+ * Day to day it stands nearly still in that range: what idles it (its weight
+ * shift, its breath, the torso a look recruits) takes this share of it.
+ * Directed and pointer-driven motion keep the whole range.
+ */
+export const STANDING_IDLE_SHARE = 0.25
 
 /** The idle lean of a standing figure at `time`, which shifts its weight. */
 export function standingWeightShift(time: number): number {

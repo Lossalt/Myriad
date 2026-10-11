@@ -1,5 +1,6 @@
 import type { MotionChannelPolicy } from '../motion/policy'
 import type { MusicMotionSignal } from '../singing/musicSignal'
+import type { AmbientPose } from './ambientMotion'
 import type { ClosedEyePresentation } from './closedEyePresentation'
 import type { IndependentBodyControl } from './directedPose'
 import type { Anime25DDriver } from './driver'
@@ -53,7 +54,7 @@ import {
 } from './randomAction'
 import { CoSpeechExpressionController } from './speechExpression'
 import { AutoSpeechController } from './speechMotion'
-import { STANDING_HEAD_ROLL, standingWeightShift } from './standing'
+import { STANDING_HEAD_ROLL, STANDING_IDLE_SHARE, standingWeightShift } from './standing'
 import { StylizedExpressionMotionController } from './stylizedExpressionMotion'
 import { ThinkingMotionController } from './thinkingMotion'
 
@@ -136,6 +137,7 @@ export class Anime25DMotionComposer {
   /** Reused so the per-frame pose composition never allocates. */
   private readonly composedPose = zeroOccupancyOffset()
   private readonly breathPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0 }
+  private readonly idleAmbient: AmbientPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0, eyeX: 0, eyeY: 0 }
   private standing = false
   private headRidesBody = 0
   private readonly cryMouth = {
@@ -153,6 +155,13 @@ export class Anime25DMotionComposer {
     private readonly closedEyes: ClosedEyePresentation,
     private readonly irisRebound: Anime25DIrisRebound,
   ) {}
+
+  /** A standing figure's ambient pose: the torso a look recruits takes its idle share of the range. */
+  private standingAmbient(ambient: Readonly<AmbientPose>): Readonly<AmbientPose> {
+    Object.assign(this.idleAmbient, ambient)
+    this.idleAmbient.body = ambient.body * STANDING_IDLE_SHARE
+    return this.idleAmbient
+  }
 
   /**
    * A standing figure also shifts its weight from leg to leg while idle; one
@@ -282,8 +291,8 @@ export class Anime25DMotionComposer {
     const thinking = this.thinkingMotion.sample(t, target.thinking && !speaking, tgt)
     const breath = idleBreathOffset(t, this.breathPose)
     if (this.standing) {
-      const weight = standingWeightShift(t)
-      breath.body += weight
+      const weight = standingWeightShift(t) * STANDING_IDLE_SHARE
+      breath.body = breath.body * STANDING_IDLE_SHARE + weight
       // The head tips further the way the body leans, as a standing idle's does.
       breath.angleZ += weight * STANDING_HEAD_ROLL
     }
@@ -304,7 +313,7 @@ export class Anime25DMotionComposer {
       tgt,
       gate,
       {
-        ambient,
+        ambient: this.standing ? this.standingAmbient(ambient) : ambient,
         randomAction,
         groove,
         thinking,
