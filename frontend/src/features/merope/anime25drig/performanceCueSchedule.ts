@@ -68,11 +68,26 @@ export function scheduledCueFromUnit(
     offset: touch ? {
       ...intentExpressionOffset('listen', 0),
       ...touchExpressionPatch(unit.form as TouchReaction, performanceUnitAmount(unit.intensity, unit.quality), unit.touch, Math.max(0, playerNow - start)),
-    } : intentExpressionOffset(
+    } : seenCueOffset(intentExpressionOffset(
       intent,
       performanceUnitAmount(unit.intensity, unit.quality),
-    ),
+    )),
   }
+}
+
+/**
+ * What a cue does with her head, scaled so it shows: through the
+ * composition gates a cue's head motion came to 0.3–0.6° (a respond nod, a
+ * question tilt), too little to see. At this scale they are about 1.2–2°.
+ * Measured through the production runtime and composer, 10-12. The body
+ * lean is left as it was: larger, a strong face's lean jumps at 30 fps.
+ */
+const CUE_MOTION_SCALE = 3.5
+
+function seenCueOffset(offset: ReturnType<typeof intentExpressionOffset>): ReturnType<typeof intentExpressionOffset> {
+  offset.angleY *= CUE_MOTION_SCALE
+  offset.angleZ *= CUE_MOTION_SCALE
+  return offset
 }
 
 const MIN_CUE_RELEASE = 0.06

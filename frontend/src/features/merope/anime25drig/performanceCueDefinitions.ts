@@ -69,12 +69,10 @@ const PERFORMANCE_CUE_MOTION = {
       brow: 0.2 * amount,
     }),
   },
-  // A listener's head moves to them about 1.7° once gated, as little as
-  // can be and still be seen (at 0.09 it was 0.3°).
   listen: {
     driver: (poseAmount) => ({ body: 0.12 * poseAmount }),
     expression: (amount, poseAmount) => ({
-      angleY: 0.5 * poseAmount,
+      angleY: 0.15 * poseAmount,
       brow: 0.12 * amount,
     }),
   },
