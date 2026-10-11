@@ -24,7 +24,7 @@ import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, HANGING_ARM, resolveDirectedArmIntent } from './armChoreography'
 import { ArmDrape, ArmPendulum, ArmSegment, BUST_ARM_SWING, FIGURE_ARM_SWING, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
-import { headRidesBody, KeyedBodyTurn } from './bodyTurnKeyforms'
+import { headRidesBody, KeyedBodyTurn, playbackBodyKeys } from './bodyTurnKeyforms'
 import {
   chestBodyExcitationY,
   chestBreathResidual,
@@ -63,12 +63,7 @@ import { BODY_ROLL_RADIANS, HEAD_ROLL_RADIANS } from './poseScale'
 import { deformAnime25DSecondaryPoint, shellTurnBlend } from './secondaryDeformation'
 import { writeAnime25DShellRotation } from './shellDeformation'
 import { Anime25DStanding } from './standing'
-import {
-  anime25DTorsoShellOffsetX,
-  anime25DTorsoYawFollow,
-  resolveAnime25DTorsoChestShape,
-  stepAnime25DTorsoShellRotation,
-} from './torsoDeformation'
+import { anime25DTorsoShellOffsetX, anime25DTorsoYawFollow, FIGURE_BODY_YAW, resolveAnime25DTorsoChestShape, stepAnime25DTorsoShellRotation } from './torsoDeformation'
 
 /** Share of an arm with a bare forearm that is sleeve: only that much of it is soft. */
 const SLEEVE_SOFT_REACH = 0.55
@@ -179,8 +174,8 @@ export class Anime25DBodyFrames {
     this.anchors = playback.anchors
     this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance, playback)
     // The bones shift a figure's weight; its weight-shift keys are not used beside them.
-    this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot,
-      this.figure ? undefined : playback.weightKeyforms)
+    this.keyedBodyTurn = KeyedBodyTurn.bind(playbackBodyKeys(playback), playback.anchors.neckPivot,
+      this.figure ? undefined : playback.weightKeyforms, this.figure ? 1 : undefined)
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -353,6 +348,7 @@ export class Anime25DBodyFrames {
       anime25DTorsoYawFollow(this.shellProfile.torso, this.current.bodyYaw),
       this.current.torsoTurn,
       this.motion.directedBodyWeight('torsoTurn'),
+      this.figure ? FIGURE_BODY_YAW : undefined,
     )
     // Explicit posture can be directed independently. Existing performances also
     // recruit the upper body, without adding an unrelated periodic oscillator.
@@ -459,8 +455,9 @@ export class Anime25DBodyFrames {
     frame.breath = breath
     frame.shellBlend = this.shellProfile.blend * this.shellActivation
     frame.shellActivation = this.shellActivation
+    // A figure turns on the whole cylinder (playbackBodyKeys); a bust's shell is a partial guess.
     frame.torsoShellBlend = this.shellProfile.enabled && this.shellProfile.torso.enabled
-      ? frame.shellBlend * this.shellProfile.torso.blend : 0
+      ? (this.figure ? this.shellActivation : frame.shellBlend * this.shellProfile.torso.blend) : 0
     frame.torsoNeckOffsetX = this.keyedBodyTurn?.step(frame, this.torsoShellRotation, this.shellActivation) ??
       anime25DTorsoShellOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
     writeAnime25DShellRotation(e.angleX, e.angleY, this.shellRotation)

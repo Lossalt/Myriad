@@ -10,7 +10,7 @@ import type { Anime25DPlayback, Anime25DPlaybackLayer, Anime25DShellProfile } fr
 import type { AtlasPixelPatch, CroppedLayerPixels } from './webglRuntime'
 import { isAnime25DRigidAttachment } from '../rig/anime25dLayerSemantics'
 import { removeDuplicatedNeckComponents } from './accessoryComponents'
-import { bindBodyTurnKeyform } from './bodyTurnKeyforms'
+import { bindBodyTurnKeyform, playbackBodyKeys } from './bodyTurnKeyforms'
 import { sampleChestWeight } from './chestPhysics'
 import { bindCropBoundary } from './cropBoundary'
 import { deriveCrownOcclusionBand, unionDrawing } from './crownOcclusion'
@@ -180,7 +180,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
   // A skirt cut in pieces (its lining behind the legs) swings as the one skirt.
   const standing = bindStanding(baseRole, baseRole === 'bottomwear' ? skirtSpan(playback.layers, source) : source, playback.anchors)
   const kneeY = standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined
-  const bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, source, rest, kneeY)
+  const bodyTurnKeyform = bindBodyTurnKeyform(playbackBodyKeys(playback), source, rest, kneeY)
   // A standing figure's bones carry every layer; they shift its weight
   // themselves, so the weight-shift keys are not used beside them.
   const { figure, figureSkin, partSways } = bindFigureLayer(baseRole, source, playback)
@@ -490,7 +490,7 @@ export function bindLayerAttachments(
     for (const attachment of [layer.attachment, layer.neckwearBridge?.upper, layer.neckwearBridge?.lower]) {
       // Its host's body key, per vertex of the host, is taken at the anchor and a pixel across (vertices 0, 1).
       if (attachment?.hostSource) {
-        attachment.binding.bodyTurnKeyform = bindBodyTurnKeyform(playback.bodyTurnKeyforms, attachment.hostSource,
+        attachment.binding.bodyTurnKeyform = bindBodyTurnKeyform(playbackBodyKeys(playback), attachment.hostSource,
           Float32Array.of(attachment.x, attachment.y, attachment.x + 1, attachment.y))
       }
     }

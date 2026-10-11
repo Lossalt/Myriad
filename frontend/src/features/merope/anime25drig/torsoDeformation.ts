@@ -11,6 +11,13 @@ import {
 
 export const HEAD_YAW_SHARE = 0.45
 const BODY_YAW_SHARE = 0.1
+/**
+ * A standing figure turns with its sway: as a full-body Live2D idle shifts its
+ * weight it turns about 20 degrees toward the leg it goes over, legs and all,
+ * rather than sliding sideways. Its whole turn stays within FIGURE_MAX_YAW.
+ */
+export const FIGURE_BODY_YAW = 0.35
+const FIGURE_MAX_YAW = 0.45
 // ~0.4 s to 95% for a held target, with continuous position AND velocity.
 const YAW_ANGULAR_FREQUENCY = 12
 const MIN_GARMENT_SHAPE_TRANSMISSION = 0.4
@@ -90,6 +97,7 @@ export function stepAnime25DTorsoShellRotation(
   yawFollowScale = 1,
   directedTurn = 0,
   directedShare = 0,
+  bodyShare = BODY_YAW_SHARE,
 ): void {
   const follow = Number.isFinite(yawFollowScale)
     ? clamp(yawFollowScale, 0, 1)
@@ -97,7 +105,8 @@ export function stepAnime25DTorsoShellRotation(
   const share = clamp(Number.isFinite(directedShare) ? directedShare : 0, 0, 1)
   // Only automatic head/body follow has this spring. The directed contribution
   // already has authority and a continuous response in the composer.
-  const yawTarget = angleX * HEAD_YAW_SHARE * follow + body * BODY_YAW_SHARE
+  const raw = angleX * HEAD_YAW_SHARE * follow + body * bodyShare
+  const yawTarget = bodyShare === BODY_YAW_SHARE ? raw : Math.max(-FIGURE_MAX_YAW, Math.min(FIGURE_MAX_YAW, raw))
   if (Number.isFinite(deltaSeconds) && deltaSeconds > 0 && Number.isFinite(yawTarget)) {
     // Exact critically damped response; see The Orange Duck's Spring-Roll-Call.
     // Carry velocity through a new goal instead of starting another easing.

@@ -143,12 +143,15 @@ export class KeyedBodyTurn {
     private readonly head: BoundTurnKeyform | null,
     private readonly weightHead: BoundTurnKeyform | null,
     readonly weighted: boolean,
+    /** How much of the torso's turn the keys show (BODY_TURN_SHARE; all of it for a figure's legs). */
+    private readonly share: number,
   ) {}
 
   static bind(
     keyforms: Readonly<Anime25DTurnKeyforms> | undefined,
     neckPivot: { x: number; y: number },
     weightKeyforms?: Readonly<Anime25DTurnKeyforms>,
+    share = BODY_TURN_SHARE,
   ): KeyedBodyTurn | null {
     if (!keyforms) return null
     const at = Float32Array.of(neckPivot.x, neckPivot.y)
@@ -156,6 +159,7 @@ export class KeyedBodyTurn {
       keyforms.head ? bindTurnKey(keyforms.head, at) : null,
       weightKeyforms?.head ? bindTurnKey(weightKeyforms.head, at) : null,
       Boolean(weightKeyforms),
+      share,
     )
   }
 
@@ -169,7 +173,7 @@ export class KeyedBodyTurn {
     rotation: Readonly<Anime25DTorsoShellRotation>,
     activation: number,
   ): number | null {
-    const amount = bodyTurnAmount(rotation, activation)
+    const amount = bodyTurnAmount(rotation, activation, this.share)
     frame.bodyTurn = amount
     if (!this.head) return null
     turnKeyformOffset(this.head, 0, amount, this.carry)
@@ -194,10 +198,25 @@ export function weightShift(standing: Readonly<StandingBends>): number {
 }
 
 /** How far through the keyed turn the body is (−1…1), from the torso's yaw. */
-export function bodyTurnAmount(rotation: Readonly<Anime25DTorsoShellRotation>, activation: number): number {
+export function bodyTurnAmount(rotation: Readonly<Anime25DTorsoShellRotation>, activation: number, share = BODY_TURN_SHARE): number {
   if (!rotation.active) return 0
   const yaw = Math.atan2(rotation.yawSine, rotation.yawCosine)
-  return Math.max(-1, Math.min(1, (yaw / BODY_KEY_YAW) * BODY_TURN_SHARE)) * activation
+  return Math.max(-1, Math.min(1, (yaw / BODY_KEY_YAW) * share)) * activation
+}
+
+/**
+ * The body keys a standing figure turns by: its legs' and shoes' only, which
+ * cross as it turns. Its trunk, sleeves, neck and head turn on the torso's
+ * cylinder, one field over all of them by where they are: fitted apart, they
+ * part at every seam, and a fit follows a garment's outline, which a turn
+ * barely moves, so the trunk slid sideways instead of turning.
+ */
+export function playbackBodyKeys(
+  playback: { bodyTurnKeyforms?: Anime25DTurnKeyforms; anchors: { groundY?: number } },
+): Anime25DTurnKeyforms | undefined {
+  const keys = playback.bodyTurnKeyforms
+  if (!keys || playback.anchors.groundY === undefined) return keys
+  return Object.fromEntries(Object.entries(keys).filter(([family]) => /^(thigh|shin|legwear|footwear)\b/.test(family)))
 }
 
 const keyed = { x: 0, y: 0 }
