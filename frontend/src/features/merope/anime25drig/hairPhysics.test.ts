@@ -4,6 +4,7 @@ import { createHairChain } from './hairChain'
 import {
   frontHairUpperParallaxScale,
   HAIR_CHAIN_LINKS,
+  hairHangShare,
   hairLockCharacter,
   hairStrandDynamics,
   stepAnime25DHairLayerSprings,
@@ -125,6 +126,7 @@ test('matches strand displacement to projected pixel length within safe bounds',
   const referenceHeight = 500
 
   assert.deepEqual(hairStrandDynamics(100, 600, referenceHeight), {
+    lengthRatio: 1,
     amplitudeScale: 1,
     stiffnessScale: 1,
     dampingScale: 1,
@@ -153,6 +155,7 @@ test('length response scaling preserves the authored damping ratio', () => {
   assert.ok(dynamics.stiffnessScale < 1)
   assert.ok(dynamics.dampingScale < 1)
   assert.deepEqual(hairStrandDynamics(600, 100, 500), {
+    lengthRatio: 1,
     amplitudeScale: 1,
     stiffnessScale: 1,
     dampingScale: 1,
@@ -160,11 +163,12 @@ test('length response scaling preserves the authored damping ratio', () => {
 })
 
 function hairFrame() {
-  return { enabled: true, idle: false, faceScale: 1, time: 0, frontSoft: 0.4, rearSoft: 2 }
+  return { enabled: true, idle: false, faceScale: 1, time: 0, frontSoft: 0.4, rearSoft: 2, tilt: 0 }
 }
 
-function strand(phase: number, scale: number) {
+function strand(phase: number, scale: number, lengthRatio = 1) {
   return {
+    lengthRatio,
     supportX: 0,
     supportY: 0,
     rootX: 100,
@@ -195,4 +199,19 @@ test('locks of one front hair are each tuned apart, and a tuft above the face is
   assert.deepEqual(hairLockCharacter({ name: 'front-hair', y: 120, h: 300 }, face), { frequencyScale: 1, dampingRatioScale: 1 })
   const tuft = hairLockCharacter({ name: 'front-hair-7', y: 20, h: 70 }, face)
   assert.ok(tuft.frequencyScale > 1.3 && tuft.dampingRatioScale < 1)
+})
+
+test('a lock longer than the face hangs back from a tilt, a bang goes round with the head', () => {
+  assert.equal(hairHangShare(0.5, true), 0)
+  assert.ok(hairHangShare(1, true) > 0 && hairHangShare(1, true) < hairHangShare(1, false))
+  assert.ok(hairHangShare(2, false) > hairHangShare(1, false))
+  const bang = strand(0, 1, 0.5)
+  const lock = strand(0, 1, 2)
+  const layers = [{ frontHair: false, springs: [bang, lock] }]
+  const frame = { ...hairFrame(), tilt: 0.4 }
+  for (let i = 0; i < 1800; i++) stepAnime25DHairLayerSprings(layers, frame, 1 / 60)
+  // A positive tilt carries a hanging tip toward -x; the long lock hangs
+  // back by its share of the tilt: 300 px * sin(0.4 * 0.7).
+  assert.ok(Math.abs(tip(bang).x) < 0.01)
+  assert.ok(Math.abs(tip(lock).x - 300 * Math.sin(0.4 * hairHangShare(2, false))) < 1, `tip ${tip(lock).x}`)
 })

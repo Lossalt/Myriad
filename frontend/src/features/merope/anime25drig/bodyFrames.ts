@@ -59,7 +59,7 @@ import {
 import { writeAnime25DLayerGlobalTransform } from './layerTransform'
 import { movingPartIn, skirtTuning } from './partPhysics'
 import { writePoseCorrectionWeights } from './poseCorrections'
-import { BODY_ROLL_RADIANS, HEAD_ROLL_RADIANS } from './poseScale'
+import { BODY_ROLL_RADIANS, headRollRadians } from './poseScale'
 import { deformAnime25DSecondaryPoint, shellTurnBlend } from './secondaryDeformation'
 import { writeAnime25DShellRotation } from './shellDeformation'
 import { Anime25DStanding } from './standing'
@@ -288,6 +288,7 @@ export class Anime25DBodyFrames {
       time: 0,
       frontSoft: 0,
       rearSoft: 0,
+      tilt: 0,
     }
   }
 
@@ -410,6 +411,7 @@ export class Anime25DBodyFrames {
       }
     }
     hairSpringFrame.time = time
+    hairSpringFrame.tilt = this.headTilt()
     stepAnime25DHairLayerSprings(layers, hairSpringFrame, dt)
     this.stepArms(dt, layers, time)
     this.figure?.stepParts(dt, e.body, e.phys)
@@ -442,7 +444,7 @@ export class Anime25DBodyFrames {
     })
     this.renderFrame.bodyLift = this.bodyLiftField
     frame.headAngleY = e.angleY
-    frame.headRoll = e.angleZ * HEAD_ROLL_RADIANS
+    frame.headRoll = headRollRadians(e.angleZ)
     frame.headRotationCosine = Math.cos(frame.headRoll)
     frame.headRotationSine = Math.sin(frame.headRoll)
     frame.bodyBreathOffset = breath * 2
@@ -558,11 +560,9 @@ export class Anime25DBodyFrames {
     const element = this.headJellyElement
     if (!element) return
     const dynamic = this.current.phys
-    const frame = this.secondaryDeformationFrame
     this.writeHeadWorldTransform(this.headWorldTransform)
     // Directions in the drawing turn with the head and body roll.
-    const roll = (frame.headRoll ?? 0) + Math.atan2(frame.bodyRotationSine, frame.bodyRotationCosine) +
-      (this.figure?.pose.chestAngle ?? 0)
+    const roll = this.headTilt()
     const downX = -Math.sin(roll)
     const downY = Math.cos(roll)
     this.headWorldPoint(element.anchorX, element.anchorY, this.jellyAnchor)
@@ -575,6 +575,12 @@ export class Anime25DBodyFrames {
   }
 
   /** The rigid head carry the shader gives a head-following layer. */
+  /** The head's tilt in the picture: its roll on the body's lean and a figure's chest. */
+  private headTilt(): number {
+    const frame = this.secondaryDeformationFrame
+    return (frame.headRoll ?? 0) + Math.atan2(frame.bodyRotationSine, frame.bodyRotationCosine) + (this.figure?.pose.chestAngle ?? 0)
+  }
+
   private writeHeadWorldTransform(m: Float32Array): void {
     const f = this.secondaryDeformationFrame
     writeAnime25DLayerGlobalTransform({

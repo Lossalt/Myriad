@@ -363,6 +363,7 @@ function bindHair(
       rootY: strand.rootY,
       chain: createHairChain(strand.x, strand.rootY, strand.x, Math.max(strand.tipY, strand.rootY + 1), HAIR_CHAIN_LINKS),
       phase: index * 1.37 + layerZ,
+      lengthRatio: dynamics[index].lengthRatio,
       amplitudeScale: dynamics[index].amplitudeScale,
       stiffnessScale: dynamics[index].stiffnessScale,
       dampingScale: dynamics[index].dampingScale,

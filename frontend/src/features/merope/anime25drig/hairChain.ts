@@ -24,6 +24,13 @@ export interface HairChainTuning {
   tipStiffness: number
   /** Air drag on the lock's swing, per second, against the root's motion. */
   drag: number
+  /**
+   * Radians the direction the lock hangs in turns from as drawn. Gravity
+   * stays down while the head tilts, so a lock carried round with the head
+   * hangs back toward the vertical, as Cubism's physics turns its gravity
+   * by the input angle.
+   */
+  hang?: number
 }
 
 export interface HairChain {
@@ -109,7 +116,10 @@ export function stepHairChain(
   const bounded = Math.min(elapsed, MAX_ELAPSED_SECONDS)
   const steps = Math.max(1, Math.ceil(bounded / MAX_STEP_SECONDS))
   const h = bounded / steps
-  const { x, y, vx, vy, links, linkLength, restX, restY } = chain
+  const { x, y, vx, vy, links, linkLength } = chain
+  const hang = tuning.hang ?? 0
+  const restX = hang ? chain.restX * Math.cos(hang) - chain.restY * Math.sin(hang) : chain.restX
+  const restY = hang ? chain.restX * Math.sin(hang) + chain.restY * Math.cos(hang) : chain.restY
   const startX = x[0]
   const startY = y[0]
   const omega = Math.max(0, tuning.omega)
@@ -169,8 +179,9 @@ export function stepHairChain(
   }
   let finite = true
   for (let index = 0; index <= links; index++) {
-    const offsetX = x[index] - (x[0] + restX * linkLength * index)
-    const offsetY = y[index] - (y[0] + restY * linkLength * index)
+    // Offsets are from the lock as drawn, carried rigidly: its hang shows.
+    const offsetX = x[index] - (x[0] + chain.restX * linkLength * index)
+    const offsetY = y[index] - (y[0] + chain.restY * linkLength * index)
     if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) finite = false
     chain.offsetX[index] = offsetX
     chain.offsetY[index] = offsetY

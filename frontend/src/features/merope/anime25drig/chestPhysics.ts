@@ -1,7 +1,7 @@
 import type { ChestSpatialField } from './chestField'
 import type { Anime25DChestProfile } from './types'
 import { clamp, mix, resolveChestSpatialField, smoothstep } from './chestField'
-import { HEAD_ROLL_RADIANS } from './poseScale'
+import { headRollRadians } from './poseScale'
 
 export { buildChestWeightField, chestDeformationWeight, chestProfileUsesGeometryWeights, type ChestSpatialField, type ChestWeightField, deriveGeometryChestProfile, resolveChestSpatialField, sampleChestVerticalWeight, sampleChestWeight } from './chestField'
 
@@ -334,7 +334,7 @@ export function topwearMotionAtChest(
   target: ChestMotionTarget = { x: 0, y: 0 },
 ): ChestMotionTarget {
   const scale = Math.max(0.01, geometry.faceScale)
-  const az = driver.angleZ * HEAD_ROLL_RADIANS
+  const az = headRollRadians(driver.angleZ)
   const cosine = Math.cos(az)
   const sine = Math.sin(az)
   const relativeX = geometry.centerX - geometry.neckX

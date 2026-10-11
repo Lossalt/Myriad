@@ -27,6 +27,8 @@ interface FaceVerticalBounds {
 }
 
 export interface HairStrandDynamics {
+  /** The lock's length over the face's height (1 when it cannot be read). */
+  lengthRatio: number
   amplitudeScale: number
   stiffnessScale: number
   dampingScale: number
@@ -41,6 +43,8 @@ export interface Anime25DHairSpringBinding {
   rootY: number
   chain: HairChain
   phase: number
+  /** The lock's length over the face's height. */
+  lengthRatio: number
   /** How much the strand's length amplified the old single-spring lag; its weights still carry it. */
   amplitudeScale: number
   stiffnessScale: number
@@ -63,6 +67,8 @@ export interface Anime25DHairSpringFrame {
   /** Softness drivers: a softer lock bends more toward its tip. */
   frontSoft: number
   rearSoft: number
+  /** The head's tilt in the picture, radians: its roll on the body's lean. */
+  tilt: number
 }
 
 /** Links per lock: enough for the bend to travel down it. */
@@ -82,6 +88,21 @@ const REAR_HAIR_CHAIN: Readonly<HairChainTuning> = { omega: 12, damping: 0.9, ca
  */
 const FRONT_WIND_SWAY = 0.2
 const REAR_WIND_SWAY = 0.4
+
+/**
+ * How much of a tilt a lock hangs back from, toward the vertical. Bangs are
+ * short and held at the hairline, so they go round with the head; a lock
+ * longer than the face hangs free like a rigger's droop-by-AngleZ sway.
+ */
+const FRONT_HAIR_HANG = 0.5
+const REAR_HAIR_HANG = 0.7
+const HANG_SHORT = 0.5
+const HANG_LONG = 1.3
+
+export function hairHangShare(lengthRatio: number, frontHair: boolean): number {
+  const t = clamp((lengthRatio - HANG_SHORT) / (HANG_LONG - HANG_SHORT), 0, 1)
+  return (frontHair ? FRONT_HAIR_HANG : REAR_HAIR_HANG) * t * t * (3 - 2 * t)
+}
 
 /**
  * How one lock of front hair is tuned apart from its length. Locks cut from
@@ -115,6 +136,7 @@ export function hairStrandDynamics(
     referenceHeight <= 0
   ) {
     return {
+      lengthRatio: 1,
       amplitudeScale: 1,
       stiffnessScale: 1,
       dampingScale: 1,
@@ -128,6 +150,7 @@ export function hairStrandDynamics(
   )
   const frequencyScale = lengthRatio ** LENGTH_RESPONSE_EXPONENT
   return {
+    lengthRatio,
     amplitudeScale: lengthRatio,
     stiffnessScale: frequencyScale ** 2,
     dampingScale: frequencyScale,
@@ -158,6 +181,7 @@ export function stepAnime25DHairLayerSprings(
       chainTuning.carry = base.carry
       chainTuning.drag = base.drag
       chainTuning.tipStiffness = base.tipStiffness / (1 + 0.3 * soft)
+      chainTuning.hang = -frame.tilt * hairHangShare(spring.lengthRatio, layer.frontHair)
       stepHairChain(
         spring.chain,
         spring.rootX + spring.supportX,

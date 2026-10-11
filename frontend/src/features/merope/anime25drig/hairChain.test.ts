@@ -84,3 +84,14 @@ test('the turn along the lock follows its links, blended between them', () => {
   assert.ok(Math.abs(hairChainTurn(chain, 1) - -Math.PI / 2) < 1e-9)
   assert.ok(Math.abs(hairChainTurn(chain, 0.5) - -Math.PI / 4) < 1e-9)
 })
+
+test('a hang turns where the lock settles and shows as its offset from the drawing', () => {
+  const chain = createHairChain(0, 0, 0, 300, 5)
+  const hang = -0.3
+  for (let i = 0; i < 600; i++) stepHairChain(chain, 0, 0, { ...tuning, hang }, 0, 1 / 60)
+  // Settled along the drawn direction turned by the hang, links whole.
+  assert.ok(Math.abs(chain.x[5] - -300 * Math.sin(hang)) < 1)
+  assert.ok(Math.abs(chain.y[5] - 300 * Math.cos(hang)) < 1)
+  assert.ok(Math.abs(hairChainOffset(chain, 1, { x: 0, y: 0 }).x - -300 * Math.sin(hang)) < 1)
+  assert.ok(Math.abs(hairChainTurn(chain, 1) - hang) < 0.01)
+})
