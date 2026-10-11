@@ -190,12 +190,7 @@ async fn direct_motion_inner(
     let decisions = decisions_source()
         .await
         .filter(|_| context.phase != MotionPhase::Presence);
-    let analyzer = if decisions.is_some() {
-        None
-    } else {
-        director_analyzer(MOTION_TIMEOUT).await
-    };
-    let result = if let Some(source) = decisions {
+    let decided = if let Some(source) = decisions {
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,
@@ -222,6 +217,25 @@ async fn direct_motion_inner(
             )
             .await,
         )
+    } else {
+        None
+    };
+    // A decisions model that failed (rather than ran out of time) answers in
+    // well under a second, which leaves the chat director time to answer.
+    let decided = match decided {
+        Some(Ok(Err(error))) => {
+            tracing::warn!(phase, error = %error, "[MeropeMotion] Decisions call failed; asking the chat director");
+            None
+        }
+        other => other,
+    };
+    let analyzer = if decided.is_some() {
+        None
+    } else {
+        director_analyzer(MOTION_TIMEOUT).await
+    };
+    let result = if decided.is_some() {
+        decided
     } else if let Some(analyzer) = analyzer {
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
