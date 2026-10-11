@@ -29,6 +29,13 @@ export const LOOK_GLIDE_SHARE = { min: 0.1, max: 0.16 } as const
  */
 export const SPEAKING_LOOK = { duration: 0.6, dwell: 0.2, roll: 1.3, turn: 0.4 } as const
 
+/**
+ * A speaker's gaze around her turn (Kendon 1967 on): she looks away as she
+ * starts, while she finds her words, and back at them as she finishes,
+ * handing the turn over, and holds it there a moment.
+ */
+export const TURN_GAZE = { awayX: [0.35, 0.6], awayY: [-0.32, -0.1], handOverHold: 1.6 } as const
+
 export const EYE_SACCADE_FLOOR_SECONDS = 0.17
 export const EYE_SACCADE_SECONDS_PER_UNIT = 0.05
 
@@ -64,8 +71,15 @@ export class AmbientMotionController {
   constructor(private readonly random: () => number = Math.random) {}
 
   private speaking = false
+  /** The turn edge the next look answers: starting to speak, or done. */
+  private turn: 'start' | 'end' | null = null
 
   sample(timeSeconds: number, enabled: boolean, speaking = false): Readonly<AmbientPose> {
+    if (speaking !== this.speaking && this.initialized && this.enabled && enabled) {
+      this.turn = speaking ? 'start' : 'end'
+      const now = Number.isFinite(timeSeconds) ? Math.max(0, timeSeconds) : 0
+      this.nextPoseAt = Math.min(this.nextPoseAt, now + (speaking ? 0.05 : 0.15))
+    }
     this.speaking = speaking
     const now = Number.isFinite(timeSeconds) ? Math.max(0, timeSeconds) : 0
     if (!this.initialized) {
@@ -105,9 +119,19 @@ export class AmbientMotionController {
 
   private beginLook(now: number): void {
     this.resolve(now)
+    const turn = this.turn
+    this.turn = null
     const choice = this.unit()
-    const inspect = this.inspectionCount < 3 && choice < 0.44
-    if (inspect) {
+    const inspect = !turn && this.inspectionCount < 3 && choice < 0.44
+    if (turn === 'start') {
+      this.targetX = (this.unit() < 0.5 ? -1 : 1) * this.range(TURN_GAZE.awayX[0], TURN_GAZE.awayX[1])
+      this.targetY = this.range(TURN_GAZE.awayY[0], TURN_GAZE.awayY[1])
+      this.inspectionCount = 0
+    } else if (turn === 'end') {
+      this.targetX = this.range(-0.05, 0.05)
+      this.targetY = this.range(-0.04, 0.06)
+      this.inspectionCount = 0
+    } else if (inspect) {
       this.targetX = clamp(this.targetX + this.range(-0.23, 0.23), -1, 1)
       this.targetY = clamp(this.targetY + this.range(-0.18, 0.18), -0.7, 0.7)
       this.inspectionCount += 1
@@ -191,7 +215,7 @@ export class AmbientMotionController {
         talk ? 0 : bodyDuration + latency + rollLag + 0.06,
         eyeDuration,
       ) +
-      dwell * (inspect ? 0.75 : 1.2) * (talk ? SPEAKING_LOOK.dwell : 1)
+      (turn === 'end' ? TURN_GAZE.handOverHold : dwell * (inspect ? 0.75 : 1.2) * (talk ? SPEAKING_LOOK.dwell : 1))
     // The remainder outlasts the look, so it is still settling when the next
     // look takes over from it and the head never parks.
     const glideDuration = (this.nextPoseAt - now) * 1.3

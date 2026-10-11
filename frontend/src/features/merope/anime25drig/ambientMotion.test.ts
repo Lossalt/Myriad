@@ -233,3 +233,27 @@ test('while she talks her looks come quicker and each tilts her head; at rest th
   assert.ok(talking.tilt > idle.tilt, `${talking.tilt} vs ${idle.tilt}`)
   assert.ok(talking.tilt <= 1)
 })
+
+test('she looks away as she starts to speak and back at them as she finishes', () => {
+  let seed = 0x1357_9BDF
+  const motion = new AmbientMotionController(() => {
+    seed = (seed * 1_664_525 + 1_013_904_223) >>> 0
+    return seed / 0x1_0000_0000
+  })
+  const gaze = (pose: { eyeX: number, eyeY: number, angleX: number, angleY: number }) => ({
+    x: pose.eyeX + pose.angleX * AMBIENT_HEAD_GAZE_SHARE.x,
+    y: pose.eyeY + pose.angleY * AMBIENT_HEAD_GAZE_SHARE.y,
+  })
+  let t = 0
+  for (; t < 5; t += 1 / 60) motion.sample(t, true, false)
+  for (const end = t + 0.7; t < end; t += 1 / 60) motion.sample(t, true, true)
+  const away = gaze(motion.sample(t, true, true))
+  assert.ok(Math.abs(away.x) > 0.3 && away.y < -0.05, `away at the start: ${away.x.toFixed(2)}, ${away.y.toFixed(2)}`)
+  for (const end = t + 4; t < end; t += 1 / 60) motion.sample(t, true, true)
+  for (const end = t + 0.8; t < end; t += 1 / 60) motion.sample(t, true, false)
+  const back = gaze(motion.sample(t, true, false))
+  assert.ok(Math.abs(back.x) < 0.1 && Math.abs(back.y) < 0.1, `back at them at the end: ${back.x.toFixed(2)}, ${back.y.toFixed(2)}`)
+  for (const end = t + 0.6; t < end; t += 1 / 60) motion.sample(t, true, false)
+  const held = gaze(motion.sample(t, true, false))
+  assert.ok(Math.abs(held.x) < 0.1 && Math.abs(held.y) < 0.1, 'and holds it a moment')
+})
