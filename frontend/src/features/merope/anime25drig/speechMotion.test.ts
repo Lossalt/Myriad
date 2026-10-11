@@ -340,3 +340,24 @@ test('a close vowel opens the mouth less than an open one of the same shape', as
   assert.ok(o > 0.2, `${o}`)
   assert.ok(u < o * 0.8, `u ${u} o ${o}`)
 })
+
+test('says once when a sentence ends and its pause begins, so she can blink in it', async () => {
+  const speech = new AutoSpeechController(
+    () => 0.5,
+    async () => [
+      { viseme: 'open', duration: 0.2, emphasis: true },
+      { viseme: 'rest', duration: 0.32, emphasis: false },
+      { viseme: 'wide', duration: 0.2, emphasis: true },
+    ],
+  )
+  speech.sample(0, true)
+  speech.enqueueText('一句。下一句', 'zh-CN')
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const pauses: number[] = []
+  for (let t = 0.001; t < 0.8; t += 1 / 60) {
+    speech.sample(t, true)
+    if (speech.takePause()) pauses.push(t)
+  }
+  assert.equal(pauses.length, 1, 'once, not each frame of the pause')
+  assert.ok(pauses[0]! > 0.18 && pauses[0]! < 0.26, `as the first sentence ends: ${pauses[0]}`)
+})

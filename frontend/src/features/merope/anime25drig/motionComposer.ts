@@ -80,6 +80,13 @@ export interface MotionComposerInput {
  * envelope keeps the result drawable; and the response smoothing writes it
  * into `current`. Rendering reads `current` and the few outputs below.
  */
+/**
+ * How often she blinks as a sentence ends and its pause begins. Blinks come
+ * at speech pauses and turn ends more than within words (Nakano & Kitazawa
+ * 2010); not every one, so it does not read as a tic.
+ */
+const PAUSE_BLINK_CHANCE = 0.6
+
 export class Anime25DMotionComposer {
   readonly directedPose = new DirectedPoseController()
   readonly performanceExpression = new PerformanceExpressionController()
@@ -405,6 +412,15 @@ export class Anime25DMotionComposer {
         this.blinkState.activeSeconds >= 0,
         Math.random,
       ) &&
+      target.blink &&
+      !blinkSuppressed &&
+      this.blinkState.activeSeconds < 0
+    ) {
+      this.blinkNow(t)
+    } else if (
+      // A speaker blinks in the pause between sentences more than within one.
+      this.speechMotion.takePause() &&
+      Math.random() < PAUSE_BLINK_CHANCE &&
       target.blink &&
       !blinkSuppressed &&
       this.blinkState.activeSeconds < 0

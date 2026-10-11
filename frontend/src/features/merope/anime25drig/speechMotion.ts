@@ -70,6 +70,8 @@ export class AutoSpeechController {
   private fromBrow = 0
   private fromHead = 0
   private restRelease = false
+  /** A full stop's pause has just begun and is not yet taken. */
+  private pauseBegun = false
   private textMode = false
   private textCues: TextVisemeCue[] = []
   private textCueIndex = 0
@@ -143,6 +145,13 @@ export class AutoSpeechController {
       MAX_VISUAL_SPEECH_TEXT_UNITS * 2 - this.textCues.length,
     )
     this.textCues.push(...cues.slice(0, available))
+  }
+
+  /** Whether a full stop's pause has begun since last asked (once each). */
+  takePause(): boolean {
+    const begun = this.pauseBegun
+    this.pauseBegun = false
+    return begun
   }
 
   sample(timeSeconds: number, enabled: boolean): Readonly<AutoSpeechPose> {
@@ -337,6 +346,8 @@ export class AutoSpeechController {
       this.previousOpenness = cue.openness ?? 1
       this.textCueStartedAt += this.textCueDuration
       this.textCueIndex += 1
+      const next = this.textCues[this.textCueIndex]
+      if (next?.viseme === 'rest' && isMajorVisualSpeechPause(next.duration)) this.pauseBegun = true
       if (cue.viseme === 'rest' && isMajorVisualSpeechPause(cue.duration)) {
         this.textPhraseStartedAt = this.textCueStartedAt
         this.textPhraseStartPending = true
