@@ -25,7 +25,8 @@
 //! `MYRIAD_MEDIA_TEST_DATABASE_URL=… DATABASE_URL=… cargo test -p
 //! myriad-backend --bin myriad-backend -- --ignored since_up_ --nocapture
 //! --test-threads=1`; `MEROPE_SINCE_UP_REPORT=<dir>` keeps every prompt
-//! part and reply, a file per scenario; `MEROPE_SINCE_UP_RUNS` (default 3)
+//! part and reply, a file per scenario; `MEROPE_SINCE_UP_SOUL` another
+//! personality than the scenarios' own; `MEROPE_SINCE_UP_RUNS` (default 3)
 //! asks of each kind. Writes go to a fresh schema that is dropped afterwards.
 
 use std::ops::Range;
@@ -177,7 +178,13 @@ impl Day {
         db.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "INSERT INTO agent_persona (id, name, personality, updated_at) VALUES ('site', $1, $2, now())",
-            [SOUL_NAME.into(), SOUL.into()],
+            [
+                SOUL_NAME.into(),
+                // Another personality to hold the same day against.
+                std::env::var("MEROPE_SINCE_UP_SOUL")
+                    .unwrap_or_else(|_| SOUL.to_string())
+                    .into(),
+            ],
         ))
         .await
         .unwrap();

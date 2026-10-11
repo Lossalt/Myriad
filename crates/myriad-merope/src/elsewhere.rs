@@ -288,10 +288,11 @@ pub fn section(talks: &[Talk], now: DateTime<Utc>) -> String {
         told_one_by_one.split_at(told_one_by_one.len().min(TOLD_ONE_BY_ONE));
     let mut lines = vec![
         "Your talks with others since you got up: only how they went, not who or what about. \
-         None of it was the one in front of you. How you are shows as it would on \
-         anyone; what happened, and that it was with someone, they know nothing of unless \
-         you tell them, and like anyone you tell that only to people you are close to."
-            .to_string(),
+         None of it was the one in front of you. How you are shows, as it would on \
+         anyone. What happened, and that it was with someone, they know nothing of unless \
+         you tell them; whether you would, and to whom, is as your personality would have \
+         it."
+        .to_string(),
     ];
     lines.extend(
         told_one_by_one
