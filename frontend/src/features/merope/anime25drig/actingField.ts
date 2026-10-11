@@ -1,5 +1,6 @@
 import type { BodyControl, ScoreMove } from '../../../services/agent/types'
 import type { ResolvedScore } from '../motion/scoreTimeline'
+import { angleZForHeadRoll, HEAD_TILT_RADIANS } from './poseScale'
 import { scoreMoveOffsets, scoreMoveSeconds } from './scoreMoves'
 
 /**
@@ -59,9 +60,17 @@ export interface ActingSample {
   weight: number
 }
 
-/** Semantic up is positive; the renderer's image-space Y points down. */
+/**
+ * Semantic up is positive; the renderer's image-space Y points down. A
+ * directed head tilt says how much it should show, and a director's tilts
+ * come small (a puzzled or shy tilt as 0.12): it is drawn as the square
+ * root of that share of the full tilt (HEAD_TILT_RADIANS), so 0.12 is about
+ * 8°, 0.25 about 12° and 1 the full 24°. Everyday motion keeps the low,
+ * slow end of angleZ to itself.
+ */
 export function mappedControlValue(key: BodyControl, value: number): number {
   if (key === 'gazeVertical') return -value
+  if (key === 'headTilt') return angleZForHeadRoll(Math.sign(value) * Math.sqrt(Math.abs(value)) * HEAD_TILT_RADIANS)
   if (key === 'hairSway') return value * 1.5
   if (key === 'chestSway') return value * 4
   return value

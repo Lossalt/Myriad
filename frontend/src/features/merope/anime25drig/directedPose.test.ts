@@ -9,6 +9,7 @@ import { RigMotionCoordinator } from '../motion/coordinator'
 import { compilePerformanceBehaviorPlan } from '../motion/performanceBehaviorPlan'
 import { IDLE_MOTION_POLICY, policyFromOwners } from '../motion/policy'
 import { TouchMotionSource } from '../motion/touchSource'
+import { mappedControlValue } from './actingField'
 import { completeBehaviorQuality } from './behaviorMotion'
 import { realizeAnime25DBehaviorPlan } from './behaviorRealizer'
 import { Anime25DBodyFrames } from './bodyFrames'
@@ -61,7 +62,7 @@ test('every declared control has a real numeric runtime mapping and reaches its 
     const goal = BODY_CONTROLS[key].min < 0 ? -0.7 : 0.7
     value.set(pose({ [key]: goal }), 0)
     const target = advance(value, 1)
-    const expected = key === 'gazeVertical' ? -goal : key === 'hairSway' ? goal * 1.5 : key === 'chestSway' ? goal * 4 : goal
+    const expected = mappedControlValue(key, goal)
     assert.ok(Math.abs(target[BODY_CONTROL_DRIVERS[key]] - expected) < 0.0001, key)
   }
 })
@@ -420,10 +421,11 @@ test('score beats take over held controls on their moment, hold, and give back t
   ] }, 0, 1000)
   const samples = sampleAt(value, 0, 3)
   const at = (seconds: number) => samples.find((sample) => sample.time >= seconds)!.target
-  assert.ok(Math.abs(at(0.45).angleZ - 0.2) < 0.03, 'the standing pose before the beat')
-  assert.ok(at(0.95).angleZ < -0.5, 'the beat takes the tilt over')
+  const standing = mappedControlValue('headTilt', 0.2)
+  assert.ok(Math.abs(at(0.45).angleZ - standing) < 0.03, 'the standing pose before the beat')
+  assert.ok(at(0.95).angleZ < mappedControlValue('headTilt', -0.6) * 0.9, 'the beat takes the tilt over')
   assert.ok(at(1.4).eyeX > 0.7, 'a later beat on another control joins it')
-  assert.ok(Math.abs(at(2.9).angleZ - 0.2) < 0.05, 'after its hold the standing pose comes back')
+  assert.ok(Math.abs(at(2.9).angleZ - standing) < 0.05, 'after its hold the standing pose comes back')
   assert.ok(at(2.9).eyeX > 0.7, 'a beat with no hold keeps going')
 })
 

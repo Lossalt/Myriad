@@ -2,7 +2,8 @@ import type { BodyControl } from '../../../services/agent/types'
 import type { ResolvedScore } from '../motion/scoreTimeline'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ActingField } from './actingField'
+import { ActingField, mappedControlValue } from './actingField'
+import { HEAD_TILT_RADIANS, headRollRadians } from './poseScale'
 
 const all = () => true
 function tilt(id: string, atMs: number, value: number, holdMs = 4000) {
@@ -44,7 +45,8 @@ test('a newer standing score crossfades with the older one on the same control',
   run(field, 2, 5, () => seen.push(value(field, 'headTilt')!.value))
   assert.ok(seen.at(-1)! < -0.45)
   const steps = seen.slice(1).map((v, i) => Math.abs(v - seen[i]!))
-  assert.ok(Math.max(...steps) < 0.08, `no jump: ${Math.max(...steps)}`)
+  const swing = Math.abs(seen.at(-1)! - seen[0]!)
+  assert.ok(Math.max(...steps) < 0.08 * swing, `no jump: ${Math.max(...steps)} of ${swing}`)
 })
 
 test('a looping standing score plays again each period; reply beats take her over without any hand-off', () => {
@@ -61,4 +63,15 @@ test('a looping standing score plays again each period; reply beats take her ove
   let loudest = 0
   run(field, 12, 13.4, () => { loudest = Math.max(loudest, Math.abs(field.offsets.get('headNod') ?? 0)) })
   assert.ok(loudest < 0.1, `${loudest}`)
+})
+
+test("a director's head tilt shows: the square root of its share of the full tilt", () => {
+  for (const tilt of [0.12, 0.25, 0.5, 1, -0.4]) {
+    const seen = headRollRadians(mappedControlValue('headTilt', tilt))
+    assert.ok(Math.abs(seen - Math.sign(tilt) * Math.sqrt(Math.abs(tilt)) * HEAD_TILT_RADIANS) < 1e-9, `${tilt}: ${seen}`)
+  }
+  // The light 0.12 a director gives a puzzled tilt is about 8°, not the 1° of the everyday angleZ scale.
+  const light = headRollRadians(mappedControlValue('headTilt', 0.12)) * 180 / Math.PI
+  assert.ok(light > 7.5 && light < 9, `${light}`)
+  assert.equal(mappedControlValue('headTurn', 0.4), 0.4, 'other controls as they are')
 })

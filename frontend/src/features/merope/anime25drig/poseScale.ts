@@ -16,6 +16,18 @@ export function headRollRadians(angleZ: number): number {
   return Math.sign(angleZ) * (amount * HEAD_ROLL_RADIANS + past * past * (HEAD_TILT_RADIANS - HEAD_ROLL_RADIANS))
 }
 
+/** The `angleZ` that rolls the head by `radians` (headRollRadians undone), up to the full tilt. */
+export function angleZForHeadRoll(radians: number): number {
+  const roll = Math.min(HEAD_TILT_RADIANS, Math.abs(radians))
+  const knee = HEAD_TILT_KNEE * HEAD_ROLL_RADIANS
+  if (roll <= knee) return Math.sign(radians) * roll / HEAD_ROLL_RADIANS
+  // roll = knee + linear·p + curve·p², p the share of the way past the knee.
+  const linear = (1 - HEAD_TILT_KNEE) * HEAD_ROLL_RADIANS
+  const curve = HEAD_TILT_RADIANS - HEAD_ROLL_RADIANS
+  const past = (-linear + Math.sqrt(linear * linear + 4 * curve * (roll - knee))) / (2 * curve)
+  return Math.sign(radians) * (HEAD_TILT_KNEE + (1 - HEAD_TILT_KNEE) * past)
+}
+
 /** Upper-body lean at `body` = ±1, in radians; the canvas cut stays put. */
 export const BODY_ROLL_RADIANS = 0.05
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bodyLeanShare, HEAD_ROLL_RADIANS, HEAD_TILT_RADIANS, headRollRadians } from './poseScale'
+import { angleZForHeadRoll, bodyLeanShare, HEAD_ROLL_RADIANS, HEAD_TILT_RADIANS, headRollRadians } from './poseScale'
 
 test('the canvas cut takes none of the lean and the shoulders take all of it', () => {
   assert.equal(bodyLeanShare(100, 100, 60), 0)
@@ -32,4 +32,11 @@ test('everyday head roll stays linear and only a directed tilt reaches the full 
     assert.ok(roll - previous < 0.02, 'no jump at the knee')
     previous = roll
   }
+})
+
+test('the angleZ for a head roll undoes headRollRadians over the whole range', () => {
+  for (let angleZ = -1; angleZ <= 1; angleZ += 0.05) {
+    assert.ok(Math.abs(angleZForHeadRoll(headRollRadians(angleZ)) - angleZ) < 1e-9, `${angleZ}`)
+  }
+  assert.equal(angleZForHeadRoll(HEAD_TILT_RADIANS * 2), 1, 'no further than the full tilt')
 })
