@@ -63,7 +63,7 @@ import { BODY_ROLL_RADIANS, headRollRadians } from './poseScale'
 import { deformAnime25DSecondaryPoint, shellTurnBlend } from './secondaryDeformation'
 import { writeAnime25DShellRotation } from './shellDeformation'
 import { Anime25DStanding } from './standing'
-import { anime25DTorsoShellOffsetX, anime25DTorsoYawFollow, FIGURE_BODY_YAW, resolveAnime25DTorsoChestShape, stepAnime25DTorsoShellRotation } from './torsoDeformation'
+import { anime25DTorsoNeckOffsetX, anime25DTorsoYawFollow, FIGURE_BODY_YAW, figureShellProfile, resolveAnime25DTorsoChestShape, stepAnime25DTorsoShellRotation } from './torsoDeformation'
 
 /** Share of an arm with a bare forearm that is sleeve: only that much of it is soft. */
 const SLEEVE_SOFT_REACH = 0.55
@@ -170,9 +170,9 @@ export class Anime25DBodyFrames {
     playback: Anime25DPlayback,
     motionEnvelopeProfile: Anime25DMotionEnvelopeProfile,
   ): void {
-    this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
     this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance, playback)
+    this.shellProfile = this.figure ? figureShellProfile(playback.shellProfile) : playback.shellProfile
     // The bones shift a figure's weight; its weight-shift keys are not used beside them.
     this.keyedBodyTurn = KeyedBodyTurn.bind(playbackBodyKeys(playback), playback.anchors.neckPivot,
       this.figure ? undefined : playback.weightKeyforms, this.figure ? 1 : undefined)
@@ -461,7 +461,7 @@ export class Anime25DBodyFrames {
     frame.torsoShellBlend = this.shellProfile.enabled && this.shellProfile.torso.enabled
       ? (this.figure ? this.shellActivation : frame.shellBlend * this.shellProfile.torso.blend) : 0
     frame.torsoNeckOffsetX = this.keyedBodyTurn?.step(frame, this.torsoShellRotation, this.shellActivation) ??
-      anime25DTorsoShellOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
+      anime25DTorsoNeckOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
     writeAnime25DShellRotation(e.angleX, e.angleY, this.shellRotation)
     updateHeadTurn(this.headTurn, e.angleX, e.angleY)
     this.renderFrame.bodyPivotX = anchors.bodyPivot.x

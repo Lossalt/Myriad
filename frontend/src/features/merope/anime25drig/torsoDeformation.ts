@@ -2,6 +2,7 @@ import type { ChestSpatialField } from './chestPhysics'
 import type {
   Anime25DChestProfile,
   Anime25DPlaybackLayer,
+  Anime25DShellProfile,
   Anime25DTorsoShellProfile,
 } from './types'
 import {
@@ -26,6 +27,23 @@ const YAW_ANGULAR_FREQUENCY = 12
 const MIN_GARMENT_SHAPE_TRANSMISSION = 0.4
 
 export const SLEEVE_TORSO_TRANSMISSION = 0.85
+
+/**
+ * A standing figure's trunk, as a drawn turn of the figure shows it: the
+ * front of the chest and skirt travels across while the head, the arms and
+ * the legs hold near the turn's axis, the way an anime three-quarter view
+ * draws the body's middle line over toward its far side. Its cylinder is this
+ * deep for its half-width (a bust's guess from the face is shallower); the
+ * neck stands this share of the way out to the chest's front; a sleeve clear
+ * of the body keeps this share of its anchor's travel. Measured on a drawn
+ * 28° turn: chest and skirt +69 px, arms, head and legs +8 to +28.
+ */
+const FIGURE_TORSO_DEPTH = 0.75
+const FIGURE_NECK_DEPTH = 0.25
+const FIGURE_SLEEVE_HANG = 0.2
+/** A sleeve lies over the body out to this many half-widths, letting go over the last share of it. */
+const FIGURE_BODY_EDGE = 1.25
+const FIGURE_BODY_EDGE_FADE = 0.3
 
 export const SLEEVE_ANCHOR_LIMIT = 0.8
 
@@ -159,6 +177,43 @@ export function anime25DSleeveAnchorX(
     profile.centerX +
     clamp(normalized, -SLEEVE_ANCHOR_LIMIT, SLEEVE_ANCHOR_LIMIT) * radiusX
   )
+}
+
+/** A standing figure's shell: its trunk FIGURE_TORSO_DEPTH deep, its neck near the axis. */
+export function figureShellProfile(profile: Readonly<Anime25DShellProfile>): Anime25DShellProfile {
+  const torso = { ...profile.torso, radiusZ: profile.torso.radiusX * FIGURE_TORSO_DEPTH, neckDepth: FIGURE_NECK_DEPTH }
+  return { ...profile, torso }
+}
+
+/** How far the turn carries the neck, and the head on it, across. */
+export function anime25DTorsoNeckOffsetX(
+  neckX: number,
+  profile: Readonly<Anime25DTorsoShellProfile>,
+  rotation: Readonly<Anime25DTorsoShellRotation>,
+  blend: number,
+): number {
+  return torsoShellOffsetX(neckX, 0, profile, rotation, blend, null) * (profile.neckDepth ?? 1)
+}
+
+/**
+ * A standing figure's sleeve, horizontally: over the body it lies on the
+ * cylinder like the garment under it, so their seam holds; clear of the body
+ * it hangs at the side, near the turn's axis, with FIGURE_SLEEVE_HANG of a
+ * bust sleeve's rigid travel.
+ */
+export function figureSleeveOffsetX(
+  restX: number,
+  anchorX: number,
+  profile: Readonly<Anime25DTorsoShellProfile>,
+  rotation: Readonly<Anime25DTorsoShellRotation>,
+  blend: number,
+): number {
+  const out = Math.abs(restX - profile.centerX) / Math.max(1, profile.radiusX)
+  const clear = clamp((out - (FIGURE_BODY_EDGE - FIGURE_BODY_EDGE_FADE)) / FIGURE_BODY_EDGE_FADE, 0, 1)
+  const onBody = torsoShellOffsetX(restX, 0, profile, rotation, blend, null)
+  const hanging = torsoShellOffsetX(anime25DSleeveAnchorX(anchorX, profile), 0, profile, rotation,
+    blend * SLEEVE_TORSO_TRANSMISSION * FIGURE_SLEEVE_HANG, null)
+  return onBody + (hanging - onBody) * clear
 }
 
 export function anime25DTorsoShellOffsetX(

@@ -4,10 +4,13 @@ import test from 'node:test'
 import {
   anime25DLayerUsesTorsoShell,
   anime25DSleeveAnchorX,
+  anime25DTorsoNeckOffsetX,
   anime25DTorsoShellModeForLayer,
   anime25DTorsoShellOffsetX,
   anime25DTorsoYawFollow,
   deformAnime25DTorsoShellPoint,
+  figureShellProfile,
+  figureSleeveOffsetX,
   resolveAnime25DTorsoChestShape,
   stepAnime25DTorsoShellRotation,
 } from './torsoDeformation'
@@ -446,5 +449,34 @@ test('the compiled follow and the audition are one value, not two', () => {
       const follow = anime25DTorsoYawFollow({ yawFollowScale: authored }, bodyYaw)
       assert.ok(follow >= 0 && follow <= 1, `${authored} ${bodyYaw}: ${follow}`)
     }
+  }
+})
+
+test("a figure's trunk turns deep while its neck and its hanging sleeves stay near the axis", () => {
+  const shell = { version: 1, source: 'anchor-derived', enabled: true, blend: 0.5, torso: profile } as never
+  const figure = figureShellProfile(shell).torso
+  assert.ok(figure.radiusZ > profile.radiusZ, 'deeper than the face-derived guess')
+  const turned = { active: true, yawCosine: Math.cos(0.5), yawSine: Math.sin(0.5) }
+  const front = anime25DTorsoShellOffsetX(figure.centerX, figure, turned, 1)
+  const neck = anime25DTorsoNeckOffsetX(figure.centerX, figure, turned, 1)
+  assert.ok(neck > 0 && neck < front * 0.5, `neck ${neck} of the chest's ${front}`)
+  // A bust profile carries the neck on the front, as before.
+  assert.equal(anime25DTorsoNeckOffsetX(profile.centerX, profile, turned, 1), anime25DTorsoShellOffsetX(profile.centerX, profile, turned, 1))
+  const anchor = figure.centerX - figure.radiusX * 1.1
+  // Over the body the sleeve lies on the surface under it: their seam holds.
+  const over = figure.centerX - figure.radiusX * 0.5
+  assert.equal(figureSleeveOffsetX(over, anchor, figure, turned, 1), anime25DTorsoShellOffsetX(over, figure, turned, 1))
+  // Clear of the body it hangs at the side, travelling a fraction of a bust's rigid sleeve.
+  const clear = figure.centerX - figure.radiusX * 1.4
+  const hanging = figureSleeveOffsetX(clear, anchor, figure, turned, 1)
+  const rigid = anime25DTorsoShellOffsetX(anime25DSleeveAnchorX(anchor, figure), figure, turned, 0.85)
+  assert.ok(Math.abs(hanging) < Math.abs(rigid) * 0.3, `hanging ${hanging} vs rigid ${rigid}`)
+  // And in between it lets go without a step (the cylinder's own edge is steep, not broken).
+  let previous = figureSleeveOffsetX(over, anchor, figure, turned, 1)
+  for (let k = 0.5; k <= 1.4; k += 0.0005) {
+    const x = figure.centerX - figure.radiusX * k
+    const offset = figureSleeveOffsetX(x, anchor, figure, turned, 1)
+    assert.ok(Math.abs(offset - previous) < front * 0.05, `step at ${k.toFixed(4)}`)
+    previous = offset
   }
 })

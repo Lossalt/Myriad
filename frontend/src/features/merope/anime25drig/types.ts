@@ -173,6 +173,8 @@ export interface Anime25DTorsoShellProfile {
   radiusX: number
   radiusZ: number
   yawFollowScale?: number
+  /** How far out toward the front the neck stands, as a share of the depth there (1 when absent: on the front). */
+  neckDepth?: number
 }
 
 export interface Anime25DShellProfile {

@@ -46,6 +46,7 @@ import {
   anime25DSleeveAnchorX,
   anime25DTorsoShellOffsetX,
   deformAnime25DTorsoShellPoint,
+  figureSleeveOffsetX,
   SLEEVE_TORSO_TRANSMISSION,
 } from './torsoDeformation'
 import { addKeyedTurn, unkeyedTurn } from './turnKeyforms'
@@ -477,9 +478,12 @@ export function deformAnime25DSecondaryPoint(
     // Measured, not projected.
     addBodyTurn(point, binding.bodyTurnKeyform, vertex, (frame.bodyTurn ?? 0) * torsoWeight)
   } else if (binding.torsoShellMode === 'sleeve') {
-    // A sleeve is one rigid drawing hanging beside the cylinder, not a patch of its surface.
-    point.x += anime25DTorsoShellOffsetX(anime25DSleeveAnchorX(binding.handwearAnchorX, frame.torsoProfile),
-      frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend * SLEEVE_TORSO_TRANSMISSION)
+    // A bust's sleeve is one rigid drawing hanging beside the cylinder, not a
+    // patch of its surface; a figure's hangs at the side but lies on the body it covers.
+    point.x += frame.figure
+      ? figureSleeveOffsetX(restX, binding.handwearAnchorX, frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend)
+      : anime25DTorsoShellOffsetX(anime25DSleeveAnchorX(binding.handwearAnchorX, frame.torsoProfile),
+        frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend * SLEEVE_TORSO_TRANSMISSION)
   } else if (binding.torsoShellMode) {
     deformAnime25DTorsoShellPoint(point, frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend * torsoWeight,
       binding.topwear ? frame.torsoChestShape : null, binding.topwear ? (binding.chestWeights?.[vertex] ?? 1) : 1,
