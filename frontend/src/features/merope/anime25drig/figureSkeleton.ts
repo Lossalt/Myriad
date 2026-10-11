@@ -544,7 +544,7 @@ export function carryOnFigure(
   restY: number,
   frame: Readonly<{ standing?: Readonly<Anime25DStandingFrame> | null; figure?: FigureFrame | null }>,
 ): void {
-  if (binding.standing && frame.standing) applySkirtTrail(point, binding.standing, restY, frame.standing)
+  if (binding.standing && frame.standing) applySkirtTrail(point, binding.standing, restX, restY, frame.standing)
   if (binding.partSways && frame.figure?.sways) applyPartSways(point, restX, restY, binding.partSways, frame.figure.sways.lags)
   if (frame.figure && binding.figureSkin && !binding.shaderGlobalTransform) {
     skinFigurePoint(point, restY, binding.figureSkin, frame.figure.rest, frame.figure.pose)

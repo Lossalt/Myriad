@@ -298,17 +298,22 @@ function clamp01(value: number): number {
 
 /**
  * A skirt's own trail behind the hips, without the pelvis tilt: on a figure
- * with bones (figureSkeleton) the pelvis carries the rest.
+ * with bones (figureSkeleton) the pelvis carries the rest. It hangs from the
+ * waist and swings about it: the hem goes aside and tips with it, the side it
+ * swings to rising, rather than sliding level as if pushed.
  */
 export function applySkirtTrail(
   point: { x: number; y: number },
   binding: Readonly<StandingBinding>,
+  restX: number,
   restY: number,
   frame: Readonly<Anime25DStandingFrame>,
 ): void {
   if (binding.kind !== 'skirt') return
-  const along = clamp01((restY - binding.topY) / Math.max(1, binding.bottomY - binding.topY))
+  const length = Math.max(1, binding.bottomY - binding.topY)
+  const along = clamp01((restY - binding.topY) / length)
   point.x += frame.skirtSwing * along * along
+  point.y -= (restX - binding.centerX) * (frame.skirtSwing / length) * along
 }
 
 /** Moves one rest point of a standing figure's layer with its stance. */

@@ -5,6 +5,10 @@
 //! 重心转移照同样做：重心落在画面右腿、左腿的两张对立式站姿图；腿和鞋两边
 //! 不对称（放松的那条弯、承重的直），各用各图的拟合。
 //!
+//! 生图模型被要求向左转时常常又画一遍向右转（把立绘镜像了也一样）。Space 读出
+//! 每张图的躯干实际往哪边走（`turned`）；转错的那张不用，用另一张的拟合左右镜像
+//! 代替（`mirrored`），两张都错就拿不到身体关键形。
+//!
 //! 和头部的半身流程同时跑（不改任务进度）。图与拆层按全身的图存在缓存里；拟合
 //! 每次重做。拿不到身体关键形时，全身照常只带头部关键形；重心关键形只和身体
 //! 关键形一起用。这一步的失败不让整个任务失败。
@@ -220,9 +224,10 @@ async fn make(
         )
         .await
         .map_err(see_through_error)?;
-    tracing::info!(job = %id, ?motion, "body keys: keyed");
+    let keys: Value = serde_json::from_slice(&keys).map_err(internal_error)?;
+    tracing::info!(job = %id, ?motion, turned = ?keys.get("turned"), mirrored = ?keys.get("mirrored"), "body keys: keyed");
     report(Stage::Done, 1, 1);
-    serde_json::from_slice(&keys).map_err(internal_error)
+    Ok(keys)
 }
 
 /// The master on a white BODY_ASPECT canvas, the canvas' size, and where the master sits on it.

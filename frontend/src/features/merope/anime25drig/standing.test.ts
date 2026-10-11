@@ -1,7 +1,7 @@
 import type { Anime25DPlaybackAnchors } from './types'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Anime25DStanding, applyStanding, bindStanding, standingWeightShift } from './standing'
+import { Anime25DStanding, applySkirtTrail, applyStanding, bindStanding, standingWeightShift } from './standing'
 
 const anchors = {
   bodyPivot: { x: 360, y: 500 },
@@ -63,6 +63,23 @@ test('the pelvis tilts the skirt hem and the tops of the legs, never the soles',
   assert.ok(point.y > 700, 'the hem drops on the left as the right hip rises')
   assert.ok(at(rightLeg, 'legwear', 500, tilted).dy < 0)
   assert.equal(at(rightLeg, 'footwear', 1300, tilted).dy, 0)
+})
+
+test("a skirt's trail swings it about the waist: the hem goes aside and tips up on that side", () => {
+  const swung = { skirtSwing: 20, pelvisTilt: 0, bendL: 0, bendR: 0 }
+  const skirt = bindStanding('bottomwear', { x: 200, y: 450, w: 320, h: 250, group: 'body' }, anchors)!
+  const moved = (x: number, y: number) => {
+    const point = { x, y }
+    applySkirtTrail(point, skirt, x, y, swung)
+    return { dx: point.x - x, dy: point.y - y }
+  }
+  assert.deepEqual(moved(300, 450), { dx: 0, dy: 0 })
+  const right = moved(500, 700)
+  const left = moved(220, 700)
+  assert.equal(right.dx, 20)
+  assert.equal(left.dx, 20)
+  assert.ok(right.dy < 0 && left.dy > 0, 'the hem tips, rising on the side it swings to')
+  assert.ok(Math.abs(moved(360, 700).dy) < 1e-9, 'the middle of the hem only goes aside')
 })
 
 test('a part on a lower leg goes with that leg; hands and the skirt do not', () => {
