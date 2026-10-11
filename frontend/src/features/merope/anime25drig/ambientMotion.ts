@@ -19,6 +19,16 @@ export const AMBIENT_HEAD_GAZE_SHARE = { x: 0.62, y: 0.55 } as const
  */
 export const LOOK_GLIDE_SHARE = { min: 0.1, max: 0.16 } as const
 
+/**
+ * How her looks go while she talks, fitted to a person talking (a face-tracked
+ * VTuber, head tracked frame by frame, at a quarter of its range as her daily
+ * share): she changes pose about 50 times a minute, moves in about 0.27 s,
+ * holds about 0.8 s, and her head tilts with each look (about 2°, at most
+ * about 4°). A talker's head is never left waiting for the body to arrive.
+ * The idle pace stays slow.
+ */
+export const SPEAKING_LOOK = { duration: 0.6, dwell: 0.2, roll: 1.3, turn: 0.4 } as const
+
 export const EYE_SACCADE_FLOOR_SECONDS = 0.17
 export const EYE_SACCADE_SECONDS_PER_UNIT = 0.05
 
@@ -53,7 +63,10 @@ export class AmbientMotionController {
 
   constructor(private readonly random: () => number = Math.random) {}
 
-  sample(timeSeconds: number, enabled: boolean): Readonly<AmbientPose> {
+  private speaking = false
+
+  sample(timeSeconds: number, enabled: boolean, speaking = false): Readonly<AmbientPose> {
+    this.speaking = speaking
     const now = Number.isFinite(timeSeconds) ? Math.max(0, timeSeconds) : 0
     if (!this.initialized) {
       this.initialized = true
@@ -122,7 +135,8 @@ export class AmbientMotionController {
     const eccentricity = Math.hypot(this.targetX, this.targetY * 0.8)
     const recruitment = smoothstep((eccentricity - 0.12) / 0.8)
     const headShare = (0.22 + 0.72 * recruitment) * this.range(0.86, 1)
-    const x = this.targetX * headShare
+    const talk = this.speaking
+    const x = this.targetX * headShare * (talk ? SPEAKING_LOOK.turn : 1)
     const y = this.targetY * (0.35 + 0.5 * recruitment)
     const headTravel = Math.hypot(x - this.output.angleX, y - this.output.angleY)
     const eyeTravel = Math.hypot(
@@ -132,7 +146,7 @@ export class AmbientMotionController {
     const eyeDuration =
       EYE_SACCADE_FLOOR_SECONDS +
       Math.min(1.8, eyeTravel) * EYE_SACCADE_SECONDS_PER_UNIT
-    const headDuration = 0.36 + Math.sqrt(headTravel) * this.range(0.42, 0.6)
+    const headDuration = (0.36 + Math.sqrt(headTravel) * this.range(0.42, 0.6)) * (talk ? SPEAKING_LOOK.duration : 1)
     const latency = this.range(0.045, 0.13)
     this.gazeX.retarget(now, this.targetX, eyeDuration)
     this.gazeY.retarget(now, this.targetY, eyeDuration)
@@ -148,10 +162,10 @@ export class AmbientMotionController {
     let bodyDuration = 0
     let glideZ = Number.NaN
     let glideBody = Number.NaN
-    if (!inspect) {
-      const roll = this.range(-0.34, 0.34) - x * 0.09
+    if (!inspect || talk) {
+      const roll = this.range(-0.34, 0.34) * (talk ? SPEAKING_LOOK.roll : 1) - x * 0.09
       glideZ = (roll - this.output.angleZ) * glideShare
-      this.headZ.retarget(now, clamp(roll - glideZ, -1, 1), headDuration * 1.35, latency + rollLag)
+      this.headZ.retarget(now, clamp(roll - glideZ, -1, 1), headDuration * (talk ? 1 : 1.35), latency + rollLag)
       // Small inspections stay eye/head-led; a broad look recruits the torso.
       // Give its larger travel time instead of accelerating it to catch up.
       const bodyTarget =
@@ -174,10 +188,10 @@ export class AmbientMotionController {
       Math.max(
         headDuration * 1.12 + latency + pitchLag,
         inspect ? 0 : headDuration * 1.35 + latency + rollLag,
-        bodyDuration + latency + rollLag + 0.06,
+        talk ? 0 : bodyDuration + latency + rollLag + 0.06,
         eyeDuration,
       ) +
-      dwell * (inspect ? 0.75 : 1.2)
+      dwell * (inspect ? 0.75 : 1.2) * (talk ? SPEAKING_LOOK.dwell : 1)
     // The remainder outlasts the look, so it is still settling when the next
     // look takes over from it and the head never parks.
     const glideDuration = (this.nextPoseAt - now) * 1.3

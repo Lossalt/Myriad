@@ -204,3 +204,32 @@ test('a held look keeps settling; the head never parks between looks', () => {
   }
   assert.ok(longestParked / 60 < 0.3, `parked for ${longestParked / 60}s`)
 })
+
+test('while she talks her looks come quicker and each tilts her head; at rest the pace is unchanged', () => {
+  const run = (speaking: boolean) => {
+    let seed = 0x2468_ACE0
+    const motion = new AmbientMotionController(() => {
+      seed = (seed * 1_664_525 + 1_013_904_223) >>> 0
+      return seed / 0x1_0000_0000
+    })
+    let tiltTurns = 0
+    let previousSpeed = 0
+    let previous = motion.sample(0, true, speaking).angleZ
+    let tilt = 0
+    for (let frame = 1; frame <= 60 * 120; frame += 1) {
+      const z = motion.sample(frame / 60, true, speaking).angleZ
+      const speed = Math.abs(z - previous) * 60
+      // A tilt begins when the head starts rolling again after it had settled.
+      if (speed > 0.15 && previousSpeed <= 0.15) tiltTurns += 1
+      tilt = Math.max(tilt, Math.abs(z))
+      previousSpeed = speed
+      previous = z
+    }
+    return { perMinute: tiltTurns / 2, tilt }
+  }
+  const idle = run(false)
+  const talking = run(true)
+  assert.ok(talking.perMinute > idle.perMinute * 2, `${talking.perMinute} vs ${idle.perMinute}`)
+  assert.ok(talking.tilt > idle.tilt, `${talking.tilt} vs ${idle.tilt}`)
+  assert.ok(talking.tilt <= 1)
+})

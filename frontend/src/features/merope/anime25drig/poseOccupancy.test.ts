@@ -73,22 +73,23 @@ test('occupancy eases when the situation flips and does not step the weights', (
   const occupancy = new PoseOccupancyController()
   occupancy.sample(0, idle)
   const started = occupancy.sample(1 / 60, { ...idle, speaking: true })
-  assert.ok(started.glance > GLANCE_SPEAKING)
-  assert.ok(started.glance < 1)
+  assert.ok(started.random > RANDOM_SPEAKING)
+  assert.ok(started.random < 1)
   assert.ok(started.coSpeech > 0)
   assert.ok(started.coSpeech < COSPEECH_SPEAKING)
   let previous = { ...started }
-  let largestGlanceStep = 0
+  let largestRandomStep = 0
   for (let frame = 2; frame <= 60; frame += 1) {
     const current = occupancy.sample(1 / 60, { ...idle, speaking: true })
-    largestGlanceStep = Math.max(
-      largestGlanceStep,
-      Math.abs(current.glance - previous.glance),
+    largestRandomStep = Math.max(
+      largestRandomStep,
+      Math.abs(current.random - previous.random),
     )
     previous = { ...current }
   }
-  assert.ok(largestGlanceStep < 0.12)
-  assert.ok(Math.abs(previous.glance - GLANCE_SPEAKING) < 0.02)
+  assert.ok(largestRandomStep < 0.12)
+  assert.ok(Math.abs(previous.random - RANDOM_SPEAKING) < 0.02)
+  assert.equal(previous.glance, GLANCE_SPEAKING, 'a talker keeps looking about')
 })
 
 test('a new semantic source becomes useful within the first eighty milliseconds', () => {
@@ -102,15 +103,15 @@ test('a new semantic source becomes useful within the first eighty milliseconds'
   assert.ok(current.speechMouth > 0.7)
 })
 
-test('speech end lets idle glance rise without a 2400ms baseline hold', () => {
+test('speech end lets idle random motion rise without a 2400ms baseline hold', () => {
   const occupancy = new PoseOccupancyController()
   occupancy.sample(0, { ...idle, speaking: true })
   let current = occupancy.sample(0, { ...idle, speaking: false })
   for (let frame = 1; frame <= 36; frame += 1) {
     current = occupancy.sample(1 / 60, idle)
   }
-  assert.ok(current.glance > GLANCE_SPEAKING)
-  assert.ok(Math.abs(current.glance - 1) < 0.08)
+  assert.ok(current.random > RANDOM_SPEAKING)
+  assert.ok(Math.abs(current.random - 1) < 0.08)
   assert.ok(36 / 60 < 2.4)
 })
 

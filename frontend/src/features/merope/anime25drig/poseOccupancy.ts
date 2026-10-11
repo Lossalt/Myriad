@@ -29,7 +29,8 @@ const ZERO: PoseOccupancy = {
 }
 
 export const GLANCE_IDLE = 1
-export const GLANCE_SPEAKING = 0.45
+/** A talker keeps looking about; her looks take the pace of talk instead (ambientMotion SPEAKING_LOOK). */
+export const GLANCE_SPEAKING = 1
 export const GLANCE_SINGING = 0.5
 export const RANDOM_IDLE = 1
 export const RANDOM_SPEAKING = 0.22

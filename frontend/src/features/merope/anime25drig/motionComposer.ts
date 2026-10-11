@@ -289,7 +289,7 @@ export class Anime25DMotionComposer {
       target.rand,
       this.performanceExpression.getActiveLevel() >= DIRECTED_BODY_BLOCK_LEVEL,
     )
-    const ambient = this.ambientMotion.sample(t, target.rand)
+    const ambient = this.ambientMotion.sample(t, target.rand, speaking)
     const thinking = this.thinkingMotion.sample(t, target.thinking && !speaking, tgt)
     const breath = idleBreathOffset(t, this.breathPose)
     if (this.standing) {
