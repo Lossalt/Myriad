@@ -33,6 +33,7 @@ mod full_size;
 mod longmemeval;
 mod making;
 mod memes;
+mod since_up;
 mod wishing;
 mod probes;
 

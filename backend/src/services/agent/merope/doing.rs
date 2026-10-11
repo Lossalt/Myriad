@@ -372,6 +372,22 @@ pub(crate) fn choice_probe_contract(soul: &str, options: usize) -> (String, Valu
     (choice_system(soul), choice_schema(options))
 }
 
+/// What she weighs at a free moment, as production sends it, with what is
+/// at hand read from `hand_from` and everything of hers from `db`: for a
+/// bench whose own schema has nothing at hand. The input, and how many
+/// choices it offers.
+#[cfg(test)]
+pub(crate) async fn choice_probe_input(
+    hand_from: &DatabaseConnection,
+    db: &DatabaseConnection,
+) -> Option<(String, usize)> {
+    let hand = at_hand(hand_from).await?;
+    let (pace, spent, lazed) = super::pace::now(db).await;
+    let facts = myriad_merope::pace::facts(&pace, spent, lazed);
+    let choices = hand.options.len() + super::pace::LAZING.len();
+    Some((choice_input(db, &hand, &facts).await, choices))
+}
+
 #[cfg(test)]
 pub(crate) fn digest_probe_contract(
     soul: &str,
