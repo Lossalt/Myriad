@@ -76,10 +76,16 @@ test("a skirt's trail swings it about the waist: the hem goes aside and tips up 
   assert.deepEqual(moved(300, 450), { dx: 0, dy: 0 })
   const right = moved(500, 700)
   const left = moved(220, 700)
-  assert.equal(right.dx, 20)
-  assert.equal(left.dx, 20)
+  // An everyday trail (8% of the skirt) goes nearly as it is.
+  assert.ok(Math.abs(right.dx - 20) < 0.6, `${right.dx}`)
+  assert.ok(Math.abs(left.dx - right.dx) < 1e-9)
   assert.ok(right.dy < 0 && left.dy > 0, 'the hem tips, rising on the side it swings to')
   assert.ok(Math.abs(moved(360, 700).dy) < 1e-9, 'the middle of the hem only goes aside')
+  // A flung one is held short of a third of its length.
+  const flung = { ...swung, skirtSwing: 600 }
+  const point = { x: 360, y: 700 }
+  applySkirtTrail(point, skirt, 360, 700, flung)
+  assert.ok(point.x - 360 > 70 && point.x - 360 <= 0.3 * 250, `${point.x - 360}`)
 })
 
 test('a part on a lower leg goes with that leg; hands and the skirt do not', () => {

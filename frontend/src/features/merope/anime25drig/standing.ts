@@ -18,6 +18,18 @@ export const STANCE_SHIFT = 0.06
 /** A skirt hem on the hips: a loose, slow pendulum that trails and then overshoots. */
 const SKIRT_FREQUENCY = 1.3
 const SKIRT_DAMPING = 0.35
+/**
+ * The hem trails at most this share of the skirt's length (about 17° from
+ * the waist), easing into it: a hard sway leaves it swept, not flung out
+ * like a flag, while an everyday trail of a few percent is as it was.
+ */
+const SKIRT_MAX_SWING = 0.3
+
+/** The hem's trail, eased into its limit. */
+function heldSwing(swing: number, length: number): number {
+  const most = SKIRT_MAX_SWING * length
+  return most * Math.tanh(swing / most)
+}
 
 /**
  * The free leg, the one without the weight: its knee bends in towards the
@@ -336,8 +348,9 @@ export function applySkirtTrail(
   if (binding.kind !== 'skirt') return
   const length = Math.max(1, binding.bottomY - binding.topY)
   const along = clamp01((restY - binding.topY) / length)
-  point.x += frame.skirtSwing * along * along
-  point.y -= (restX - binding.centerX) * (frame.skirtSwing / length) * along
+  const swing = heldSwing(frame.skirtSwing, length)
+  point.x += swing * along * along
+  point.y -= (restX - binding.centerX) * (swing / length) * along
 }
 
 /** Moves one rest point of a standing figure's layer with its stance. */
@@ -350,8 +363,9 @@ export function applyStanding(
 ): void {
   if (binding.kind === 'skirt') {
     // Held at the waist, freest at the hem, which tilts with the pelvis.
-    const along = clamp01((restY - binding.topY) / Math.max(1, binding.bottomY - binding.topY))
-    point.x += frame.skirtSwing * along * along
+    const length = Math.max(1, binding.bottomY - binding.topY)
+    const along = clamp01((restY - binding.topY) / length)
+    point.x += heldSwing(frame.skirtSwing, length) * along * along
     point.y -= (restX - binding.centerX) * frame.pelvisTilt * along
     return
   }
