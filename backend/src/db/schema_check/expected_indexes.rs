@@ -621,6 +621,12 @@ pub(crate) fn get_expected_indexes() -> Vec<IndexDef> {
             is_unique: false,
         },
         IndexDef {
+            name: "idx_agent_affect_events_at".into(),
+            table: "agent_affect_events".into(),
+            columns: vec!["at".into()],
+            is_unique: false,
+        },
+        IndexDef {
             name: "idx_agent_persona_field_history_field".into(),
             table: "agent_persona_field_history".into(),
             columns: vec!["field".into(), "replaced_at".into()],

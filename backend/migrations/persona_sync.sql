@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS agent_affect_events (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_affect_events_user_at
     ON agent_affect_events (user_id, at);
+-- Everyone's changes since she got up, for how her talks with others went
+-- (myriad_merope::elsewhere), read on every turn.
+CREATE INDEX IF NOT EXISTS idx_agent_affect_events_at
+    ON agent_affect_events (at);
 
 -- Where replaying her affect toward a person starts: the affect right after
 -- the change `through_event`, at `at`. Written with the first change and

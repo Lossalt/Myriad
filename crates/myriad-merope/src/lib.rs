@@ -15,6 +15,7 @@ pub mod contrast;
 pub mod curiosity;
 pub mod diary;
 pub mod doing;
+pub mod elsewhere;
 pub mod explore;
 pub mod heard;
 pub mod inner;

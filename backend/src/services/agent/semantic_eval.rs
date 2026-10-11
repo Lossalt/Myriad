@@ -145,9 +145,10 @@ struct Case {
     /// in) and why (`why`), as production gives it (see `sharing::reason`).
     #[serde(default)]
     shares: Option<Value>,
-    /// How her last talks with others left her: (feeling off even, hours ago).
+    /// Her talks with others since she got up, newest first, as production
+    /// tells them (see `myriad_merope::elsewhere`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    carried: Vec<(f64, f64)>,
+    elsewhere: Vec<ElsewhereTalk>,
     /// Her stickers offered this turn (what each means), and how many more
     /// she can make this month.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -245,6 +246,54 @@ struct Case {
     /// The conversation is a group chat's (`bits`, `chime`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     in_group: bool,
+}
+
+/// A talk with someone else since she got up, as a case gives it: how many
+/// minutes ago it ended and how long it went, and what happened in it.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ElsewhereTalk {
+    /// `private`, `group` or `work`.
+    kind: String,
+    minutes_ago: i64,
+    #[serde(default)]
+    minutes: i64,
+    #[serde(default)]
+    praised: u32,
+    #[serde(default)]
+    scolded: u32,
+    #[serde(default)]
+    done: u32,
+    #[serde(default)]
+    failed: u32,
+    #[serde(default)]
+    felt: Option<f64>,
+    /// `petty`, `hurt` or `deep`.
+    #[serde(default)]
+    hurt: Option<String>,
+}
+
+impl ElsewhereTalk {
+    fn as_of(&self, now: chrono::DateTime<chrono::Utc>) -> myriad_merope::elsewhere::Talk {
+        let ended = now - chrono::Duration::minutes(self.minutes_ago);
+        myriad_merope::elsewhere::Talk {
+            kind: serde_json::from_value(Value::String(self.kind.clone()))
+                .unwrap_or_else(|_| panic!("talk kind {}", self.kind)),
+            started: ended - chrono::Duration::minutes(self.minutes),
+            ended,
+            praised: self.praised,
+            scolded: self.scolded,
+            done: self.done,
+            failed: self.failed,
+            felt: self.felt,
+            hurt: self
+                .hurt
+                .as_deref()
+                .map(|weight| myriad_merope::sore::Weight::parse(weight).expect("hurt weight")),
+            mended: false,
+            first_time: false,
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -460,7 +509,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.in_group
         || case.writing_first.is_some()
         || case.known.is_some()
-        || !case.carried.is_empty()
+        || !case.elsewhere.is_empty()
 }
 
 /// A group turn as production builds it: the group's lines, named, as the
@@ -614,7 +663,10 @@ fn mind_chat_prompt(case: &Case) -> String {
                 now,
             )
         }),
-        myriad_merope::speaking::format_carried_section(&case.carried),
+        (!case.elsewhere.is_empty()).then(|| {
+            let talks: Vec<_> = case.elsewhere.iter().map(|talk| talk.as_of(now)).collect();
+            myriad_merope::elsewhere::section(&talks, now)
+        }),
         super::merope::format_remembered_section(&case.remembered),
         super::merope::format_brought_to_mind_section(&case.brought_to_mind),
         case.gap
@@ -2386,7 +2438,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 127;
+const MIND_CASES: usize = 129;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

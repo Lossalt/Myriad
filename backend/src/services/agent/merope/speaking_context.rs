@@ -197,31 +197,116 @@ async fn how_she_differs_with(db: &sea_orm::DatabaseConnection, user_id: i32) ->
     told
 }
 
-/// How her last talks with others left her (see
-/// `myriad_merope::speaking::format_carried_section`): each one's last
-/// feeling off even, and how many hours ago, for talks in the last hours.
-async fn carried(db: &sea_orm::DatabaseConnection, user_id: i32) -> Vec<(f64, f64)> {
-    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, Value as SeaValue};
-    const WITHIN_HOURS: i32 = 6;
-    let Ok(rows) = db
+/// Her talks with others since she got up (see `myriad_merope::elsewhere`),
+/// as the section that tells them: in a group, where people outside the
+/// community may be reading, only the strongest feeling still with her. Read as times, kinds and counts only: no
+/// message text, name, group or what a sore spot was about is selected here,
+/// so none of it can reach the prompt this goes into.
+pub(super) async fn since_she_got_up(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    present: &crate::services::agent::memory::unified::Audience,
+) -> Option<String> {
+    use myriad_merope::elsewhere::{self, Cause, Facing, Heard, Moved, Place, Stung};
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let now = super::clock::now();
+    let since = now - chrono::Duration::minutes(i64::from(super::timing::her_day().since_up));
+    let facing = Facing {
+        person: user_id,
+        group: present.group_id(),
+    };
+    let at = |row: &sea_orm::QueryResult, column: &str| {
+        row.try_get::<chrono::DateTime<chrono::FixedOffset>>("", column)
+            .ok()
+            .map(|at| at.with_timezone(&chrono::Utc))
+    };
+    let moved: Vec<Moved> = db
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT emotion, (EXTRACT(EPOCH FROM (now() - emotion_settled_at)) / 3600.0)::float8 AS hours \
-             FROM agent_addressee_state \
-             WHERE user_id <> $1 AND emotion_settled_at > now() - make_interval(hours => $2)",
-            vec![SeaValue::Int(Some(user_id)), SeaValue::Int(Some(WITHIN_HOURS))],
+            "SELECT user_id, at, cause, (after->>'emotion')::float8 AS emotion \
+             FROM agent_affect_events WHERE at >= $1 AND user_id <> $2 ORDER BY at",
+            [since.fixed_offset().into(), user_id.into()],
         ))
         .await
-    else {
-        return Vec::new();
-    };
-    rows.iter()
+        .unwrap_or_default()
+        .iter()
         .filter_map(|row| {
-            let emotion = row.try_get::<f64>("", "emotion").ok()?;
-            let hours = row.try_get::<f64>("", "hours").ok()?;
-            Some((emotion - myriad_merope::affect::ORIGIN, hours))
+            Some(Moved {
+                person: row.try_get("", "user_id").ok()?,
+                at: at(row, "at")?,
+                cause: Cause::parse(&row.try_get::<String>("", "cause").ok()?),
+                felt_after: row.try_get::<f64>("", "emotion").ok()? - myriad_merope::affect::ORIGIN,
+            })
         })
-        .collect()
+        .collect();
+    let mut people: Vec<i32> = moved.iter().map(|moved| moved.person).collect();
+    people.sort_unstable();
+    people.dedup();
+    let told = |talks: &[elsewhere::Talk]| {
+        if present.is_group() {
+            elsewhere::section_in_group(talks, now)
+        } else {
+            Some(elsewhere::section(talks, now))
+        }
+    };
+    if people.is_empty() {
+        return told(&[]);
+    }
+    let heard: Vec<Heard> = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT s.user_id, s.context->>'mode' AS mode, s.context->>'venue' AS venue, \
+                    m.created_at \
+             FROM agent_sessions s JOIN agent_messages m ON m.session_id = s.id \
+             WHERE s.user_id = ANY($1) AND m.role = 'user' AND m.created_at >= $2",
+            [people.clone().into(), since.fixed_offset().into()],
+        ))
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let venue = row.try_get::<Option<String>>("", "venue").ok().flatten();
+            let mode = row.try_get::<Option<String>>("", "mode").ok().flatten();
+            Some(Heard {
+                person: row.try_get("", "user_id").ok()?,
+                place: match (venue, mode.as_deref()) {
+                    (Some(venue), _) => Place::Group(venue),
+                    (None, Some("chat")) => Place::Private,
+                    (None, _) => Place::Work,
+                },
+                at: at(row, "created_at")?,
+            })
+        })
+        .collect();
+    let mut stung = Vec::new();
+    let mut first_met = Vec::new();
+    for &person in &people {
+        stung.extend(
+            super::sore::open_all(db, person)
+                .await
+                .into_iter()
+                .map(|sore| Stung {
+                    person,
+                    place: match sore.venue.strip_prefix("group:") {
+                        Some(group) => Place::Group(group.to_string()),
+                        None => Place::Private,
+                    },
+                    weight: sore.weight,
+                    since: sore.since,
+                    mended: sore.mended,
+                }),
+        );
+        if acquaintance(db, person)
+            .await
+            .and_then(|(first, _)| first)
+            .is_some_and(|first| first >= since)
+        {
+            first_met.push(person);
+        }
+    }
+    told(&elsewhere::talks(
+        &heard, &moved, &stung, &first_met, since, facing,
+    ))
 }
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -496,4 +581,214 @@ async fn speaking_prompt_from_db(
 
 pub fn speaking_prompt_plain(sections: &[String]) -> String {
     sections.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::agent::memory::unified::Audience;
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+
+    async fn user(db: &sea_orm::DatabaseConnection, name: &str) -> i32 {
+        db.query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO users (username, display_name) VALUES ($1, $1) RETURNING id",
+            [name.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap()
+    }
+
+    /// One message `user_id` sent her at `at`, in a session of its own
+    /// (`venue` for a group's), and the change it made in her.
+    async fn said(
+        db: &sea_orm::DatabaseConnection,
+        user_id: i32,
+        venue: Option<&str>,
+        at: chrono::DateTime<chrono::Utc>,
+        text: &str,
+        cause: &str,
+        emotion: f64,
+    ) {
+        let session = uuid::Uuid::new_v4().to_string();
+        let context = match venue {
+            Some(venue) => serde_json::json!({ "mode": "chat", "venue": venue }),
+            None => serde_json::json!({ "mode": "chat" }),
+        };
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO agent_sessions (id, user_id, title, context, message_count, archived, \
+             created_at, last_active_at) VALUES ($1, $2, $3, $4, 1, false, $5, $5)",
+            [
+                session.clone().into(),
+                user_id.into(),
+                text.into(),
+                context.into(),
+                at.fixed_offset().into(),
+            ],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO agent_messages (session_id, role, content, created_at) \
+             VALUES ($1, 'user', $2, $3)",
+            [session.into(), text.into(), at.fixed_offset().into()],
+        ))
+        .await
+        .unwrap();
+        let affect = serde_json::json!({
+            "mood": 50.0, "arousal": 50.0, "emotion": emotion, "emotionArousal": 50.0
+        });
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO agent_affect_events (id, user_id, at, cause, impulse, baseline_mood, \
+             baseline_arousal, before, after, created_at) \
+             VALUES ($1, $2, $3, $4, '{}'::jsonb, 50, 50, $5, $5, NOW())",
+            [
+                uuid::Uuid::new_v4().to_string().into(),
+                user_id.into(),
+                at.fixed_offset().into(),
+                cause.into(),
+                affect.into(),
+            ],
+        ))
+        .await
+        .unwrap();
+    }
+
+    /// What one person tells her never crosses to another: the section
+    /// built for someone else carries how it went and nothing of what was
+    /// said, who said it, where, or what got to her. The one she faces,
+    /// the group she is in, and what came before she got up are left out.
+    #[tokio::test]
+    async fn how_a_talk_went_crosses_and_nothing_said_in_it_does() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "since_she_got_up").await;
+        let db = isolated.db.clone();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-11T15:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let ago = |minutes: i64| now - chrono::Duration::minutes(minutes);
+        let ming = user(&db, "ming-secret-handle").await;
+        let hong = user(&db, "hong").await;
+        let group = "telegram:-1009988";
+        said(
+            &db,
+            ming,
+            None,
+            ago(50),
+            "PLUM-SECRET 我的猫昨天走丢了",
+            "user_turn",
+            50.0,
+        )
+        .await;
+        said(
+            &db,
+            ming,
+            None,
+            ago(40),
+            "PLUM-SECRET 你真笨",
+            "user_scold",
+            20.0,
+        )
+        .await;
+        said(
+            &db,
+            ming,
+            Some(group),
+            ago(30),
+            "GROUP-SECRET 大家好",
+            "user_praise",
+            80.0,
+        )
+        .await;
+        // Before she got up today.
+        said(
+            &db,
+            ming,
+            None,
+            ago(20 * 60),
+            "NIGHT-SECRET",
+            "user_praise",
+            90.0,
+        )
+        .await;
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO agent_memories (id, user_id, kind, content, evidence, speaker, source, \
+             venue, valid_from, created_at, updated_at) \
+             VALUES ('sore-1', $1, 'fact', 'SORE-SECRET 他嘲笑我的画', $2, 'agent', 'sore', \
+             'private', $3, $3, $3)",
+            [
+                ming.into(),
+                serde_json::json!({ "weight": "hurt", "since": ago(40).to_rfc3339() })
+                    .to_string()
+                    .into(),
+                ago(40).fixed_offset().into(),
+            ],
+        ))
+        .await
+        .unwrap();
+
+        let zone = super::super::clock::Zone::named("UTC").unwrap();
+        let built = |user_id: i32, present: Audience| {
+            let db = db.clone();
+            async move {
+                super::super::clock::in_zone(
+                    zone,
+                    super::super::clock::as_of(now, since_she_got_up(&db, user_id, &present)),
+                )
+                .await
+            }
+        };
+
+        let for_hong = built(hong, Audience::private(hong)).await.unwrap();
+        for secret in ["SECRET", "ming", "猫", "画", "telegram", "-1009988"] {
+            assert!(!for_hong.contains(secret), "{secret} crossed: {for_hong}");
+        }
+        assert!(
+            for_hong.contains(
+                "- Within the last hour, a private talk, for a while; they scolded you; \
+                 something they did got to you; it left you hurting."
+            ),
+            "{for_hong}"
+        );
+        assert!(
+            for_hong.contains("- Within the last hour, in a group, briefly; they praised you"),
+            "{for_hong}"
+        );
+        assert_eq!(
+            for_hong
+                .lines()
+                .filter(|line| line.starts_with("- "))
+                .count(),
+            2,
+            "nothing from before she got up: {for_hong}"
+        );
+
+        // In a group, people outside the community may be reading: only
+        // how she still is, not when, where or how many.
+        let in_group = built(hong, Audience::group(group, hong)).await.unwrap();
+        assert_eq!(
+            in_group,
+            "## Since you got up\nEarlier, with someone else, it left you a little stung. \
+             It was not anyone here: it is only how you are."
+        );
+        // In another group, that group's own talk with her is told the same way.
+        let elsewhere_group = built(hong, Audience::group("telegram:-1", hong)).await;
+        assert!(elsewhere_group.is_some_and(|text| !text.contains("SECRET")));
+
+        // To the one who said it all, nobody else has talked with her.
+        assert_eq!(
+            built(ming, Audience::private(ming)).await.as_deref(),
+            Some("## Since you got up\nNobody else has talked with you since you got up.")
+        );
+        assert_eq!(built(ming, Audience::group(group, ming)).await, None);
+    }
 }

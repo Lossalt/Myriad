@@ -234,13 +234,10 @@ fn roughly(hours: f64) -> String {
 /// Her own day as plain facts. What it does to her — tired, restless,
 /// curious, glad of company — is left to the model and the personality.
 pub fn format_day_section(facts: &SelfFacts) -> String {
-    // The clock is in the Now section, on every turn.
+    // The clock is in the Now section, on every turn; who else she talked
+    // with, and how it went, in the one since she got up
+    // (`myriad_merope::elsewhere`).
     let mut lines = Vec::new();
-    lines.push(match facts.people_recently {
-        0 => "Nobody else has talked with you in the last few hours.".to_string(),
-        1 => "One person has talked with you in the last few hours.".to_string(),
-        n => format!("{n} different people have talked with you in the last few hours."),
-    });
     if let Some(hours) = facts.hours_since_anyone.filter(|hours| *hours >= 1.0) {
         lines.push(format!(
             "Before this, the last time anyone came was {}.",
@@ -340,7 +337,10 @@ mod tests {
         // The clock is in the Now section, on every turn.
         assert!(day.starts_with("## Your day\n"));
         assert!(!day.contains("02:00"));
-        assert!(day.contains("4 different people have talked with you"));
+        assert!(
+            !day.contains("people"),
+            "how many, in the talks since she got up"
+        );
         assert!(day.contains("about 9 hours ago"));
         for verdict in ["tired", "energy", "shorter", "lonely", "curious", "glad"] {
             assert!(
@@ -349,7 +349,6 @@ mod tests {
             );
         }
         let quiet = format_day_section(&derive(14, &[7.0]).facts);
-        assert!(quiet.contains("Nobody else has talked with you"));
         assert!(quiet.contains("the last time anyone came was about 7 hours ago"));
         assert!(quiet.contains("have not learned anything new"));
         let view = night.facts_view();

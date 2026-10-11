@@ -221,11 +221,11 @@ pub(super) async fn her_state(
     };
     if compiled.is_none() {
         sections.push(format_mood_section(state.mood, state.arousal));
-        if let Some(block) =
-            myriad_merope::speaking::format_carried_section(&carried(db, user_id).await)
-        {
-            sections.push(block);
-        }
+    }
+    // What happened to her with others since she got up: her inner state
+    // was written facing this person alone, so it does not have it.
+    if let Some(block) = since_she_got_up(db, user_id, present).await {
+        sections.push(block);
     }
     // Her inner state goes last, nearest their words, so it is what she
     // answers from; without it, how the words landed stands here instead.
