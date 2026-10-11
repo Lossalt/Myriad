@@ -217,7 +217,9 @@ pub async fn current(db: &DatabaseConnection) -> SelfState {
     {
         return state;
     }
-    let now = Utc::now();
+    // Her clock, as her day's is: a replayed or simulated turn reads the
+    // state of its own moment.
+    let now = super::clock::now();
     let contacts = recent_contacts(db, now).await.unwrap_or_default();
     let learned = crate::services::agent::memory::unified::last_learned_at(db)
         .await

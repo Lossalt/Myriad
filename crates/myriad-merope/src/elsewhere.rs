@@ -288,9 +288,9 @@ pub fn section(talks: &[Talk], now: DateTime<Utc>) -> String {
         told_one_by_one.split_at(told_one_by_one.len().min(TOLD_ONE_BY_ONE));
     let mut lines = vec![
         "Your talks with others since you got up: only how they went, not who or what about. \
-         None of it was the one in front of you, and they know nothing of it \
-         unless you tell them; like anyone, you tell such things only to people you are \
-         close to."
+         None of it was the one in front of you. How you are shows as it would on \
+         anyone; what happened, and that it was with someone, they know nothing of unless \
+         you tell them, and like anyone you tell that only to people you are close to."
             .to_string(),
     ];
     lines.extend(
@@ -479,13 +479,13 @@ fn together(talks: &[&Talk]) -> String {
 
 fn left_her(felt: f64) -> Option<&'static str> {
     if felt >= STRONG {
-        Some("it left you in really good spirits")
+        Some("at the time you came away in really good spirits")
     } else if felt >= CLEAR {
-        Some("it left you a little pleased")
+        Some("at the time you came away a little pleased")
     } else if felt <= -STRONG {
-        Some("it left you hurting")
+        Some("at the time you came away hurting")
     } else if felt <= -CLEAR {
-        Some("it left you a little stung")
+        Some("at the time you came away a little stung")
     } else {
         None
     }
@@ -713,9 +713,9 @@ mod tests {
             told,
             [
                 "- Just now, in a group, briefly; something they did got to you; \
-                 it left you a little stung.",
+                 at the time you came away a little stung.",
                 "- Within the last hour, a private talk, for about an hour; they praised you; \
-                 it left you in really good spirits.",
+                 at the time you came away in really good spirits.",
                 "- A few hours ago, you got done something someone asked of you.",
                 "- Besides these: 1 private talk, nothing much in them.",
             ],

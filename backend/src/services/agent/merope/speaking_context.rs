@@ -753,7 +753,7 @@ mod tests {
         assert!(
             for_hong.contains(
                 "- Within the last hour, a private talk, for a while; they scolded you; \
-                 something they did got to you; it left you hurting."
+                 something they did got to you; at the time you came away hurting."
             ),
             "{for_hong}"
         );
