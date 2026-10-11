@@ -355,6 +355,39 @@ where
             }
         };
         tokio::pin!(cancelled);
+        // A decisions model answers in under a second: she reacts to what
+        // they said before her reply has words, not with the keyword floor.
+        // Her reply's direction replaces it as it arrives.
+        if crate::services::agent::merope::motion::decisions_source()
+            .await
+            .is_some()
+        {
+            let mut reaction = context.clone();
+            reaction.phase = crate::services::agent::merope::MotionPhase::Reaction;
+            reaction.activity = reaction.phase.activity().to_owned();
+            reaction.response_text = None;
+            let result = tokio::select! {
+                biased;
+                _ = &mut cancelled => None,
+                result = refine(reaction) => result,
+            };
+            if let Some(mut performance) = result
+                && updates.borrow().is_none()
+            {
+                performance.plan.cues.clear();
+                let sent = if let Some(live) = &live {
+                    live.publish(performance)
+                } else {
+                    try_publish_motion(&tx, performance)
+                };
+                if sent {
+                    did_publish.store(
+                        MotionPublication::Refined as u8,
+                        std::sync::atomic::Ordering::Release,
+                    );
+                }
+            }
+        }
         loop {
             tokio::select! {
                 biased;
