@@ -875,6 +875,29 @@ fn event_context(case: &Case) -> (event::ConsciousnessEvent, event::SelfSnapshot
     (event, snapshot)
 }
 
+/// The moment a motion case stands for, as the director is given it.
+fn motion_context(case: &Case) -> super::merope::MotionContext {
+    let mut context = super::motion_overlay::motion_refinement_tests::context();
+    context.phase = super::merope::MotionPhase::Delivery;
+    context.activity = "talking".into();
+    context.user_text = case.input.clone();
+    context.response_text = Some(case.reply.clone());
+    context.previous_phrases = case.previous_phrases.clone();
+    context.rig_state = case
+        .rig
+        .as_ref()
+        .and_then(myriad_merope::sanitize_rig_state);
+    if let Some(mood) = case.mood {
+        context.mood.before = mood;
+        context.mood.after = mood;
+        context.mood.band_before =
+            super::merope::state::mood_band(mood, context.mood.arousal_before).into();
+        context.mood.band_after =
+            super::merope::state::mood_band(mood, context.mood.arousal_after).into();
+    }
+    context
+}
+
 fn request(case: &Case) -> Value {
     match case.kind.as_str() {
         "touch" => super::merope::touch::appraisal_contract(
@@ -885,25 +908,7 @@ fn request(case: &Case) -> Value {
             &case.activity,
         ),
         "motion" => {
-            let mut context = super::motion_overlay::motion_refinement_tests::context();
-            context.phase = super::merope::MotionPhase::Delivery;
-            context.activity = "talking".into();
-            context.user_text = case.input.clone();
-            context.response_text = Some(case.reply.clone());
-            context.previous_phrases = case.previous_phrases.clone();
-            context.rig_state = case
-                .rig
-                .as_ref()
-                .and_then(myriad_merope::sanitize_rig_state);
-            if let Some(mood) = case.mood {
-                context.mood.before = mood;
-                context.mood.after = mood;
-                context.mood.band_before =
-                    super::merope::state::mood_band(mood, context.mood.arousal_before).into();
-                context.mood.band_after =
-                    super::merope::state::mood_band(mood, context.mood.arousal_after).into();
-            }
-            let mut contract = super::merope::motion::semantic_contract(&context);
+            let mut contract = super::merope::motion::semantic_contract(&motion_context(case));
             if let Some(soul) = &case.soul {
                 let mut input: Value =
                     serde_json::from_str(contract["input"].as_str().unwrap()).unwrap();
@@ -1949,12 +1954,19 @@ async fn run_semantic_suite() {
     } else {
         super::merope::motion::director_analyzer(director_timeout).await
     };
+    // A decisions model directs her acting as production lets it.
+    let decisions = if mode == "live" && !director_on_lite {
+        super::merope::motion::decisions_source().await
+    } else {
+        None
+    };
     if mode == "live" {
         model_info["director"] = json!(if director_on_lite {
             "lite"
         } else {
             "production"
         });
+        model_info["actingModel"] = json!(decisions.as_ref().map(|source| source.model.clone()));
     }
     let mut rows = vec![];
     let probe = std::env::var("MEROPE_SEMANTIC_PROBE").ok();
@@ -1996,6 +2008,17 @@ async fn run_semantic_suite() {
             )
         } else if gated(&case) {
             ("gated".into(), String::new())
+        } else if case.kind == "motion"
+            && let Some(source) = &decisions
+        {
+            let context = motion_context(&case);
+            let call =
+                super::merope::motion::decisions_plan(&context, case.soul.as_deref(), source);
+            match tokio::time::timeout(Duration::from_secs(10), call).await {
+                Ok(Ok(output)) => ("returned".into(), output),
+                Ok(Err(_)) => ("request_error".into(), String::new()),
+                Err(_) => ("deadline".into(), String::new()),
+            }
         } else if let Some(analyzer) = if case.kind == "motion" {
             &director
         } else if is_judgment(&case) {

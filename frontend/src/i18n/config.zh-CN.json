@@ -1147,6 +1147,8 @@
   "aiLiteModelPlaceholder": "留空就不用 Lite",
   "aiAuxJudgeModelLabel": "判断用模型",
   "aiAuxJudgeModelPlaceholder": "留空则与 Lite 相同。用于情绪、要不要开口、记什么这类小判断，适合更快的模型",
+  "aiAuxActingModelLabel": "动作判断用模型",
+  "aiAuxActingModelPlaceholder": "留空则由判断用模型决定她的动作。填 typesafe/jev-1.13 这类判断专用模型时，姿态、歪头、手势约半秒就能定下",
   "aiAuxEmbeddingModelLabel": "向量模型",
   "aiAuxEmbeddingModelPlaceholder": "留空则只按字面回想。填一个 embedding 模型（如 perplexity/pplx-embed-v1-0.6b），她也能按意思想起事情",
   "aiAuxModelTitle": "判断与向量",

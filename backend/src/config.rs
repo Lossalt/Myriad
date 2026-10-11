@@ -398,6 +398,11 @@ pub struct DynamicConfig {
     /// decisions, memory extraction, whether to look something up), on the
     /// judgment and embedding source. Blank: Lite's own model.
     pub aux_judge_model: String,
+    /// Optional model that judges her acting (how she holds herself, tilts,
+    /// gestures), on the judgment and embedding source. A decisions model
+    /// (TypeSafe Jev) answers typed questions instead of writing a plan.
+    /// Blank: the judgment model directs her acting, as before.
+    pub aux_acting_model: String,
     /// Optional embedding model on the judgment and embedding source: recall
     /// then finds a memory by what it means, not only by its words. Blank:
     /// words only.
@@ -785,6 +790,7 @@ impl Default for DynamicConfig {
             lite_ai_model: String::new(),
             // 留空：判断也用 Lite 的模型，回忆只按字面。
             aux_judge_model: String::new(),
+            aux_acting_model: String::new(),
             aux_embedding_model: String::new(),
             aux_ai_source: String::new(),
             pro_enabled: false,
@@ -1469,6 +1475,23 @@ impl DynamicConfig {
         }
     }
 
+    /// The acting model (`aux_acting_model`) on the judgment and embedding
+    /// source, placed as the judgment model is; `None` when it is blank (the
+    /// judgment model directs her acting).
+    pub fn resolve_acting_ai_config(&self) -> Option<ResolvedAiConfig> {
+        let acting = self.aux_acting_model.trim();
+        if acting.is_empty() {
+            return None;
+        }
+        match self.resolve_strict_lite_ai_config() {
+            Some(lite) if !self.aux_chosen() => Some(ResolvedAiConfig {
+                model: acting.to_string(),
+                ..lite
+            }),
+            _ => self.on_aux_source(acting),
+        }
+    }
+
     /// The embedding model, when one is set, on the judgment and embedding
     /// source, whether Lite is on or not; `None` (recall by words alone)
     /// when either is missing or that source cannot be used.
@@ -1982,6 +2005,24 @@ mod tests {
                 .resolve_strict_lite_ai_config()
                 .map(|resolved| resolved.model),
             Some("lite/model".to_string())
+        );
+    }
+
+    #[test]
+    fn acting_uses_its_own_model_on_the_judgment_source_and_blank_defers() {
+        let mut config = DynamicConfig {
+            lite_ai_model: "qwen/qwen3.8-omni-flash".to_string(),
+            ..DynamicConfig::default()
+        };
+        assert!(
+            config.resolve_acting_ai_config().is_none(),
+            "blank: the judgment model directs"
+        );
+        config.aux_acting_model = " typesafe/jev-1.13 ".to_string();
+        assert_eq!(
+            config.resolve_acting_ai_config().map(|r| r.model),
+            Some("typesafe/jev-1.13".to_string()),
+            "never chosen: on Lite's source, as the judgment model is"
         );
     }
 

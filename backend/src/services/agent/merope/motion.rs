@@ -23,6 +23,7 @@ use super::MoodTransition;
 use super::motion_local::local_performance_plan;
 use super::store::get_persona;
 
+mod jev;
 mod prompt;
 mod requests;
 
@@ -120,12 +121,45 @@ pub struct PerformanceDirective {
 pub(in crate::services::agent) async fn director_analyzer(
     timeout: Duration,
 ) -> Option<crate::services::analyzer::AiAnalyzer> {
+    if let Some(acting) =
+        crate::services::ai::create_acting_ai_analyzer_with_timeout(Some(timeout)).await
+    {
+        return Some(acting);
+    }
     match crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(timeout)).await {
         Some(judge) => Some(judge),
         None => {
             crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(timeout)).await
         }
     }
+}
+
+/// The acting model's source when it answers decisions (TypeSafe Jev)
+/// rather than writing a plan.
+pub(in crate::services::agent) async fn decisions_source() -> Option<crate::config::ResolvedAiConfig>
+{
+    crate::GLOBAL_DYNAMIC_CONFIG
+        .read()
+        .await
+        .resolve_acting_ai_config()
+        .filter(|source| jev::is_decisions_model(&source.model))
+}
+
+/// What a decisions model makes of a moment, as the director's plan.
+#[cfg(test)]
+pub(in crate::services::agent) async fn decisions_plan(
+    context: &MotionContext,
+    persona: Option<&str>,
+    source: &crate::config::ResolvedAiConfig,
+) -> anyhow::Result<String> {
+    jev::direct(
+        context,
+        context.rig_state.as_ref(),
+        persona,
+        source,
+        MOTION_TIMEOUT,
+    )
+    .await
 }
 
 /// Runs exactly one Lite-tier call, falling back to the deterministic plan for
@@ -151,8 +185,44 @@ async fn direct_motion_inner(
         tracing::debug!(phase, "[MeropeMotion] Face hidden; ambient motion only");
         return None;
     }
-    let analyzer = director_analyzer(MOTION_TIMEOUT).await;
-    let result = if let Some(analyzer) = analyzer {
+    // A decisions model judges her acting by typed questions. Standing acting
+    // (a score looped on time) stays with the chat director.
+    let decisions = decisions_source()
+        .await
+        .filter(|_| context.phase != MotionPhase::Presence);
+    let analyzer = if decisions.is_some() {
+        None
+    } else {
+        director_analyzer(MOTION_TIMEOUT).await
+    };
+    let result = if let Some(source) = decisions {
+        let persona_row = match crate::services::process_db::database() {
+            Ok(db) => get_persona(&db).await.ok().flatten(),
+            Err(_) => None,
+        };
+        let persona = persona_row
+            .as_ref()
+            .map(|row| row.personality.trim().to_owned());
+        let call = jev::direct(
+            &context,
+            rig_state.as_ref(),
+            persona.as_deref().filter(|p| !p.is_empty()),
+            &source,
+            MOTION_TIMEOUT,
+        );
+        Some(
+            tokio::time::timeout(
+                MOTION_TOTAL_TIMEOUT,
+                crate::services::ai_cost_ledger::with_site_ai_ledger(
+                    context.user_id,
+                    "merope",
+                    &format!("motion_{phase}"),
+                    call,
+                ),
+            )
+            .await,
+        )
+    } else if let Some(analyzer) = analyzer {
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,

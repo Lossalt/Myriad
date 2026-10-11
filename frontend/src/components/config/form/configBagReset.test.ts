@@ -71,6 +71,7 @@ describe('config bag reset ownership', () => {
       lite_ai_model: '',
       aux_ai_source: '',
       aux_judge_model: '',
+      aux_acting_model: '',
       aux_embedding_model: '',
       ai_image_model: 'openai/gpt-image-2.5-sunburst',
       ai_vendor_sources: '[]',
