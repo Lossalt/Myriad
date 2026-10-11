@@ -119,7 +119,7 @@ pub async fn tick(db: DatabaseConnection) {
         }
         // Her face where they are using her: a page's, or the app's.
         let live = crate::services::agent::consciousness::face_presence(user_id);
-        if !live.page_visible || !live.face_visible || live.speaking {
+        if !crate::services::agent::consciousness::can_speak_to(&live) || live.speaking {
             continue;
         }
         let Ok(state) = super::get_or_create_state(&db, user_id).await else {

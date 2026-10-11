@@ -165,7 +165,10 @@ pub async fn ingest(
     if thought {
         // Her face where they are using her: a page's, or the app's.
         let live = crate::services::agent::consciousness::face_presence(user_id);
-        if !live.face_visible || live.speaking || !decision.allow_model {
+        if !crate::services::agent::consciousness::can_speak_to(&live)
+            || live.speaking
+            || !decision.allow_model
+        {
             return Ok(());
         }
     }

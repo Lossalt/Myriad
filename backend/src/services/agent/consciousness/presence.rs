@@ -4,8 +4,11 @@
 //! told apart by [`LiveSurface`]. Whether the person is here with her
 //! ([`owner_here`]: arriving, who is present, the panel being open) reads
 //! every surface, so someone on the Mac app is as present as someone on a
-//! page. Her body on the site (the face, its rig, touch, perception) reads
-//! only pages: [`last_live_presence`].
+//! page. A page is here while it is visible; the app is here while its link
+//! is up and its lease fresh, its window on screen or not (D16): it holds
+//! what she says until they look. Visibility stays as reported. Her body on
+//! the site (the face, its rig, touch, perception) reads only pages:
+//! [`last_live_presence`].
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -42,15 +45,21 @@ impl LivePresenceStore {
         let mut live = live;
         let pages = self.users.entry(user_id).or_default();
         let key = live.instance_id.clone().unwrap_or_default();
+        let before = pages
+            .get(&key)
+            .filter(|before| presence_is_fresh_at(before, now));
         // The same as it was: they did not come or go, so it keeps when they did.
-        let same = pages.get(&key).filter(|before| {
-            presence_is_fresh_at(before, now)
-                && before.page_visible == live.page_visible
+        let same = before.is_some_and(|before| {
+            before.page_visible == live.page_visible
                 && before.panel_visible == live.panel_visible
                 && before.face_visible == live.face_visible
         });
+        // Its window going off screen is not using it: an app still here
+        // keeps when they last came to it.
+        let leaving = before.is_some() && !live.page_visible;
         if live.changed_at.is_none() {
-            live.changed_at = same
+            live.changed_at = before
+                .filter(|_| same || leaving)
                 .and_then(|before| before.changed_at)
                 .or(live.captured_at);
         }
@@ -79,7 +88,7 @@ impl LivePresenceStore {
             .users
             .get(&user_id)?
             .iter()
-            .filter(|(_, live)| live.page_visible && presence_is_fresh_at(live, now))
+            .filter(|(_, live)| counts_here(live) && presence_is_fresh_at(live, now))
             .max_by_key(|(key, live)| {
                 (
                     live.changed_at.or(live.captured_at),
@@ -101,13 +110,26 @@ impl LivePresenceStore {
 
     /// Here on any surface, and looking at her panel on any.
     fn here(&self, user_id: i32, now: DateTime<Utc>) -> Here {
-        let mut here = Here::default();
+        // The app with its link up is here whatever its window shows (D16).
+        let mut here = Here {
+            present: self.on(user_id, LiveSurface::Native, now),
+            panel_open: false,
+        };
         for surface in [LiveSurface::Web, LiveSurface::Native] {
             let live = self.last_on(user_id, surface, now);
             here.present |= live.page_visible;
             here.panel_open |= live.page_visible && live.panel_visible;
         }
         here
+    }
+
+    /// Some fresh lease of theirs on this surface.
+    fn on(&self, user_id: i32, surface: LiveSurface, now: DateTime<Utc>) -> bool {
+        self.users.get(&user_id).is_some_and(|pages| {
+            pages
+                .values()
+                .any(|live| live.surface == surface && presence_is_fresh_at(live, now))
+        })
     }
 
     fn last_on(&self, user_id: i32, surface: LiveSurface, now: DateTime<Utc>) -> SelfLivePresence {
@@ -153,7 +175,7 @@ impl LivePresenceStore {
 }
 
 /// Whether the person is with her right now, wherever: a visible page of the
-/// site or the native app's window on screen.
+/// site, or the native app with its link up (D16).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Here {
     pub present: bool,
@@ -172,6 +194,32 @@ pub struct Front {
 }
 
 const NATIVE_PREFIX: &str = "native:";
+
+/// A lease that counts as them being here: a visible page, or the app with
+/// its link up whatever its window shows (D16).
+fn counts_here(live: &SelfLivePresence) -> bool {
+    live.page_visible || live.surface == LiveSurface::Native
+}
+
+/// Something she says to them in person can be said where they are using
+/// her: a page with her face on screen, or the app, which holds the line
+/// (its voice and acting) until its window is looked at again (D16).
+pub fn can_speak_to(live: &SelfLivePresence) -> bool {
+    live.surface == LiveSurface::Native || (live.page_visible && live.face_visible)
+}
+
+/// The rig she acts with where they are using her. The app plays her acting
+/// once its window is on screen again (D16), so its summary is taken as that
+/// body seen; the page's is taken as it is.
+pub fn acting_rig_state(user_id: i32) -> Option<myriad_merope::RigStateSummary> {
+    let live = face_presence(user_id);
+    let mut rig = live.rig_state?;
+    if live.surface == LiveSurface::Native {
+        rig.page_visible = true;
+        rig.face_visible = true;
+    }
+    Some(rig)
+}
 
 static LIVE: Lazy<RwLock<LivePresenceStore>> =
     Lazy::new(|| RwLock::new(LivePresenceStore::default()));
@@ -694,6 +742,77 @@ mod tests {
         assert_eq!(store.front(1, tie).unwrap().surface, LiveSurface::Web);
         store.remember(1, app(false, false, tie), tie);
         assert_eq!(store.front(1, tie).unwrap().surface, LiveSurface::Web);
+    }
+
+    #[test]
+    fn the_app_with_its_link_up_is_here_whatever_its_window_shows() {
+        let mut store = LivePresenceStore::default();
+        let now = Utc::now();
+        let app = |visible: bool, at| {
+            let mut live = page("mac", visible, visible, at);
+            live.instance_id = Some(native_instance("dev_d16"));
+            live.surface = LiveSurface::Native;
+            live
+        };
+        // Launched behind other windows: arriving all the same, her panel not open.
+        assert!(store.remember(1, app(false, now), now));
+        assert_eq!(
+            store.here(1, now),
+            Here {
+                present: true,
+                panel_open: false
+            }
+        );
+        let front = store.front(1, now).unwrap();
+        assert_eq!(front.surface, LiveSurface::Native);
+        // What it reported stays as it was reported.
+        assert!(!front.live.page_visible && !front.live.face_visible);
+        assert!(can_speak_to(&front.live));
+        // A hidden page is not here, and cannot be spoken to.
+        let hidden_tab = page("tab", false, false, now);
+        assert!(!can_speak_to(&hidden_tab));
+
+        // Their window comes up, then a page is opened later: the page is in use.
+        let t1 = now + Duration::seconds(1);
+        store.remember(1, app(true, t1), t1);
+        let t2 = now + Duration::seconds(2);
+        store.remember(1, page("tab", true, false, t2), t2);
+        assert_eq!(store.front(1, t2).unwrap().surface, LiveSurface::Web);
+        // The app's window going away is not using it: the page stays in use.
+        let t3 = now + Duration::seconds(3);
+        store.remember(1, app(false, t3), t3);
+        assert_eq!(store.front(1, t3).unwrap().surface, LiveSurface::Web);
+        // Back to the app's window: the app again; hiding it later keeps it.
+        let t4 = now + Duration::seconds(4);
+        store.remember(1, app(true, t4), t4);
+        let t5 = now + Duration::seconds(5);
+        store.remember(1, app(false, t5), t5);
+        assert_eq!(store.front(1, t5).unwrap().surface, LiveSurface::Native);
+        // The lease still ends it: no link refresh, nobody here.
+        store.remember(1, page("tab", false, false, t5), t5);
+        let later = t5 + Duration::seconds(PRESENCE_WINDOW_SECS + 1);
+        assert_eq!(store.here(1, later), Here::default());
+        assert!(store.front(1, later).is_none());
+
+        // Through the link's entry points, and the rig she acts with there.
+        let user = 1_930_916;
+        assert!(remember_native_presence(
+            user,
+            "dev_d16",
+            &serde_json::json!({ "presence": { "pageVisible": false, "faceVisible": false,
+                "rigState": { "pageVisible": false, "faceVisible": false, "expression": "steady" } } }),
+        ));
+        assert!(owner_here(user).present && !live_presence_panel_open(user));
+        assert!(present_users().contains(&user));
+        let rig = acting_rig_state(user).unwrap();
+        assert!(rig.page_visible && rig.face_visible);
+        let reported = front_presence(user).unwrap().live;
+        let reported_rig = reported.rig_state.unwrap();
+        assert!(!reported_rig.page_visible && !reported_rig.face_visible);
+        assert_eq!(reported_rig.expression, rig.expression);
+        assert!(!reported.page_visible);
+        forget_native_presence(user, "dev_d16");
+        assert!(!owner_here(user).present && acting_rig_state(user).is_none());
     }
 
     #[test]

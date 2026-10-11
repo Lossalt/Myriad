@@ -1161,5 +1161,27 @@ async fn her_lines_go_to_the_app_they_are_using_her_on() {
     remember_live_presence(OWNER, page(false));
     forget_native_presence(OWNER, &mac.id);
     drop(child);
+
+    // D16: the app with its link up is where they are, its window on screen or
+    // not. Coming up behind other windows, it still gets her lines as `say`.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut child = Child::open(&site, &token).await;
+    child.hello_with(&["rig", "say"]).await;
+    remember_native_presence(
+        OWNER,
+        &mac.id,
+        &json!({ "presence": { "pageVisible": false, "panelVisible": false, "faceVisible": false } }),
+    );
+    assert!(crate::services::agent::consciousness::owner_here(OWNER).present);
+    assert_eq!(in_person(OWNER, false), InPerson::App(mac.id.clone()));
+    assert_eq!(
+        deliver_first_words(&site.db, OWNER, Route::Site, "在吗？").await,
+        Some("app")
+    );
+    let behind = child.expect("say").await;
+    assert_eq!(behind["body"]["kind"], "proactive");
+    assert_eq!(behind["body"]["text"], "在吗？");
+    forget_native_presence(OWNER, &mac.id);
+    drop(child);
     site.close().await;
 }

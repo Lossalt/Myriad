@@ -189,8 +189,9 @@ async fn redeem_speak_intent(
                     previous_phrases: Vec::new(),
                     task_success: None,
                     // The body she acts with is where they are using her.
-                    rig_state: crate::services::agent::consciousness::face_presence(intent.user_id)
-                        .rig_state,
+                    rig_state: crate::services::agent::consciousness::acting_rig_state(
+                        intent.user_id,
+                    ),
                     motion_style,
                 };
                 let performance = if decision.live {
