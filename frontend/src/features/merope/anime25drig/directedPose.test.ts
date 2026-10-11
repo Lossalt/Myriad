@@ -147,6 +147,18 @@ test('speech retains articulation while pose can colour eyes, brows and smile', 
   assert.ok(target.mouthForm > 0.69 && target.eyeSmile > 0.79)
 })
 
+test('her breath and the beats of her voice ride on a held axis; the rest of what moved there is held still', () => {
+  const value = controller()
+  value.set(pose({ headTilt: 0.5, headTurn: -0.4 }), 0)
+  advance(value, 2)
+  const held = { ...IDENTITY_DRIVER, angleZ: 0.3, angleY: 0.2, angleX: 0.25 }
+  value.step(1 / 120, 2.01, held)
+  value.write(held, true, { angleZ: 0.06, angleY: 0.04 })
+  assert.ok(Math.abs(held.angleZ - (mappedControlValue('headTilt', 0.5) + 0.06)) < 1e-3, 'the voice nods the tilted head')
+  assert.ok(Math.abs(held.angleX + 0.4) < 1e-3, 'a glance does not move a held turn')
+  assert.equal(held.angleY, 0.2, 'an axis not held is left as composed')
+})
+
 test('a held pose yields to immediate touch and resumes without replaying its goal', () => {
   const value = controller()
   value.set(pose({ headTurn: -0.8, gazeHorizontal: -0.7, eyeSmile: 0.8 }), 0)

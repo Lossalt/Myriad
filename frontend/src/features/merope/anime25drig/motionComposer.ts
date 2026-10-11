@@ -136,6 +136,8 @@ export class Anime25DMotionComposer {
 
   /** Reused so the per-frame pose composition never allocates. */
   private readonly composedPose = zeroOccupancyOffset()
+  /** Breath and voice, kept apart to ride on what the director holds. */
+  private readonly ridingPose = zeroOccupancyOffset()
   private readonly breathPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0 }
   private readonly idleAmbient: AmbientPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0, eyeX: 0, eyeY: 0 }
   private standing = false
@@ -323,6 +325,7 @@ export class Anime25DMotionComposer {
         coSpeech: speechExpression,
       },
       this.composedPose,
+      this.ridingPose,
     )
     applyAnime25DStylizedExpression(
       tgt,
@@ -347,7 +350,7 @@ export class Anime25DMotionComposer {
       smoothAnime25DUnit(stylizedTargets.silly) * this.sillyMouthShare,
     )
     this.directedPose.setTouchShare(this.performanceExpression.getTouchShare())
-    this.directedPose.write(tgt, vocalizing)
+    this.directedPose.write(tgt, vocalizing, this.ridingPose)
     tgt.angleX += tgt.torsoTurn * this.headRidesBody
     projectAnime25DMotionEnvelope(
       tgt,

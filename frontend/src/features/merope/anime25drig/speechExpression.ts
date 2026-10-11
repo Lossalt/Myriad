@@ -17,6 +17,12 @@ export const SPEECH_ACCENT_ARM_ATTACK = 0.16
 export const SPEECH_ACCENT_ARM_RELEASE = 0.34
 /** A full beat lifts the arms this much (`armY`): enough for one arm to lead it. */
 export const SPEECH_ACCENT_ARM_LIFT = 0.15
+/**
+ * How far an accent nods her head: about 3.5° at the peak once gated, as a
+ * calm talker's head moves (Busso et al. 2007, neutral speech: 3.3° deviation
+ * on the main axis). At 0.09 the beat was under 1° and could not be seen.
+ */
+const SPEECH_NOD = 0.45
 const ARM_RELEASE_RATE = 4.2
 
 export interface CoSpeechExpressionOffset {
@@ -341,7 +347,7 @@ function writeOffset(
     Math.sin(motionTime * 0.31 + 0.1) * 0.3
   output.brow = (0.025 * activity + 0.07 * browBeat) * density
   output.eyeOpen = -0.018 * activity + 0.014 * browBeat
-  output.angleY = (0.09 * headBeat) / directness
+  output.angleY = (SPEECH_NOD * headBeat) / directness
   output.angleZ =
     (0.075 * activity * drift * directness +
       0.09 * headBeat * gestureDirection * rebound) *

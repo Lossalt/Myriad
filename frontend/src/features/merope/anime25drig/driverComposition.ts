@@ -160,7 +160,16 @@ export function applyAnime25DComposedPose(
     coSpeech: Readonly<CoSpeechExpressionOffset>
   },
   scratch: OccupancyOffset,
+  /** Receives the part that follows her breath and voice, which rides on a directed pose. */
+  riding?: OccupancyOffset,
 ): void {
+  if (riding) {
+    for (const key of POSE_KEYS) riding[key] = 0
+    accumulateOccupancyOffset(riding, sources.breath, gate.ambient)
+    accumulateOccupancyOffset(riding, sources.coSpeech, gate.coSpeech)
+    accumulatePoseChannel(riding, 'angleY', speechHeadMotionOffset(sources.coSpeech.angleY), gate.coSpeech)
+    accumulatePoseChannel(riding, 'brow', speechBrowMotionOffset(sources.coSpeech.brow), gate.coSpeech)
+  }
   for (const key of POSE_KEYS) scratch[key] = 0
   accumulateOccupancyOffset(scratch, sources.ambient, gate.ambient)
   accumulateOccupancyOffset(scratch, sources.randomAction, gate.random)

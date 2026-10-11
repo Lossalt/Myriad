@@ -139,8 +139,12 @@ export class DirectedPoseController {
     }
   }
 
-  /** Compose into a target; expression preview and final output use separate targets. */
-  write(target: Anime25DDriver, vocalizing: boolean): void {
+  /**
+   * Compose into a target; expression preview and final output use separate targets.
+   * What is `riding` (her breath, the beats of her voice) stays on top of a directed
+   * axis instead of being held still with the rest: a held tilt still nods as she talks.
+   */
+  write(target: Anime25DDriver, vocalizing: boolean, riding?: Readonly<Partial<Record<keyof Anime25DDriver, number>>>): void {
     for (const [key, axis] of this.axes) {
       const driver = BODY_CONTROL_DRIVERS[key]
       if (this.policy?.[controlChannel(key)] === 'preview') continue
@@ -150,14 +154,15 @@ export class DirectedPoseController {
       // A held goal is not an interaction lock: immediate contact reactions
       // temporarily take their existing performance share, then the goal resumes.
       const weight = this.heldWeight(key)
-      target[driver] += (axis.value - target[driver]) * weight
+      target[driver] += (axis.value - target[driver] + (riding?.[driver] ?? 0)) * weight
       if (key === 'hairSway') target.physAmp += (axis.value * 0.5 - target.physAmp) * weight
     }
     // The director's beats, over the standing pose, each as strongly as it plays.
     for (const [key, sample] of this.acting.values) {
       if (vocalizing && isArticulation(key)) continue
+      const driver = BODY_CONTROL_DRIVERS[key]
       const weight = sample.weight * (1 - this.interruption(key))
-      target[BODY_CONTROL_DRIVERS[key]] += (sample.value - target[BODY_CONTROL_DRIVERS[key]]) * weight
+      target[driver] += (sample.value - target[driver] + (riding?.[driver] ?? 0)) * weight
     }
     for (const [key, offset] of this.acting.offsets) {
       const driver = BODY_CONTROL_DRIVERS[key]
