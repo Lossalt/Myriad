@@ -31,6 +31,12 @@ export interface HairChainTuning {
    * by the input angle.
    */
   hang?: number
+  /**
+   * The furthest a link swings from the way the lock hangs, radians, as
+   * Cubism's physics output stops at its parameter's range: a lock flung
+   * hard stays a swept lock and does not fly up off the head.
+   */
+  limit?: number
 }
 
 export interface HairChain {
@@ -120,6 +126,7 @@ export function stepHairChain(
   const hang = tuning.hang ?? 0
   const restX = hang ? chain.restX * Math.cos(hang) - chain.restY * Math.sin(hang) : chain.restX
   const restY = hang ? chain.restX * Math.sin(hang) + chain.restY * Math.cos(hang) : chain.restY
+  const limit = tuning.limit ?? Math.PI
   const startX = x[0]
   const startY = y[0]
   const omega = Math.max(0, tuning.omega)
@@ -158,13 +165,23 @@ export function stepHairChain(
       vy[index] += ay * h
       let nextX = beforeX + vx[index] * h
       let nextY = beforeY + vy[index] * h
-      // The link keeps its length.
+      // The link keeps its length, and swings no further than the limit.
       const dx = nextX - x[index - 1]
       const dy = nextY - y[index - 1]
       const distance = Math.hypot(dx, dy)
       if (distance > 1e-9) {
-        nextX = x[index - 1] + (dx / distance) * linkLength
-        nextY = y[index - 1] + (dy / distance) * linkLength
+        let ux = dx / distance
+        let uy = dy / distance
+        if (limit < Math.PI) {
+          const swing = Math.atan2(restX * uy - restY * ux, restX * ux + restY * uy)
+          if (Math.abs(swing) > limit) {
+            const held = Math.sign(swing) * limit
+            ux = restX * Math.cos(held) - restY * Math.sin(held)
+            uy = restX * Math.sin(held) + restY * Math.cos(held)
+          }
+        }
+        nextX = x[index - 1] + ux * linkLength
+        nextY = y[index - 1] + uy * linkLength
       } else {
         nextX = x[index - 1] + wantX * linkLength
         nextY = y[index - 1] + wantY * linkLength

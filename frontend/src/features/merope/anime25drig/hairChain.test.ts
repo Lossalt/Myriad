@@ -95,3 +95,24 @@ test('a hang turns where the lock settles and shows as its offset from the drawi
   assert.ok(Math.abs(hairChainOffset(chain, 1, { x: 0, y: 0 }).x - -300 * Math.sin(hang)) < 1)
   assert.ok(Math.abs(hairChainTurn(chain, 1) - hang) < 0.01)
 })
+
+test('a lock flung hard swings no further than its limit, and without one it flies up', () => {
+  const swingOf = (limit?: number) => {
+    const chain = createHairChain(0, 0, 0, 300, 5)
+    stepHairChain(chain, 0, 0, { ...tuning, limit }, 0, 1 / 60)
+    let widest = 0
+    // The root thrown 600 px aside in a tenth of a second.
+    for (let i = 1; i <= 60; i++) {
+      stepHairChain(chain, 600 * Math.min(1, i / 6), 0, { ...tuning, limit }, 0, 1 / 60)
+      for (let index = 1; index <= 5; index++) {
+        const dx = chain.x[index] - chain.x[index - 1]
+        const dy = chain.y[index] - chain.y[index - 1]
+        widest = Math.max(widest, Math.abs(Math.atan2(dx, dy)))
+        assert.ok(Math.abs(Math.hypot(dx, dy) - 60) < 1e-6)
+      }
+    }
+    return widest
+  }
+  assert.ok(swingOf() > 1.2, 'unlimited, the lock flies out past 70°')
+  assert.ok(swingOf(0.5) <= 0.5 + 1e-9, `limited: ${swingOf(0.5)}`)
+})

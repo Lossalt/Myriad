@@ -79,8 +79,8 @@ export const HAIR_CHAIN_LINKS = 5
  * far the head went and are still within 0.8 s. Long rear hair is heavier
  * and slower, swings back about a third and drifts more in idle air.
  */
-const FRONT_HAIR_CHAIN: Readonly<HairChainTuning> = { omega: 24, damping: 0.7, carry: 0.8, tipStiffness: 0.8, drag: 10 }
-const REAR_HAIR_CHAIN: Readonly<HairChainTuning> = { omega: 12, damping: 0.9, carry: 0.55, tipStiffness: 0.6, drag: 3 }
+const FRONT_HAIR_CHAIN: Readonly<HairChainTuning> = { omega: 24, damping: 0.7, carry: 0.8, tipStiffness: 0.8, drag: 10, limit: 0.52 }
+const REAR_HAIR_CHAIN: Readonly<HairChainTuning> = { omega: 12, damping: 0.9, carry: 0.55, tipStiffness: 0.6, drag: 3, limit: 0.79 }
 /**
  * Idle air holds a lock aside by the same few pixels however stiff it is, in
  * face-scale pixels per unit of wind: about ±4 at a bang's tip, ±8 at the
@@ -157,7 +157,7 @@ export function hairStrandDynamics(
   }
 }
 
-const chainTuning: HairChainTuning = { omega: 0, damping: 0, carry: 0, tipStiffness: 1, drag: 0 }
+const chainTuning: HairChainTuning = { omega: 0, damping: 0, carry: 0, tipStiffness: 1, drag: 0, limit: Math.PI }
 
 export function stepAnime25DHairLayerSprings(
   layers: readonly Anime25DHairSpringLayer[],
@@ -181,6 +181,7 @@ export function stepAnime25DHairLayerSprings(
       chainTuning.carry = base.carry
       chainTuning.drag = base.drag
       chainTuning.tipStiffness = base.tipStiffness / (1 + 0.3 * soft)
+      chainTuning.limit = base.limit
       chainTuning.hang = -frame.tilt * hairHangShare(spring.lengthRatio, layer.frontHair)
       stepHairChain(
         spring.chain,
