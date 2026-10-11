@@ -8,6 +8,7 @@ import { compileTextVisemes } from './textVisemes'
 import {
   alignVisemeTimelineToAudio,
   audioVoicing,
+  textTimeOnAudio,
   VISEME_SILENCE_ENERGY,
   visemeAmount,
   visemeAt,
@@ -129,7 +130,7 @@ export function playTtsBuffer(
           accents: audioProsody.accents.filter(
             (accent) => accent.offsetMs >= elapsedMs + 140,
           ),
-        })
+        }, textTimeOnAudio(segment.text, voicing))
         hooks.onProsody?.(timeline, {
           startedAtMs,
         })

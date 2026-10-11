@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { compileTextVisemes } from './textVisemes'
-import { alignVisemeTimeline, alignVisemeTimelineToAudio, audioVoicing, visemeAmount, visemeAt } from './visemeTimeline'
+import { alignVisemeTimeline, alignVisemeTimelineToAudio, audioVoicing, textTimeOnAudio, visemeAmount, visemeAt } from './visemeTimeline'
 
 test('stretches the compiled shapes onto the audio that says them', async () => {
   const cues = await compileTextVisemes('你好世界', 'zh-CN')
@@ -128,4 +128,15 @@ test('the mouth keeps to the voice: it starts with it, pauses in its pauses and 
 test('without voicing the shapes are spread over the whole audio as before', () => {
   const cues = [{ viseme: 'open' as const, duration: 1, emphasis: false }]
   assert.deepEqual(alignVisemeTimelineToAudio(cues, 2, null), alignVisemeTimeline(cues, 2))
+})
+
+test('a place in the text is said where the voice says it: commas in the audio pauses', () => {
+  const voicing = { voiceStart: 0.3, voiceEnd: 2.1, pauses: [[1.1, 1.5]] as const }
+  const place = textTimeOnAudio('你好呀，今天天气很好', voicing)!
+  assert.ok(Math.abs(place(0) - 0.3) < 1e-9, 'the first word with the voice')
+  assert.ok(Math.abs(place(3) - 1.1) < 1e-9, 'the comma where the audio pauses')
+  assert.ok(Math.abs(place(4) - 1.5) < 1e-9, 'and the next word as it resumes')
+  assert.ok(Math.abs(place(7) - 1.8) < 1e-9, 'between, by share of the characters')
+  assert.ok(Math.abs(place(10) - 2.1) < 1e-9, 'the last with the voice')
+  assert.equal(textTimeOnAudio('你好', null), null)
 })

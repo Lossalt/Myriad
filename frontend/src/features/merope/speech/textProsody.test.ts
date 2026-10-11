@@ -208,3 +208,12 @@ test('later audio phrase anchors survive alignment and the production event boun
   assert.equal(event.prosody.accents.at(-1)!.gesture, 'question')
   assert.deepEqual(event.prosody.accents, aligned.accents)
 })
+
+test('given where the voice says each place, an accent lands where its words are spoken', () => {
+  const input = { utteranceId: 'placed', text: '不过我们可以试试。你觉得呢？', startedAtMs: 0 }
+  const placed = alignTextProsody(input, { durationMs: 6_000, accents: [] }, (offset) => 0.5 + offset * 0.3)
+  assert.ok(placed.accents.length > 0)
+  for (const accent of placed.accents) {
+    assert.equal(accent.offsetMs, Math.round((0.5 + accent.textOffset! * 0.3) * 1_000))
+  }
+})

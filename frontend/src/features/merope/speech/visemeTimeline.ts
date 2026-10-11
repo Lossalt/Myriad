@@ -1,5 +1,6 @@
 import type { SpeechViseme } from '../rig/articulation'
 import type { TextVisemeCue } from './textVisemes'
+import { visualSpeechPauseSeconds } from './textTiming'
 
 /** Loudness is not a mouth shape. */
 export interface VisemeSpan {
@@ -175,4 +176,51 @@ function matchInOrder(text: readonly number[], audio: readonly number[]): [numbe
     }
   }
   return pairs
+}
+
+/**
+ * Where a place in the text (a code unit offset) is said, in seconds of its
+ * audio: the text starts with the voice and ends with it, and its pauses
+ * (punctuation) fall in the audio's pauses, in order; between those anchors
+ * by its share of the characters. Null without voicing.
+ */
+export function textTimeOnAudio(
+  text: string,
+  voicing: AudioVoicing | null,
+): ((textOffset: number) => number) | null {
+  if (!voicing || !(voicing.voiceEnd > voicing.voiceStart) || !text) return null
+  const pauses: [number, number][] = []
+  let offset = 0
+  let run: number | null = null
+  for (const symbol of text) {
+    const pause = visualSpeechPauseSeconds(symbol)
+    if (pause !== null && pause >= TEXT_PAUSE_SECONDS) {
+      run ??= offset
+    } else if (run !== null) {
+      // A pause before the first word or after the last is not between words.
+      if (run > 0) pauses.push([run, offset])
+      run = null
+    }
+    offset += symbol.length
+  }
+  const length = text.length
+  const voiced = voicing.voiceEnd - voicing.voiceStart
+  const matched = matchInOrder(
+    pauses.map(([start, end]) => (start + end) / 2 / length),
+    voicing.pauses.map(([start, end]) => ((start + end) / 2 - voicing.voiceStart) / voiced),
+  )
+  const anchors: [number, number][] = [[0, voicing.voiceStart]]
+  for (const [t, a] of matched) {
+    anchors.push([pauses[t]![0], voicing.pauses[a]![0]], [pauses[t]![1], voicing.pauses[a]![1]])
+  }
+  anchors.push([length, voicing.voiceEnd])
+  return (textOffset: number) => {
+    const at = Math.max(0, Math.min(length, textOffset))
+    for (let i = 1; i < anchors.length; i += 1) {
+      const [t0, a0] = anchors[i - 1]!
+      const [t1, a1] = anchors[i]!
+      if (at <= t1) return t1 > t0 ? a0 + ((at - t0) / (t1 - t0)) * (a1 - a0) : a1
+    }
+    return voicing.voiceEnd
+  }
 }

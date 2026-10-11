@@ -114,22 +114,25 @@ export function predictTextProsody(input: TextProsodyInput): SpeechProsodyPlan {
   }
 }
 
+/**
+ * The text's predicted accents on the audio that says them. With `place`
+ * (where each text offset is said, in seconds) an accent lands where its
+ * words are spoken; without it, at its share of the audio's length.
+ */
 export function alignTextProsody(
   input: TextProsodyInput,
   audio: SpeechProsodyTimeline,
+  place?: ((textOffset: number) => number) | null,
 ): SpeechProsodyTimeline {
   if (!Number.isFinite(audio.durationMs) || audio.durationMs <= 0)
     return { durationMs: 0, accents: [] }
   const predicted = predictTextProsody({ ...input, streaming: false })
   const accents: SpeechProsodyPlan['accents'][number][] = []
   for (const accent of predicted.accents) {
-    const offsetMs = Math.round(
-      clamp(
-        (accent.offsetMs / predicted.durationMs) * audio.durationMs,
-        0,
-        audio.durationMs,
-      ),
-    )
+    const placed = place && typeof accent.textOffset === 'number'
+      ? place(accent.textOffset) * 1_000
+      : (accent.offsetMs / predicted.durationMs) * audio.durationMs
+    const offsetMs = Math.round(clamp(placed, 0, audio.durationMs))
     if (
       accents.some(
         (other) => Math.abs(other.offsetMs - offsetMs) < MIN_ACCENT_GAP_MS,
