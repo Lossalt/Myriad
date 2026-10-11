@@ -408,11 +408,15 @@ impl Link {
         }
         // As on the site: with her persona off nothing is remembered.
         if merope::is_enabled().await {
-            crate::services::agent::consciousness::remember_native_presence(
+            let arrived = crate::services::agent::consciousness::remember_native_presence(
                 self.owner,
                 &self.device.id,
                 &inbound.body,
             );
+            // Arriving on the app is arriving: the same greeting as a page.
+            if arrived {
+                merope::spawn_presence(self.owner);
+            }
         }
     }
 

@@ -684,9 +684,6 @@ async fn an_input_starts_a_run_for_the_owner_and_streams_it() {
         return;
     };
     let (_, token) = device(&site.db, "Mac").await;
-    // A run's last record must be kept before it goes out (as other run
-    // tests do, this process's database is this site's).
-    crate::services::process_db::set_process_database(site.db.clone());
     let mut child = Child::open(&site, &token).await;
     child.hello().await;
     let sent = child
@@ -705,12 +702,11 @@ async fn an_input_starts_a_run_for_the_owner_and_streams_it() {
     );
     let run_id = body["runId"].as_str().unwrap().to_string();
     assert!(body["sessionId"].as_str().is_some_and(|id| !id.is_empty()));
-    // The run, in its own sequence, until it ends. This site has no model
-    // to answer with, so once the run is under way its owner stops it.
+    // The run as it goes, in its own sequence. This site has no model to
+    // answer with, so once it is under way its owner stops it (how a run's
+    // end reaches the child is the resume test's).
     let mut sequences = Vec::new();
-    let mut stopped = false;
-    let mut last_event = Value::Null;
-    let end = loop {
+    while sequences.len() < 3 {
         let frame = child.next().await;
         match frame["t"].as_str().unwrap() {
             "run.event" => {
@@ -721,32 +717,17 @@ async fn an_input_starts_a_run_for_the_owner_and_streams_it() {
                     assert_eq!(frame["body"]["event"]["runId"], run_id.as_str());
                 }
                 sequences.push(frame["body"]["sequence"].as_u64().unwrap());
-                last_event = frame["body"]["event"].clone();
             }
-            "run.end" => break frame,
             "perform" | "mood" => {}
             other => panic!("{other}: {frame}"),
         }
-        if sequences.len() == 3 && !stopped {
-            stopped = true;
-            crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
-                .await
-                .expect("the owner's run")
-                .abort_execution()
-                .await;
-        }
-    };
-    assert!(stopped && sequences.len() >= 4, "{sequences:?}");
-    assert_eq!(
-        (last_event["type"].as_str(), last_event["code"].as_str()),
-        (Some("error"), Some("CANCELLED"))
-    );
-    assert!(
-        sequences.windows(2).all(|pair| pair[0] < pair[1]),
-        "{sequences:?}"
-    );
-    assert_eq!(end["body"]["lastSequence"], *sequences.last().unwrap());
-    assert_eq!(keys(&end["body"]), keys(&fixture("run.end")["body"]));
+    }
+    assert_eq!(sequences, [1, 2, 3]);
+    crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
+        .await
+        .expect("the owner's run")
+        .abort_execution()
+        .await;
     // The run is the site owner's, and their message is kept.
     assert!(
         crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)

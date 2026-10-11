@@ -56,9 +56,10 @@ pub struct DeviceRoleRequest {
 }
 
 /// PUT /api/agent/devices/{device_id}/role: the owner says which end is
-/// her parent from the site. `parent` makes this device it (a parent
-/// device before it becomes a child); `child` on the parent device gives
-/// it back to the site. The device learns it at its next `hello`. Answers
+/// her parent from the site. Until host leases, the site is her host (her
+/// link always treats it so): `parent` changes nothing and answers the list
+/// with `code: host_is_site`; `child` on a device made parent before gives
+/// her back to the site. The device learns it at its next `hello`. Answers
 /// the list, as `GET /devices` does.
 pub async fn set_device_role(
     State(db): State<DatabaseConnection>,
@@ -73,6 +74,22 @@ pub async fn set_device_role(
             Json(json!({ "error": "role is parent or child", "code": "invalid_role" })),
         )));
     };
+    if role == devices::Role::Parent {
+        let live = devices::list(&db, owner)
+            .await
+            .map_err(store_failed)?
+            .into_iter()
+            .any(|device| device.id == device_id && device.revoked_at.is_none());
+        if !live {
+            return Err(HttpError::from((
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "No such device", "code": "device_not_found" })),
+            )));
+        }
+        let mut list = device_list(&db, owner).await?;
+        list["code"] = json!("host_is_site");
+        return Ok(Json(list));
+    }
     let updated = devices::set_role(&db, owner, &device_id, role)
         .await
         .map_err(store_failed)?
@@ -195,9 +212,10 @@ mod tests {
         }
     }
 
-    /// The owner picks her parent from the site (an isolated schema on a
-    /// real database; skipped without a test database): a device, then the
-    /// site again; nobody else can.
+    /// The site stays her host (an isolated schema on a real database;
+    /// skipped without a test database): asking for a parent device changes
+    /// nothing and says why; a device made parent before is given back to
+    /// the site; nobody else can.
     #[tokio::test]
     async fn the_owner_sets_her_parent_from_the_site() {
         use sea_orm::ConnectionTrait;
@@ -216,19 +234,26 @@ mod tests {
         let (imac, _) = devices::add(&db, 41, "iMac").await.unwrap();
 
         let list = role(&db, 41, &mac.id, "parent").await.unwrap();
-        assert_eq!(list["parent"], mac.id.as_str());
-        let list = role(&db, 41, &imac.id, "parent").await.unwrap();
-        assert_eq!(list["parent"], imac.id.as_str());
-        let parents = list["devices"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|device| device["role"] == "parent")
-            .count();
-        assert_eq!(parents, 1);
-        // The parent made a child gives her back to the site.
+        assert_eq!(list["code"], "host_is_site");
+        assert_eq!(list["parent"], "site");
+        assert!(
+            list["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|device| device["role"] == "child")
+        );
+        assert_eq!(devices::parent(&db, 41).await.unwrap(), None);
+        // A device made parent before: made a child, she is the site's again.
+        db.execute_unprepared(&format!(
+            "UPDATE agent_sync_devices SET role = 'parent' WHERE id = '{}'",
+            imac.id
+        ))
+        .await
+        .unwrap();
         let list = role(&db, 41, &imac.id, "child").await.unwrap();
         assert_eq!(list["parent"], "site");
+        assert!(list.get("code").is_none());
 
         let (status, body) = role(&db, 41, &mac.id, "boss").await.unwrap_err();
         assert_eq!(

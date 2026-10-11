@@ -21,7 +21,6 @@ use super::is_logged_in_addressee;
 use super::store::{insert_remembered_if_new, latest_open_session};
 use super::{activity_is_busy, current_activity, effective_do_not_disturb};
 use crate::models::entities::agent_addressee_state;
-use crate::services::agent::consciousness::last_live_presence;
 use crate::services::agent::run_hub;
 
 pub use myriad_merope::diary::{compact_summary, redact_event_text};
@@ -64,10 +63,11 @@ pub(crate) async fn current_sight(
     user_id: i32,
     state: &agent_addressee_state::Model,
 ) -> IngestSight {
-    let live = last_live_presence(user_id);
+    // Here on any surface: on the Mac app as much as on a page.
+    let here = crate::services::agent::consciousness::owner_here(user_id);
     IngestSight {
-        on_page: live.page_visible,
-        panel_open: live.panel_visible,
+        on_page: here.present,
+        panel_open: here.panel_open,
         executing: run_hub::user_has_executing_run(user_id).await,
         working: activity_is_busy(current_activity(state)),
         do_not_disturb: effective_do_not_disturb(state),
@@ -163,6 +163,54 @@ mod tests {
         assert!(src.contains("insert_remembered_if_new(db, user_id, candidate, Some(event))"));
         assert!(!src.contains("insert_diary(db, user_id, memory, \"event\")"));
         assert!(!src.contains("insert_diary(db, user_id, &memory, \"event\")"));
+    }
+
+    /// Someone on the Mac app is here for what she says and whether she
+    /// notifies, as on a page (an isolated schema; skipped without a test
+    /// database).
+    #[tokio::test]
+    async fn the_owner_on_the_app_is_in_sight() {
+        use crate::services::agent::consciousness::{
+            forget_native_presence, remember_native_presence,
+        };
+        use sea_orm::ConnectionTrait;
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let user = 1_930_778;
+        fixture
+            .db
+            .execute_unprepared(&format!(
+                "INSERT INTO users (id, username) VALUES ({user}, 'mac{user}')"
+            ))
+            .await
+            .unwrap();
+        let state = super::super::get_or_create_state(&fixture.db, user)
+            .await
+            .unwrap();
+        let away = current_sight(user, &state).await;
+        assert!(!away.on_page && !away.panel_open);
+        let valuable = "agent.merope.mood_floor";
+        assert!(super::super::gates::decide_ingest(valuable, &away).notify);
+
+        let on_the_app = |panel: bool| serde_json::json!({ "presence": { "pageVisible": true, "panelVisible": panel } });
+        remember_native_presence(user, "dev_sight", &on_the_app(true));
+        let looking = current_sight(user, &state).await;
+        assert!(looking.on_page && looking.panel_open);
+        let decision = super::super::gates::decide_ingest(valuable, &looking);
+        assert!(!decision.notify && decision.live, "{decision:?}");
+        // Speaking first stays quiet while her panel is open on the app.
+        assert!(crate::services::agent::consciousness::live_presence_panel_open(user));
+
+        remember_native_presence(user, "dev_sight", &on_the_app(false));
+        let here = current_sight(user, &state).await;
+        assert!(here.on_page && !here.panel_open);
+        assert!(super::super::gates::decide_ingest(valuable, &here).notify);
+        assert!(crate::services::agent::consciousness::present_users().contains(&user));
+
+        forget_native_presence(user, "dev_sight");
+        assert_eq!(current_sight(user, &state).await, away);
+        fixture.close().await;
     }
 
     #[test]

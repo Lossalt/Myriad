@@ -1701,6 +1701,7 @@
     "invalid_sync_clock",
     "sync_clock_required",
     "invalid_zone",
-    "persona_field_required"
+    "persona_field_required",
+    "host_is_site"
   ]
 }

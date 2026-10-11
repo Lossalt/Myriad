@@ -94,9 +94,10 @@ pub struct RoleRequest {
     role: String,
 }
 
-/// PUT /api/agent/sync/role: chosen when the device connects. `parent`
-/// makes this device the parent end (another parent device becomes a
-/// child); `child` leaves the site as the parent unless another device is.
+/// PUT /api/agent/sync/role: chosen when the device connects. Until host
+/// leases, the site is her host (her link always treats it so): `parent`
+/// changes nothing and answers how things stand, with `code: host_is_site`;
+/// `child` leaves the site as the parent unless another device is.
 pub async fn sync_role(
     State(db): State<DatabaseConnection>,
     Extension(device): Extension<SyncDevice>,
@@ -111,6 +112,15 @@ pub async fn sync_role(
         )));
     };
     let owner = owner_of(&device);
+    if role == devices::Role::Parent {
+        let parent = devices::parent(&db, owner).await.map_err(sync_failed)?;
+        tracing::info!(device = %device.0.id, "[sync] asked to be the parent; the site stays her host");
+        return Ok(Json(json!({
+            "role": device.0.role.as_str(),
+            "parent": parent.unwrap_or_else(|| "site".to_string()),
+            "code": "host_is_site",
+        })));
+    }
     let updated = devices::set_role(&db, owner, &device.0.id, role)
         .await
         .map_err(sync_failed)?
@@ -515,7 +525,15 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["role"], "parent");
+        // The site stays her host: nothing changes, and it says why.
+        assert_eq!(
+            (
+                body["role"].as_str(),
+                body["parent"].as_str(),
+                body["code"].as_str()
+            ),
+            (Some("child"), Some("site"), Some("host_is_site"))
+        );
 
         // A wrong clock does not keep a device from leaving.
         let (status, _) = call_with(

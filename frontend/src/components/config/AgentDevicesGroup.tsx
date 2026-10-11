@@ -88,20 +88,6 @@ export function AgentDevicesGroup() {
     [c.agentDevicesRemoveFailed, fail, load],
   )
 
-  const setRole = useCallback(
-    async (device: SyncDevice, role: SyncDevice['role']) => {
-      setWorking(true)
-      try {
-        setList(await agentService.setSyncDeviceRole(device.id, role))
-      } catch (error) {
-        fail(error, c.agentDevicesRoleFailed)
-      } finally {
-        setWorking(false)
-      }
-    },
-    [c.agentDevicesRoleFailed, fail],
-  )
-
   const when = useCallback(
     (at: string) => new Date(at).toLocaleString(locale || undefined),
     [locale],
@@ -109,24 +95,15 @@ export function AgentDevicesGroup() {
 
   const devices = useMemo(() => list?.devices ?? [], [list])
   const live = devices.filter((device) => !device.revokedAt)
-  const parentName =
-    list && list.parent !== 'site'
-      ? (devices.find((device) => device.id === list.parent)?.name ??
-        c.agentDevicesParentSite)
-      : c.agentDevicesParentSite
 
+  // The site is her host until choosing a host arrives; there is no parent
+  // end to pick here.
   const stats: ManagedListStat[] = [
     {
       key: 'live',
       label: c.agentDevicesStatLive,
       value: `${live.length} / ${list?.limit ?? 10}`,
       tone: live.length === 0 ? 'muted' : 'default',
-    },
-    {
-      key: 'parent',
-      label: c.agentDevicesStatParent,
-      value: parentName,
-      tone: 'default',
     },
   ]
 
@@ -141,13 +118,8 @@ export function AgentDevicesGroup() {
     const badges: ManagedListItem['badges'] = []
     if (device.revokedAt) {
       badges.push({ label: removedWhy(device), tone: 'muted' })
-    } else {
-      if (device.role === 'parent') {
-        badges.push({ label: c.agentDevicesRoleParent, tone: 'active' })
-      }
-      if (device.stale) {
-        badges.push({ label: c.agentDevicesStale, tone: 'warn' })
-      }
+    } else if (device.stale) {
+      badges.push({ label: c.agentDevicesStale, tone: 'warn' })
     }
     return {
       id: device.id,
@@ -160,24 +132,6 @@ export function AgentDevicesGroup() {
       actions: device.revokedAt
         ? []
         : [
-            device.role === 'parent'
-              ? {
-                  key: 'site-parent',
-                  label: c.agentDevicesMakeSiteParent,
-                  onClick: () => void setRole(device, 'child'),
-                  disabled: working,
-                  variant: 'secondary' as const,
-                }
-              : {
-                  key: 'make-parent',
-                  label: c.agentDevicesMakeParent,
-                  onClick: () => void setRole(device, 'parent'),
-                  disabled: working,
-                  variant: 'secondary' as const,
-                  confirm: format(c.agentDevicesMakeParentConfirm, {
-                    name: device.name,
-                  }),
-                },
             {
               key: 'remove',
               label: c.agentDevicesRemove,
@@ -262,7 +216,6 @@ export function AgentDevicesGroup() {
         working={working}
         maxHeight={null}
       />
-      <p className="setting-hint">{c.agentDevicesParentHint}</p>
     </SettingGroup>
   )
 }
