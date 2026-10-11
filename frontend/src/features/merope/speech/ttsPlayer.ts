@@ -6,7 +6,8 @@ import { speechProsodyTimeline } from './prosody'
 import { alignTextProsody } from './textProsody'
 import { compileTextVisemes } from './textVisemes'
 import {
-  alignVisemeTimeline,
+  alignVisemeTimelineToAudio,
+  audioVoicing,
   VISEME_SILENCE_ENERGY,
   visemeAmount,
   visemeAt,
@@ -116,7 +117,11 @@ export function playTtsBuffer(
       )
       void compiled.then((cues) => {
         if (stopped) return
-        spans = alignVisemeTimeline(cues, decoded.duration)
+        // The mouth keeps to the voice: its start, its end and its pauses.
+        const voicing = typeof decoded.getChannelData === 'function' && decoded.numberOfChannels > 0
+          ? audioVoicing(decoded.getChannelData(0), decoded.sampleRate)
+          : null
+        spans = alignVisemeTimelineToAudio(cues, decoded.duration, voicing)
         const audioProsody = speechProsodyTimeline(spans, decoded.duration)
         const elapsedMs = Math.max(0, wallNow() - startedAtMs)
         const timeline = alignTextProsody(prosodyInput, {

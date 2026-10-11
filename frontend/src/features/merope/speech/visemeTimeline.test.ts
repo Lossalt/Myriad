@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { compileTextVisemes } from './textVisemes'
-import { alignVisemeTimeline, visemeAmount, visemeAt } from './visemeTimeline'
+import { alignVisemeTimeline, alignVisemeTimelineToAudio, audioVoicing, visemeAmount, visemeAt } from './visemeTimeline'
 
 test('stretches the compiled shapes onto the audio that says them', async () => {
   const cues = await compileTextVisemes('你好世界', 'zh-CN')
@@ -84,4 +84,48 @@ test('keeps conversational pacing and real sentence pauses without audio', async
     english.some((cue) => cue.viseme === 'rest' && cue.duration >= 0.32),
     'ASCII full stops are sentence boundaries too',
   )
+})
+
+function utterance(parts: readonly [boolean, number][], rate = 16_000): Float32Array {
+  const total = parts.reduce((sum, [, seconds]) => sum + seconds, 0)
+  const samples = new Float32Array(Math.round(total * rate))
+  let at = 0
+  for (const [voiced, seconds] of parts) {
+    const end = at + Math.round(seconds * rate)
+    if (voiced) {
+      for (let i = at; i < end; i += 1) samples[i] = 0.3 * Math.sin((i / rate) * 2 * Math.PI * 180)
+    }
+    at = end
+  }
+  return samples
+}
+
+test('the mouth keeps to the voice: it starts with it, pauses in its pauses and stops with it', () => {
+  const samples = utterance([[false, 0.3], [true, 0.8], [false, 0.4], [true, 0.6], [false, 0.2]])
+  const voicing = audioVoicing(samples, 16_000)!
+  assert.ok(Math.abs(voicing.voiceStart - 0.3) < 0.02 && Math.abs(voicing.voiceEnd - 2.1) < 0.02)
+  assert.equal(voicing.pauses.length, 1)
+  const cues = [
+    { viseme: 'open' as const, duration: 0.5, emphasis: false },
+    { viseme: 'wide' as const, duration: 0.5, emphasis: false },
+    { viseme: 'rest' as const, duration: 0.2, emphasis: false },
+    { viseme: 'round' as const, duration: 0.8, emphasis: false },
+  ]
+  const spans = alignVisemeTimelineToAudio(cues, 2.3, voicing)
+  assert.equal(spans[0]!.viseme, 'rest', 'still before the voice')
+  assert.ok(Math.abs(spans[0]!.endsAt - 0.3) < 0.02)
+  const pause = spans.find((span, i) => span.viseme === 'rest' && i > 0)!
+  const before = spans[spans.indexOf(pause) - 1]!
+  assert.ok(Math.abs(before.endsAt - 1.1) < 0.03, `pause starts with the audio's: ${before.endsAt}`)
+  assert.ok(Math.abs(pause.endsAt - 1.5) < 0.03, `and ends with it: ${pause.endsAt}`)
+  assert.ok(Math.abs(spans.at(-1)!.endsAt - 2.1) < 0.02, 'stops with the voice')
+  // Spread evenly, the mouth was already open through the silence before the voice.
+  const even = alignVisemeTimeline(cues, 2.3)
+  assert.equal(visemeAt(even, 0.1)?.viseme, 'open')
+  assert.equal(visemeAt(spans, 0.1)?.viseme, 'rest')
+})
+
+test('without voicing the shapes are spread over the whole audio as before', () => {
+  const cues = [{ viseme: 'open' as const, duration: 1, emphasis: false }]
+  assert.deepEqual(alignVisemeTimelineToAudio(cues, 2, null), alignVisemeTimeline(cues, 2))
 })
