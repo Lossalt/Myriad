@@ -103,8 +103,12 @@ export type FigureSkin =
 export const FIGURE_LEAN = 0.14
 /** The hip shift at `body` = ±1, as a share of the leg span, the way of the sway. */
 export const FIGURE_HIP_SHIFT = 0.2
-/** A free leg's heel lifts by this share of the leg span; its toes stay down. */
-const HEEL_LIFT = 0.05
+/**
+ * A free leg's heel lifts by this share of the leg span; its toes stay down.
+ * At the rig's full range the free knee comes well in, as a drawn
+ * contrapposto has it; much more and the shoe leaves the ground.
+ */
+const HEEL_LIFT = 0.1
 /**
  * A knee bent towards the viewer drifts inwards by this share of the thigh
  * for each unit of `sqrt(1 − (reach / drawn reach)²)`.
