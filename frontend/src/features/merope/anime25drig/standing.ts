@@ -46,9 +46,11 @@ const LEG_DAMPING = 0.75
  * weight over to the other: these holds, in seconds, and leans (as `body`),
  * alternating sides, then again. Each move takes this long.
  */
-const WEIGHT_HOLDS = [7.5, 5.5, 9, 6.5, 8, 6] as const
-const WEIGHT_LEANS = [0.55, 0.5, 0.45, 0.6, 0.42, 0.52] as const
-const WEIGHT_MOVE = 1.4
+const WEIGHT_HOLDS = [1.8, 1.2, 2.4, 1.2, 1.5, 2.2, 1.3, 1.2, 2.0, 1.4] as const
+const WEIGHT_LEANS = [0.85, 0.55, 1.0, 0.45, 0.75, 0.95, 0.6, 0.8, 0.5, 0.9] as const
+const WEIGHT_MOVE = 0.9
+/** A held lean is not parked: it keeps going this much further, slowly, over the hold. */
+const WEIGHT_GLIDE = 0.12
 const WEIGHT_CYCLE = WEIGHT_HOLDS.reduce((sum, hold) => sum + hold, 0)
 
 function weightLean(index: number): number {
@@ -65,8 +67,10 @@ export function standingWeightShift(time: number): number {
     if (t < end || i === WEIGHT_HOLDS.length - 1) {
       const u = Math.max(0, Math.min(1, (t - start) / WEIGHT_MOVE))
       const eased = u * u * (3 - 2 * u)
-      const from = weightLean(i - 1)
-      return from + (weightLean(i) - from) * eased
+      const from = weightLean(i - 1) * (1 + WEIGHT_GLIDE)
+      const hold = Math.max(0, Math.min(1, (t - start - WEIGHT_MOVE) / Math.max(0.1, WEIGHT_HOLDS[i] - WEIGHT_MOVE)))
+      const glide = weightLean(i) * WEIGHT_GLIDE * hold * hold * (3 - 2 * hold)
+      return from + (weightLean(i) - from) * eased + glide
     }
     start = end
   }
@@ -145,6 +149,8 @@ export class Anime25DStanding {
     private readonly withLean: boolean,
     /** The skirt's trail as its material sets it (partPhysics). */
     private readonly skirtSpring: Readonly<{ frequency: number; damping: number }>,
+    /** The hip shift at a full lean, as a share of the leg span. */
+    private readonly shiftShare: number,
   ) {}
 
   /** A standing figure's stance, or none for a bust. */
@@ -152,16 +158,17 @@ export class Anime25DStanding {
     anchors: Readonly<Anime25DPlaybackAnchors>,
     withLean = false,
     skirt: Readonly<{ frequency: number; damping: number }> | null = null,
+    shiftShare = STANCE_SHIFT,
   ): Anime25DStanding | null {
     return anchors.groundY === undefined
       ? null
       : new Anime25DStanding(anchors.groundY, anchors.bodyPivot.y, withLean,
-        skirt ?? { frequency: SKIRT_FREQUENCY, damping: SKIRT_DAMPING })
+        skirt ?? { frequency: SKIRT_FREQUENCY, damping: SKIRT_DAMPING }, shiftShare)
   }
 
   /** How far the hips move at a lean of `body`. */
   shift(body: number): number {
-    return (this.withLean ? body : -body) * STANCE_SHIFT * (this.groundY - this.hipsY)
+    return (this.withLean ? body : -body) * this.shiftShare * (this.groundY - this.hipsY)
   }
 
   /** Which leg the hips are over at a lean of `body`: +1 the one on the right of the picture. */

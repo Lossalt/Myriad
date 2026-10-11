@@ -100,11 +100,11 @@ export type FigureSkin =
  * The upper body's lean over the hips at `body` = ±1, in radians: it goes
  * on the way the hips went, so the figure moves more the higher up it is.
  */
-export const FIGURE_LEAN = 0.04
+export const FIGURE_LEAN = 0.14
 /** The hip shift at `body` = ±1, as a share of the leg span, the way of the sway. */
-export const FIGURE_HIP_SHIFT = 0.06
+export const FIGURE_HIP_SHIFT = 0.2
 /** A free leg's heel lifts by this share of the leg span; its toes stay down. */
-const HEEL_LIFT = 0.024
+const HEEL_LIFT = 0.05
 /**
  * A knee bent towards the viewer drifts inwards by this share of the thigh
  * for each unit of `sqrt(1 − (reach / drawn reach)²)`.
@@ -551,6 +551,39 @@ export function carryOnFigure(
   }
 }
 
+/** What a figure is drawn on: its layers' boxes and the canvas they are on. */
+export interface FigureCanvas {
+  layers: readonly Readonly<{ x: number; y: number; w: number; h: number }>[]
+  pixelCanvas: Readonly<{ width: number }>
+}
+
+/**
+ * Of the room beside a figure on its canvas, a full sway may take this much:
+ * the rest is for the arms swinging out past it.
+ */
+const SWAY_ROOM = 0.85
+
+/**
+ * The share of the full sway (FIGURE_HIP_SHIFT, FIGURE_LEAN) a figure has room
+ * for: at a full lean, the top of its drawing goes no nearer an edge of its
+ * canvas than the room left there allows, or it would be cut off.
+ */
+export function figureSwayReach(rest: Readonly<FigureRest>, canvas: FigureCanvas): number {
+  let left = Infinity
+  let right = -Infinity
+  let top = Infinity
+  for (const layer of canvas.layers) {
+    if (!(layer.w > 0 && layer.h > 0)) continue
+    left = Math.min(left, layer.x)
+    right = Math.max(right, layer.x + layer.w)
+    top = Math.min(top, layer.y)
+  }
+  if (!Number.isFinite(left)) return 1
+  const room = Math.max(0, Math.min(left, canvas.pixelCanvas.width - right)) * SWAY_ROOM
+  const travel = FIGURE_HIP_SHIFT * rest.legSpan + Math.tan(FIGURE_LEAN) * Math.max(0, rest.hips.y - top)
+  return travel > 0 ? Math.min(1, room / travel) : 1
+}
+
 /** A standing figure's bones in a running player: posed each frame from its sway and stance. */
 export class FigureBody {
   readonly pose = createFigurePose()
@@ -561,19 +594,30 @@ export class FigureBody {
     readonly sways: PartSways,
     /** A floating figure's springs (figureFloat); a standing one has none. */
     private readonly float: FigureFloat | null,
+    /** The share of the full sway its canvas has room for (figureSwayReach). */
+    readonly reach: number,
   ) {}
 
   static of(
     anchors: Readonly<Anime25DPlaybackAnchors>,
     parts?: Anime25DPartProfile,
     stance: FigureStance = 'ground',
+    canvas?: FigureCanvas,
   ): FigureBody | null {
     const rest = figureRestOf(anchors)
-    return rest ? new FigureBody(rest, new PartSways(parts), stance === 'float' ? new FigureFloat(rest) : null) : null
+    if (!rest) return null
+    const reach = canvas ? figureSwayReach(rest, canvas) : 1
+    return new FigureBody(rest, new PartSways(parts), stance === 'float' ? new FigureFloat(rest) : null, reach)
+  }
+
+  /** Its hip shift at a full lean, as a share of the leg span. */
+  get hipShift(): number {
+    return FIGURE_HIP_SHIFT * this.reach
   }
 
   /** Steps a floating figure's legs and the swaying parts after the bones moved. */
   stepParts(dt: number, body: number, dynamic: boolean): void {
+    body *= this.reach
     this.float?.step(dt, body, dynamic)
     this.sways.step(dt, this.pose, dynamic)
   }
@@ -581,11 +625,11 @@ export class FigureBody {
   /** Poses the bones for a sway of `body`: floating, or standing on the stance's legs. */
   step(body: number, stance: Readonly<Anime25DStandingFrame> | undefined): void {
     if (this.float) {
-      this.float.pose(body, this.pose)
+      this.float.pose(body * this.reach, this.pose)
       return
     }
     solveFigurePose(this.rest, {
-      body,
+      body: body * this.reach,
       pelvisTilt: stance?.pelvisTilt ?? 0,
       bendL: stance?.bendL ?? 0,
       bendR: stance?.bendR ?? 0,

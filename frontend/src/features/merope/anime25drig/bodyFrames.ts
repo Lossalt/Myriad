@@ -177,7 +177,7 @@ export class Anime25DBodyFrames {
   ): void {
     this.shellProfile = playback.shellProfile
     this.anchors = playback.anchors
-    this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance)
+    this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance, playback)
     // The bones shift a figure's weight; its weight-shift keys are not used beside them.
     this.keyedBodyTurn = KeyedBodyTurn.bind(playback.bodyTurnKeyforms, playback.anchors.neckPivot,
       this.figure ? undefined : playback.weightKeyforms)
@@ -265,7 +265,7 @@ export class Anime25DBodyFrames {
       figure: this.figure,
     }
     // With bones the figure sways from its feet, hips and shoulders together.
-    this.standing = Anime25DStanding.of(anchors, Boolean(this.figure), skirtTuning(movingPartIn(playback.partProfile, 'bottomwear')))
+    this.standing = Anime25DStanding.of(anchors, Boolean(this.figure), skirtTuning(movingPartIn(playback.partProfile, 'bottomwear')), this.figure?.hipShift)
     this.collarMotion = {
       neckPivotX: anchors.neckPivot.x,
       neckPivotY: anchors.neckPivot.y,
