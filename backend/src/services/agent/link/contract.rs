@@ -23,6 +23,7 @@ pub(super) struct Contract {
     pub hosts: Vec<String>,
     pub surfaces: Vec<String>,
     pub capabilities: Vec<String>,
+    pub say_kinds: Vec<String>,
     pub envelope: FieldSpec,
     pub frames: BTreeMap<String, FrameSpec>,
     pub error_codes: BTreeMap<String, String>,
@@ -33,6 +34,7 @@ pub(super) struct Contract {
 #[serde(rename_all = "camelCase")]
 pub(super) struct TimingSpec {
     pub heartbeat_ms: u64,
+    pub say_ttl_ms: u64,
     pub missed_heartbeats: u32,
     pub hello_timeout_ms: u64,
 }
@@ -150,7 +152,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 10] = [
+pub(super) const HOST_FRAMES: [&str; 11] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -161,6 +163,7 @@ pub(super) const HOST_FRAMES: [&str; 10] = [
     "ping",
     "pong",
     "error",
+    "say",
 ];
 
 /// Frame types the host takes from a child.

@@ -914,7 +914,7 @@
   "agentPersonaDeleteConfirm": "Supprimer la persona actuelle ? Humeur et journal seront aussi effacés.",
   "agentPersonaDeleteFailed": "Impossible de supprimer la persona",
   "agentDevicesTitle": "Appareils",
-  "agentDevicesDesc": "Synchronisez-la avec d’autres appareils, comme Myriad sur un Mac : persona, souvenirs, humeur et ses propres journées restent identiques des deux côtés. Chaque appareil se connecte avec un jeton qui ne sert qu’à synchroniser.",
+  "agentDevicesDesc": "Reliez votre Mac à elle, ici : elle vit sur ce site, et dans Myriad sur votre Mac vous pouvez aussi lui parler, la voir et l’entendre. Chaque appareil se connecte avec un jeton qui ne sert qu’à la joindre ; il ne permet ni de se connecter au site ni de lire autre chose.",
   "agentDevicesAdd": "Ajouter un appareil",
   "agentDevicesAddDesc": "Nommez-le et obtenez son jeton",
   "agentDevicesName": "Nom de l’appareil",

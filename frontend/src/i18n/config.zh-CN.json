@@ -914,7 +914,7 @@
   "agentPersonaDeleteConfirm": "确定删除现在的性格设定？心情和日记也会一起清掉。",
   "agentPersonaDeleteFailed": "删除人设失败",
   "agentDevicesTitle": "设备",
-  "agentDevicesDesc": "让别的设备（比如 Mac 上的 Myriad）上的她和这里的她保持同步：设定、记忆、心情和她自己的经历两边对齐。每台设备用一个只能拿来同步的令牌连接。",
+  "agentDevicesDesc": "让你的 Mac 连上这里的她：她住在这个站点上，在 Mac 上的 Myriad 里也能和她聊天、看见她、听她说话。每台设备用一个只能用来连接她的令牌，它不能登录，也读不了别的内容。",
   "agentDevicesAdd": "添加设备",
   "agentDevicesAddDesc": "起个名字，生成这台设备的令牌",
   "agentDevicesName": "设备名",

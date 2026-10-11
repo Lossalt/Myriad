@@ -13,9 +13,13 @@
 //!
 //! One link per device: a new connection replaces the old one. Removing the
 //! device, or the site getting another owner, closes it.
+//!
+//! What she says unprompted goes to the app when that is where the person
+//! is using her ([`say`]); see `merope::ingest` and `merope::reach`.
 
 mod connection;
 mod contract;
+mod say;
 mod turns;
 
 #[cfg(test)]
@@ -24,10 +28,11 @@ mod tests;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 pub(crate) use connection::serve;
 pub(crate) use contract::Close;
+pub(crate) use say::{Say, SayKind, can_say, say};
 
 /// The largest frame a child may send.
 pub(crate) fn max_frame_bytes() -> usize {
@@ -36,7 +41,10 @@ pub(crate) fn max_frame_bytes() -> usize {
 
 struct Open {
     id: u64,
+    owner: i32,
     close: oneshot::Sender<Close>,
+    /// Where her `say` frames go, once the child said it takes them.
+    says: Option<mpsc::Sender<connection::Outgoing>>,
 }
 
 /// The open link of each device, by device id.
@@ -44,15 +52,39 @@ static OPEN: LazyLock<Mutex<HashMap<String, Open>>> = LazyLock::new(|| Mutex::ne
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Registers a new link for the device, closing the one it had.
-fn open(device_id: &str) -> (u64, oneshot::Receiver<Close>) {
+fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (close, closed) = oneshot::channel();
     if let Ok(mut open) = OPEN.lock() {
-        if let Some(previous) = open.insert(device_id.to_string(), Open { id, close }) {
+        let link = Open {
+            id,
+            owner,
+            close,
+            says: None,
+        };
+        if let Some(previous) = open.insert(device_id.to_string(), link) {
             let _ = previous.close.send(Close::Replaced);
         }
     }
     (id, closed)
+}
+
+/// The link `id` takes `say` frames, sent through `sender`.
+fn takes_say(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing>) {
+    if let Ok(mut open) = OPEN.lock() {
+        if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
+            link.says = Some(sender);
+        }
+    }
+}
+
+/// Where the owner's device takes `say` frames, when its link is open and does.
+fn say_sender(owner: i32, device_id: &str) -> Option<mpsc::Sender<connection::Outgoing>> {
+    OPEN.lock().ok().and_then(|open| {
+        open.get(device_id)
+            .filter(|link| link.owner == owner)
+            .and_then(|link| link.says.clone())
+    })
 }
 
 /// Forgets the link `id` when it is still the device's.
@@ -64,8 +96,12 @@ fn forget(device_id: &str, id: u64) {
     }
 }
 
-/// Closes the device's link, if it has one open, saying why.
+/// Closes the device's link, if it has one open, saying why. A device that
+/// is not one any more keeps nothing waiting for it.
 pub(crate) fn disconnect(device_id: &str, why: Close) {
+    if matches!(why, Close::Revoked | Close::OwnerChanged) {
+        say::forget_device(device_id);
+    }
     let open = OPEN.lock().ok().and_then(|mut open| open.remove(device_id));
     if let Some(open) = open {
         let _ = open.close.send(why);

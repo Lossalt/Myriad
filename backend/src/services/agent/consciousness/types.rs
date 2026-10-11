@@ -92,6 +92,11 @@ pub struct SelfLivePresence {
     /// When this observation was written. `None` is treated as expired.
     #[serde(default)]
     pub captured_at: Option<DateTime<Utc>>,
+    /// When they last came to this page or app, or did something there: its
+    /// visibility or panel changed, or they said something. Unchanged
+    /// reports keep it. Which surface they are using is the latest one.
+    #[serde(skip)]
+    pub changed_at: Option<DateTime<Utc>>,
 }
 
 /// Trusted runtime facts describing who the Agent is speaking to and what it

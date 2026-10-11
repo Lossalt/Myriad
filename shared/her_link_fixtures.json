@@ -106,6 +106,27 @@
         "activity": "talking"
       }
     },
+    {
+      "t": "say", "seq": 10, "ack": 6, "id": "spk_0123456789abcdef0123456789abcdef", "at": 1760140820000,
+      "body": {
+        "text": "你回来啦。",
+        "kind": "greeting",
+        "saidAt": 1760140819950,
+        "sessionId": "sess_1",
+        "eventKey": "agent.merope.greeting",
+        "perform": {
+          "phase": "proactive",
+          "moodRevision": 1760140800000,
+          "motionStyle": "even",
+          "plan": {
+            "baseline": { "expression": "warm", "posture": "open", "motionEnergy": 0.5, "attention": 0.75 },
+            "cues": [
+              { "intent": "greet", "atMs": 0, "intensity": 0.5, "tempo": 1.0, "fadeInMs": 120, "fadeOutMs": 240, "interrupt": "replace" }
+            ]
+          }
+        }
+      }
+    },
     { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
     { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },
     { "t": "pong", "seq": 6, "ack": 8, "at": 1760140815020, "body": {} },

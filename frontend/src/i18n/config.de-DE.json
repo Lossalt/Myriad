@@ -914,7 +914,7 @@
   "agentPersonaDeleteConfirm": "Die aktuelle Persona löschen? Stimmung und Tagebuch werden ebenfalls geleert.",
   "agentPersonaDeleteFailed": "Persona konnte nicht gelöscht werden",
   "agentDevicesTitle": "Geräte",
-  "agentDevicesDesc": "Halte sie mit anderen Geräten synchron, etwa Myriad auf einem Mac: Persona, Erinnerungen, Stimmung und ihre eigenen Tage sind auf beiden gleich. Jedes Gerät verbindet sich mit einem Token, das nur synchronisieren kann.",
+  "agentDevicesDesc": "Verbinde deinen Mac mit ihr hier: Sie lebt auf dieser Seite, und in Myriad auf deinem Mac kannst du auch mit ihr chatten, sie sehen und hören. Jedes Gerät verbindet sich mit einem Token, das nur zu ihr führt; es kann sich nicht anmelden und nichts anderes lesen.",
   "agentDevicesAdd": "Gerät hinzufügen",
   "agentDevicesAddDesc": "Benennen und Token erzeugen",
   "agentDevicesName": "Gerätename",

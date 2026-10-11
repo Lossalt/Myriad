@@ -117,7 +117,8 @@ pub async fn tick(db: DatabaseConnection) {
         if user_id <= 0 || !super::is_logged_in_addressee(user_id) {
             continue;
         }
-        let live = crate::services::agent::consciousness::last_live_presence(user_id);
+        // Her face where they are using her: a page's, or the app's.
+        let live = crate::services::agent::consciousness::face_presence(user_id);
         if !live.page_visible || !live.face_visible || live.speaking {
             continue;
         }

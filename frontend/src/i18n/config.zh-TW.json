@@ -914,7 +914,7 @@
   "agentPersonaDeleteConfirm": "確定刪除現在的性格設定？心情和日記也會一起清掉。",
   "agentPersonaDeleteFailed": "刪除人設失敗",
   "agentDevicesTitle": "裝置",
-  "agentDevicesDesc": "讓其他裝置（例如 Mac 上的 Myriad）上的她和這裡的她保持同步：設定、記憶、心情和她自己的經歷兩邊對齊。每台裝置用一個只能拿來同步的權杖連線。",
+  "agentDevicesDesc": "讓你的 Mac 連上這裡的她：她住在這個站點上，在 Mac 上的 Myriad 裡也能和她聊天、看見她、聽她說話。每台裝置用一個只能用來連接她的權杖，它不能登入，也讀不了別的內容。",
   "agentDevicesAdd": "新增裝置",
   "agentDevicesAddDesc": "取個名字，產生這台裝置的權杖",
   "agentDevicesName": "裝置名稱",

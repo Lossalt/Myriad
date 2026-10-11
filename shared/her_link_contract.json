@@ -24,6 +24,7 @@
     "reconnectInitialMs": 1000,
     "reconnectMaxMs": 30000,
     "reconnectFactor": 2,
+    "sayTtlMs": 90000,
     "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes."
   },
   "limits": {
@@ -59,8 +60,10 @@
     "perception.window",
     "perception.pointer",
     "perception.music",
-    "perception.screen"
+    "perception.screen",
+    "say"
   ],
+  "sayKinds": ["greeting", "proactive", "face-to-face"],
   "frames": {
     "hello": {
       "from": "child",
@@ -135,6 +138,14 @@
       "delivery": "latest",
       "required": ["mood", "activity"],
       "description": "Her mood as shown: mood is a MoodTransition {before, after, arousalBefore, arousalAfter, bandBefore, bandAfter, delta, cause, revision}; activity is idle, thinking, talking, working, and so on. revision orders them. Only while her persona is on."
+    },
+    "say": {
+      "from": "host",
+      "delivery": "reliable",
+      "idempotency": "id is the line's id (sayId): the same when it is sent again.",
+      "required": ["text", "kind", "saidAt"],
+      "optional": ["sessionId", "perform", "eventKey"],
+      "description": "Something she says to the person unprompted, on this child because it is where they are using her now. Sent only to a child whose hello listed the say capability; a child without it never gets one, and her lines go where they went before. kind is one of sayKinds: greeting (they have just come to her), proactive (she writes to them first), face-to-face (something she says to them in person). text is what she says, for display and for the child's own voice. saidAt is milliseconds since the epoch when she said it, the same on every resend. sessionId is her chat session it belongs to. perform is how she acts it, a PerformanceDirective like perform's. eventKey is the event behind it, for the child's notification policy. The host keeps it until the child's ack covers its seq and sends it again (same id) after a reconnect; one not acked within timing.sayTtlMs is dropped. The child deduplicates by id and acks with any frame (an ack frame when it has nothing else)."
     },
     "ack": {
       "from": "child",

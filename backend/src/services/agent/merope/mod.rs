@@ -77,6 +77,7 @@ pub use ingest::{
     allow_existing_notify, is_enabled, spawn as spawn_ingest, spawn_presence,
     tick_speak_intents,
 };
+pub(crate) use ingest::{InPerson, in_person};
 pub use motion::{
     MotionContext, MotionPhase, PerformanceDirective, direct_motion, local_directive,
     refine_motion, resolve_round_motion_style,

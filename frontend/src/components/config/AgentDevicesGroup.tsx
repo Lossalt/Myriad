@@ -16,7 +16,7 @@ import {
   SettingsButton,
 } from '../settings'
 
-/** Devices that sync her with this site. Only the site owner sees it. */
+/** Devices (a Mac) connected to her on this site. Only the site owner sees it. */
 export function AgentDevicesGroup() {
   const { t, format, locale } = useI18n()
   const c = t.config

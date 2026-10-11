@@ -914,7 +914,7 @@
   "agentPersonaDeleteConfirm": "Delete the current persona? Mood and diary will be cleared too.",
   "agentPersonaDeleteFailed": "Could not delete the persona",
   "agentDevicesTitle": "Devices",
-  "agentDevicesDesc": "Keep her in sync with other devices, like Myriad on a Mac: persona, memories, mood and her own days stay the same on both. Each device connects with a token that can only sync.",
+  "agentDevicesDesc": "Connect your Mac to her here: she lives on this site, and in Myriad on your Mac you can chat with her, see her and hear her too. Each device connects with a token that can only reach her; it cannot sign in or read anything else.",
   "agentDevicesAdd": "Add device",
   "agentDevicesAddDesc": "Name it and get its token",
   "agentDevicesName": "Device name",

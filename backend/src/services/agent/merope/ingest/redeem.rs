@@ -101,7 +101,8 @@ async fn redeem_speak_intent(
         || speech_is_shown(&intent.topic, decision.notify);
     // Said in person while her voice is Omni's: the line is made and said in
     // one breath, its sound on a stream of its own for the face to play.
-    let omni = if decision.live {
+    // Only the site's face plays her own voice; the app speaks with its own.
+    let omni = if decision.live && in_person(intent.user_id, touch) == InPerson::Face {
         crate::GLOBAL_DYNAMIC_CONFIG
             .read()
             .await
@@ -187,7 +188,9 @@ async fn redeem_speak_intent(
                     response_text: Some(spoken.clone()),
                     previous_phrases: Vec::new(),
                     task_success: None,
-                    rig_state: last_live_presence(intent.user_id).rig_state,
+                    // The body she acts with is where they are using her.
+                    rig_state: crate::services::agent::consciousness::face_presence(intent.user_id)
+                        .rig_state,
                     motion_style,
                 };
                 let performance = if decision.live {
@@ -220,7 +223,28 @@ async fn redeem_speak_intent(
     // Merope toasts only what it owns. Task / phantasi / sync already have a
     // producer; sending ours as well would be two notices for one event.
     let mut delivered = false;
-    if decision.live && shown {
+    let target = if decision.live && shown {
+        in_person(intent.user_id, touch)
+    } else {
+        InPerson::Nowhere
+    };
+    if let InPerson::App(device) = &target {
+        // On the app they are using her on: said there, not on the site's face.
+        delivered = say_on_app(
+            db,
+            intent.user_id,
+            device,
+            &intent.id,
+            &intent.topic,
+            &spoken,
+            performance.as_ref(),
+        )
+        .await;
+        if delivered {
+            claim.delivered(&intent, repeat_minutes);
+        }
+    }
+    if target == InPerson::Face {
         delivered = emit_live_speech(
             intent.user_id,
             &intent.id,
@@ -282,6 +306,78 @@ async fn redeem_speak_intent(
     }
     Ok(())
 }
+
+/// Where a line said in person goes now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InPerson {
+    /// The native app they are using her on, whose link takes `say`.
+    App(String),
+    /// Her face on a page of the site.
+    Face,
+    /// Neither is in front of them.
+    Nowhere,
+}
+
+/// The app when that is where they are using her (of the surfaces they are
+/// on, the one they came to or used last) and its link takes `say`;
+/// otherwise the site's face, when a page is visible. A touch is answered on
+/// the face it came from.
+pub(crate) fn in_person(user_id: i32, touch: bool) -> InPerson {
+    use crate::services::agent::consciousness::{Front, LiveSurface, front_presence};
+    if !touch {
+        if let Some(Front {
+            surface: LiveSurface::Native,
+            device_id: Some(device),
+            ..
+        }) = front_presence(user_id)
+        {
+            if crate::services::agent::link::can_say(user_id, &device) {
+                return InPerson::App(device);
+            }
+        }
+    }
+    if last_live_presence(user_id).page_visible {
+        InPerson::Face
+    } else {
+        InPerson::Nowhere
+    }
+}
+
+/// Says the line on the app, with how she acts it.
+pub(crate) async fn say_on_app(
+    db: &DatabaseConnection,
+    user_id: i32,
+    device: &str,
+    id: &str,
+    event_key: &str,
+    spoken: &str,
+    performance: Option<&PerformanceDirective>,
+) -> bool {
+    use crate::services::agent::link::{Say, SayKind, say};
+    let session_id = latest_open_session(db, user_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|(id, _)| id);
+    say(
+        user_id,
+        device,
+        Say {
+            id: id.to_string(),
+            kind: if event_key == GREETING_EVENT {
+                SayKind::Greeting
+            } else {
+                SayKind::FaceToFace
+            },
+            text: spoken.to_string(),
+            session_id,
+            perform: performance.and_then(|value| serde_json::to_value(value).ok()),
+            event_key: Some(event_key.to_string()),
+        },
+    )
+}
+
+const GREETING_EVENT: &str = "agent.merope.greeting";
 
 async fn current_delivery(
     db: &DatabaseConnection,
@@ -773,6 +869,25 @@ mod tests {
 
     /// She never speaks a stock line: a line nobody will see, or one that
     /// could not be composed, is not said at all.
+    /// On the app they are using her on, a line is said there and not also
+    /// on the site's face; the face is only for a page in front of them.
+    #[test]
+    fn a_line_said_on_the_app_is_not_also_shown_on_the_face() {
+        let source = include_str!("redeem.rs");
+        let app = source
+            .split("if let InPerson::App(device) = &target {")
+            .nth(1)
+            .and_then(|rest| rest.split("if target == InPerson::Face {").next())
+            .unwrap();
+        assert!(app.contains("say_on_app("));
+        assert!(!app.contains("emit_live_speech"));
+        let face = source
+            .split("if target == InPerson::Face {")
+            .nth(1)
+            .unwrap();
+        assert!(face.contains("emit_live_speech("));
+    }
+
     #[test]
     fn nothing_composed_is_nothing_said() {
         let src = include_str!("redeem.rs")

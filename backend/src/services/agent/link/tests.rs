@@ -15,6 +15,7 @@ use super::connection::{Hello, Inbound, Input, Resume, accepted, acting, mood_fr
 use super::contract::{
     CHILD_FRAMES, CONTRACT, CONTRACT_JSON, Close, HOST_ERROR_CODES, HOST_FRAMES, Timing, valid_id,
 };
+use super::say::SayKind;
 use super::turns::{self, Turn};
 use crate::services::agent::AgentProgressEvent;
 use crate::services::agent::merope::{MoodTransition, PerformanceDirective};
@@ -80,6 +81,18 @@ fn the_host_speaks_the_contract() {
         }
     }
     assert_eq!(CONTRACT.frames["input"].delivery, "reliable");
+    assert_eq!(CONTRACT.frames["say"].delivery, "reliable");
+    assert!(CONTRACT.capabilities.iter().any(|c| c == "say"));
+    let kinds: Vec<&str> = [SayKind::Greeting, SayKind::Proactive, SayKind::FaceToFace]
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect();
+    assert_eq!(CONTRACT.say_kinds, kinds);
+    assert_eq!(
+        Duration::from_millis(CONTRACT.timing.say_ttl_ms),
+        Duration::from_secs(crate::services::agent::presence_window::PRESENCE_WINDOW_SECS as u64),
+        "a line waits as long as presence lasts"
+    );
     // Codes: what the host sends is declared, and declared codes are what it sends.
     let declared: BTreeSet<String> = CONTRACT.error_codes.keys().cloned().collect();
     assert_eq!(declared, strings(&HOST_ERROR_CODES));
@@ -229,6 +242,20 @@ fn every_frame_has_a_fixture_that_fits_it() {
     let mood: MoodTransition = serde_json::from_value(mood).unwrap();
     let sent = mood_frame(&mood, "talking");
     assert_eq!(sent.body, fixture("mood")["body"]);
+    let say = fixture("say");
+    let built = super::say::body(
+        &super::say::Say {
+            id: say["id"].as_str().unwrap().into(),
+            kind: SayKind::Greeting,
+            text: say["body"]["text"].as_str().unwrap().into(),
+            session_id: Some("sess_1".into()),
+            perform: Some(say["body"]["perform"].clone()),
+            event_key: Some("agent.merope.greeting".into()),
+        },
+        say["body"]["saidAt"].as_i64().unwrap(),
+    );
+    assert_eq!(built, say["body"]);
+    let _: PerformanceDirective = serde_json::from_value(say["body"]["perform"].clone()).unwrap();
     // A mood that comes with a run counts only as it happens.
     let event = AgentProgressEvent::MeropeStateChanged {
         mood,
@@ -443,11 +470,16 @@ impl Child {
     }
 
     async fn hello(&mut self) -> Value {
+        self.hello_with(&["rig", "telepathy", "rig", "notify"])
+            .await
+    }
+
+    async fn hello_with(&mut self, capabilities: &[&str]) -> Value {
         self.send(
             "hello",
             None,
             json!({ "protocol": 1, "role": "child", "surface": "app",
-                    "capabilities": ["rig", "telepathy", "rig", "notify"] }),
+                    "capabilities": capabilities }),
         )
         .await;
         self.expect("welcome").await
@@ -941,6 +973,193 @@ async fn performing_and_resuming_after_a_reconnect() {
     assert_eq!(child.expect("run.end").await["body"]["lastSequence"], 6);
     let (other, _) = device(&site.db, "Other Mac").await;
     assert!(turns::find(&site.db, &other.id, "t_p").await.is_none());
+    drop(child);
+    site.close().await;
+}
+
+/// Her lines go to the app they are using her on, as `say`, kept until the
+/// child acks them; on the web, they go where they always did.
+#[tokio::test]
+async fn her_lines_go_to_the_app_they_are_using_her_on() {
+    use crate::services::agent::consciousness::{
+        forget_native_presence, live_presence_from_custom_data, remember_live_presence,
+        remember_native_presence,
+    };
+    use crate::services::agent::merope::ingest::{InPerson, in_person, say_on_app};
+    use crate::services::agent::merope::reach::deliver_first_words;
+    use myriad_merope::reach::Route;
+    let Some(site) = site().await else {
+        return;
+    };
+    let (mac, token) = device(&site.db, "Mac").await;
+    let mut child = Child::open(&site, &token).await;
+    let welcome = child.hello_with(&["rig", "say"]).await;
+    assert_eq!(welcome["body"]["capabilities"], json!(["rig", "say"]));
+
+    // The owner is only on the Mac.
+    let on_the_mac =
+        json!({ "presence": { "pageVisible": true, "panelVisible": false, "faceVisible": true } });
+    remember_native_presence(OWNER, &mac.id, &on_the_mac);
+    assert_eq!(in_person(OWNER, false), InPerson::App(mac.id.clone()));
+    assert_eq!(
+        in_person(OWNER, true),
+        InPerson::Nowhere,
+        "a touch answers the face it came from"
+    );
+
+    // Her first words: on the app.
+    assert_eq!(
+        deliver_first_words(&site.db, OWNER, Route::Site, "在忙吗？").await,
+        Some("app")
+    );
+    let first = child.expect("say").await;
+    let first_id = first["id"].as_str().unwrap().to_string();
+    assert!(first_id.starts_with("say_"));
+    assert_eq!(first["body"]["kind"], "proactive");
+    assert_eq!(first["body"]["text"], "在忙吗？");
+    assert!(first["body"]["saidAt"].as_i64().unwrap() > 0);
+    // Her greeting: on the app, as she acts it; nothing on the site's face.
+    let directive = fixture("say")["body"]["perform"].clone();
+    let performance: PerformanceDirective = serde_json::from_value(directive.clone()).unwrap();
+    assert!(
+        say_on_app(
+            &site.db,
+            OWNER,
+            &mac.id,
+            "spk_greeting1",
+            "agent.merope.greeting",
+            "你回来啦。",
+            Some(&performance),
+        )
+        .await
+    );
+    let greeting = child.expect("say").await;
+    assert_eq!(greeting["id"], "spk_greeting1");
+    assert_eq!(greeting["body"]["kind"], "greeting");
+    assert_eq!(greeting["body"]["eventKey"], "agent.merope.greeting");
+    assert_eq!(greeting["body"]["perform"], directive);
+    let required: BTreeSet<String> = CONTRACT.frames["say"].required.iter().cloned().collect();
+    assert!(keys(&greeting["body"]).is_superset(&required));
+    assert_eq!(keys(&greeting), keys(&fixture("say")));
+    // Something she says in person is face-to-face.
+    assert!(
+        say_on_app(
+            &site.db,
+            OWNER,
+            &mac.id,
+            "spk_thought1",
+            "agent.merope.thought",
+            "我刚想起一件事。",
+            None
+        )
+        .await
+    );
+    let thought = child.expect("say").await;
+    assert_eq!(thought["body"]["kind"], "face-to-face");
+    assert!(thought["body"].get("perform").is_none());
+
+    // Not acked when the link drops: sent again, same ids, on the next one.
+    drop(child);
+    let mut child = Child::open(&site, &token).await;
+    child.hello_with(&["rig", "say"]).await;
+    let mut again = Vec::new();
+    for _ in 0..3 {
+        again.push(
+            child.expect("say").await["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    assert_eq!(again, [first_id.as_str(), "spk_greeting1", "spk_thought1"]);
+    // Acked, they are gone.
+    child.send("ack", None, json!({})).await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    drop(child);
+    let mut child = Child::open(&site, &token).await;
+    child.hello_with(&["rig", "say"]).await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    // One not acked in time is dropped: by then they are not here either.
+    assert!(
+        say_on_app(
+            &site.db,
+            OWNER,
+            &mac.id,
+            "spk_late",
+            "agent.merope.thought",
+            "还在吗？",
+            None
+        )
+        .await
+    );
+    assert_eq!(child.expect("say").await["id"], "spk_late");
+    drop(child);
+    super::say::age_all(&mac.id);
+    let mut child = Child::open(&site, &token).await;
+    child.hello_with(&["rig", "say"]).await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+
+    // A child that does not take `say`: her lines go where they went before.
+    // (A dropped link clears the app's presence once the host notices.)
+    drop(child);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut old = Child::open(&site, &token).await;
+    old.hello_with(&["rig"]).await;
+    remember_native_presence(OWNER, &mac.id, &on_the_mac);
+    assert_eq!(in_person(OWNER, false), InPerson::Nowhere);
+    assert!(
+        !say_on_app(
+            &site.db,
+            OWNER,
+            &mac.id,
+            "spk_old",
+            "agent.merope.thought",
+            "嗯？",
+            None
+        )
+        .await
+    );
+    drop(old);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // On the web: the face, as always, and first words are no `say`.
+    let mut child = Child::open(&site, &token).await;
+    child.hello_with(&["rig", "say"]).await;
+    remember_native_presence(OWNER, &mac.id, &on_the_mac);
+    assert_eq!(in_person(OWNER, false), InPerson::App(mac.id.clone()));
+    let page = |visible: bool| {
+        live_presence_from_custom_data(&json!({
+            "presence": { "instanceId": "link-test-page", "pageVisible": visible, "faceVisible": visible }
+        }))
+    };
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    remember_live_presence(OWNER, page(true));
+    assert_eq!(
+        in_person(OWNER, false),
+        InPerson::Face,
+        "the page came last"
+    );
+    assert_eq!(
+        deliver_first_words(&site.db, OWNER, Route::Site, "嗨").await,
+        None
+    );
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    // Back on the Mac (its window comes to the front): the app again.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    remember_native_presence(
+        OWNER,
+        &mac.id,
+        &json!({ "presence": { "pageVisible": false } }),
+    );
+    remember_native_presence(OWNER, &mac.id, &on_the_mac);
+    assert_eq!(in_person(OWNER, false), InPerson::App(mac.id.clone()));
+
+    remember_live_presence(OWNER, page(false));
+    forget_native_presence(OWNER, &mac.id);
     drop(child);
     site.close().await;
 }

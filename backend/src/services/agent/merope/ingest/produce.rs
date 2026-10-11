@@ -163,7 +163,8 @@ pub async fn ingest(
     // who can see her, or let go.
     let thought = super::super::gates::said_only_in_person(event_key);
     if thought {
-        let live = crate::services::agent::consciousness::last_live_presence(user_id);
+        // Her face where they are using her: a page's, or the app's.
+        let live = crate::services::agent::consciousness::face_presence(user_id);
         if !live.face_visible || live.speaking || !decision.allow_model {
             return Ok(());
         }

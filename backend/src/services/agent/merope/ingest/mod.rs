@@ -26,6 +26,9 @@ use crate::services::agent::run_hub;
 pub use myriad_merope::diary::{compact_summary, redact_event_text};
 pub use produce::{spawn, spawn_presence};
 pub use redeem::tick_speak_intents;
+pub(crate) use redeem::{InPerson, in_person};
+#[cfg(test)]
+pub(crate) use redeem::say_on_app;
 
 const SAME_EVENT_MINUTES: i64 = 15;
 

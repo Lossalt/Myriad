@@ -2,7 +2,7 @@
 //! sends, the runs it follows, her mood, and the heartbeat that also checks
 //! the device is still one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
@@ -41,13 +41,23 @@ fn frame(t: &'static str, body: Value) -> Outgoing {
     Outgoing { t, id: None, body }
 }
 
+impl Outgoing {
+    /// A reliable frame: kept until acked, by its id.
+    pub(super) fn reliable(t: &'static str, id: String, body: Value) -> Self {
+        Self {
+            t,
+            id: Some(id),
+            body,
+        }
+    }
+}
+
 /// A frame as a child sends it. Every field but `id` is required.
 #[derive(Deserialize)]
 pub(super) struct Inbound {
     pub(super) t: String,
     pub(super) seq: u64,
-    #[allow(dead_code)] // The host keeps no reliable frames of its own yet.
-    ack: u64,
+    pub(super) ack: u64,
     #[serde(default)]
     pub(super) id: Option<String>,
     #[allow(dead_code)]
@@ -96,7 +106,7 @@ pub(super) async fn serve_with(
     device: Device,
     timing: Timing,
 ) {
-    let (registered, closed) = super::open(&device.id);
+    let (registered, closed) = super::open(&device.id, device.user_id);
     let (sink, stream) = socket.split();
     let (tx, rx) = mpsc::channel(QUEUED_FRAMES);
     let mut link = Link {
@@ -112,6 +122,10 @@ pub(super) async fn serve_with(
         last_heard: Instant::now(),
         follows: HashMap::new(),
         moods: None,
+        registered,
+        takes_say: false,
+        unacked: Vec::new(),
+        said: HashSet::new(),
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -142,6 +156,14 @@ struct Link {
     /// The run each followed turn is being sent from.
     follows: HashMap<String, tokio::task::AbortHandle>,
     moods: Option<tokio::task::AbortHandle>,
+    /// This link in the registry.
+    registered: u64,
+    /// The child said it takes `say`.
+    takes_say: bool,
+    /// Reliable frames sent on this connection and not yet acked: (seq, id).
+    unacked: Vec<(u64, String)>,
+    /// Reliable ids sent on this connection.
+    said: HashSet<String>,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -215,6 +237,9 @@ impl Link {
             "body": outgoing.body,
         });
         if let Some(id) = outgoing.id {
+            self.unacked.retain(|(_, sent)| *sent != id);
+            self.unacked.push((self.sent, id.clone()));
+            self.said.insert(id.clone());
             envelope["id"] = id.into();
         }
         sink.send(Message::Text(envelope.to_string().into()))
@@ -251,6 +276,7 @@ impl Link {
             return None;
         };
         self.heard = self.heard.max(inbound.seq);
+        self.acked(inbound.ack);
         if !self.hello {
             if inbound.t != "hello" {
                 self.error("not_ready", Some(inbound.seq));
@@ -319,11 +345,19 @@ impl Link {
             "lineage": self.device.lineage,
             "hostEpoch": Value::Null,
             "heartbeatMs": self.timing.heartbeat.as_millis() as u64,
-            "capabilities": capabilities,
+            "capabilities": &capabilities,
             "turns": told,
             "serverTime": chrono::Utc::now().timestamp_millis(),
         });
         self.reply(frame("welcome", welcome));
+        // Her lines for the app: what is still waiting goes again, after welcome.
+        if capabilities.iter().any(|capability| capability == "say") {
+            self.takes_say = true;
+            super::takes_say(&self.device.id, self.registered, self.tx.clone());
+            for (id, body) in super::say::pending(&self.device.id) {
+                self.reply(Outgoing::reliable("say", id, body));
+            }
+        }
         if let Some(mood) = current_mood(&self.db, self.owner).await {
             self.reply(mood);
         }
@@ -367,6 +401,8 @@ impl Link {
             self.reject(&turn_id, "input_too_long");
             return;
         }
+        // Saying something on the app is using her there.
+        crate::services::agent::consciousness::native_used(self.owner, &self.device.id);
         let request = ProcessRequest {
             input: input.text,
             context: Some(ProcessContext {
@@ -482,7 +518,31 @@ impl Link {
         if self.hello {
             self.reply(frame("ping", json!({})));
         }
+        if self.takes_say {
+            // Lines that could not be queued when said, and none that expired.
+            let pending = super::say::pending(&self.device.id);
+            self.unacked
+                .retain(|(_, id)| pending.iter().any(|(waiting, _)| waiting == id));
+            for (id, body) in pending {
+                if !self.said.contains(&id) {
+                    self.reply(Outgoing::reliable("say", id, body));
+                }
+            }
+        }
         None
+    }
+
+    /// The child's ack covers everything up to `ack` on this connection.
+    fn acked(&mut self, ack: u64) {
+        let device = &self.device.id;
+        self.unacked.retain(|(seq, id)| {
+            if *seq <= ack {
+                super::say::acked(device, id);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// The link is closed: stop sending, and the person is not there now

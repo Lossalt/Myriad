@@ -39,8 +39,21 @@ impl LivePresenceStore {
             return false;
         }
         let was_present = self.here(user_id, now).present;
+        let mut live = live;
         let pages = self.users.entry(user_id).or_default();
         let key = live.instance_id.clone().unwrap_or_default();
+        // The same as it was: they did not come or go, so it keeps when they did.
+        let same = pages.get(&key).filter(|before| {
+            presence_is_fresh_at(before, now)
+                && before.page_visible == live.page_visible
+                && before.panel_visible == live.panel_visible
+                && before.face_visible == live.face_visible
+        });
+        if live.changed_at.is_none() {
+            live.changed_at = same
+                .and_then(|before| before.changed_at)
+                .or(live.captured_at);
+        }
         if !pages.contains_key(&key) && pages.len() >= MAX_USER_PAGES {
             // Prefer evicting an old hidden page, not the actively viewed one.
             if let Some(oldest) = pages
@@ -57,6 +70,33 @@ impl LivePresenceStore {
 
     fn last(&self, user_id: i32, now: DateTime<Utc>) -> SelfLivePresence {
         self.last_on(user_id, LiveSurface::Web, now)
+    }
+
+    /// Of the pages and apps they are on, the one they came to or used last;
+    /// a page wins a tie.
+    fn front(&self, user_id: i32, now: DateTime<Utc>) -> Option<Front> {
+        let (key, newest) = self
+            .users
+            .get(&user_id)?
+            .iter()
+            .filter(|(_, live)| live.page_visible && presence_is_fresh_at(live, now))
+            .max_by_key(|(key, live)| {
+                (
+                    live.changed_at.or(live.captured_at),
+                    live.surface == LiveSurface::Web,
+                    live.panel_visible,
+                    *key,
+                )
+            })?;
+        let surface = newest.surface;
+        Some(Front {
+            surface,
+            device_id: match surface {
+                LiveSurface::Native => key.strip_prefix(NATIVE_PREFIX).map(str::to_string),
+                LiveSurface::Web => None,
+            },
+            live: self.last_on(user_id, surface, now),
+        })
     }
 
     /// Here on any surface, and looking at her panel on any.
@@ -121,6 +161,18 @@ pub struct Here {
     pub panel_open: bool,
 }
 
+/// The surface the person is using her on right now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Front {
+    pub surface: LiveSurface,
+    /// The native child's device, on the app.
+    pub device_id: Option<String>,
+    /// That surface's presence: its face, rig and perception.
+    pub live: SelfLivePresence,
+}
+
+const NATIVE_PREFIX: &str = "native:";
+
 static LIVE: Lazy<RwLock<LivePresenceStore>> =
     Lazy::new(|| RwLock::new(LivePresenceStore::default()));
 
@@ -162,7 +214,37 @@ pub fn last_live_presence(user_id: i32) -> SelfLivePresence {
 /// The lease key of a native child: a colon never passes the page whitelist,
 /// so no page can write over it.
 fn native_instance(device_id: &str) -> String {
-    format!("native:{device_id}")
+    format!("{NATIVE_PREFIX}{device_id}")
+}
+
+/// Where they are using her now: the page or app they came to or used last.
+pub fn front_presence(user_id: i32) -> Option<Front> {
+    LIVE.read()
+        .ok()
+        .and_then(|store| store.front(user_id, Utc::now()))
+}
+
+/// Her face where they are using her: that surface's presence (a page's when
+/// nobody is anywhere).
+pub fn face_presence(user_id: i32) -> SelfLivePresence {
+    front_presence(user_id)
+        .map(|front| front.live)
+        .unwrap_or_default()
+}
+
+/// They said something to her on the app: it is the surface in use now.
+pub fn native_used(user_id: i32, device_id: &str) {
+    if let Ok(mut store) = LIVE.write() {
+        let now = Utc::now();
+        if let Some(live) = store
+            .users
+            .get_mut(&user_id)
+            .and_then(|pages| pages.get_mut(&native_instance(device_id)))
+            .filter(|live| presence_is_fresh_at(live, now))
+        {
+            live.changed_at = Some(now);
+        }
+    }
 }
 
 /// What a native child on her link reports, through the same whitelist and
@@ -415,6 +497,8 @@ pub fn live_presence_from_request(request: &UserRequest) -> SelfLivePresence {
         apply_whitelisted_presence(&mut live, data);
     }
     live.captured_at = Some(Utc::now());
+    // Saying something there is using it.
+    live.changed_at = live.captured_at;
     live
 }
 
@@ -571,6 +655,45 @@ mod tests {
         forget_native_presence(user, "dev_b");
         assert!(!owner_here(user).present && !live_presence_panel_open(user));
         assert!(!present_users().contains(&user));
+    }
+
+    #[test]
+    fn the_surface_in_use_is_the_one_they_came_to_or_used_last() {
+        let mut store = LivePresenceStore::default();
+        let now = Utc::now();
+        let app = |visible: bool, panel: bool, at| {
+            let mut live = page("mac", visible, panel, at);
+            live.instance_id = Some(native_instance("dev_front"));
+            live.surface = LiveSurface::Native;
+            live
+        };
+        assert!(store.front(1, now).is_none());
+        store.remember(1, page("tab", true, false, now), now);
+        let later = now + Duration::seconds(5);
+        store.remember(1, app(true, false, later), later);
+        let front = store.front(1, later).unwrap();
+        assert_eq!(front.surface, LiveSurface::Native);
+        assert_eq!(front.device_id.as_deref(), Some("dev_front"));
+        assert_eq!(front.live.perception, vec!["mac"]);
+        // The page reporting the same again is not coming back to it.
+        let again = later + Duration::seconds(5);
+        store.remember(1, page("tab", true, false, again), again);
+        assert_eq!(store.front(1, again).unwrap().surface, LiveSurface::Native);
+        // Opening her panel there is.
+        store.remember(1, page("tab", true, true, again), again);
+        let front = store.front(1, again).unwrap();
+        assert_eq!((front.surface, front.device_id), (LiveSurface::Web, None));
+        // A tie goes to the page; the app gone, the page is all there is.
+        let tie = again + Duration::seconds(5);
+        store.remember(1, app(false, false, tie), tie);
+        store.remember(1, app(true, true, tie), tie);
+        assert_eq!(store.front(1, tie).unwrap().surface, LiveSurface::Native);
+        let mut said = page("tab", true, true, tie);
+        said.changed_at = Some(tie);
+        store.remember(1, said, tie);
+        assert_eq!(store.front(1, tie).unwrap().surface, LiveSurface::Web);
+        store.remember(1, app(false, false, tie), tie);
+        assert_eq!(store.front(1, tie).unwrap().surface, LiveSurface::Web);
     }
 
     #[test]
