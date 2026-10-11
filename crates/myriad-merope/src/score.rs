@@ -9,8 +9,9 @@ use serde_json::Value;
 use crate::performance::{BodyPose, sanitize_body_pose};
 use crate::rig_contract::{
     PERFORMANCE_BODY_CONTROLS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_SCORE_DIRECTIONS,
-    PERFORMANCE_SCORE_MOVES, PERFORMANCE_SCORE_SIDES, SCORE_MAX_ANCHOR_CHARS, SCORE_MAX_AT_MS,
-    SCORE_MAX_BEATS, SCORE_MAX_COUNT, SCORE_MAX_OFFSET_MS, SCORE_MAX_TEMPO, SCORE_MIN_TEMPO,
+    PERFORMANCE_SCORE_MOVES, PERFORMANCE_SCORE_SIDES, PERFORMANCE_TEMPO_LEVELS,
+    SCORE_MAX_ANCHOR_CHARS, SCORE_MAX_AT_MS, SCORE_MAX_BEATS, SCORE_MAX_COUNT, SCORE_MAX_OFFSET_MS,
+    SCORE_MAX_TEMPO, SCORE_MIN_TEMPO,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,7 +184,13 @@ fn sanitize_move(value: &Value) -> Option<ScoreMove> {
         count: number("count", 1.0)?
             .round()
             .clamp(1.0, SCORE_MAX_COUNT as f64) as u32,
-        tempo: number("tempo", 1.0)?.clamp(SCORE_MIN_TEMPO as f64, SCORE_MAX_TEMPO as f64) as f32,
+        tempo: match object.get("tempo") {
+            Some(Value::String(name)) => {
+                crate::performance::level_value(PERFORMANCE_TEMPO_LEVELS, name)? as f64
+            }
+            _ => number("tempo", 1.0)?,
+        }
+        .clamp(SCORE_MIN_TEMPO as f64, SCORE_MAX_TEMPO as f64) as f32,
     })
 }
 

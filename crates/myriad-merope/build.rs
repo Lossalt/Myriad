@@ -366,6 +366,31 @@ fn main() {
     generated.push_str("];\n");
     // A control whose drawn look does not grow evenly names its own tiers: a
     // drawing swapped in shows ghosted halfway, so it has only its full one.
+    // Named levels the director picks for baseline energy and attention, a
+    // cue's intensity and a beat's tempo, instead of writing a number.
+    for (field, constant) in [
+        ("motionEnergy", "PERFORMANCE_ENERGY_LEVELS"),
+        ("attention", "PERFORMANCE_ATTENTION_LEVELS"),
+        ("cueIntensity", "PERFORMANCE_INTENSITY_LEVELS"),
+        ("tempo", "PERFORMANCE_TEMPO_LEVELS"),
+    ] {
+        let mut levels: Vec<(&String, f64)> = performance_contract["levels"][field]
+            .as_object()
+            .unwrap_or_else(|| panic!("missing performance levels.{field}"))
+            .iter()
+            .map(|(name, value)| (name, value.as_f64().expect("level value")))
+            .collect();
+        levels.sort_by(|a, b| a.1.total_cmp(&b.1));
+        generated.push_str(&format!("pub const {constant}: &[(&str, f32)] = &[\n"));
+        for (name, value) in levels {
+            generated.push_str(&format!(
+                "    ({}, {}),\n",
+                serde_json::to_string(name).unwrap(),
+                f32_lit(value)
+            ));
+        }
+        generated.push_str("];\n");
+    }
     generated.push_str(
         "pub const PERFORMANCE_BODY_CONTROL_TIERS: &[(&str, &[(&str, f32)])] = &[\n",
     );

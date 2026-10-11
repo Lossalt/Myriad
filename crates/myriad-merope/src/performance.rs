@@ -3,10 +3,11 @@ use std::collections::BTreeMap;
 
 use crate::rig_contract::{
     BODY_POSE_HOLD_MS, BODY_POSE_MAX_HOLD_MS, BODY_POSE_MAX_TRANSITION_MS,
-    BODY_POSE_MIN_TRANSITION_MS, BODY_POSE_TRANSITION_MS, PERFORMANCE_BASELINE_EXPRESSIONS,
-    PERFORMANCE_BODY_CONTROL_RESTS, PERFORMANCE_BODY_CONTROL_TIERS, PERFORMANCE_BODY_CONTROLS,
-    PERFORMANCE_CUE_INTENTS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_INTERRUPT_MODES,
-    PERFORMANCE_POSTURES,
+    BODY_POSE_MIN_TRANSITION_MS, BODY_POSE_TRANSITION_MS, PERFORMANCE_ATTENTION_LEVELS,
+    PERFORMANCE_BASELINE_EXPRESSIONS, PERFORMANCE_BODY_CONTROL_RESTS,
+    PERFORMANCE_BODY_CONTROL_TIERS, PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS,
+    PERFORMANCE_ENERGY_LEVELS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_INTENSITY_LEVELS,
+    PERFORMANCE_INTERRUPT_MODES, PERFORMANCE_POSTURES, PERFORMANCE_TEMPO_LEVELS,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -23,7 +24,9 @@ pub struct ChatPerformancePlan {
 pub struct ChatPerformanceBaseline {
     pub expression: String,
     pub posture: String,
+    #[serde(deserialize_with = "energy_level")]
     pub motion_energy: f32,
+    #[serde(deserialize_with = "attention_level")]
     pub attention: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pose: Option<BodyPose>,
@@ -169,7 +172,9 @@ fn sanitize_pose(raw: RawBodyPose) -> Option<BodyPose> {
 pub struct ChatPerformanceCue {
     pub intent: String,
     pub at_ms: u32,
+    #[serde(deserialize_with = "intensity_level")]
     pub intensity: f32,
+    #[serde(deserialize_with = "tempo_level")]
     pub tempo: f32,
     pub fade_in_ms: u32,
     pub fade_out_ms: u32,
@@ -189,9 +194,9 @@ struct RawPlan {
 struct RawBaseline {
     expression: String,
     posture: String,
-    #[serde(default = "default_motion_energy")]
+    #[serde(default = "default_motion_energy", deserialize_with = "energy_level")]
     motion_energy: f32,
-    #[serde(default = "default_attention")]
+    #[serde(default = "default_attention", deserialize_with = "attention_level")]
     attention: f32,
     #[serde(default)]
     pose: Option<RawBodyPose>,
@@ -203,9 +208,9 @@ struct RawCue {
     intent: String,
     #[serde(default)]
     at_ms: u32,
-    #[serde(default = "default_intensity")]
+    #[serde(default = "default_intensity", deserialize_with = "intensity_level")]
     intensity: f32,
-    #[serde(default = "default_tempo")]
+    #[serde(default = "default_tempo", deserialize_with = "tempo_level")]
     tempo: f32,
     #[serde(default = "default_fade_in")]
     fade_in_ms: u32,
@@ -287,6 +292,43 @@ fn sanitize_cue(cue: RawCue) -> Option<ChatPerformanceCue> {
             default_interrupt()
         },
     })
+}
+
+/// A number as written, or a named level the director picked (`levels` in
+/// the performance contract). Bounds are applied later, so they still show.
+fn level<'de, D>(deserializer: D, levels: &[(&str, f32)]) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match RawExtent::deserialize(deserializer)? {
+        RawExtent::Value(value) => Ok(value),
+        RawExtent::Tier(name) => level_value(levels, &name)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown level {name}"))),
+    }
+}
+
+/// A named level's value (`levels` in the performance contract).
+pub fn level_value(levels: &[(&str, f32)], name: &str) -> Option<f32> {
+    levels
+        .iter()
+        .find(|(level, _)| *level == name)
+        .map(|(_, value)| *value)
+}
+
+fn energy_level<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    level(deserializer, PERFORMANCE_ENERGY_LEVELS)
+}
+
+fn attention_level<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    level(deserializer, PERFORMANCE_ATTENTION_LEVELS)
+}
+
+fn intensity_level<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    level(deserializer, PERFORMANCE_INTENSITY_LEVELS)
+}
+
+fn tempo_level<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    level(deserializer, PERFORMANCE_TEMPO_LEVELS)
 }
 
 fn default_intensity() -> f32 {
