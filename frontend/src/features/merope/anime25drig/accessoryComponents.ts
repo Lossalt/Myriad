@@ -1,13 +1,22 @@
 import type { Anime25DPlaybackLayer } from './types'
 import type { CroppedLayerPixels } from './webglRuntime'
 
-/** Two ear ornaments may share one upstream drawing, but not one attachment. */
-export function splitPairedEarwear(
+/** Head pieces drawn as a pair either side of the face, which one layer may hold both of. */
+const PAIRED_ROLES = new Set(['earwear', 'headwear'])
+
+/**
+ * A pair either side of the face in one layer (two earrings, two hair clips)
+ * as two layers, one each side: each then hangs from what it is on (an ear,
+ * the lock it is clipped to) instead of both from a point between them. Only
+ * across a clear transparent gap about the face's middle; a band or a hat
+ * that goes across stays whole.
+ */
+export function splitPairedHeadAccessory(
   source: Anime25DPlaybackLayer,
   art: CroppedLayerPixels | null,
   faceCenterX: number,
 ): Anime25DPlaybackLayer[] | null {
-  if (source.role !== 'earwear' || source.group !== 'head' || source.side || source.phys || source.fade || !art) return null
+  if (!PAIRED_ROLES.has(source.role) || source.group !== 'head' || source.side || source.phys || source.fade || !art) return null
   if (art.width < 4 || art.height < 1 || art.pixels.length !== art.width * art.height * 4) return null
   const center = Math.floor((faceCenterX - source.x) / source.w * art.width)
   if (center <= 0 || center >= art.width - 1) return null

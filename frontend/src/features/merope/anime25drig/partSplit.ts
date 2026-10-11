@@ -64,6 +64,11 @@ export function cutFrom(source: Anime25DPlaybackLayer): string | undefined {
   return cutHosts.get(source)
 }
 
+/** A piece's host was itself split: it hangs from the part of it named. */
+export function hangCutFrom(source: Anime25DPlaybackLayer, hostName: string): void {
+  if (cutHosts.has(source)) cutHosts.set(source, hostName)
+}
+
 /** The name of a piece's own layer, which says which part of the inventory it is. */
 export function splitLayerName(index: number, part: Readonly<Anime25DPart>): string {
   return `part:${index}:${part.name}`

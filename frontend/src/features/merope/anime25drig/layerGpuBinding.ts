@@ -21,7 +21,7 @@ import type { SurfaceContact } from './surfaceContact'
 import type { AttachmentTurn } from './turnKeyforms'
 import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import type { AtlasPixelPatch, CroppedLayerPixels } from './webglRuntime'
-import { splitPairedEarwear } from './accessoryComponents'
+import { splitPairedHeadAccessory } from './accessoryComponents'
 import { duplicateAccessoryLayers } from './accessoryDuplicate'
 import { anime25DArmsTouch, anime25DHandTouchesHead, bindArmRig, bindArmRigMesh } from './armRig'
 import { buildFrontCollarContactModel } from './collarContact'
@@ -42,7 +42,7 @@ import {
   linkCrownOcclusion,
   patchNeckOrnaments,
 } from './layerGpuAssembly'
-import { createCutTexture, splitHangingParts } from './partSplit'
+import { createCutTexture, hangCutFrom, splitHangingParts } from './partSplit'
 
 import {
   disposeIndexedDeformableMesh,
@@ -212,10 +212,15 @@ export function compileAnime25DGpuLayers(
     )
     const renderSources = playback.layers.flatMap((source, index) => {
       if (duplicateAccessories.has(source)) return []
-      const parts = source.role === 'earwear'
-        ? splitPairedEarwear(source, readBindingPixels(source), playback.anchors.face.cx) : null
+      const parts = splitPairedHeadAccessory(source, readBindingPixels(source), playback.anchors.face.cx)
       const own = parts?.map(part => ({ ...part, z: source.z ?? index })) ?? [source]
-      return [...own, ...cuts.filter((cut) => cut.host === source).map((cut) => cut.source)]
+      const pieces = cuts.filter((cut) => cut.host === source).map((cut) => cut.source)
+      // A piece cut from a pair hangs from the one of the two it lies on.
+      for (const piece of parts ? pieces : []) {
+        const middle = piece.x + piece.w / 2
+        hangCutFrom(piece, (own.find((part) => middle >= part.x && middle < part.x + part.w) ?? own[0]).name)
+      }
+      return [...own, ...pieces]
     })
     const torsos = playback.layers.filter((layer) => layer.role === 'topwear')
     const torso = torsos.length === 1 ? torsos[0] : null

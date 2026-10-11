@@ -2,7 +2,7 @@ import type { Anime25DPlaybackLayer } from './types'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { removeDuplicatedNeckComponents, splitPairedEarwear } from './accessoryComponents'
+import { removeDuplicatedNeckComponents, splitPairedHeadAccessory } from './accessoryComponents'
 import { IDENTITY_DRIVER } from './driver'
 import {
   compileAnime25DGpuLayers,
@@ -10,7 +10,7 @@ import {
 } from './layerGpuBinding'
 import { deriveAnime25DShellProfile } from './shellProfile'
 
-test('paired earwear splits only across transparent face space and preserves every atlas pixel', () => {
+test('a paired head piece splits only across transparent face space and preserves every atlas pixel', () => {
   const source = { name: 'earwear', role: 'earwear', group: 'head', side: null,
     x: 100, y: 200, w: 100, h: 80, atlas: { x: 0.1, y: 0.2, w: 0.4, h: 0.3 },
   } as Anime25DPlaybackLayer
@@ -19,7 +19,7 @@ test('paired earwear splits only across transparent face space and preserves eve
 }
   const original = structuredClone(source)
   const pixels = art.pixels.slice()
-  const parts = splitPairedEarwear(source, art, 150)!
+  const parts = splitPairedHeadAccessory(source, art, 150)!
   assert.equal(parts.length, 2)
   assert.deepEqual(parts.map(p => p.side), ['L', 'R'])
   assert.equal(parts[0].x, source.x)
@@ -29,11 +29,13 @@ test('paired earwear splits only across transparent face space and preserves eve
   assert.ok(Math.abs(parts[1].atlas.x + parts[1].atlas.w - source.atlas.x - source.atlas.w) < 1e-12)
   assert.deepEqual(source, original)
   assert.deepEqual(art.pixels, pixels)
-  assert.equal(splitPairedEarwear(parts[0], art, 150), null)
-  assert.equal(splitPairedEarwear({ ...source, role: 'headwear' }, art, 150), null)
-  assert.equal(splitPairedEarwear(source, null, 150), null)
+  assert.equal(splitPairedHeadAccessory(parts[0], art, 150), null)
+  // Two hair clips either side of the face part the same way; a neck piece never does.
+  assert.deepEqual(splitPairedHeadAccessory({ ...source, role: 'headwear' }, art, 150)!.map(p => p.side), ['L', 'R'])
+  assert.equal(splitPairedHeadAccessory({ ...source, role: 'neckwear' }, art, 150), null)
+  assert.equal(splitPairedHeadAccessory(source, null, 150), null)
   art.pixels[(8 * 20 + 10) * 4 + 3] = 1
-  assert.equal(splitPairedEarwear(source, art, 150), null, 'even a translucent connector is not cut')
+  assert.equal(splitPairedHeadAccessory(source, art, 150), null, 'even a translucent connector is not cut')
 })
 
 function fixture() {
