@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use crate::rig_contract::{
     BODY_POSE_HOLD_MS, BODY_POSE_MAX_HOLD_MS, BODY_POSE_MAX_TRANSITION_MS,
     BODY_POSE_MIN_TRANSITION_MS, BODY_POSE_TRANSITION_MS, PERFORMANCE_BASELINE_EXPRESSIONS,
-    PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS, PERFORMANCE_INTERRUPT_MODES,
+    PERFORMANCE_BODY_CONTROL_RESTS, PERFORMANCE_BODY_CONTROL_TIERS, PERFORMANCE_BODY_CONTROLS,
+    PERFORMANCE_CUE_INTENTS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_INTERRUPT_MODES,
     PERFORMANCE_POSTURES,
 };
 
@@ -33,6 +34,7 @@ pub struct ChatPerformanceBaseline {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BodyPose {
+    #[serde(deserialize_with = "named_or_valued_targets")]
     pub targets: BTreeMap<String, f32>,
     pub transition_ms: u32,
     /// Zero holds until revised/released. Nonzero expires locally.
@@ -42,11 +44,89 @@ pub struct BodyPose {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawBodyPose {
-    targets: BTreeMap<String, f32>,
+    targets: BTreeMap<String, RawExtent>,
     #[serde(default = "default_pose_transition")]
     transition_ms: u32,
     #[serde(default = "default_pose_hold")]
     hold_ms: u32,
+}
+
+/// How far a control goes: a tier the director names, or a value a person
+/// (workbench, stored standing acting) wrote.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawExtent {
+    Value(f32),
+    Tier(String),
+}
+
+/// The tiers the director may name for a control: toward each end it can move
+/// from its rest, `-` toward its minimum. An eye open at rest only closes; a
+/// drawing swapped in whole has only its full tier.
+pub fn extent_tiers(control: &str) -> Vec<String> {
+    let Some((_, min, max, _, _)) = PERFORMANCE_BODY_CONTROLS.iter().find(|c| c.0 == control)
+    else {
+        return Vec::new();
+    };
+    let rest = control_rest(control);
+    let tiers = control_tiers(control);
+    let mut named = Vec::new();
+    if *min < rest {
+        named.extend(tiers.iter().rev().map(|(tier, _)| format!("-{tier}")));
+    }
+    if *max > rest {
+        named.extend(tiers.iter().map(|(tier, _)| (*tier).to_owned()));
+    }
+    named
+}
+
+/// A named tier on a control as its normalized value: that share of the way
+/// from rest to the end the sign points at. None for a tier it does not have.
+pub fn tier_extent(control: &str, tier: &str) -> Option<f32> {
+    let (_, min, max, _, _) = PERFORMANCE_BODY_CONTROLS.iter().find(|c| c.0 == control)?;
+    let (toward_min, name) = match tier.strip_prefix('-') {
+        Some(name) => (true, name),
+        None => (false, tier),
+    };
+    let (_, share) = control_tiers(control).iter().find(|(t, _)| *t == name)?;
+    let rest = control_rest(control);
+    let end = if toward_min { *min } else { *max };
+    (end != rest).then(|| rest + share * (end - rest))
+}
+
+/// A control's own tiers where its look does not grow evenly, else the shared ones.
+fn control_tiers(control: &str) -> &'static [(&'static str, f32)] {
+    PERFORMANCE_BODY_CONTROL_TIERS
+        .iter()
+        .find(|(name, _)| *name == control)
+        .map_or(PERFORMANCE_EXTENT_TIERS, |(_, tiers)| tiers)
+}
+
+/// Targets as written, a named tier read as its extent; unbounded values stay
+/// as they are, so a bound applied later still shows.
+fn named_or_valued_targets<'de, D>(deserializer: D) -> Result<BTreeMap<String, f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    BTreeMap::<String, RawExtent>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(control, extent)| {
+            let value = match extent {
+                RawExtent::Value(value) => Some(value),
+                RawExtent::Tier(tier) => tier_extent(&control, &tier),
+            };
+            value
+                .map(|value| (control, value))
+                .ok_or_else(|| serde::de::Error::custom("unknown extent tier"))
+        })
+        .collect()
+}
+
+fn control_rest(control: &str) -> f32 {
+    PERFORMANCE_BODY_CONTROL_RESTS
+        .iter()
+        .find(|(name, _)| *name == control)
+        .map_or(0.0, |(_, rest)| *rest)
 }
 
 fn default_pose_transition() -> u32 {
@@ -66,11 +146,13 @@ pub(crate) fn sanitize_body_pose(value: &serde_json::Value) -> Option<BodyPose> 
 fn sanitize_pose(raw: RawBodyPose) -> Option<BodyPose> {
     // Reject misspelled or unbounded axes rather than silently execute half a pose.
     let mut targets = BTreeMap::new();
-    for (key, value) in raw.targets {
+    for (key, extent) in raw.targets {
         let (_, min, max, _, _) = PERFORMANCE_BODY_CONTROLS.iter().find(|c| c.0 == key)?;
-        if !value.is_finite() {
-            return None;
-        }
+        let value = match extent {
+            RawExtent::Value(value) if value.is_finite() => value,
+            RawExtent::Value(_) => return None,
+            RawExtent::Tier(tier) => tier_extent(&key, &tier)?,
+        };
         targets.insert(key, value.clamp(*min, *max));
     }
     Some(BodyPose {

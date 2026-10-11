@@ -65,13 +65,13 @@ test('a looping standing score plays again each period; reply beats take her ove
   assert.ok(loudest < 0.1, `${loudest}`)
 })
 
-test("a director's head tilt shows: the square root of its share of the full tilt", () => {
-  for (const tilt of [0.12, 0.25, 0.5, 1, -0.4]) {
+test("a director's head tilt shows as its share of the full tilt, its slight one plainly", () => {
+  for (const tilt of [0.35, 0.65, 1, -0.4]) {
     const seen = headRollRadians(mappedControlValue('headTilt', tilt))
-    assert.ok(Math.abs(seen - Math.sign(tilt) * Math.sqrt(Math.abs(tilt)) * HEAD_TILT_RADIANS) < 1e-9, `${tilt}: ${seen}`)
+    assert.ok(Math.abs(seen - tilt * HEAD_TILT_RADIANS) < 1e-9, `${tilt}: ${seen}`)
   }
-  // The light 0.12 a director gives a puzzled tilt is about 8°, not the 1° of the everyday angleZ scale.
-  const light = headRollRadians(mappedControlValue('headTilt', 0.12)) * 180 / Math.PI
-  assert.ok(light > 7.5 && light < 9, `${light}`)
+  // The slight tilt a director names (0.35) is about 8°, not the 3° of the everyday angleZ scale.
+  const slight = headRollRadians(mappedControlValue('headTilt', 0.35)) * 180 / Math.PI
+  assert.ok(slight > 8 && slight < 9, `${slight}`)
   assert.equal(mappedControlValue('headTurn', 0.4), 0.4, 'other controls as they are')
 })

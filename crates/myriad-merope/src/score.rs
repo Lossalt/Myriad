@@ -8,9 +8,9 @@ use serde_json::Value;
 
 use crate::performance::{BodyPose, sanitize_body_pose};
 use crate::rig_contract::{
-    PERFORMANCE_BODY_CONTROLS, PERFORMANCE_SCORE_DIRECTIONS, PERFORMANCE_SCORE_MOVES,
-    PERFORMANCE_SCORE_SIDES, SCORE_MAX_ANCHOR_CHARS, SCORE_MAX_AT_MS, SCORE_MAX_BEATS,
-    SCORE_MAX_COUNT, SCORE_MAX_OFFSET_MS, SCORE_MAX_TEMPO, SCORE_MIN_TEMPO,
+    PERFORMANCE_BODY_CONTROLS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_SCORE_DIRECTIONS,
+    PERFORMANCE_SCORE_MOVES, PERFORMANCE_SCORE_SIDES, SCORE_MAX_ANCHOR_CHARS, SCORE_MAX_AT_MS,
+    SCORE_MAX_BEATS, SCORE_MAX_COUNT, SCORE_MAX_OFFSET_MS, SCORE_MAX_TEMPO, SCORE_MIN_TEMPO,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,7 +169,17 @@ fn sanitize_move(value: &Value) -> Option<ScoreMove> {
         kind: kind.to_owned(),
         side: word("side", PERFORMANCE_SCORE_SIDES)?,
         direction: word("direction", PERFORMANCE_SCORE_DIRECTIONS)?,
-        amount: number("amount", 0.6)?.clamp(0.1, 1.0) as f32,
+        // A tier names how big; a number is a person's (workbench) own.
+        amount: match object.get("amount") {
+            Some(Value::String(tier)) => {
+                PERFORMANCE_EXTENT_TIERS
+                    .iter()
+                    .find(|(name, _)| name == tier)?
+                    .1 as f64
+            }
+            _ => number("amount", 0.6)?,
+        }
+        .clamp(0.1, 1.0) as f32,
         count: number("count", 1.0)?
             .round()
             .clamp(1.0, SCORE_MAX_COUNT as f64) as u32,

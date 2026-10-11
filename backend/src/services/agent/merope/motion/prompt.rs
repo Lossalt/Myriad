@@ -209,12 +209,12 @@ pub(super) fn motion_system_prompt(offered: &[&str]) -> String {
 {}
 
 Enums: {}; posture {}; cue {}. The first reaction should set a baseline. delivery is an incremental revision of a performance already playing; if the sustained state need not change, omit baseline and only give new phrase segments. If there is no new intent, output {{"continue":true}}. Pick 0–2 cues only when they have an expressive job; do not repeat the same function for spectacle.
-baseline.pose gives independent semantic body control, not just preset clips. targets use only the input bodyControls, each at the normalized extent allowed by the schema. Directions are image-relative. You may simultaneously turn head, turn/lean/rise/pitch torso, direct gaze, pose each supported arm, and compose eyes/brows/mouth. E.g. a head turn need not turn the torso or gaze; a one-sided gesture should explicitly keep the other supported arm still. Use meaningful full-range poses when personality and intent warrant, rather than only tiny motions. Local physics and garment safety preserve attachments and constrain unsafe extremes. Do not invent fingers, unsupported joints, locomotion, or anatomy.
+baseline.pose gives independent semantic body control, not just preset clips. targets use only the input bodyControls, each named by how far it goes from rest: slight (small, yet plainly seen), clear, strong (as far as it goes); a leading - goes toward the negative end its description names. Directions are image-relative. You may simultaneously turn head, turn/lean/rise/pitch torso, direct gaze, pose each supported arm, and compose eyes/brows/mouth. E.g. a head turn need not turn the torso or gaze; a one-sided gesture should explicitly keep the other supported arm still. Use meaningful full-range poses when personality and intent warrant, rather than only tiny motions. Local physics and garment safety preserve attachments and constrain unsafe extremes. Do not invent fingers, unsupported joints, locomotion, or anatomy.
 pose is a full target restatement, not additive deltas. transitionMs sets the continuous approach; holdMs is 0 for holding until revised, otherwise a bounded local duration. A new pose retargets from the current movement without recentering or replay. Empty targets releases directed axes naturally; a new baseline without pose also releases them. Omit baseline to preserve an ongoing pose. Prefer sustained attention/posture for ongoing reactions and cues for brief accents. Use independent gaze to check the addressee without repeatedly swinging the head. Speech keeps articulation: mouthSmile can colour speech, but mouthOpen/Wide/Round/Narrow/Seal and maniac only act while not vocalizing. Do not randomly combine opposing sticker emotions; if changing one, release the old one. Keep a stable motive through incremental revisions.
 phrases are 0–6 segment intents aligned with responseText, in source order. Each text must be a unique short sentence copied verbatim from responseText (including trailing punctuation, 2–120 chars). Do not cite userText, code, other people's quotes, or invent later text that has not been generated. intent may be ask (a real question), hesitate, tease (affectionate ribbing / joking rhetorical question), explain (a turn of thought / earnest explanation), check-in (after speaking, check their reaction), laugh (they are actually laughing), none (restrained; do not auto-perform on ？/笑). Distinguish the speaker's own expression from mentioning someone else's emotion; describing sadness is not being sad; describing laughter is not laughing. Let adjacent segments continue the motive, e.g. hesitate→explain→check-in; do not make every line its own climax. Do not put the same expression already assigned to phrases into cues; cues are for whole-turn reactions that do not depend on a specific line. Live only revises segments that have not yet fired; spoken short sentences are skipped and need no catch-up.
 score is your timeline: the acting that unfolds over time, beat by beat, rather than one held face. Use it for a run of looks, a nod or two, a hand beat on a stressed word, a sigh before an answer, a glance away and back, a tilt that holds and later straightens. Each beat is placed either on words, with text (an exact fragment copied from responseText, at most 24 characters; the beat lands as she says those words; offsetMs moves it earlier to prepare or later to follow through), or on time, with atMs (milliseconds after this score arrives) when there are no words to land on. Beats on words follow the order the words are said; a repeated fragment means its next occurrence. A beat carries pose and/or move. pose uses the same controls and ranges as baseline.pose: from that moment those controls move to their targets over transitionMs, stay for holdMs (0 means about 3 seconds) and then ease back by themselves; a later beat on the same control blends over an earlier one. Nothing needs undoing: never add a beat just to put a control back. move is a movement that goes and comes back by itself:
 {}
-side picks the hand or eye (left/right are image sides; both for both); direction is image-relative for glance; amount 0.1–1; count repeats; tempo above 1 is quicker. Beats may overlap on different controls (eyes glance while a hand beats). presence means nobody is talking with her: activity says what she is doing on her own (listening to a song, reading, daydreaming, wandering the site, rereading old chats). Give her standing acting for it instead of words on a screen: a baseline and a score of beats on time only (atMs from 0 to loopMs, no text), and loopMs (the score then plays again each loopMs; about 20000). Make it read plainly as that activity and as her: eyes down and moving along lines while reading, eyes softening and small nods with a song, gaze drifting while daydreaming, looking about while wandering. Keep it quiet and unhurried, uneven within the period so the repeat does not show, and only cues that fit being alone (none of greet/notify/question). Speech and replies take her over by themselves; the standing acting need not leave room for them.
+side picks the hand or eye (left/right are image sides; both for both); direction is image-relative for glance; amount slight, clear or strong, as for pose; count repeats; tempo above 1 is quicker. Beats may overlap on different controls (eyes glance while a hand beats). presence means nobody is talking with her: activity says what she is doing on her own (listening to a song, reading, daydreaming, wandering the site, rereading old chats). Give her standing acting for it instead of words on a screen: a baseline and a score of beats on time only (atMs from 0 to loopMs, no text), and loopMs (the score then plays again each loopMs; about 20000). Make it read plainly as that activity and as her: eyes down and moving along lines while reading, eyes softening and small nods with a song, gaze drifting while daydreaming, looking about while wandering. Keep it quiet and unhurried, uneven within the period so the repeat does not show, and only cues that fit being alone (none of greet/notify/question). Speech and replies take her over by themselves; the standing acting need not leave room for them.
 Give the beats a person would actually make, usually 2–8 per answer, each with a job; speech already brings its own small accents, so do not script every word, and do not repeat what phrases or cues already express.
 First judge whether the expression matches the present attitude, then whether the body can do it. Capability being available is not a reason to pick it: do not pick a missing layer; while speaking, maniac steals the mouth so do not pick it; silly/cry that fit semantically play through the eyes. Music supplies ongoing rhythm: leave axes you want to keep rhythmic out of pose.targets; direct a complementary sustained posture, gaze or a meaningful overriding response when needed, rather than resetting the entire body.
 Live observations in userText and the attitude the speaker is expressing in responseText should stay continuous: refusal, dodge, hesitation do not automatically become coy, clingy, or a joke. Change attitude only with new semantic evidence; an outgoing persona does not override a present boundary. silly is self-deprecation or teasing, not a generic closed-eye for refusal; needing closed eyes is not needing silly. When there is no fitting new motion, keep the sustained state or continue; do not fill with repeated cues. Intensity may be full, but do not swap in the opposite emotion for spectacle.
@@ -331,7 +331,7 @@ pub(super) fn motion_schema(offered: &[&str]) -> serde_json::Value {
                                 "kind": { "type": "string", "enum": myriad_merope::PERFORMANCE_SCORE_MOVES.iter().map(|m| m.0).collect::<Vec<_>>() },
                                 "side": { "type": "string", "enum": myriad_merope::PERFORMANCE_SCORE_SIDES },
                                 "direction": { "type": "string", "enum": myriad_merope::PERFORMANCE_SCORE_DIRECTIONS },
-                                "amount": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+                                "amount": { "type": "string", "enum": myriad_merope::PERFORMANCE_EXTENT_TIERS.iter().map(|t| t.0).collect::<Vec<_>>() },
                                 "count": { "type": "integer", "minimum": 1, "maximum": myriad_merope::SCORE_MAX_COUNT },
                                 "tempo": { "type": "number", "minimum": 0.5, "maximum": 1.8 }
                             },
@@ -387,7 +387,7 @@ pub(super) fn motion_schema_for_state(offered: &[&str], state: Option<&RigStateS
     let controls = offered_body_controls(state);
     let properties: serde_json::Map<String, Value> = myriad_merope::PERFORMANCE_BODY_CONTROLS.iter()
         .filter(|c| controls.contains(&c.0))
-        .map(|c| (c.0.to_owned(), serde_json::json!({"type":"number", "minimum":c.1, "maximum":c.2, "description":c.4}))).collect();
+        .map(|c| (c.0.to_owned(), serde_json::json!({"type":"string", "enum":myriad_merope::extent_tiers(c.0), "description":c.4}))).collect();
     let pose = serde_json::json!({
         "type":"object", "additionalProperties":false,
         "properties": {
@@ -431,6 +431,47 @@ mod body_control_tests {
         }
         assert_eq!(targets["additionalProperties"], false);
         assert!(motion_system_prompt(&[]).contains("baseline.pose"));
+    }
+
+    #[test]
+    fn the_director_names_tiers_and_the_parser_turns_them_into_extents() {
+        let state = myriad_merope::sanitize_rig_state(&serde_json::json!({
+            "capabilities":["head-body", "independent-eyes", "silly-eye", "cry-eye"]
+        }))
+        .unwrap();
+        let schema = motion_schema_for_state(&[], Some(&state));
+        let props = &schema["properties"]["baseline"]["properties"]["pose"]["properties"]["targets"]
+            ["properties"];
+        assert_eq!(
+            props["headTilt"]["enum"],
+            serde_json::json!(["-strong", "-clear", "-slight", "slight", "clear", "strong"])
+        );
+        assert_eq!(
+            props["eyeOpenLeft"]["enum"],
+            serde_json::json!(["-strong", "-clear", "-slight"]),
+            "an open eye only closes"
+        );
+        assert_eq!(
+            props["hairSway"]["enum"],
+            serde_json::json!(["slight", "clear", "strong"])
+        );
+        // Drawn eyes swapped in show ghosted halfway: only the full one is offered.
+        assert_eq!(props["silly"]["enum"], serde_json::json!(["strong"]));
+        assert_eq!(myriad_merope::tier_extent("cry", "slight"), Some(0.2));
+        let raw = r#"{"baseline":{"expression":"steady","posture":"neutral","motionEnergy":1,"attention":1,"pose":{"targets":{"headTilt":"-clear","eyeOpenLeft":"-strong","hairSway":"slight"},"transitionMs":250,"holdMs":0}},"cues":[],"score":[{"text":"嗯","move":{"kind":"nod","amount":"strong"}}]}"#;
+        assert!(semantic_valid(raw, "嗯，好。"));
+        let Some(MotionDecision::Perform(plan)) = parse_motion_decision(raw) else {
+            panic!("tiers must survive the real director parser")
+        };
+        let targets = plan.baseline.unwrap().pose.unwrap().targets;
+        assert_eq!(targets["headTilt"], -0.65);
+        assert_eq!(targets["eyeOpenLeft"], 0.0);
+        assert_eq!(targets["hairSway"], 0.35);
+        let unknown = raw.replace("\"-clear\"", "\"huge\"");
+        assert!(
+            !semantic_valid(&unknown, "嗯，好。"),
+            "an unknown tier is not half acted"
+        );
     }
 
     #[test]

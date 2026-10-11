@@ -344,6 +344,75 @@ fn main() {
     let body_controls = performance_contract["bodyControls"]
         .as_object()
         .expect("bodyControls");
+    // The director names how far a control goes, not a number: each tier is a
+    // share of the way from the control's rest to the end the sign points at.
+    generated.push_str("pub const PERFORMANCE_EXTENT_TIERS: &[(&str, f32)] = &[\n");
+    let mut tiers: Vec<(&String, f64)> = performance_contract["extentTiers"]
+        .as_object()
+        .expect("missing performance extentTiers")
+        .iter()
+        .map(|(tier, share)| (tier, share.as_f64().expect("extent tier share")))
+        .collect();
+    // Smallest first, as the director reads them.
+    tiers.sort_by(|a, b| a.1.total_cmp(&b.1));
+    for (tier, share) in tiers {
+        assert!(share > 0.0 && share <= 1.0, "extent tier {tier} must be a share in (0, 1]");
+        generated.push_str(&format!(
+            "    ({}, {}),\n",
+            serde_json::to_string(tier).unwrap(),
+            f32_lit(share)
+        ));
+    }
+    generated.push_str("];\n");
+    // A control whose drawn look does not grow evenly names its own tiers: a
+    // drawing swapped in shows ghosted halfway, so it has only its full one.
+    generated.push_str(
+        "pub const PERFORMANCE_BODY_CONTROL_TIERS: &[(&str, &[(&str, f32)])] = &[\n",
+    );
+    for (name, control) in body_controls {
+        let Some(own) = control.get("tiers") else {
+            continue;
+        };
+        let mut own: Vec<(&String, f64)> = own
+            .as_object()
+            .expect("body control tiers")
+            .iter()
+            .map(|(tier, share)| (tier, share.as_f64().expect("body control tier share")))
+            .collect();
+        own.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let own: Vec<String> = own
+            .iter()
+            .map(|(tier, share)| {
+                assert!(
+                    performance_contract["extentTiers"].get(tier.as_str()).is_some(),
+                    "body control {name} names unknown tier {tier}"
+                );
+                assert!(*share > 0.0 && *share <= 1.0, "body control {name} tier {tier}");
+                format!("({}, {})", serde_json::to_string(tier).unwrap(), f32_lit(*share))
+            })
+            .collect();
+        generated.push_str(&format!(
+            "    ({}, &[{}]),\n",
+            serde_json::to_string(name).unwrap(),
+            own.join(", ")
+        ));
+    }
+    generated.push_str("];\n");
+    generated.push_str("pub const PERFORMANCE_BODY_CONTROL_RESTS: &[(&str, f32)] = &[\n");
+    for (name, control) in body_controls {
+        let min = control["min"].as_f64().expect("body control min");
+        let max = control["max"].as_f64().expect("body control max");
+        let rest = control
+            .get("rest")
+            .map_or(0.0_f64.clamp(min, max), |rest| rest.as_f64().expect("body control rest"));
+        assert!((min..=max).contains(&rest), "body control {name} must rest within its range");
+        generated.push_str(&format!(
+            "    ({}, {}),\n",
+            serde_json::to_string(name).unwrap(),
+            f32_lit(rest)
+        ));
+    }
+    generated.push_str("];\n");
     generated.push_str(
         "pub const PERFORMANCE_SCORE_MOVES: &[(&str, &[&str], &str)] = &[\n",
     );

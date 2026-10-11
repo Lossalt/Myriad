@@ -2559,7 +2559,7 @@ fn cases_use_production_contracts_and_replay_hashes_include_rubrics() {
     let cases = cases();
     assert_eq!(
         cases.iter().filter(|c| c.kind != "touch").count(),
-        50 + MIND_CASES
+        54 + MIND_CASES
     );
     for mut case in cases {
         let request = request(&case);

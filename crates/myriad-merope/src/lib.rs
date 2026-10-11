@@ -75,8 +75,8 @@ pub use outfit_overlay::{
     worn_outfit_id,
 };
 pub use performance::{
-    BodyPose, ChatPerformanceBaseline, ChatPerformanceCue, ChatPerformancePlan,
-    parse_performance_plan,
+    BodyPose, ChatPerformanceBaseline, ChatPerformanceCue, ChatPerformancePlan, extent_tiers,
+    parse_performance_plan, tier_extent,
 };
 pub use persona::{fallback_persona_draft, persona_draft_is_complete, sanitize_persona_draft};
 pub use rig::{
@@ -88,8 +88,8 @@ pub use rig::{
 pub use rig_contract::{
     BODY_POSE_MAX_HOLD_MS, BODY_POSE_MAX_TRANSITION_MS, BODY_POSE_MIN_TRANSITION_MS,
     CharacterAssetProfile, CharacterAssetProfileContract, PERFORMANCE_BASELINE_EXPRESSIONS,
-    PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS, PERFORMANCE_INTERRUPT_MODES,
-    PERFORMANCE_PHRASE_INTENTS, PERFORMANCE_POSTURES, PERFORMANCE_SCORE_DIRECTIONS,
+    PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS, PERFORMANCE_EXTENT_TIERS,
+    PERFORMANCE_INTERRUPT_MODES, PERFORMANCE_PHRASE_INTENTS, PERFORMANCE_POSTURES, PERFORMANCE_SCORE_DIRECTIONS,
     PERFORMANCE_SCORE_MOVES, PERFORMANCE_SCORE_SIDES, SCORE_MAX_AT_MS, SCORE_MAX_BEATS,
     SCORE_MAX_COUNT, SCORE_MAX_OFFSET_MS,
 };
