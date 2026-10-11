@@ -1,8 +1,8 @@
 //! Devices that sync her with the site, and the token each one holds.
 //!
 //! The site owner adds a device and copies its token once; only the token's
-//! sha256 is kept. A token is good for syncing her and nothing else: it is
-//! not a JWT, so every other route refuses it. A device stays until the
+//! sha256 is kept. A token is good for syncing her and for her link, and
+//! nothing else: it is not a JWT, so every other route refuses it. A device stays until the
 //! owner removes it or it leaves; tokens do not expire. One live device, or
 //! else the site itself, is her parent end: the one where her own life
 //! happens.
@@ -244,25 +244,36 @@ pub async fn list<C: ConnectionTrait>(db: &C, user_id: i32) -> Result<Vec<Device
     .collect()
 }
 
-/// Removes a live device of the owner's. `None` when there is no such live
-/// device.
+/// Removes a live device of the owner's, closing its link if one is open.
+/// `None` when there is no such live device.
 pub async fn revoke<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
     id: &str,
     why: RevokeReason,
 ) -> Result<Option<Device>, DbErr> {
-    db.query_one_raw(statement(
-        &format!(
-            "UPDATE agent_sync_devices SET revoked_at = NOW(), revoked_reason = $3 \
-             WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING {COLUMNS}"
-        ),
-        vec![id.into(), user_id.into(), why.as_str().into()],
-    ))
-    .await?
-    .as_ref()
-    .map(Device::from_row)
-    .transpose()
+    let removed = db
+        .query_one_raw(statement(
+            &format!(
+                "UPDATE agent_sync_devices SET revoked_at = NOW(), revoked_reason = $3 \
+                 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING {COLUMNS}"
+            ),
+            vec![id.into(), user_id.into(), why.as_str().into()],
+        ))
+        .await?
+        .as_ref()
+        .map(Device::from_row)
+        .transpose()?;
+    if let Some(device) = &removed {
+        use crate::services::agent::link::{Close, disconnect};
+        // The reason the link was allowed is gone: the device forgets its token.
+        let close = match why {
+            RevokeReason::OwnerChanged => Close::OwnerChanged,
+            RevokeReason::ByOwner | RevokeReason::DeviceLeft => Close::Revoked,
+        };
+        disconnect(&device.id, close);
+    }
+    Ok(removed)
 }
 
 /// Why a request's token is not a device's.
@@ -306,6 +317,33 @@ pub async fn authenticate<C: ConnectionTrait>(
     if !bool::from(stored.as_bytes().ct_eq(hash.as_bytes())) {
         return Err(Refused::Unknown);
     }
+    let device = Device::from_row(&row)?;
+    if device.revoked_at.is_some() {
+        return Err(Refused::Revoked);
+    }
+    let owner = owner.ok_or(Refused::NoOwner)?;
+    if device.user_id != owner {
+        revoke(db, device.user_id, &device.id, RevokeReason::OwnerChanged).await?;
+        return Err(Refused::OwnerChanged);
+    }
+    Ok(device)
+}
+
+/// The device `id` while it still is one and still belongs to the site's
+/// owner `owner`: what a connection that stays open checks now and then, as
+/// [`authenticate`] checked it when it opened.
+pub async fn recheck<C: ConnectionTrait>(
+    db: &C,
+    id: &str,
+    owner: Option<i32>,
+) -> Result<Device, Refused> {
+    let row = db
+        .query_one_raw(statement(
+            &format!("SELECT {COLUMNS} FROM agent_sync_devices WHERE id = $1"),
+            vec![id.into()],
+        ))
+        .await?
+        .ok_or(Refused::Unknown)?;
     let device = Device::from_row(&row)?;
     if device.revoked_at.is_some() {
         return Err(Refused::Revoked);

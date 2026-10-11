@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "description": "One example of every frame in her_link_contract.json, as it goes over the link. Both ends test against these: the host serializes to them and parses them.",
+  "frames": [
+    {
+      "t": "hello", "seq": 1, "ack": 0, "at": 1760140800000,
+      "body": {
+        "protocol": 1,
+        "role": "child",
+        "surface": "app",
+        "capabilities": ["rig", "voice.out", "voice.in", "notify", "panel"],
+        "app": { "name": "MyriadNative", "version": "0.1.0" },
+        "lineage": null,
+        "hostEpoch": null
+      }
+    },
+    {
+      "t": "welcome", "seq": 1, "ack": 1, "at": 1760140800050,
+      "body": {
+        "protocol": 1,
+        "role": "host",
+        "host": "site",
+        "deviceId": "dev_0123456789abcdef0123456789abcdef",
+        "deviceName": "MacBook",
+        "lineage": null,
+        "hostEpoch": null,
+        "heartbeatMs": 15000,
+        "capabilities": ["rig", "voice.out", "voice.in", "notify", "panel"],
+        "turns": [
+          { "turnId": "t_01", "runId": "run_0123456789abcdef0123456789abcdef", "sessionId": "sess_1", "lastSequence": 42, "completed": true }
+        ],
+        "serverTime": 1760140800050
+      }
+    },
+    {
+      "t": "input", "seq": 2, "ack": 1, "id": "t_02", "at": 1760140801000,
+      "body": {
+        "surface": "app",
+        "text": "今天过得怎么样？",
+        "sessionId": "sess_1",
+        "rigState": { "expression": "steady", "capabilities": ["head-body", "independent-eyes"], "pageVisible": true, "faceVisible": true, "speaking": false }
+      }
+    },
+    {
+      "t": "presence", "seq": 3, "ack": 1, "at": 1760140801500,
+      "body": {
+        "presence": { "pageVisible": true, "panelVisible": true, "faceVisible": true, "speaking": false, "speechInterruptible": false, "visibleMode": "chat" },
+        "perception": [
+          { "sourceId": "window", "kind": "surface", "privacy": "consented", "summary": "在写代码", "ttlMs": 60000, "safeFacts": { "app": "Xcode" } }
+        ],
+        "musicStatus": { "isPlaying": false, "isEnabled": true }
+      }
+    },
+    {
+      "t": "run.resume", "seq": 4, "ack": 3, "at": 1760140802000,
+      "body": { "turnId": "t_02", "runId": "run_fedcba9876543210fedcba9876543210", "afterSeq": 3 }
+    },
+    {
+      "t": "run.accepted", "seq": 2, "ack": 2, "at": 1760140801020,
+      "body": { "turnId": "t_02", "runId": "run_fedcba9876543210fedcba9876543210", "sessionId": "sess_1", "duplicate": false }
+    },
+    {
+      "t": "run.rejected", "seq": 3, "ack": 2, "at": 1760140801020,
+      "body": { "turnId": "t_03", "code": "agent_access_denied" }
+    },
+    {
+      "t": "run.event", "seq": 4, "ack": 2, "at": 1760140801100,
+      "body": {
+        "turnId": "t_02",
+        "runId": "run_fedcba9876543210fedcba9876543210",
+        "sequence": 2,
+        "event": { "type": "summary_token", "token": "还不错", "done": false }
+      }
+    },
+    {
+      "t": "run.end", "seq": 5, "ack": 2, "at": 1760140803000,
+      "body": { "turnId": "t_02", "runId": "run_fedcba9876543210fedcba9876543210", "lastSequence": 9 }
+    },
+    {
+      "t": "perform", "seq": 6, "ack": 2, "at": 1760140801200,
+      "body": {
+        "turnId": "t_02",
+        "runId": "run_fedcba9876543210fedcba9876543210",
+        "sequence": 3,
+        "directive": {
+          "phase": "delivery",
+          "moodRevision": 1760140800000,
+          "motionStyle": "even",
+          "plan": {
+            "baseline": { "expression": "warm", "posture": "open", "motionEnergy": 0.5, "attention": 0.75 },
+            "cues": [
+              { "intent": "respond", "atMs": 0, "intensity": 0.5, "tempo": 1.0, "fadeInMs": 120, "fadeOutMs": 240, "interrupt": "replace" }
+            ]
+          },
+          "phrases": [ { "text": "还不错", "intent": "explain" } ]
+        }
+      }
+    },
+    {
+      "t": "mood", "seq": 7, "ack": 2, "at": 1760140800060,
+      "body": {
+        "mood": {
+          "before": 62.0, "after": 64.5, "arousalBefore": 50.0, "arousalAfter": 52.0,
+          "bandBefore": "calm", "bandAfter": "calm", "delta": 2.5, "cause": "user_appraisal", "revision": 1760140800000
+        },
+        "activity": "talking"
+      }
+    },
+    { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
+    { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },
+    { "t": "pong", "seq": 6, "ack": 8, "at": 1760140815020, "body": {} },
+    {
+      "t": "error", "seq": 9, "ack": 6, "at": 1760140815030,
+      "body": { "code": "unknown_frame", "ref": 6 }
+    }
+  ]
+}

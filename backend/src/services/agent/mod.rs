@@ -14,6 +14,7 @@ pub mod executor_utils_pure;
 pub mod external_pure;
 pub mod heartbeat;
 pub mod identity;
+pub(crate) mod link;
 pub mod mcp;
 pub mod memory;
 pub mod merope;

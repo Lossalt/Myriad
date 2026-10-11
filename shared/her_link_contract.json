@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "protocol": 1,
+  "description": "The link between her host and a child end: one WebSocket that the child always dials. Her state and every decision stay on the host; a child sends what it hears and sees up, and plays what comes down. Children synthesize her voice themselves: the host sends text and performance, never audio. Protocol 1 is the first cut: the site is the host and a native app is a child; text frames only.",
+  "path": "/api/agent/link",
+  "auth": {
+    "header": "Authorization",
+    "scheme": "Bearer",
+    "tokenPrefix": "mys_",
+    "description": "The device token the site owner made under Agent settings, devices. It is checked before the upgrade, without X-Sync-Clock. A refusal is a plain HTTP answer {error, code} and no upgrade."
+  },
+  "refusals": {
+    "device_token_required": 401,
+    "device_token_invalid": 401,
+    "device_revoked": 401,
+    "owner_changed": 403,
+    "site_owner_required": 403,
+    "internal_error": 500
+  },
+  "timing": {
+    "heartbeatMs": 15000,
+    "missedHeartbeats": 2,
+    "helloTimeoutMs": 10000,
+    "reconnectInitialMs": 1000,
+    "reconnectMaxMs": 30000,
+    "reconnectFactor": 2,
+    "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes."
+  },
+  "limits": {
+    "maxFrameBytes": 262144,
+    "maxTextChars": 32680,
+    "idPattern": "^[A-Za-z0-9_.:-]{1,64}$"
+  },
+  "envelope": {
+    "required": ["t", "seq", "ack", "at", "body"],
+    "optional": ["id"],
+    "description": "Every text frame is {t, seq, ack, id?, at, body}. t is a frame type below. seq counts this end's frames on this connection, from 1, one up per frame. ack is the highest seq this end has received from the other on this connection (0 before any). at is milliseconds since the Unix epoch. id is present on reliable frames and is their idempotency id. Numbering restarts on every connection: what survives a reconnect is the idempotency ids and the run sequences, never seq."
+  },
+  "deliveries": {
+    "handshake": "Once per connection, first thing.",
+    "reliable": "The sender keeps the frame until the other end's ack covers its seq, and sends it again (same id, new seq) after a reconnect. The receiver deduplicates by id.",
+    "answer": "Sent in reply to one frame; carries what that frame's id or turnId refers to.",
+    "turn": "A run's events in run sequence. After a reconnect the child asks for what it missed with run.resume.",
+    "latest": "Only the newest value counts. Dropped while disconnected; the host sends its current value again after the next welcome.",
+    "request": "Asks the other end to do something now; not kept or resent.",
+    "control": "Link housekeeping."
+  },
+  "roles": ["host", "child"],
+  "hosts": ["site"],
+  "surfaces": ["app"],
+  "capabilities": [
+    "rig",
+    "voice.out",
+    "voice.in",
+    "notify",
+    "panel",
+    "pi",
+    "cua",
+    "perception.window",
+    "perception.pointer",
+    "perception.music",
+    "perception.screen"
+  ],
+  "frames": {
+    "hello": {
+      "from": "child",
+      "delivery": "handshake",
+      "required": ["protocol", "role", "surface"],
+      "optional": ["capabilities", "app", "lineage", "hostEpoch"],
+      "description": "The child's first frame, within helloTimeoutMs of the upgrade. role is child in protocol 1: asking to be the host while the site is the host closes the link with host_is_site. surface is the kind of child (app). capabilities is what this end can do, from the list above; unknown ones are dropped. app is {name, version} for logs. lineage and hostEpoch are null until host leases exist."
+    },
+    "welcome": {
+      "from": "host",
+      "delivery": "handshake",
+      "required": ["protocol", "role", "host", "deviceId", "heartbeatMs", "capabilities", "turns", "serverTime"],
+      "optional": ["deviceName", "lineage", "hostEpoch"],
+      "description": "The host's answer to hello. host is where she lives (site). deviceId and deviceName are this device as the site knows it. capabilities is the child's list as accepted. turns is this device's recent turns the host still has: [{turnId, runId, sessionId?, lastSequence, completed}], newest first, so a child can tell what to resume. serverTime is milliseconds since the epoch. After welcome the host sends mood, when her persona is on."
+    },
+    "input": {
+      "from": "child",
+      "delivery": "reliable",
+      "idempotency": "id is the turnId: made by the child, one per thing the person says, kept across resends.",
+      "required": ["surface", "text"],
+      "optional": ["sessionId", "rigState"],
+      "description": "Something the site owner said to her on this child: a chat turn. The host starts a run for the site owner as their current role allows, and answers run.accepted or run.rejected. sessionId is the chat session to continue (from an earlier run.accepted); without it the host starts one. rigState is the rig as it stands, the same summary the site's face sends, so her acting fits this body."
+    },
+    "presence": {
+      "from": "child",
+      "delivery": "latest",
+      "required": ["presence"],
+      "optional": ["perception", "musicStatus"],
+      "description": "Whether the person is with her on this child, in the shape the site's POST /api/agent/presence takes: presence is {pageVisible (the app's window is on screen), panelVisible, faceVisible, speaking, speechInterruptible, visibleMode?, motionIntent?, speechIntent?, rigState?}; perception and musicStatus are the same whitelisted observations. It holds for the presence lease (90 s) unless sent again; the link closing ends it."
+    },
+    "run.resume": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["turnId", "afterSeq"],
+      "optional": ["runId"],
+      "description": "Send the turn's run events after afterSeq (the last run sequence this child has; 0 for all), then keep going live until run.end. runId lets the host find a turn it no longer remembers (after a restart). A turn the host cannot find is answered run.rejected turn_unknown. The host keeps the latest 512 events of a run; when what came after afterSeq is older than that, the replay starts later (the final task_completed still carries the whole reply)."
+    },
+    "run.accepted": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["turnId", "runId", "duplicate"],
+      "optional": ["sessionId"],
+      "description": "The input's run. duplicate is true when this turnId already had a run: nothing new started, and nothing is streamed until the child sends run.resume. For a new run the events follow at once."
+    },
+    "run.rejected": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["turnId", "code"],
+      "description": "No run for this turn. code says why (errorCodes below, or an AI quota code); there is no message text."
+    },
+    "run.event": {
+      "from": "host",
+      "delivery": "turn",
+      "required": ["turnId", "runId", "sequence", "event"],
+      "description": "One run hub envelope as it is: sequence is the run's own (0 only for a run_started the host made up for a run that had none), event is the agent event JSON the site's SSE carries (type run_started, summary_token, task_completed, error, outfit_overlay, waiting_for_input, ...). A child plays her body only from perform and her mood only from mood: performance_plan and merope_state_changed events, and response.performance inside task_completed, are the run's record and are not played."
+    },
+    "run.end": {
+      "from": "host",
+      "delivery": "turn",
+      "required": ["turnId", "runId", "lastSequence"],
+      "description": "The run is over: its last event (task_completed not waiting for input, or error) has been sent."
+    },
+    "perform": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["directive"],
+      "optional": ["turnId", "runId", "sequence"],
+      "description": "How she acts now: a PerformanceDirective in the shared merope_performance_contract vocabulary, with its phase (reaction, delivery, outcome, proactive, mood, presence). A newer one replaces an older one; within a turn, the higher sequence is newer. Sent while a turn is live, including the turn's newest directive when it is resumed before its end."
+    },
+    "mood": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["mood", "activity"],
+      "description": "Her mood as shown: mood is a MoodTransition {before, after, arousalBefore, arousalAfter, bandBefore, bandAfter, delta, cause, revision}; activity is idle, thinking, talking, working, and so on. revision orders them. Only while her persona is on."
+    },
+    "ack": {
+      "from": "child",
+      "delivery": "control",
+      "required": [],
+      "description": "Carries only the envelope's ack, for a child with nothing else to send. The host's frames always carry its ack, and it pings at least every heartbeat."
+    },
+    "ping": {
+      "from": "either",
+      "delivery": "control",
+      "required": [],
+      "description": "Answered with pong."
+    },
+    "pong": {
+      "from": "either",
+      "delivery": "control",
+      "required": [],
+      "description": "The answer to ping."
+    },
+    "error": {
+      "from": "host",
+      "delivery": "control",
+      "required": ["code"],
+      "optional": ["ref"],
+      "description": "A frame the host could not take, and the link stays up. ref is that frame's seq. Codes are in errorCodes; there is no message text."
+    }
+  },
+  "errorCodes": {
+    "unknown_frame": "A frame type this host does not know (a newer child): ignored.",
+    "bad_frame": "Not an envelope, or a body without its required fields.",
+    "not_ready": "A frame other than hello before hello: ignored; the host still waits for hello.",
+    "binary_unsupported": "A binary frame: protocol 1 has none.",
+    "empty_input": "input text is empty.",
+    "input_too_long": "input text is longer than limits.maxTextChars.",
+    "bad_id": "An id or turnId that does not match limits.idPattern.",
+    "surface_unsupported": "A surface this host does not take input from.",
+    "turn_unknown": "run.resume for a turn the host does not have.",
+    "agent_access_denied": "The site owner may not use the agent now.",
+    "internal_error": "Something failed on the host; trying again later may work."
+  },
+  "closeCodes": {
+    "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },
+    "owner_changed": { "code": 4002, "forgetCredentials": true, "reconnect": false, "description": "The site has another owner; this device was the old owner's." },
+    "replaced": { "code": 4003, "forgetCredentials": false, "reconnect": false, "description": "Another connection of this same device took over." },
+    "host_moved": { "code": 4004, "forgetCredentials": false, "reconnect": true, "description": "Reserved for host leases: she lives somewhere else now." },
+    "host_frozen": { "code": 4005, "forgetCredentials": false, "reconnect": true, "description": "Reserved for host leases: she is moving." },
+    "host_is_site": { "code": 4009, "forgetCredentials": false, "reconnect": false, "description": "hello asked for the host role while the site is her host." },
+    "bad_frame": { "code": 4400, "forgetCredentials": false, "reconnect": true, "description": "The hello could not be taken: not an envelope, a body without what it needs, or a role or surface this host does not know." },
+    "unsupported_protocol": { "code": 4406, "forgetCredentials": false, "reconnect": false, "description": "hello.protocol is not one this host speaks." },
+    "timeout": { "code": 4408, "forgetCredentials": false, "reconnect": true, "description": "No hello in time, or nothing heard for missedHeartbeats heartbeats." },
+    "unavailable": { "code": 4503, "forgetCredentials": false, "reconnect": true, "description": "The host is stopping or cannot serve the link now." }
+  }
+}

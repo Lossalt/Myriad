@@ -1,4 +1,9 @@
 //! Process-local live presence. Not a table, not a grant.
+//!
+//! Pages of the site and native children on her link share one lease table,
+//! told apart by [`LiveSurface`]. "On the site" (revival, who is present, the
+//! panel being open) reads only pages; a native child's presence is kept
+//! beside them, for routing to the child.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -10,7 +15,7 @@ use serde_json::Value;
 use crate::services::agent::presence_window::PRESENCE_WINDOW_SECS;
 use crate::services::agent::types::UserRequest;
 
-use super::SelfLivePresence;
+use super::{LiveSurface, SelfLivePresence};
 
 const MAX_LIVE_USERS: usize = 4096;
 const MAX_USER_PAGES: usize = 16;
@@ -49,12 +54,16 @@ impl LivePresenceStore {
     }
 
     fn last(&self, user_id: i32, now: DateTime<Utc>) -> SelfLivePresence {
+        self.last_on(user_id, LiveSurface::Web, now)
+    }
+
+    fn last_on(&self, user_id: i32, surface: LiveSurface, now: DateTime<Utc>) -> SelfLivePresence {
         let Some(pages) = self.users.get(&user_id) else {
             return SelfLivePresence::default();
         };
         let fresh: Vec<_> = pages
             .iter()
-            .filter(|(_, live)| presence_is_fresh_at(live, now))
+            .filter(|(_, live)| live.surface == surface && presence_is_fresh_at(live, now))
             .collect();
         // Select one coherent body/perception/music source. Never splice the rig
         // of one outfit into another page's observations. Visible panel wins,
@@ -119,6 +128,34 @@ pub fn last_live_presence(user_id: i32) -> SelfLivePresence {
     LIVE.read()
         .map(|store| store.last(user_id, Utc::now()))
         .unwrap_or_default()
+}
+
+/// The lease key of a native child: a colon never passes the page whitelist,
+/// so no page can write over it.
+fn native_instance(device_id: &str) -> String {
+    format!("native:{device_id}")
+}
+
+/// What a native child on her link reports, through the same whitelist and
+/// lease as a page. It never revives anyone onto the site.
+pub fn remember_native_presence(user_id: i32, device_id: &str, data: &Value) {
+    let mut live = live_presence_from_custom_data(data);
+    live.instance_id = Some(native_instance(device_id));
+    live.surface = LiveSurface::Native;
+    remember_live_presence(user_id, live);
+}
+
+/// The child's link closed: it is not there any more.
+pub fn forget_native_presence(user_id: i32, device_id: &str) {
+    if let Ok(mut store) = LIVE.write() {
+        let key = native_instance(device_id);
+        if let Some(pages) = store.users.get_mut(&user_id) {
+            pages.remove(&key);
+            if pages.is_empty() {
+                store.users.remove(&user_id);
+            }
+        }
+    }
 }
 
 fn age_perception(live: &mut SelfLivePresence, now: DateTime<Utc>) {
@@ -427,6 +464,56 @@ mod tests {
         assert!(store.last(1, now).perception.is_empty());
         assert!(store.last(1, now).rig_state.is_none());
         assert!(store.last(2, now).perception.is_empty());
+    }
+
+    #[test]
+    fn a_native_child_is_kept_apart_from_the_sites_pages() {
+        let mut store = LivePresenceStore::default();
+        let now = Utc::now();
+        let mut native = page("mac", true, true, now);
+        native.instance_id = Some(native_instance("dev_a"));
+        native.surface = LiveSurface::Native;
+        // Someone on the Mac is not someone arriving on, or being on, the site.
+        assert!(!store.remember(1, native, now));
+        assert!(!store.last(1, now).page_visible);
+        let on_mac = store.last_on(1, LiveSurface::Native, now);
+        assert!(on_mac.page_visible && on_mac.panel_visible);
+        assert_eq!(on_mac.perception, vec!["mac"]);
+        // A page arriving afterwards still arrives, and the Mac's panel is not the site's.
+        assert!(store.remember(1, page("front", true, false, now), now));
+        assert!(!store.last(1, now).panel_visible);
+        assert_eq!(store.last(1, now).perception, vec!["front"]);
+        // The same lease as a page.
+        let later = now + Duration::seconds(PRESENCE_WINDOW_SECS + 1);
+        assert!(!store.last_on(1, LiveSurface::Native, later).page_visible);
+
+        // Through the link's entry points: a page cannot pose as the child,
+        // and the link closing ends it.
+        let user = 1_930_777;
+        remember_native_presence(
+            user,
+            "dev_b",
+            &serde_json::json!({
+                "presence": { "instanceId": "native:dev_b", "pageVisible": true, "panelVisible": true }
+            }),
+        );
+        let native = |user| {
+            LIVE.read()
+                .unwrap()
+                .last_on(user, LiveSurface::Native, Utc::now())
+        };
+        assert!(native(user).panel_visible);
+        assert!(!last_live_presence(user).page_visible);
+        assert!(!present_users().contains(&user));
+        remember_live_presence(
+            user,
+            live_presence_from_custom_data(&serde_json::json!({
+                "presence": { "instanceId": "native:dev_b", "pageVisible": false }
+            })),
+        );
+        assert!(native(user).panel_visible);
+        forget_native_presence(user, "dev_b");
+        assert!(!native(user).page_visible);
     }
 
     #[test]

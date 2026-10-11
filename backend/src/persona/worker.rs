@@ -141,6 +141,8 @@ pub async fn run() -> anyhow::Result<()> {
         result = &mut refresh => Err(anyhow::anyhow!("persona config refresh stopped: {result:?}")),
     };
     super::request_stop().await;
+    // Children reconnect with backoff; their links are not drained.
+    crate::services::agent::link::disconnect_all(crate::services::agent::link::Close::Unavailable);
     let _ = shutdown.send(true);
     refresh.abort();
     if !http.is_finished() {
@@ -166,6 +168,17 @@ async fn limit_http_work(
     use axum::response::IntoResponse;
     use futures::StreamExt;
     let path = request.uri().path();
+    // Her link: the handshake takes its own small budget; the upgraded
+    // connection then lives outside the response, so its body is not held.
+    if path == "/api/agent/link" {
+        let Ok(_permit) = budgets.links.try_acquire_owned() else {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        return match tokio::time::timeout(Duration::from_secs(30), next.run(request)).await {
+            Ok(response) => response,
+            Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+        };
+    }
     let passive_stream = request.method() == axum::http::Method::GET
         && (path.ends_with("/stream") || path == "/api/speech/convo/events");
     let control = path == "/api/agent/presence"
@@ -248,6 +261,7 @@ struct Budgets {
     requests: Arc<tokio::sync::Semaphore>,
     streams: Arc<tokio::sync::Semaphore>,
     controls: Arc<tokio::sync::Semaphore>,
+    links: Arc<tokio::sync::Semaphore>,
 }
 impl Default for Budgets {
     fn default() -> Self {
@@ -255,6 +269,7 @@ impl Default for Budgets {
             requests: Arc::new(tokio::sync::Semaphore::new(8)),
             streams: Arc::new(tokio::sync::Semaphore::new(32)),
             controls: Arc::new(tokio::sync::Semaphore::new(8)),
+            links: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
 }
@@ -267,12 +282,69 @@ mod tests {
         extract::Request,
     };
     use tower::ServiceExt;
+
+    /// Her link upgrades through the worker's admission, and once open it
+    /// holds neither the request budget nor its own handshake budget.
+    #[tokio::test]
+    async fn her_link_upgrades_and_holds_no_request_budget() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as Sent;
+        let budget = Budgets {
+            requests: Arc::new(tokio::sync::Semaphore::new(1)),
+            streams: Arc::new(tokio::sync::Semaphore::new(1)),
+            controls: Arc::new(tokio::sync::Semaphore::new(1)),
+            links: Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let app = Router::new()
+            .route(
+                "/api/agent/link",
+                get(|upgrade: axum::extract::ws::WebSocketUpgrade| async move {
+                    upgrade.on_upgrade(|mut socket| async move {
+                        while let Some(Ok(message)) = socket.recv().await {
+                            if socket.send(message).await.is_err() {
+                                break;
+                            }
+                        }
+                    })
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                budget.clone(),
+                limit_http_work,
+            ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut links = Vec::new();
+        for _ in 0..2 {
+            let (mut link, response) =
+                tokio_tungstenite::connect_async(format!("ws://{address}/api/agent/link"))
+                    .await
+                    .unwrap();
+            assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+            link.send(Sent::Text("hi".into())).await.unwrap();
+            let echoed = tokio::time::timeout(Duration::from_secs(5), link.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(echoed, Sent::Text("hi".into()));
+            links.push(link);
+        }
+        assert_eq!(budget.requests.available_permits(), 1);
+        assert_eq!(budget.links.available_permits(), 1);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn stalled_work_and_sse_leave_cancel_admission_available() {
         let budget = Budgets {
             requests: Arc::new(tokio::sync::Semaphore::new(1)),
             streams: Arc::new(tokio::sync::Semaphore::new(1)),
             controls: Arc::new(tokio::sync::Semaphore::new(1)),
+            links: Arc::new(tokio::sync::Semaphore::new(1)),
         };
         let app = Router::new()
             .route(

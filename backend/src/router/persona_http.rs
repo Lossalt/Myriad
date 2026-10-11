@@ -91,6 +91,7 @@ mod tests {
             "/api/speech/convo/chat/completions",
             "/api/merope/rig/active",
             "/api/tapp/agent/v2/interactions/id/result",
+            "/api/agent/link",
         ] {
             let request = || {
                 Request::builder()

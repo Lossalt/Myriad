@@ -699,4 +699,12 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::sync_device::sync_device_auth,
             )),
         )
+        // Her link (WebSocket): the same device token, no clock.
+        .route(
+            "/link",
+            get(super::link::her_link).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_link_auth,
+            )),
+        )
 }

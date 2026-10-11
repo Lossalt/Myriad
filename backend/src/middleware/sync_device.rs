@@ -1,5 +1,5 @@
 //! `sync_device_auth`: the gate in front of the routes a device uses to sync
-//! her (`/api/agent/sync/*`).
+//! her (`/api/agent/sync/*`) and of her link (`/api/agent/link`).
 //!
 //! It accepts only a device token (`Authorization: Bearer mys_…`) and never
 //! a session: those routes are for devices. The other way round holds by
@@ -14,6 +14,8 @@
 //! the device can say its clock is wrong and sync again once it is right
 //! (`myriad_persona_sync::hlc::check_ahead`). `hello` and `role` require it;
 //! `leave` never refuses it, so a device with a wrong clock can still leave.
+//! The link does not read it at all: nothing on the link is ordered by a
+//! device's clock.
 
 use axum::{
     Json,
@@ -57,9 +59,22 @@ pub fn clock_ahead(ahead: hlc::Ahead, server_time: i64) -> Response {
         .into_response()
 }
 
-/// The clock in `req`, if it has one, or the answer refusing it. With
-/// `ahead_too` a clock too far ahead is taken as it is (leaving).
-fn clock_of(req: &Request, ahead_too: bool) -> Result<Option<Rev>, Response> {
+/// How a gate takes the device's clock.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClockRule {
+    /// Refused when too far ahead.
+    Check,
+    /// Taken as it is, even far ahead (leaving).
+    AheadToo,
+    /// Not read (the link).
+    Ignore,
+}
+
+/// The clock in `req`, if it has one, or the answer refusing it.
+fn clock_of(req: &Request, rule: ClockRule) -> Result<Option<Rev>, Response> {
+    if rule == ClockRule::Ignore {
+        return Ok(None);
+    }
     let Some(raw) = req.headers().get(SYNC_CLOCK_HEADER) else {
         return Ok(None);
     };
@@ -75,7 +90,7 @@ fn clock_of(req: &Request, ahead_too: bool) -> Result<Option<Rev>, Response> {
             )
         })?;
     let now = chrono::Utc::now().timestamp_micros();
-    if !ahead_too {
+    if rule == ClockRule::Check {
         hlc::check_ahead(&rev, now).map_err(|ahead| clock_ahead(ahead, now))?;
     }
     Ok(Some(rev))
@@ -90,7 +105,7 @@ pub async fn sync_device_auth(
     req: Request,
     next: Next,
 ) -> Response {
-    gate(db, req, next, false).await
+    gate(db, req, next, ClockRule::Check).await
 }
 
 /// The gate for `leave`: the same, except that a clock too far ahead does
@@ -100,10 +115,20 @@ pub async fn sync_device_leave_auth(
     req: Request,
     next: Next,
 ) -> Response {
-    gate(db, req, next, true).await
+    gate(db, req, next, ClockRule::AheadToo).await
 }
 
-async fn gate(db: DatabaseConnection, mut req: Request, next: Next, ahead_too: bool) -> Response {
+/// The gate for her link: the same device checks, before the upgrade, and no
+/// clock.
+pub async fn sync_device_link_auth(
+    State(db): State<DatabaseConnection>,
+    req: Request,
+    next: Next,
+) -> Response {
+    gate(db, req, next, ClockRule::Ignore).await
+}
+
+async fn gate(db: DatabaseConnection, mut req: Request, next: Next, rule: ClockRule) -> Response {
     let Some(token) = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -171,7 +196,7 @@ async fn gate(db: DatabaseConnection, mut req: Request, next: Next, ahead_too: b
     if let Err(error) = devices::seen(&db, &device.id).await {
         tracing::warn!(%error, device = %device.id, "[sync] could not record a device as seen");
     }
-    let clock = match clock_of(&req, ahead_too) {
+    let clock = match clock_of(&req, rule) {
         Ok(clock) => clock,
         Err(refused) => {
             tracing::info!(device = %device.id, "[sync] a device's clock was refused");

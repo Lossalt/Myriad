@@ -51,6 +51,7 @@ mod feishu_status;
 mod heartbeat_mcp;
 mod helpers;
 mod intentions;
+mod link;
 mod notifications;
 mod onebot_pairing;
 mod onebot_status;

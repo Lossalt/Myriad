@@ -46,6 +46,15 @@ pub struct RecentIntent {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Which kind of end a live observation came from: a page of the site, or a
+/// native child on her link. Observational only, never a grant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LiveSurface {
+    #[default]
+    Web,
+    Native,
+}
+
 /// Instant live-face / speech facts. Memory-only; never a grant or a tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -53,6 +62,10 @@ pub struct SelfLivePresence {
     /// Page-instance lease key, never a user identity or an authorization fact.
     #[serde(skip)]
     pub instance_id: Option<String>,
+    /// Where it was observed. Everything that reads presence as "on the site"
+    /// reads only the web surface.
+    #[serde(skip)]
+    pub surface: LiveSurface,
     pub speaking: bool,
     pub face_visible: bool,
     /// Document is visible in this browser. Independent of the face widget.

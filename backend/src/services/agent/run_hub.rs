@@ -753,6 +753,21 @@ pub(crate) async fn create_run_for_test(user_id: i32, session_id: Option<String>
     run
 }
 
+/// A run in the hub, found like any other, whose durable records stay in
+/// memory: for tests of what reads runs.
+#[cfg(test)]
+pub(crate) async fn create_live_run_for_test(user_id: i32) -> Arc<AgentRun> {
+    let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+    let run = AgentRun::new_for_test(run_id.clone(), user_id);
+    AGENT_RUNS.write().await.insert(run_id.clone(), run.clone());
+    run.publish(AgentProgressEvent::RunStarted {
+        run_id,
+        session_id: None,
+    })
+    .await;
+    run
+}
+
 /// The server may reserve an ID while committing input references, before
 /// publishing RunStarted or admitting execution. Never accepts a client ID.
 pub(crate) async fn create_run_with_id(

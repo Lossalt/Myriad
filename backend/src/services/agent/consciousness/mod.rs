@@ -44,16 +44,17 @@ pub use grant::{
 pub use grant_store::AutonomyGrantStore;
 pub use policy::validate_decision;
 pub use presence::{
-    last_live_presence, live_presence_from_custom_data, live_presence_from_request,
-    live_presence_panel_open, present_users, remember_live_presence,
+    forget_native_presence, last_live_presence, live_presence_from_custom_data,
+    live_presence_from_request, live_presence_panel_open, present_users, remember_live_presence,
+    remember_native_presence,
 };
 pub use snapshot::capture_self_snapshot;
 pub use speak_intent::{SpeakIntent, drain_speak_intents, enqueue_speak_intent, new_speak_intent};
 pub use store::IntentStore;
 pub use types::{
     AcceptSource, ConsciousnessAction, ConsciousnessDecision, ConsciousnessEvent, EventUrgency,
-    IntentRecord, IntentStatus, RecentIntent, SelfFacts, SelfLivePresence, SelfSnapshot,
-    WorkProposal,
+    IntentRecord, IntentStatus, LiveSurface, RecentIntent, SelfFacts, SelfLivePresence,
+    SelfSnapshot, WorkProposal,
 };
 
 #[cfg(test)]
