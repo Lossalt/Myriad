@@ -56,6 +56,9 @@ struct AppState {
     persona_requests: Arc<tokio::sync::Semaphore>,
     persona_streams: Arc<tokio::sync::Semaphore>,
     persona_controls: Arc<tokio::sync::Semaphore>,
+    /// Her link (`/api/agent/link`), the one persona WebSocket: held for as
+    /// long as each link is open, apart from requests and streams.
+    persona_links: Arc<tokio::sync::Semaphore>,
     federation_isolated: Arc<std::sync::atomic::AtomicBool>,
     federation_requests: Arc<tokio::sync::Semaphore>,
     federation_websockets: Arc<tokio::sync::Semaphore>,
@@ -159,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
         persona_requests: Arc::new(tokio::sync::Semaphore::new(32)),
         persona_streams: Arc::new(tokio::sync::Semaphore::new(64)),
         persona_controls: Arc::new(tokio::sync::Semaphore::new(16)),
+        persona_links: Arc::new(tokio::sync::Semaphore::new(16)),
         // Unknown backend state must not send federation work into web.
         federation_isolated: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         federation_requests: Arc::new(tokio::sync::Semaphore::new(32)),
@@ -300,7 +304,23 @@ async fn handle(
         &state.frontend_upstream
     };
     if persona && is_websocket_upgrade(req.headers()) {
-        return Ok(StatusCode::BAD_REQUEST.into_response());
+        // Only her link upgrades; every other persona path stays HTTP.
+        if path != PERSONA_LINK_PATH {
+            return Ok(StatusCode::BAD_REQUEST.into_response());
+        }
+        let Ok(permit) = state.persona_links.clone().try_acquire_owned() else {
+            return Ok(StatusCode::SERVICE_UNAVAILABLE.into_response());
+        };
+        return Ok(forward_websocket(
+            &state,
+            upstream,
+            &path_with_query(req.uri()),
+            req,
+            client_addr,
+            Some(permit),
+        )
+        .await
+        .unwrap_or_else(bad_gateway));
     }
     if persona {
         let subscription = req.method() == hyper::Method::GET
@@ -503,6 +523,9 @@ fn backend_isolated(value: &serde_json::Value, field: &str) -> Option<bool> {
         None => Some(false), // Proven legacy backend, before domain extraction.
     }
 }
+
+/// The one persona path that is a WebSocket: her link, which a device dials.
+const PERSONA_LINK_PATH: &str = "/api/agent/link";
 
 fn is_persona_path(path: &str) -> bool {
     [
@@ -1455,6 +1478,7 @@ mod tests {
             persona_requests: Arc::new(tokio::sync::Semaphore::new(32)),
             persona_streams: Arc::new(tokio::sync::Semaphore::new(64)),
             persona_controls: Arc::new(tokio::sync::Semaphore::new(16)),
+            persona_links: Arc::new(tokio::sync::Semaphore::new(16)),
             federation_upstream: Some(format!("http://{fed_address}")),
             federation_isolated: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             federation_requests: budget.clone(),
@@ -1531,6 +1555,7 @@ mod tests {
             persona_requests: Arc::new(tokio::sync::Semaphore::new(32)),
             persona_streams: budget.clone(),
             persona_controls: Arc::new(tokio::sync::Semaphore::new(16)),
+            persona_links: Arc::new(tokio::sync::Semaphore::new(16)),
             federation_upstream: Some(format!("http://{fed_address}")),
             federation_isolated: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             federation_requests: Arc::new(tokio::sync::Semaphore::new(32)),
@@ -1611,6 +1636,7 @@ mod tests {
             persona_requests: Arc::new(tokio::sync::Semaphore::new(32)),
             persona_streams: Arc::new(tokio::sync::Semaphore::new(64)),
             persona_controls: Arc::new(tokio::sync::Semaphore::new(16)),
+            persona_links: Arc::new(tokio::sync::Semaphore::new(16)),
             federation_upstream: Some(format!("http://{address}")),
             federation_isolated: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             federation_requests: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -1648,6 +1674,126 @@ mod tests {
             drop(client);
             worker.await.unwrap();
             while budget.available_permits() == 0 {
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), test)
+            .await
+            .unwrap();
+        proxy.abort();
+    }
+
+    /// Her link is the one persona WebSocket: it goes through on its own
+    /// budget, held until the link closes, while every other persona path
+    /// still refuses an upgrade.
+    #[tokio::test]
+    async fn her_link_is_the_only_persona_websocket() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = upstream.local_addr().unwrap();
+        let worker = tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            assert!(request.starts_with("get /api/agent/link "), "{request}");
+            assert!(request.contains("upgrade: websocket"));
+            assert!(request.contains("authorization: bearer mys_"));
+            socket.write_all(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n").await.unwrap();
+            let mut frame = [0; 8];
+            socket.read_exact(&mut frame).await.unwrap();
+            socket.write_all(&frame).await.unwrap();
+            let mut byte = [0];
+            assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
+        });
+        let links = Arc::new(tokio::sync::Semaphore::new(1));
+        let requests = Arc::new(tokio::sync::Semaphore::new(32));
+        let state = Arc::new(AppState {
+            state_path: PathBuf::from("/__myriad_proxy_test_no_maintenance"),
+            backend_upstream: "http://127.0.0.1:1".into(),
+            frontend_upstream: "http://127.0.0.1:1".into(),
+            updater_upstream: "http://127.0.0.1:1".into(),
+            persona_upstream: Some(format!("http://{address}")),
+            persona_isolated: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            persona_requests: requests.clone(),
+            persona_streams: Arc::new(tokio::sync::Semaphore::new(64)),
+            persona_controls: Arc::new(tokio::sync::Semaphore::new(16)),
+            persona_links: links.clone(),
+            federation_upstream: None,
+            federation_isolated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            federation_requests: Arc::new(tokio::sync::Semaphore::new(1)),
+            federation_websockets: Arc::new(tokio::sync::Semaphore::new(1)),
+            allow_direct_updater: false,
+            trusted_upstreams: vec![],
+            client: Client::builder(TokioExecutor::new()).build_http(),
+            maint_cache: Arc::new(RwLock::new(MaintCache::default())),
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = listener.local_addr().unwrap();
+        let proxy = tokio::spawn(async move {
+            let app = Router::new().fallback(any(handle)).with_state(state);
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let handshake = |path: &str| {
+            format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer mys_test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            )
+        };
+        async fn status_line(client: &mut tokio::net::TcpStream) -> String {
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(client.read_u8().await.unwrap());
+            }
+            String::from_utf8_lossy(&headers)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        }
+        let test = async {
+            // Other persona paths still refuse an upgrade, before any upstream.
+            for path in [
+                "/api/agent/runs/run_x/stream",
+                "/api/speech/convo/events",
+                "/api/agent/link/extra",
+            ] {
+                let mut client = tokio::net::TcpStream::connect(proxy_address).await.unwrap();
+                client.write_all(handshake(path).as_bytes()).await.unwrap();
+                assert!(
+                    status_line(&mut client).await.starts_with("HTTP/1.1 400"),
+                    "{path}"
+                );
+            }
+            let mut client = tokio::net::TcpStream::connect(proxy_address).await.unwrap();
+            client
+                .write_all(handshake("/api/agent/link").as_bytes())
+                .await
+                .unwrap();
+            assert!(status_line(&mut client).await.starts_with("HTTP/1.1 101"));
+            assert_eq!(links.available_permits(), 0);
+            assert_eq!(requests.available_permits(), 32, "not a request's budget");
+            // A second link waits for no one: the budget is full.
+            let mut second = tokio::net::TcpStream::connect(proxy_address).await.unwrap();
+            second
+                .write_all(handshake("/api/agent/link").as_bytes())
+                .await
+                .unwrap();
+            assert!(status_line(&mut second).await.starts_with("HTTP/1.1 503"));
+            let frame = [0x81, 0x82, 1, 2, 3, 4, b'h' ^ 1, b'i' ^ 2];
+            client.write_all(&frame).await.unwrap();
+            let mut echoed = [0; 8];
+            client.read_exact(&mut echoed).await.unwrap();
+            assert_eq!(echoed, frame);
+            drop(client);
+            worker.await.unwrap();
+            while links.available_permits() == 0 {
                 tokio::task::yield_now().await;
             }
         };
