@@ -9,6 +9,7 @@ import type { MusicMotionSource, SingingFrame } from './musicSource'
 import { AmbientMotionSource } from './ambientSource'
 import { RigMotionCoordinator } from './coordinator'
 import { HumanPerformanceRuntime } from './humanPerformanceRuntime'
+import { ListeningMotionSource } from './listeningSource'
 import { MoodMotionSource } from './moodSource'
 import { PerformanceMotionSource } from './performanceSource'
 import { RIG_STATE_CAPABILITY_LIMIT } from './rigStateSummary'
@@ -47,6 +48,7 @@ export class MotionRuntime {
   readonly mood: MoodMotionSource
   readonly ambient: AmbientMotionSource
   readonly touch: TouchMotionSource
+  readonly listening: ListeningMotionSource
   private readonly humanPerformance = new HumanPerformanceRuntime()
   private readonly musicSource: MusicMotionSource | null
   private readonly listeners = new Set<MotionFrameListener>()
@@ -69,6 +71,7 @@ export class MotionRuntime {
   ) {
     this.coordinator = coordinator
     this.touch = new TouchMotionSource(coordinator, () => this.emit())
+    this.listening = new ListeningMotionSource(() => this.emit(), currentNow)
     this.musicSource = musicSource
     this.speech = new SpeechMotionSource(
       coordinator,
@@ -107,6 +110,7 @@ export class MotionRuntime {
     if (this.retains === 1) {
       this.speech.start()
       this.performance.start()
+      this.listening.start()
       this.ambient.claim()
       if (this.musicSource) {
         this.unsubMusic = this.musicSource.subscribe((frame) => {
@@ -127,6 +131,7 @@ export class MotionRuntime {
       this.stopPreviewClock()
       this.speech.stop()
       this.performance.stop()
+      this.listening.stop()
       this.touch.release()
       this.mood.release()
       this.ambient.release()
@@ -190,6 +195,8 @@ export class MotionRuntime {
         this.musicFrame?.behaviorPlan,
         this.touch.current(),
         this.touch.speechContinuation(now, messageId => this.speech.hasPlayback({ messageId, source: 'proactive' })),
+        // A listener's attention is not laid over her own speaking.
+        hasSpeechIntent(speech) ? null : this.listening.current(now),
       ],
       now,
     )

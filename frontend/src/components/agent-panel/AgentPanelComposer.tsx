@@ -13,6 +13,7 @@ import React, {
 import { useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useI18n } from '../../contexts/I18nContext'
+import { dispatchMeropeListening } from '../../features/merope/events/performanceEvents'
 import {
   getVoicePresence,
   subscribeVoicePresence,
@@ -906,7 +907,11 @@ export const AgentPanelComposer: React.FC<AgentPanelComposerProps> = ({
               className="agent-panel-field"
               rows={1}
               value={value}
-              onChange={(event) => setValue(event.target.value)}
+              onChange={(event) => {
+                setValue(event.target.value)
+                // She attends while they type to her (nothing is sent).
+                dispatchMeropeListening()
+              }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={placeholder}

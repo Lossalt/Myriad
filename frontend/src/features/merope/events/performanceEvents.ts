@@ -23,6 +23,8 @@ import {
 
 export const MEROPE_PERFORMANCE_EVENT = 'merope-performance'
 export const MEROPE_STATE_EVENT = 'merope-state'
+/** They typed to her: a listener's attention, nothing more is sent. */
+export const MEROPE_LISTENING_EVENT = 'merope-listening'
 
 export {
   currentMeropeState,
@@ -322,4 +324,10 @@ function clamp(value: number, min: number, max: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** They typed a character to her; she attends while it goes on. */
+export function dispatchMeropeListening(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(MEROPE_LISTENING_EVENT))
 }
