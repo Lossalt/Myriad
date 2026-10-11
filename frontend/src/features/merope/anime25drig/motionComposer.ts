@@ -53,7 +53,7 @@ import {
 } from './randomAction'
 import { CoSpeechExpressionController } from './speechExpression'
 import { AutoSpeechController } from './speechMotion'
-import { standingWeightShift } from './standing'
+import { STANDING_HEAD_ROLL, standingWeightShift } from './standing'
 import { StylizedExpressionMotionController } from './stylizedExpressionMotion'
 import { ThinkingMotionController } from './thinkingMotion'
 
@@ -281,7 +281,12 @@ export class Anime25DMotionComposer {
     const ambient = this.ambientMotion.sample(t, target.rand)
     const thinking = this.thinkingMotion.sample(t, target.thinking && !speaking, tgt)
     const breath = idleBreathOffset(t, this.breathPose)
-    if (this.standing) breath.body += standingWeightShift(t)
+    if (this.standing) {
+      const weight = standingWeightShift(t)
+      breath.body += weight
+      // The head tips further the way the body leans, as a standing idle's does.
+      breath.angleZ += weight * STANDING_HEAD_ROLL
+    }
     const gate = this.poseGate.sample(
       dt,
       applyBehaviorMotionGate(

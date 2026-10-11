@@ -58,6 +58,13 @@ function weightLean(index: number): number {
   return (i % 2 === 0 ? 1 : -1) * WEIGHT_LEANS[i]
 }
 
+/**
+ * A standing figure's head tips with its weight shift, this much `angleZ` at a
+ * full lean, the way the body leans: on top of the chest's own lean it comes
+ * to about 14 degrees, as in a full-body Live2D idle.
+ */
+export const STANDING_HEAD_ROLL = 0.7
+
 /** The idle lean of a standing figure at `time`, which shifts its weight. */
 export function standingWeightShift(time: number): number {
   const t = Number.isFinite(time) ? ((time % WEIGHT_CYCLE) + WEIGHT_CYCLE) % WEIGHT_CYCLE : 0
@@ -67,7 +74,8 @@ export function standingWeightShift(time: number): number {
     if (t < end || i === WEIGHT_HOLDS.length - 1) {
       const u = Math.max(0, Math.min(1, (t - start) / WEIGHT_MOVE))
       const eased = u * u * (3 - 2 * u)
-      const from = weightLean(i - 1) * (1 + WEIGHT_GLIDE)
+      // The very first move starts from standing straight, not mid-lean.
+      const from = time < WEIGHT_HOLDS[0] ? 0 : weightLean(i - 1) * (1 + WEIGHT_GLIDE)
       const hold = Math.max(0, Math.min(1, (t - start - WEIGHT_MOVE) / Math.max(0.1, WEIGHT_HOLDS[i] - WEIGHT_MOVE)))
       const glide = weightLean(i) * WEIGHT_GLIDE * hold * hold * (3 - 2 * hold)
       return from + (weightLean(i) - from) * eased + glide
