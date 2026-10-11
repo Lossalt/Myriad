@@ -54,11 +54,10 @@ import {
 import { Anime25DIrisRebound } from './irisRebound'
 
 import { deformLayers, settleDependentLayers } from './layerFrameDeformation'
+import { drawOrder } from './legOrder'
 import { Anime25DMotionComposer } from './motionComposer'
 
-import {
-  deriveAnime25DMotionEnvelopeProfile,
-} from './motionEnvelope'
+import { deriveAnime25DMotionEnvelopeProfile } from './motionEnvelope'
 import {
   bearingDriverPatch,
 } from './performanceExpression'
@@ -650,7 +649,7 @@ export class Anime25DPlayer {
       this.gl,
       this.program,
       this.rendererBindings,
-      this.layers,
+      drawOrder(this.layers, this.body.secondaryDeformationFrame.standing),
       this.atlasTexture,
       this.collarClip,
       this.renderFrame,
