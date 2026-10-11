@@ -921,3 +921,6 @@ mod tests {
         assert!(!src.contains("extract_and_store("));
     }
 }
+
+#[cfg(test)]
+mod replay;
