@@ -35,6 +35,13 @@ export interface ArmSideIntent {
 }
 
 /**
+ * What a standing figure's arm is asked to do: hang at its side and go as the
+ * body carries it. A full-body Live2D idle never lifts, swings or reaches its
+ * arms on their own, and a lifted sleeve on a figure reads as flailing.
+ */
+export const HANGING_ARM: Readonly<ArmSideIntent & { sway: number }> = { open: 0, bend: 0, reach: 0, sway: 0 }
+
+/**
  * Raise/swing are already weighted and response-filtered by the composer.
  * Shares only suppress automatic recruitment; multiplying the directed
  * contribution again would weaken attacks and prematurely erase releases.

@@ -21,7 +21,7 @@ import type {
   Anime25DTorsoYawState,
 } from './torsoDeformation'
 import type { Anime25DPlayback, Anime25DShellProfile } from './types'
-import { ArmChoreography, resolveDirectedArmIntent } from './armChoreography'
+import { ArmChoreography, HANGING_ARM, resolveDirectedArmIntent } from './armChoreography'
 import { ARM_INERTIA_GAIN, ArmDrape, ArmPendulum, ArmSegment, FIGURE_ARM_INERTIA_GAIN, FIGURE_ARM_SLACK, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
 import { headRidesBody, KeyedBodyTurn } from './bodyTurnKeyforms'
@@ -640,9 +640,10 @@ export class Anime25DBodyFrames {
       const own = choreography[side]
       const raiseShare = this.motion.directedBodyWeight(side === 'L' ? 'leftArmRaise' : 'rightArmRaise')
       const swingShare = this.motion.directedBodyWeight(side === 'L' ? 'leftArmSwing' : 'rightArmSwing')
-      const raised = side === 'L' ? e.armRaiseL : e.armRaiseR
-      const swung = side === 'L' ? e.armSwingL : e.armSwingR
-      const intent = resolveDirectedArmIntent(own, e.armPos, raised, swung, raiseShare, swingShare, this.armElbows[side])
+      const [raised, swung] = side === 'L' ? [e.armRaiseL, e.armSwingL] : [e.armRaiseR, e.armSwingR]
+      // A standing figure's arms hang and go as the body carries them (HANGING_ARM).
+      const intent = this.figure ? HANGING_ARM
+        : resolveDirectedArmIntent(own, e.armPos, raised, swung, raiseShare, swingShare, this.armElbows[side])
       const input = { open: intent.open, sway: intent.sway, bodyRoll, dynamic: e.phys, inertiaGain, slack }
       const angle = this.armPendulums[side].step(input, joint, dt)
       const drape = this.armDrapes[side].step(angle, input.bodyRoll, input.dynamic, dt)
