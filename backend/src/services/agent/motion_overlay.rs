@@ -314,9 +314,9 @@ where
 }
 
 fn spawn_chat_motion_refinement_in<F, Fut>(
-    mut context: crate::services::agent::merope::MotionContext,
+    context: crate::services::agent::merope::MotionContext,
     tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
-    mut refine: F,
+    refine: F,
     live: Option<super::playback_direction::PlaybackDirection>,
 ) -> (ChatMotionDelivery, MotionRefinementGuard)
 where
@@ -324,6 +324,29 @@ where
     Fut: std::future::Future<Output = Option<crate::services::agent::merope::PerformanceDirective>>
         + Send
         + 'static,
+{
+    spawn_refinement(context, tx, refine, live, async {
+        crate::services::agent::merope::motion::decisions_source()
+            .await
+            .is_some()
+    })
+}
+
+/// `reacts_first`: whether the director answers fast enough (a decisions
+/// model) for her to react to what they said before her reply has words.
+fn spawn_refinement<F, Fut, R>(
+    mut context: crate::services::agent::merope::MotionContext,
+    tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
+    mut refine: F,
+    live: Option<super::playback_direction::PlaybackDirection>,
+    reacts_first: R,
+) -> (ChatMotionDelivery, MotionRefinementGuard)
+where
+    F: FnMut(crate::services::agent::merope::MotionContext) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Option<crate::services::agent::merope::PerformanceDirective>>
+        + Send
+        + 'static,
+    R: std::future::Future<Output = bool> + Send + 'static,
 {
     context.phase = crate::services::agent::merope::MotionPhase::Delivery;
     context.activity = context.phase.activity().to_owned();
@@ -358,10 +381,7 @@ where
         // A decisions model answers in under a second: she reacts to what
         // they said before her reply has words, not with the keyword floor.
         // Her reply's direction replaces it as it arrives.
-        if crate::services::agent::merope::motion::decisions_source()
-            .await
-            .is_some()
-        {
+        if reacts_first.await {
             let mut reaction = context.clone();
             reaction.phase = crate::services::agent::merope::MotionPhase::Reaction;
             reaction.activity = reaction.phase.activity().to_owned();
@@ -558,6 +578,52 @@ pub(super) mod motion_refinement_tests {
         assert_eq!(pose.targets["headTurn"], -0.8);
         assert_eq!(pose.targets["torsoTurn"], 0.7);
         assert_eq!(pose.targets["rightArmRaise"], 0.0);
+        live.close();
+        drop(delivery);
+        guard.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_quick_director_reacts_to_what_they_said_before_the_reply_has_words() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let live = super::super::playback_direction::PlaybackDirection::default();
+        let (seen, mut phases) = tokio::sync::mpsc::unbounded_channel();
+        let (mut delivery, guard) = spawn_refinement(
+            context(),
+            tx.clone(),
+            move |context| {
+                let seen = seen.clone();
+                async move {
+                    let _ = seen.send((context.phase, context.response_text.clone()));
+                    crate::services::agent::merope::local_directive(&context)
+                }
+            },
+            Some(live.clone()),
+            async { true },
+        );
+        let first = tokio::time::timeout(Duration::from_secs(1), phases.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first,
+            (MotionPhase::Reaction, None),
+            "asked before any words of the reply"
+        );
+        let reaction = tokio::time::timeout(Duration::from_secs(1), live.read_after(0))
+            .await
+            .unwrap();
+        assert!(reaction.performance.is_some(), "and played at once");
+        delivery.observe("我在听你说。", &tx);
+        let next = tokio::time::timeout(Duration::from_secs(1), phases.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            next.0,
+            MotionPhase::Delivery,
+            "the reply's words are directed as before"
+        );
         live.close();
         drop(delivery);
         guard.stop().await;
