@@ -17,6 +17,12 @@ export interface Anime25DImportProfile {
    * crop edge, or a standing figure's hips.
    */
   readonly bodyPivot: 'crop' | 'hips'
+  /**
+   * Room left beside the content on each side, as a share of its padded
+   * width: a standing figure sways from its feet about a tenth of its height
+   * each way, as a full-body Live2D idle does, and is cut off without it.
+   */
+  readonly stageMargin: number
 }
 
 const PROFILES: Record<CharacterAssetProfile, Anime25DImportProfile> = {
@@ -34,6 +40,7 @@ const PROFILES: Record<CharacterAssetProfile, Anime25DImportProfile> = {
     renamedLayers: { legwear: 'bottomwear' },
     lowerBodyFrames: false,
     bodyPivot: 'crop',
+    stageMargin: 0,
   },
   fullBody: {
     profile: 'fullBody',
@@ -42,6 +49,7 @@ const PROFILES: Record<CharacterAssetProfile, Anime25DImportProfile> = {
     renamedLayers: {},
     lowerBodyFrames: true,
     bodyPivot: 'hips',
+    stageMargin: 0.25,
   },
 }
 

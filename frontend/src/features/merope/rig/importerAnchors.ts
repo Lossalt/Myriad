@@ -50,7 +50,8 @@ export function contentFrame(
     left -= (targetWidth - width) / 2
     width = targetWidth
   }
-  return { x: left, y: top, width, height }
+  const margin = width * profile.stageMargin
+  return { x: left - margin, y: top, width: width + 2 * margin, height }
 }
 
 /**

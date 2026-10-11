@@ -563,9 +563,10 @@ test('a full figure keeps each leg and shoe, frames down to the soles and leans 
     CHARACTER_ASSET_PROFILES.fullBody.contractVersion,
   )
   assert.deepEqual(prepared.source.canvas, CHARACTER_ASSET_PROFILES.fullBody.portrait.canvas)
+  // The stage is the 9:16 portrait with room beside it to sway in, a quarter of its width each side.
   const playback = prepared.source.anime25dPlayback!
   const { width, height } = playback.pixelCanvas
-  assert.ok(Math.abs(height / width - 16 / 9) < 0.01, `${width}x${height}`)
+  assert.ok(Math.abs(height / width - 16 / 9 / 1.5) < 0.01, `${width}x${height}`)
   for (const role of ['legwear', 'footwear']) {
     const sides = playback.layers.filter((layer) => layer.role === role)
     assert.deepEqual(sides.map((layer) => layer.side).toSorted(), ['L', 'R'], role)
