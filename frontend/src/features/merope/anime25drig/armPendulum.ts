@@ -26,11 +26,30 @@ export const ARM_PENDULUM_DAMPING = 0.55
 export const ARM_INERTIA_GAIN = 4.5
 /** A figure's bones move its drawn shoulder as far as the body goes: nothing to make up. */
 export const FIGURE_ARM_INERTIA_GAIN = 1
+
 /**
- * How far a figure's arm swings away from its body past where it means to be,
- * on its own: further, and what was never drawn under it shows.
+ * How a pendulum arm is tuned: a bust's, drawn cropped at the shoulder and
+ * moved by a 2D body, and a standing figure's. A figure's arms hang as in a
+ * full-body Live2D idle: plumb whatever way the chest leans, so one opens off
+ * the body as the other closes in; the hand trails the body by about an
+ * eighth of a second, swings past and settles over two or three swings.
+ * Measured on such a rig swayed about once a second: the hand goes 1.23
+ * times as far as the hips, 0.13 s behind; this tuning gives 1.2 and 0.13.
  */
-export const FIGURE_ARM_SLACK = 0.02
+export interface ArmSwing {
+  inertiaGain: number
+  slack: number | undefined
+  /** Share of a chest roll the hanging arm gives back to gravity. */
+  hang: number
+  hz: number
+  damping: number
+}
+export const BUST_ARM_SWING: ArmSwing = {
+  inertiaGain: ARM_INERTIA_GAIN, slack: undefined, hang: ARM_HANG, hz: ARM_PENDULUM_HZ, damping: ARM_PENDULUM_DAMPING,
+}
+export const FIGURE_ARM_SWING: ArmSwing = {
+  inertiaGain: FIGURE_ARM_INERTIA_GAIN, slack: undefined, hang: 1, hz: 1.2, damping: 0.45,
+}
 
 /** Shoulder acceleration above this is a discontinuity, not motion. */
 const MAX_SUPPORT_ACCELERATION = 20_000
@@ -51,6 +70,10 @@ export interface ArmPendulumInput {
   inertiaGain?: number
   /** How far it swings away from the body past its target on its own, softly; unbounded when unset. */
   slack?: number
+  /** ARM_HANG, ARM_PENDULUM_HZ, ARM_PENDULUM_DAMPING when unset. */
+  hang?: number
+  hz?: number
+  damping?: number
 }
 
 export interface ArmSupport {
@@ -80,7 +103,7 @@ export class ArmPendulum {
     const sway = finite(input.sway)
     const roll = finite(input.bodyRoll)
     // Positive rotation moves a hanging arm's hand toward image left.
-    const target = this.outward * open * ARM_OPEN_RADIANS - sway * ARM_SWAY_RADIANS - ARM_HANG * roll
+    const target = this.outward * open * ARM_OPEN_RADIANS - sway * ARM_SWAY_RADIANS - (input.hang ?? ARM_HANG) * roll
     const step = Number.isFinite(dt) ? Math.max(0, dt) : 0
     if (!this.initialized || !input.dynamic) {
       this.initialized = true
@@ -106,14 +129,14 @@ export class ArmPendulum {
     } else {
       this.forgetSupport(support)
     }
-    const omega = 2 * Math.PI * ARM_PENDULUM_HZ * (1 + this.outward * SIDE_DETUNE)
+    const omega = 2 * Math.PI * (input.hz ?? ARM_PENDULUM_HZ) * (1 + this.outward * SIDE_DETUNE)
     const reach = support && support.reach > 0 ? support.reach : Infinity
     const world = this.state + roll
     // A pendulum on a moving support: the hand lags the shoulder's acceleration.
     const inertia =
       ((input.inertiaGain ?? ARM_INERTIA_GAIN) * (accelerationX * Math.cos(world) + accelerationY * Math.sin(world))) / reach
     const acceleration =
-      -omega * omega * (this.state - target) - 2 * ARM_PENDULUM_DAMPING * omega * this.velocity + inertia
+      -omega * omega * (this.state - target) - 2 * (input.damping ?? ARM_PENDULUM_DAMPING) * omega * this.velocity + inertia
     this.velocity += acceleration * step
     this.state += this.velocity * step
     if (!Number.isFinite(this.state) || !Number.isFinite(this.velocity)) {

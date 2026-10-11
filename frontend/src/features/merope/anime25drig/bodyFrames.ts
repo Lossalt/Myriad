@@ -22,7 +22,7 @@ import type {
 } from './torsoDeformation'
 import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, HANGING_ARM, resolveDirectedArmIntent } from './armChoreography'
-import { ARM_INERTIA_GAIN, ArmDrape, ArmPendulum, ArmSegment, FIGURE_ARM_INERTIA_GAIN, FIGURE_ARM_SLACK, FOREARM, HAND, REACH } from './armPendulum'
+import { ArmDrape, ArmPendulum, ArmSegment, BUST_ARM_SWING, FIGURE_ARM_SWING, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
 import { headRidesBody, KeyedBodyTurn } from './bodyTurnKeyforms'
 import {
@@ -610,7 +610,7 @@ export class Anime25DBodyFrames {
     if (!e.phys) this.prepareHeadFrame(time)
     // Which way is down for an arm: the chest it hangs from.
     const bodyRoll = this.figure ? this.figure.pose.chestAngle : e.body * BODY_ROLL_RADIANS
-    const [inertiaGain, slack] = this.figure ? [FIGURE_ARM_INERTIA_GAIN, FIGURE_ARM_SLACK] : [ARM_INERTIA_GAIN, undefined]
+    const swing = this.figure ? FIGURE_ARM_SWING : BUST_ARM_SWING
     const sleeves = {
       L: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'L'),
       R: layers.find((layer) => layer.secondaryDeformation.arm && layer.secondaryDeformation.handwearSide === 'R'),
@@ -644,7 +644,7 @@ export class Anime25DBodyFrames {
       // A standing figure's arms hang and go as the body carries them (HANGING_ARM).
       const intent = this.figure ? HANGING_ARM
         : resolveDirectedArmIntent(own, e.armPos, raised, swung, raiseShare, swingShare, this.armElbows[side])
-      const input = { open: intent.open, sway: intent.sway, bodyRoll, dynamic: e.phys, inertiaGain, slack }
+      const input = { ...swing, open: intent.open, sway: intent.sway, bodyRoll, dynamic: e.phys }
       const angle = this.armPendulums[side].step(input, joint, dt)
       const drape = this.armDrapes[side].step(angle, input.bodyRoll, input.dynamic, dt)
       // Away from the body is the arm's own outward turn.

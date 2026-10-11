@@ -10,7 +10,7 @@ import {
   ArmSegment,
   DRAPE_SAG,
   FIGURE_ARM_INERTIA_GAIN,
-  FIGURE_ARM_SLACK,
+  FIGURE_ARM_SWING,
   FOREARM,
   HAND,
 } from './armPendulum'
@@ -89,7 +89,7 @@ test('a figure\'s drawn shoulder moves as far as its body: its arm is not swung 
   assert.ok(figure > 0 && figure < bust / 3, `${figure} vs ${bust}`)
 })
 
-test('a figure\'s arm is not flung away from its body past where it means to be', () => {
+test('slack keeps an arm from being flung away from its body past where it means to be', () => {
   // ArmPendulum(1): positive is away from the body. The shoulder jerks toward
   // the body and back, flinging the hand both ways.
   const swing = (slack?: number) => {
@@ -108,11 +108,39 @@ test('a figure\'s arm is not flung away from its body past where it means to be'
     }
     return { away, toward }
   }
+  const slack = 0.02
   const free = swing()
-  const held = swing(FIGURE_ARM_SLACK)
-  assert.ok(free.away > FIGURE_ARM_SLACK * 2, `${free.away}`)
-  assert.ok(held.away <= FIGURE_ARM_SLACK + 1e-9, `${held.away}`)
+  const held = swing(slack)
+  assert.ok(free.away > slack * 2, `${free.away}`)
+  assert.ok(held.away <= slack + 1e-9, `${held.away}`)
   assert.ok(Math.abs(held.toward - free.toward) < 1e-3, 'toward the body it swings as freely')
+})
+
+test('a figure\'s arms hang plumb as the chest leans: one opens off the body, the other closes in', () => {
+  const left = new ArmPendulum(1)
+  const right = new ArmPendulum(-1)
+  const lean = { ...STILL, ...FIGURE_ARM_SWING, bodyRoll: 0.06 }
+  settle(left, { ...STILL, ...FIGURE_ARM_SWING }, 0.1)
+  settle(right, { ...STILL, ...FIGURE_ARM_SWING }, 0.1)
+  // Plumb: the whole roll given back (softened a little by the swing's limit).
+  assert.ok(Math.abs(settle(left, lean) + 0.06) < 4e-3)
+  assert.ok(Math.abs(settle(right, lean) + 0.06) < 4e-3)
+})
+
+test('a figure\'s hand trails its swaying body, swings past it and settles', () => {
+  const arm = new ArmPendulum(1)
+  const at = (t: number) => (t < 0.2 ? 0 : 60 * Math.sin(2 * Math.PI * 1.05 * (t - 0.2)))
+  let peakHand = 0
+  let peakBody = 0
+  for (let t = 0; t < 4; t += DT) {
+    const x = at(t)
+    const angle = arm.step({ ...STILL, ...FIGURE_ARM_SWING }, { x, y: 0, reach: 400 }, DT)
+    if (t > 2) {
+      peakBody = Math.max(peakBody, Math.abs(x))
+      peakHand = Math.max(peakHand, Math.abs(x - 400 * Math.sin(angle)))
+    }
+  }
+  assert.ok(peakHand > peakBody * 1.05 && peakHand < peakBody * 1.6, `${peakHand} vs ${peakBody}`)
 })
 
 test('a leaning body lets the hanging arms give some of the roll back', () => {
