@@ -220,23 +220,14 @@ async fn direct_motion_inner(
     } else {
         None
     };
-    // A decisions model that failed (rather than ran out of time) answers in
-    // well under a second, which leaves the chat director time to answer.
-    let decided = match decided {
-        Some(Ok(Err(error))) => {
-            tracing::warn!(phase, error = %error, "[MeropeMotion] Decisions call failed; asking the chat director");
-            None
-        }
-        other => other,
-    };
-    let analyzer = if decided.is_some() {
-        None
-    } else {
-        director_analyzer(MOTION_TIMEOUT).await
-    };
-    let result = if decided.is_some() {
-        decided
-    } else if let Some(analyzer) = analyzer {
+    let chat_director = async {
+        let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await else {
+            tracing::debug!(
+                phase,
+                "[MeropeMotion] Lite unavailable; requested cues may still play"
+            );
+            return None;
+        };
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,
@@ -262,13 +253,8 @@ async fn direct_motion_inner(
             )
             .await,
         )
-    } else {
-        tracing::debug!(
-            phase,
-            "[MeropeMotion] Lite unavailable; requested cues may still play"
-        );
-        None
     };
+    let result = or_chat_director(decided, phase, chat_director).await;
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut phrases = Vec::new();
@@ -390,6 +376,26 @@ async fn direct_motion_inner(
         score,
         loop_ms,
     })
+}
+
+type DirectorAnswer = Option<Result<anyhow::Result<String>, tokio::time::error::Elapsed>>;
+
+/// The decisions model's answer; the chat director's when there was none, or
+/// when the decisions call failed (rather than ran out of time): a decisions
+/// call answers in well under a second, which leaves the chat director time.
+async fn or_chat_director(
+    decided: DirectorAnswer,
+    phase: &str,
+    chat_director: impl std::future::Future<Output = DirectorAnswer>,
+) -> DirectorAnswer {
+    match decided {
+        Some(Ok(Err(error))) => {
+            tracing::warn!(phase, error = %error, "[MeropeMotion] Decisions call failed; asking the chat director");
+            chat_director.await
+        }
+        None => chat_director.await,
+        answered => answered,
+    }
 }
 
 /// The deterministic floor as a directive, with no network call and no await.
@@ -614,3 +620,42 @@ pub(super) mod live_probe {
 #[cfg(test)]
 #[path = "motion_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod decisions_fallback_tests {
+    use super::*;
+
+    fn chat() -> impl std::future::Future<Output = DirectorAnswer> {
+        async { Some(Ok(Ok("chat".to_owned()))) }
+    }
+
+    #[tokio::test]
+    async fn a_failed_decisions_call_is_answered_by_the_chat_director() {
+        let failed: DirectorAnswer = Some(Ok(Err(anyhow::anyhow!("decisions call failed: 502"))));
+        let answer = or_chat_director(failed, "delivery", chat()).await;
+        assert_eq!(answer.unwrap().unwrap().unwrap(), "chat");
+    }
+
+    #[tokio::test]
+    async fn a_decisions_answer_stands_and_a_spent_budget_is_not_spent_again() {
+        let decided: DirectorAnswer = Some(Ok(Ok("jev".to_owned())));
+        let answer = or_chat_director(decided, "delivery", chat()).await;
+        assert_eq!(answer.unwrap().unwrap().unwrap(), "jev");
+        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        let timed_out: DirectorAnswer = Some(Err(elapsed));
+        assert!(
+            or_chat_director(timed_out, "delivery", chat())
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_decisions_model_the_chat_director_answers_as_before() {
+        let answer = or_chat_director(None, "delivery", chat()).await;
+        assert_eq!(answer.unwrap().unwrap().unwrap(), "chat");
+    }
+}
