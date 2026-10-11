@@ -154,6 +154,9 @@ pub struct SelfFacts {
     pub hours_since_anyone: Option<f64>,
     #[serde(default)]
     pub hours_since_learned: Option<f64>,
+    /// How what happened today has left her, in words; none when even.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub today_left_you: Option<String>,
 }
 
 /// Side-effect class selected by the consciousness model.

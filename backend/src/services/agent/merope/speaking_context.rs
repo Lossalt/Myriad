@@ -198,8 +198,9 @@ async fn how_she_differs_with(db: &sea_orm::DatabaseConnection, user_id: i32) ->
 }
 
 /// Her talks with others since she got up (see `myriad_merope::elsewhere`),
-/// as the section that tells them: in a group, where people outside the
-/// community may be reading, only the strongest feeling still with her. Read as times, kinds and counts only: no
+/// as the section that tells them, in private. In a group, where people
+/// outside the community may be reading, nothing: how today has left her is
+/// part of her own state there as everywhere (`self_state`). Read as times, kinds and counts only: no
 /// message text, name, group or what a sore spot was about is selected here,
 /// so none of it can reach the prompt this goes into.
 pub(super) async fn since_she_got_up(
@@ -209,6 +210,9 @@ pub(super) async fn since_she_got_up(
 ) -> Option<String> {
     use myriad_merope::elsewhere::{self, Cause, Facing, Heard, Moved, Place, Stung};
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    if present.is_group() {
+        return None;
+    }
     let now = super::clock::now();
     let since = now - chrono::Duration::minutes(i64::from(super::timing::her_day().since_up));
     let facing = Facing {
@@ -242,13 +246,7 @@ pub(super) async fn since_she_got_up(
     let mut people: Vec<i32> = moved.iter().map(|moved| moved.person).collect();
     people.sort_unstable();
     people.dedup();
-    let told = |talks: &[elsewhere::Talk]| {
-        if present.is_group() {
-            elsewhere::section_in_group(talks, now)
-        } else {
-            Some(elsewhere::section(talks, now))
-        }
-    };
+    let told = |talks: &[elsewhere::Talk]| Some(elsewhere::section(talks, now));
     if people.is_empty() {
         return told(&[]);
     }
@@ -772,17 +770,13 @@ mod tests {
             "nothing from before she got up: {for_hong}"
         );
 
-        // In a group, people outside the community may be reading: only
-        // how she still is, not when, where or how many.
-        let in_group = built(hong, Audience::group(group, hong)).await.unwrap();
+        // In a group, people outside the community may be reading: none of
+        // it. How today left her is in her own state there.
+        assert_eq!(built(hong, Audience::group(group, hong)).await, None);
         assert_eq!(
-            in_group,
-            "## Since you got up\nEarlier, with someone else, it left you a little stung. \
-             It was not anyone here: it is only how you are."
+            built(hong, Audience::group("telegram:-1", hong)).await,
+            None
         );
-        // In another group, that group's own talk with her is told the same way.
-        let elsewhere_group = built(hong, Audience::group("telegram:-1", hong)).await;
-        assert!(elsewhere_group.is_some_and(|text| !text.contains("SECRET")));
 
         // To the one who said it all, nobody else has talked with her.
         assert_eq!(

@@ -1,10 +1,17 @@
 //! Her present across people: what happened to her with others since she got
-//! up, told on every turn wherever she is.
+//! up.
 //!
 //! A real person carries the last hour into the next talk: still glad from a
 //! compliment, still smarting from a jab, worn from a busy group. Her talks
 //! are kept apart (what one person tells her is theirs), so what crosses
-//! between them is only how it went, never who or what about.
+//! between them is only how it went, never who or what about. It crosses
+//! two ways:
+//! - **How today has left her** ([`own_feeling`]): one state, not toward
+//!   anyone, that every push of her emotion moves and time lets fade. It is
+//!   part of her own state (energy and the rest), so it reaches whatever she
+//!   judges, not only what she says, and narrows her when low.
+//! - **Her talks** ([`talks`], [`section`]): told in private, as what she
+//!   could say if she chose to, roughly and without who.
 //!
 //! That holds by what goes in, not by asking the model to keep quiet: every
 //! input here is a time, a kind or a number. No line anyone wrote, no name,
@@ -303,28 +310,52 @@ pub fn section(talks: &[Talk], now: DateTime<Utc>) -> String {
     format!("{HEAD}\n{}", lines.join("\n"))
 }
 
-/// In a group, where people outside the community may be reading: only the
-/// strongest feeling still with her from talks elsewhere, with no when,
-/// where or how many. Nothing when none is.
-pub fn section_in_group(talks: &[Talk], now: DateTime<Utc>) -> Option<String> {
-    let left = talks
-        .iter()
-        .map(|talk| {
-            let hours = (now - talk.ended).num_minutes().max(0) as f64 / 60.0;
-            felt_with_hurt(talk) * (-hours / STAYS_FOR_HOURS).exp()
-        })
-        .max_by(|left, right| left.abs().total_cmp(&right.abs()))?;
-    let what = left_her(left)?;
-    Some(format!(
-        "## Since you got up\nEarlier, with someone else, {what}. \
-         It was not anyone here: it is only how you are."
-    ))
+/// One push of her emotion toward anyone since she got up (praise, a jab,
+/// how their words read to her, a task done or failed): how far it moved
+/// her, off even. Who and what about stay where they happened.
+#[derive(Debug, Clone, Copy)]
+pub struct Push {
+    pub at: DateTime<Utc>,
+    pub valence: f64,
 }
 
-/// How long a feeling from one talk is still with her in a group, as a time
-/// constant in hours. A mood carries over (Kuppens et al. 2010); how long is
-/// a guess, not measured.
-const STAYS_FOR_HOURS: f64 = 2.0;
+/// How long what happened stays with her, as a time constant in hours. A
+/// mood carries over (Kuppens et al. 2010); how long is a guess, not
+/// measured.
+pub const STAYS_FOR_HOURS: f64 = 2.0;
+
+/// How today has left her so far, not toward anyone: every push since she
+/// got up, the older ones fainter. Off even, like an emotion; 0 is even.
+pub fn own_feeling(pushes: &[Push], now: DateTime<Utc>) -> f64 {
+    pushes
+        .iter()
+        .filter(|push| push.at <= now && push.valence.is_finite())
+        .map(|push| {
+            let hours = (now - push.at).num_seconds() as f64 / 3600.0;
+            push.valence * (-hours / STAYS_FOR_HOURS).exp()
+        })
+        .sum()
+}
+
+/// [`own_feeling`] in words, when it says something.
+pub fn own_feeling_words(feeling: f64) -> Option<&'static str> {
+    if feeling >= STRONG {
+        Some("in really good spirits")
+    } else if feeling >= CLEAR {
+        Some("a little pleased")
+    } else if feeling <= -STRONG {
+        Some("hurting")
+    } else if feeling <= -CLEAR {
+        Some("a little stung")
+    } else {
+        None
+    }
+}
+
+/// Low enough that it narrows her (as tiredness does).
+pub fn own_feeling_is_low(feeling: f64) -> bool {
+    feeling <= -CLEAR
+}
 
 /// Whether a talk left her with something worth telling on its own.
 fn left_something(talk: &Talk) -> bool {
@@ -733,27 +764,29 @@ mod tests {
     }
 
     #[test]
-    fn in_a_group_only_the_strongest_feeling_still_with_her_is_told() {
-        let talks = [
-            Talk {
-                praised: 1,
-                felt: Some(30.0),
-                ..empty(TalkKind::Private, at(300))
-            },
-            Talk {
-                hurt: Some(Weight::Deep),
-                ..empty(TalkKind::Private, at(20))
-            },
-        ];
-        let text = section_in_group(&talks, now()).unwrap();
+    fn what_today_did_to_her_adds_up_and_fades() {
+        let push = |minutes_ago, valence| Push {
+            at: at(minutes_ago),
+            valence,
+        };
+        // A jab an hour ago, two compliments since: on balance, pleased.
+        let day = [push(60, -30.0), push(20, 20.0), push(5, 15.0)];
+        let feeling = own_feeling(&day, now());
         assert_eq!(
-            text,
-            "## Since you got up\nEarlier, with someone else, it left you hurting. \
-             It was not anyone here: it is only how you are."
+            own_feeling_words(feeling),
+            Some("a little pleased"),
+            "{feeling}"
         );
-        // Hours later it has faded.
+        // The jab alone, just now: it hurts and narrows her.
+        let jab = own_feeling(&[push(1, -30.0)], now());
+        assert_eq!(own_feeling_words(jab), Some("hurting"));
+        assert!(own_feeling_is_low(jab));
+        // Hours later it has faded to nothing.
         let later = now() + Duration::hours(6);
-        assert_eq!(section_in_group(&talks, later), None);
-        assert_eq!(section_in_group(&[], now()), None);
+        assert_eq!(
+            own_feeling_words(own_feeling(&[push(1, -30.0)], later)),
+            None
+        );
+        assert_eq!(own_feeling(&[], now()), 0.0);
     }
 }

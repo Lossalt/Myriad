@@ -13,14 +13,20 @@
 //! - **How long since she learned something new** (a fact about someone,
 //!   something looked up or found out, something heard): a fact, not a
 //!   score. Her everyday doings are not learning.
+//! - **How today has left her**: every push of her emotion toward anyone
+//!   since she got up, the older ones fainter (`myriad_merope::elsewhere::
+//!   own_feeling`). Not her feeling toward anyone, which stays with them:
+//!   how she is, wherever she goes next.
 //!
 //! Two different uses, kept apart:
 //! - **Mechanical knobs** the system turns from these numbers: how long she
 //!   waits between speaking up unprompted, how far recall wanders by
-//!   association, how often her mind drifts. They budget cost and intrusion.
+//!   association (narrower when she is tired or low), how often her mind
+//!   drifts. They budget cost and intrusion.
 //! - **What the model is told** is only the facts underneath ([`SelfFacts`]):
 //!   the time, how many people talked with her lately, how long since anyone
-//!   came, how long since she learned something new. How tired or curious she
+//!   came, how long since she learned something new, and in words how today
+//!   has left her. How tired or curious she
 //!   is, what she does about it and how she talks, is the model's judgment,
 //!   never an instruction. Scores never reach a prompt.
 
@@ -51,6 +57,8 @@ pub struct SelfFacts {
     pub hours_since_anyone: Option<f64>,
     /// Since she last learned anything new about anyone; `None`: never.
     pub hours_since_learned: Option<f64>,
+    /// How today has left her, off even (0 is even); told only in words.
+    pub feeling: f64,
 }
 
 /// How far back "lately" reaches for the people count.
@@ -90,10 +98,27 @@ impl SelfState {
         (BASE_PROACTIVE_COOLDOWN_SECS as f64 * (1.0 + 3.0 * spent * spent)).round() as i64
     }
 
-    /// How far recall may wander by association, `0..=1`. Tiredness narrows
-    /// thought to what was actually said.
+    /// The same state, left by today as `feeling` (see
+    /// `myriad_merope::elsewhere::own_feeling`).
+    pub fn with_feeling(self, feeling: f64) -> Self {
+        Self {
+            facts: SelfFacts {
+                feeling: if feeling.is_finite() { feeling } else { 0.0 },
+                ..self.facts
+            },
+            ..self
+        }
+    }
+
+    /// How far recall may wander by association, `0..=1`. Tiredness and a
+    /// low mood narrow thought to what was actually said (a bad mood
+    /// narrows attention; Gasper & Clore 2002).
     pub fn recall_breadth(&self) -> f64 {
-        if self.tired() { 0.5 } else { 1.0 }
+        if self.tired() || myriad_merope::elsewhere::own_feeling_is_low(self.facts.feeling) {
+            0.5
+        } else {
+            1.0
+        }
     }
 
     /// The facts for a decision model, which judges for itself.
@@ -104,6 +129,8 @@ impl SelfState {
             people_recently: facts.people_recently,
             hours_since_anyone: facts.hours_since_anyone.map(round_tenth),
             hours_since_learned: facts.hours_since_learned.map(round_tenth),
+            today_left_you: myriad_merope::elsewhere::own_feeling_words(facts.feeling)
+                .map(str::to_string),
         }
     }
 }
@@ -168,6 +195,7 @@ pub fn derive_at(
                 .count(),
             hours_since_anyone: valid.iter().copied().reduce(f64::min),
             hours_since_learned: None,
+            feeling: 0.0,
         },
     }
 }
@@ -198,8 +226,13 @@ pub async fn current(db: &DatabaseConnection) -> SelfState {
         .map(|at| (now - at.with_timezone(&Utc)).num_seconds().max(0) as f64 / 3600.0);
     // Her day runs on the host clock, as the do-not-disturb window does.
     let local = super::clock::local_now();
-    let mut state =
-        derive_at(super::timing::her_day(), local.hour(), &contacts).with_last_learned(learned);
+    let day = super::timing::her_day();
+    let pushes = pushes_since_up(db, now, day.since_up)
+        .await
+        .unwrap_or_default();
+    let mut state = derive_at(day, local.hour(), &contacts)
+        .with_last_learned(learned)
+        .with_feeling(myriad_merope::elsewhere::own_feeling(&pushes, now));
     state.facts.local_minute = local.minute();
     if let Ok(mut cached) = CACHE.lock() {
         *cached = Some((Instant::now(), state));
@@ -216,6 +249,38 @@ async fn recent_contacts(
         .await?
         .into_iter()
         .map(|at| (now - at.with_timezone(&Utc)).num_seconds().max(0) as f64 / 3600.0)
+        .collect())
+}
+
+/// Every push of her emotion toward anyone since she got up `since_up`
+/// minutes ago: how far each change moved it. Turns that only let her
+/// settle are not pushes.
+async fn pushes_since_up(
+    db: &DatabaseConnection,
+    now: DateTime<Utc>,
+    since_up: u32,
+) -> Result<Vec<myriad_merope::elsewhere::Push>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let since = now - chrono::Duration::minutes(i64::from(since_up));
+    Ok(db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT at, (after->>'emotion')::float8 - (before->>'emotion')::float8 AS moved \
+             FROM agent_affect_events \
+             WHERE at >= $1 AND at <= $2 AND cause <> 'user_turn'",
+            [since.fixed_offset().into(), now.fixed_offset().into()],
+        ))
+        .await?
+        .iter()
+        .filter_map(|row| {
+            Some(myriad_merope::elsewhere::Push {
+                at: row
+                    .try_get::<chrono::DateTime<chrono::FixedOffset>>("", "at")
+                    .ok()?
+                    .with_timezone(&Utc),
+                valence: row.try_get::<f64>("", "moved").ok()?,
+            })
+        })
         .collect())
 }
 
@@ -248,6 +313,9 @@ pub fn format_day_section(facts: &SelfFacts) -> String {
         Some(hours) => format!("You last learned something new {}.", roughly(hours)),
         None => "You have not learned anything new yet.".to_string(),
     });
+    if let Some(words) = myriad_merope::elsewhere::own_feeling_words(facts.feeling) {
+        lines.push(format!("What has happened today has left you {words}."));
+    }
     format!("## Your day\n{}", lines.join(" "))
 }
 
@@ -355,5 +423,93 @@ mod tests {
         assert_eq!(view.local_time, "02:00");
         assert_eq!(view.people_recently, 4);
         assert_eq!(view.hours_since_anyone, Some(0.2));
+    }
+
+    #[test]
+    fn how_today_left_her_is_told_in_words_and_narrows_her_when_low() {
+        let even = derive(14, &[]);
+        assert!(!format_day_section(&even.facts).contains("left you"));
+        assert_eq!(even.facts_view().today_left_you, None);
+        assert_eq!(even.recall_breadth(), 1.0);
+        let low = even.with_feeling(-30.0);
+        assert!(
+            format_day_section(&low.facts)
+                .contains("What has happened today has left you hurting.")
+        );
+        assert_eq!(low.facts_view().today_left_you.as_deref(), Some("hurting"));
+        assert_eq!(low.recall_breadth(), 0.5, "a bad mood narrows her");
+        let glad = even.with_feeling(30.0);
+        assert_eq!(glad.recall_breadth(), 1.0);
+        assert!(
+            !format_day_section(&glad.facts).contains("30"),
+            "words, never the score"
+        );
+    }
+
+    /// The pushes are every change of her emotion toward anyone since she
+    /// got up, by how far it moved; turns that only let her settle, and
+    /// what came before she got up, are not among them.
+    #[tokio::test]
+    async fn pushes_are_every_change_toward_anyone_since_she_got_up() {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "her_own_feeling").await;
+        let db = isolated.db.clone();
+        let now = Utc::now();
+        let mut people = Vec::new();
+        for name in ["feeling-a", "feeling-b"] {
+            let id: i32 = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "INSERT INTO users (username) VALUES ($1) RETURNING id",
+                    [name.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "id")
+                .unwrap();
+            people.push(id);
+        }
+        for (user_id, minutes_ago, cause, before, after) in [
+            (people[0], 50, "user_scold", 50.0, 20.0),
+            (people[0], 45, "user_turn", 20.0, 25.0),
+            (people[1], 10, "user_appraisal", 50.0, 70.0),
+            (people[1], 600, "user_praise", 50.0, 90.0),
+        ] {
+            let affect = |emotion: f64| {
+                serde_json::json!({
+                    "mood": 50.0, "arousal": 50.0, "emotion": emotion, "emotionArousal": 50.0
+                })
+            };
+            db.execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "INSERT INTO agent_affect_events (id, user_id, at, cause, impulse, baseline_mood, \
+                 baseline_arousal, before, after, created_at) \
+                 VALUES ($1, $2, $3, $4, '{}'::jsonb, 50, 50, $5, $6, NOW())",
+                [
+                    uuid::Uuid::new_v4().to_string().into(),
+                    user_id.into(),
+                    (now - chrono::Duration::minutes(minutes_ago))
+                        .fixed_offset()
+                        .into(),
+                    cause.into(),
+                    affect(before).into(),
+                    affect(after).into(),
+                ],
+            ))
+            .await
+            .unwrap();
+        }
+        let mut pushes: Vec<f64> = pushes_since_up(&db, now, 120)
+            .await
+            .unwrap()
+            .iter()
+            .map(|push| push.valence)
+            .collect();
+        pushes.sort_by(f64::total_cmp);
+        assert_eq!(pushes, [-30.0, 20.0]);
     }
 }
