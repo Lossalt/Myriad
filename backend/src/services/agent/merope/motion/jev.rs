@@ -31,6 +31,22 @@ const FEELINGS: &[(&str, &str)] = &[
     ("excited", "eager, lit up"),
 ];
 
+/// How a sentence is said: the speech phrase intents, as Jev reads them.
+const SAYING: &[(&str, &str)] = &[
+    ("ask", "a real question or a guess put to them"),
+    ("hesitate", "hesitating or puzzling it out, unsure"),
+    (
+        "tease",
+        "ribbing them fondly, a joke or rhetorical jab at their expense",
+    ),
+    ("explain", "a turn of thought, earnest explaining"),
+    ("check-in", "checking how they take it"),
+    ("laugh", "she is actually laughing"),
+    ("none", "none of these, said plainly"),
+];
+/// At most this many sentences are asked about (speech phrases).
+const MAX_SENTENCES: usize = 6;
+
 const GESTURES: &[(&str, &str)] = &[
     ("nod", "agreement, acknowledgement"),
     ("shake", "refusal, disbelief, 'no no'"),
@@ -90,6 +106,17 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
             "instructions": "Where her eyes mostly are while she says it.",
             "criteria": {"listener": "on the person", "away-thinking": "off to the side, thinking", "down": "lowered", "aside": "aside, avoiding their eyes"}}));
     }
+    for (index, sentence) in sentences(context.response_text.as_deref())
+        .iter()
+        .enumerate()
+    {
+        questions.insert(
+            format!("say{index}"),
+            json!({"type": "choice",
+            "instructions": format!("How she says 「{sentence}」"),
+            "criteria": criteria(SAYING)}),
+        );
+    }
     let offered = offered_score_moves(state);
     let mut gestures: Vec<(&str, &str)> = GESTURES
         .iter()
@@ -144,6 +171,48 @@ pub(super) fn anchors(reply: Option<&str>) -> Vec<String> {
             break;
         }
     }
+    out
+}
+
+/// The reply's sentences, each as written with its closing mark, said once.
+pub(super) fn sentences(reply: Option<&str>) -> Vec<String> {
+    let reply = reply.unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut chars = reply.chars().peekable();
+    while let Some(c) = chars.next() {
+        current.push(c);
+        // A quote or bracket closed right after the end of a sentence ends it.
+        let closing = "。！？!?…\n".contains(c)
+            || ("”」』）)\"'".contains(c)
+                && current
+                    .chars()
+                    .rev()
+                    .nth(1)
+                    .is_some_and(|p| "。！？!?…".contains(p)));
+        // A run of closing marks (……, ？！) and the quote or bracket they
+        // close stay with their sentence.
+        if closing
+            && !chars
+                .peek()
+                .is_some_and(|next| "。！？!?…”」』）)\"'".contains(*next))
+        {
+            let sentence = current.trim().to_owned();
+            current.clear();
+            let count = sentence.chars().count();
+            if (2..=120).contains(&count)
+                && reply.matches(sentence.as_str()).count() == 1
+                && !out.contains(&sentence)
+            {
+                out.push(sentence);
+            }
+        }
+    }
+    let rest = current.trim();
+    if (2..=120).contains(&rest.chars().count()) && reply.matches(rest).count() == 1 {
+        out.push(rest.to_owned());
+    }
+    out.truncate(MAX_SENTENCES);
     out
 }
 
@@ -266,7 +335,18 @@ pub(super) fn plan_from_answers(
         }
         score.push(beat);
     }
+    let phrases: Vec<Value> = sentences(context.response_text.as_deref())
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, text)| {
+            let intent = sure(&format!("say{index}"))?;
+            // A laugh in a quote is not hers.
+            (intent != "none" && (own || intent != "laugh"))
+                .then(|| json!({"text": text, "intent": intent}))
+        })
+        .collect();
     json!({
+        "phrases": phrases,
         "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy, "attention": 0.85,
             "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}},
         "cues": [],
@@ -373,6 +453,25 @@ mod tests {
     }
 
     #[test]
+    fn each_sentence_is_asked_about_as_written_once() {
+        let reply = "诶？这我怎么猜得到嘛……是拉面吗？";
+        assert_eq!(
+            sentences(Some(reply)),
+            ["诶？", "这我怎么猜得到嘛……", "是拉面吗？"]
+        );
+        assert_eq!(
+            sentences(Some("哈哈。哈哈。好")),
+            Vec::<String>::new(),
+            "a repeated sentence is not placed"
+        );
+        assert_eq!(
+            sentences(Some("她说：“哈哈，我太开心了！”这是小说角色的台词。")),
+            ["她说：“哈哈，我太开心了！”", "这是小说角色的台词。"],
+            "a closing quote stays with what it closes"
+        );
+    }
+
+    #[test]
     fn a_shy_answer_becomes_a_plan_the_shared_director_parser_takes() {
         let reply = "才、才没有呢……不过，谢谢你这么说。";
         let state = bust();
@@ -384,6 +483,9 @@ mod tests {
             "anchor": {"type": "choice", "choice": "才、才没有呢", "confidence": 0.7},
             "posture": {"type": "choice", "choice": "closed", "confidence": 0.72},
             "gaze": {"type": "choice", "choice": "aside", "confidence": 0.48},
+            "say0": {"type": "choice", "choice": "hesitate", "confidence": 0.8},
+            "say1": {"type": "choice", "choice": "none", "confidence": 0.9},
+            "say2": {"type": "choice", "choice": "explain", "confidence": 0.2},
         });
         let raw = plan_from_answers(&answers, &context(reply), Some(&state)).to_string();
         assert!(super::super::semantic_valid(&raw, reply), "{raw}");
@@ -401,6 +503,11 @@ mod tests {
         let value: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(value["score"][0]["text"], "才、才没有呢");
         assert_eq!(value["score"][0]["move"]["kind"], "glance");
+        assert_eq!(
+            value["phrases"],
+            json!([{"text": "才、才没有呢……", "intent": "hesitate"}]),
+            "unsure and plain sentences are left alone"
+        );
     }
 
     #[test]
