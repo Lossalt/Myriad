@@ -182,11 +182,10 @@ async fn direct_motion_inner(
     }
     // The judgment model judges her acting by answering typed questions: a
     // decisions model (TypeSafe Jev) on its own endpoint, a chat model as
-    // structured output. Standing acting (a score looped on time) is written
-    // by the chat director.
-    let decided = if context.phase == MotionPhase::Presence {
-        None
-    } else {
+    // structured output. Her standing acting too: the answers become a score
+    // looped on time. The chat director writes the plan only when answering
+    // fails.
+    let decided = {
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,
