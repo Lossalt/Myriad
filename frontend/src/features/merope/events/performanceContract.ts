@@ -232,7 +232,12 @@ export function faceLife(face: string | null | undefined): FaceLife | null {
           [control, tierExtent(control as BodyControl, tier)]))
       : undefined
     const move = raw.move
-      ? { ...raw.move, amount: extents[raw.move.amount as string], tempo: tempos[(raw.move.tempo as string) ?? 'usual'] }
+      ? {
+          ...raw.move,
+          // A tier or level by name, or the value itself.
+          amount: typeof raw.move.amount === 'number' ? raw.move.amount : extents[raw.move.amount as string],
+          tempo: typeof raw.move.tempo === 'number' ? raw.move.tempo : tempos[(raw.move.tempo as string) ?? 'usual'],
+        }
       : undefined
     const beat = sanitizeScoreBeat({ atMs: raw.atMs, ...(raw.pose ? { pose: { ...raw.pose, targets } } : {}), ...(move ? { move } : {}) })
     return beat ? [beat] : []
