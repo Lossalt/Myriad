@@ -122,6 +122,59 @@ pub async fn unowned_with_evidence<C: ConnectionTrait>(
         .await
 }
 
+/// The unowned rows from `source` whose evidence carries `marker`, kept in
+/// groups other than `here` (stored form), most recently touched first: her
+/// notes on the same account in the other groups she knows them from.
+pub async fn unowned_elsewhere<C: ConnectionTrait>(
+    db: &C,
+    here: &str,
+    source: &str,
+    marker: &str,
+    limit: u64,
+) -> Result<Vec<agent_memories::Model>, DbErr> {
+    agent_memories::Entity::find()
+        .filter(agent_memories::Column::UserId.is_null())
+        .filter(agent_memories::Column::Venue.starts_with("group:"))
+        .filter(agent_memories::Column::Venue.ne(here))
+        .filter(agent_memories::Column::Source.eq(source))
+        .filter(agent_memories::Column::InvalidAt.is_null())
+        .filter(agent_memories::Column::Evidence.contains(marker))
+        .order_by_desc(agent_memories::Column::UpdatedAt)
+        .limit(limit)
+        .all(db)
+        .await
+}
+
+/// Rows of `sources` kept in groups other than `here` (stored form): one
+/// person's when `user_id` is given, else everyone's; freshest first, short
+/// notes that have faded left out.
+pub async fn in_other_groups<C: ConnectionTrait>(
+    db: &C,
+    user_id: Option<i32>,
+    here: &str,
+    sources: &[&str],
+    limit: u64,
+) -> Vec<agent_memories::Model> {
+    let mut query = agent_memories::Entity::find()
+        .filter(agent_memories::Column::Venue.starts_with("group:"))
+        .filter(agent_memories::Column::Venue.ne(here))
+        .filter(agent_memories::Column::Source.is_in(sources.iter().copied()))
+        .filter(agent_memories::Column::InvalidAt.is_null());
+    if let Some(user_id) = user_id {
+        query = query.filter(agent_memories::Column::UserId.eq(user_id));
+    }
+    let now = Utc::now().fixed_offset();
+    query
+        .order_by_desc(agent_memories::Column::UpdatedAt)
+        .limit(limit)
+        .all(db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|row| !faded_note(row, now))
+        .collect()
+}
+
 /// Notes kept on someone from outside (rows of `source` with no owner whose
 /// evidence carries `marker`) become `user_id`'s ordinary memories from
 /// `as_source` once they pair: still of the group they were said in, so

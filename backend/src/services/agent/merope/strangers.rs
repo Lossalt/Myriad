@@ -125,10 +125,18 @@ pub async fn reply(
         .await
         .unwrap_or_default();
     let note = note_on(db, venue, stranger).await.map(|row| row.content);
+    // The same account in her other groups: what she noted of them there.
+    let elsewhere = super::other_groups::noted_elsewhere(
+        db,
+        &group_venue(venue),
+        SOURCE,
+        &evidence_marker(&stranger.who),
+    )
+    .await;
     let mut sections = vec![
         super::group_speaking_section(&stranger.name),
         myriad_merope::speaking::chat_app_section().to_string(),
-        section(&stranger.name, note.as_deref()),
+        section(&stranger.name, note.as_deref(), &elsewhere),
         super::speaking_prompts::format_now_section(super::clock::local_now()),
     ];
     // Whom she takes them for, if anyone: a guess, nothing more.

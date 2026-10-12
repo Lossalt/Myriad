@@ -101,6 +101,13 @@ pub(super) async fn recollection(
             sections.push(block);
         }
     }
+    // In a group, the same person in her other groups: where she knows them
+    // from, and what they said about themselves there that this brings back.
+    if let (Some(here), Turn::Chat(words) | Turn::Event(words)) = (present.group_id(), turn)
+        && let Some(block) = other_groups::they_section(db, user_id, here, words).await
+    {
+        sections.push(block);
+    }
     // Asked about what was said in detail, or for all of it, she scrolls
     // back through the chat.
     // Asked back to something before, she scrolls back even when she could

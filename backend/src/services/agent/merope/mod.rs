@@ -37,6 +37,7 @@ pub(in crate::services::agent) mod motion_preview;
 pub(in crate::services::agent) mod observe;
 pub(in crate::services::agent) mod onboarding_ai;
 mod onboarding_prompts;
+mod other_groups;
 pub(in crate::services::agent) mod others;
 mod outfit_overlay;
 mod pace;

@@ -27,6 +27,7 @@ pub mod making_sense;
 pub mod memes;
 pub mod life;
 mod onboarding;
+pub mod other_groups;
 pub mod others;
 pub mod pace;
 mod outfit_overlay;

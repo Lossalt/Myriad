@@ -280,3 +280,52 @@ async fn a_group_keeps_its_freshest_in_view_and_the_talk_brings_back_an_older_on
         ["早安接龙", "复读机比赛"]
     );
 }
+
+#[tokio::test]
+async fn from_other_groups_comes_only_what_is_theirs_and_never_the_private() {
+    let Some(db) = temp_db().await else {
+        return;
+    };
+    let in_group = |venue: &str, content: &str| NewMemory {
+        audience: Audience::group(venue, 7),
+        ..fact(7, content)
+    };
+    remember(&db, in_group("onebot:1", "下个月要去大阪"))
+        .await
+        .unwrap();
+    remember(&db, in_group("onebot:2", "在学吉他"))
+        .await
+        .unwrap();
+    remember(&db, fact(7, "私下说的事")).await.unwrap();
+    remember(
+        &db,
+        NewMemory {
+            audience: Audience::group("onebot:1", 8),
+            ..fact(8, "别人的事")
+        },
+    )
+    .await
+    .unwrap();
+    let theirs = in_other_groups(&db, Some(7), "group:onebot:2", &["chat"], 10).await;
+    let contents: Vec<&str> = theirs.iter().map(|row| row.content.as_str()).collect();
+    assert_eq!(contents, ["下个月要去大阪"]);
+
+    let marker = "\"who\":\"onebot:42\"";
+    for venue in ["group:onebot:1", "group:onebot:2", "group:telegram:3"] {
+        remember_in_venue(
+            &db,
+            venue,
+            &format!("{venue} 的笔记"),
+            &format!("{{{marker},\"name\":\"阿木\"}}"),
+            "stranger",
+        )
+        .await
+        .unwrap();
+    }
+    let noted = unowned_elsewhere(&db, "group:onebot:2", "stranger", marker, 10)
+        .await
+        .unwrap();
+    let mut venues: Vec<&str> = noted.iter().map(|row| row.venue.as_str()).collect();
+    venues.sort();
+    assert_eq!(venues, ["group:onebot:1", "group:telegram:3"]);
+}

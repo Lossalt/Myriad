@@ -39,17 +39,30 @@ pub fn evidence_marker(who: &str) -> String {
     format!("\"who\":{}", Value::String(who.to_string()))
 }
 
-/// Who they are to her, for the reply.
-pub fn section(name: &str, note: Option<&str>) -> String {
-    let known = match note {
-        Some(note) => format!(
+/// Who they are to her, for the reply: her note on them here, and her notes
+/// on the same account in other groups (see `other_groups`).
+pub fn section(
+    name: &str,
+    note: Option<&str>,
+    elsewhere: &[crate::other_groups::FromGroup],
+) -> String {
+    let here = note.map(|note| {
+        format!(
             "You have talked with them here before. What you remember of them:\n{}",
             myriad_agent_rules::untrusted_block("remembered_of_them", note)
-        ),
-        None => "You do not know anything about them yet; do not act as if you did.".to_string(),
+        )
+    });
+    let known: Vec<String> = here
+        .into_iter()
+        .chain(crate::other_groups::noted_elsewhere(elsewhere))
+        .collect();
+    let known = if known.is_empty() {
+        "You do not know anything about them yet; do not act as if you did.".to_string()
+    } else {
+        known.join("\n")
     };
     format!(
-        "## Who is talking to you\n{name} is not from your community: you know them only from this group. {known}"
+        "## Who is talking to you\n{name} is not from your community: you know them only from groups. {known}"
     )
 }
 
@@ -129,12 +142,22 @@ mod tests {
     }
 
     #[test]
-    fn she_knows_them_only_from_the_group() {
-        let fresh = section("阿明", None);
+    fn she_knows_them_only_from_groups() {
+        let fresh = section("阿明", None, &[]);
         assert!(fresh.contains("not from your community"));
         assert!(fresh.contains("do not act as if you did"));
-        let known = section("阿明", Some("爱玩音游"));
+        let known = section("阿明", Some("爱玩音游"), &[]);
         assert!(known.contains("remembered_of_them"));
+        let met_elsewhere = section(
+            "阿明",
+            None,
+            &[crate::other_groups::FromGroup {
+                group: Some("摸鱼小队".into()),
+                text: "爱玩音游".into(),
+            }],
+        );
+        assert!(met_elsewhere.contains("- in the group 「摸鱼小队」: 爱玩音游"));
+        assert!(!met_elsewhere.contains("do not act as if you did"));
         assert_eq!(without_directives("好呀[[wear: 帽子]]"), "好呀");
         assert_eq!(without_directives("嗯[[music:"), "嗯");
     }
