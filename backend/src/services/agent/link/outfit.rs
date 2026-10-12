@@ -156,6 +156,64 @@ pub(super) async fn current(db: &DatabaseConnection, device_id: &str) -> Option<
     worn(row.visual_profile.as_ref()?, device_id).map(|(worn, _)| worn)
 }
 
+/// Her wardrobe as a child shows it, read only (`wardrobe`): every set in
+/// her order, whether it can be worn on an app (it has a rig), and the
+/// content ids of its rig and picture.
+pub(super) fn listed(profile: &Value) -> Vec<Value> {
+    let Some(items) = profile.get("wardrobe").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id")?.as_str().filter(|id| !id.is_empty())?;
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(id);
+            let profile = match item.get("profile").and_then(Value::as_str) {
+                Some("fullBody") => "fullBody",
+                _ => "bust",
+            };
+            let mut listed = json!({
+                "outfitId": id,
+                "name": name,
+                "profile": profile,
+                // As `wearable`: a set with a rig.
+                "wearable": item.get("rigAssetId").and_then(Value::as_str).is_some(),
+            });
+            for key in ["rigAssetId", "portraitAssetId"] {
+                if let Some(asset) = item
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                {
+                    listed[key] = asset.into();
+                }
+            }
+            Some(listed)
+        })
+        .collect()
+}
+
+/// The `wardrobe` frame.
+pub(super) fn list_frame(outfits: Vec<Value>) -> Outgoing {
+    Outgoing::latest("wardrobe", json!({ "outfits": outfits }))
+}
+
+/// Her wardrobe as listed now, read only.
+pub(super) async fn current_list(db: &DatabaseConnection) -> Vec<Value> {
+    merope::get_persona(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|row| row.visual_profile)
+        .map(|profile| listed(&profile))
+        .unwrap_or_default()
+}
+
 /// The `outfit` frame.
 pub(super) fn frame(worn: &Worn) -> Outgoing {
     let mut body = json!({

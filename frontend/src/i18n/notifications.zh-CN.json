@@ -42,6 +42,7 @@
     "agent.merope.platform_activity": "平台新动态",
     "agent.merope.report_ready": "报告已生成",
     "agent.merope.reach_out": "她想找你说话",
+    "agent.reminder_due": "提醒到点了",
     "heartbeat.succeeded": "定时任务成功",
     "heartbeat.failed": "定时任务失败",
     "heartbeat.seo_review": "Agent 优化 SEO",

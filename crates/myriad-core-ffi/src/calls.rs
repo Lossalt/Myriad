@@ -23,6 +23,7 @@ mod memory;
 mod outfit;
 mod own;
 mod reach;
+mod reminder;
 mod serial;
 mod soup;
 mod speaking;
@@ -95,6 +96,7 @@ const CALLS: &[(&str, Call)] = &[
     ("reach.texts", reach::texts),
     ("reach.writing_first", reach::writing_first),
     ("reach.wrote_before", reach::wrote_before),
+    ("reminder.due", reminder::due),
     ("serial.advance", serial::advance),
     ("serial.clean_aozora", serial::clean_aozora),
     ("serial.clean_gutenberg", serial::clean_gutenberg),

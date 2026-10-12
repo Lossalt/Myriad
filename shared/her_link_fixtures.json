@@ -319,6 +319,39 @@
       "t": "act.cancel", "seq": 21, "ack": 17, "at": 1760140995000,
       "body": { "actId": "act_0123456789abcdef0123456789abcdef", "code": "act_cancelled" }
     },
+    {
+      "t": "wardrobe", "seq": 22, "ack": 17, "at": 1760141000000,
+      "body": {
+        "outfits": [
+          {
+            "outfitId": "default", "name": "日常", "profile": "bust", "wearable": true,
+            "rigAssetId": "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "portraitAssetId": "d2c1b0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928170615243"
+          },
+          {
+            "outfitId": "coat", "name": "外套", "profile": "fullBody", "wearable": true,
+            "rigAssetId": "6a7ed7e6cc28d41bfc5955e00677c9b97d78ef40af7e144ee68281b5e439a0f5"
+          },
+          { "outfitId": "sketch", "name": "草稿", "profile": "bust", "wearable": false }
+        ]
+      }
+    },
+    {
+      "t": "conversation", "seq": 23, "ack": 17, "at": 1760141010000,
+      "body": {
+        "session": {
+          "sessionId": "ses_0123456789abcdef0123456789abcdef",
+          "title": "周末去哪",
+          "updatedAt": 1760141005000,
+          "messages": [
+            { "id": "msg_101", "role": "user", "text": "周末去哪走走？", "at": 1760140850000 },
+            { "id": "msg_102", "role": "assistant", "text": "去河边吧，风正好。", "at": 1760140860000 },
+            { "id": "say_say_0123456789abcdef", "role": "assistant", "text": "刚想起来，河边那家书店周末开门。", "at": 1760140950000, "kind": "proactive" },
+            { "id": "msg_103", "role": "user", "text": "那就去书店。", "at": 1760141005000 }
+          ]
+        }
+      }
+    },
     { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
     { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },
     { "t": "pong", "seq": 6, "ack": 8, "at": 1760140815020, "body": {} },

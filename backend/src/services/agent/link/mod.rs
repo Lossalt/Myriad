@@ -64,7 +64,8 @@ use std::sync::{LazyLock, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) use act::{
-    cancel_for_proposal, mac_for_work, macs, request as act_request, sweep as sweep_acts,
+    cancel_for_proposal, mac_for_work, macs, request as act_request,
+    request_accepting as act_request_accepting, sweep as sweep_acts,
 };
 pub(crate) use body::perform_say;
 pub(crate) use connection::serve;

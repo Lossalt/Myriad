@@ -150,6 +150,14 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         Duration::from_secs(10 * 60),
         move || agent::merope::lifecycle::upkeep::tick(upkeep_db.clone()),
     );
+    // The owner's reminders kept on the site come due (H2-5).
+    let reminders_db = db.clone();
+    drivers.periodic(
+        "reminders",
+        Duration::from_secs(30),
+        Duration::from_secs(5),
+        move || agent::reminders::tick(reminders_db.clone()),
+    );
     let expiry_db = db.clone();
     drivers.periodic("TAPP interactions", Duration::from_secs(5), Duration::ZERO, move || {
         let db = expiry_db.clone();

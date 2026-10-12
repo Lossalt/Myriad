@@ -749,7 +749,8 @@
       "failed": "剛才沒有處理成功，請再試一次。",
       "onMac": "在你的 Mac 上辦",
       "sentToMac": "已交給你的 Mac 去辦",
-      "macUnavailable": "你的 Mac 沒連著，或沒在那台 Mac 上打開「允許站點讓這台 Mac 辦事」。"
+      "macUnavailable": "你的 Mac 沒連著，或沒在那台 Mac 上打開「允許站點讓這台 Mac 辦事」。",
+      "macBusy": "Mac 正在辦別的，等它辦完再交給它。"
     },
     "workOffer": {
       "kicker": "做事",

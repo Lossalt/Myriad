@@ -18,7 +18,7 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
   const [intentions, setIntentions] = useState<AgentIntention[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
-  const [macRefused, setMacRefused] = useState(false)
+  const [macRefused, setMacRefused] = useState<'unavailable' | 'busy' | null>(null)
   const [sentToMac, setSentToMac] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -61,7 +61,7 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
   const accept = async () => {
     setBusyId(intention.id)
     setFailed(false)
-    setMacRefused(false)
+    setMacRefused(null)
     try {
       const accepted = await agentService.acceptIntention(intention.id)
       setIntentions((current) =>
@@ -75,8 +75,9 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
       }
     } catch (error) {
       const code = (error as { code?: string } | null)?.code
+      // A busy Mac leaves the proposal open: accept it again later.
       if (onMac && (code === 'act_unavailable' || code === 'act_busy')) {
-        setMacRefused(true)
+        setMacRefused(code === 'act_busy' ? 'busy' : 'unavailable')
       } else {
         setFailed(true)
       }
@@ -117,7 +118,11 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
           </small>
         ) : null}
         {macRefused ? (
-          <small data-tone="danger">{t.agentPanel.intention.macUnavailable}</small>
+          <small data-tone="danger">
+            {macRefused === 'busy'
+              ? t.agentPanel.intention.macBusy
+              : t.agentPanel.intention.macUnavailable}
+          </small>
         ) : null}
         {failed ? (
           <small data-tone="danger">{t.agentPanel.intention.failed}</small>

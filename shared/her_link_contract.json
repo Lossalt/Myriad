@@ -71,12 +71,32 @@
     "experience",
     "conversations",
     "proposals",
-    "act"
+    "act",
+    "wardrobe.list",
+    "conversations.live",
+    "reminders"
   ],
   "sayKinds": ["greeting", "proactive", "face-to-face"],
-  "noticeKinds": ["work", "waiting", "report"],
+  "noticeKinds": ["work", "waiting", "report", "reminder"],
   "workPlaces": ["site", "mac"],
   "actStatuses": ["completed", "failed", "cancelled", "timeout"],
+  "capNames": {
+    "description": "The permission names an act.request cap may carry (the site's), and the names of a Mac's own grants each stands for, as the Mac checks its Work tools. Both ends read this table: the host sends only names in it, and a Mac narrows its run to the grants these name. A name not in it, on either side, allows nothing. A Mac name ending in .* stands for every grant of the Mac that starts with what comes before it (mcp.* is each of its MCP servers). What only the site has (its platforms, Tapps, router, pages and the rest) is not here: a Mac has nothing it could stand for.",
+    "mac": {
+      "ai:image": ["ai:image"],
+      "ai:search": ["ai:search"],
+      "bookmark:write": ["bookmark:write"],
+      "http:fetch": ["http:fetch"],
+      "mcp:execute": ["mcp.*"],
+      "music:control": ["music:control"],
+      "music:read": ["music:read"],
+      "note:write": ["note:write"],
+      "reminder:write": ["reminder:write"],
+      "report:read": ["report:read"],
+      "system:admin": ["system:admin"],
+      "weather:read": ["weather:read"]
+    }
+  },
   "frames": {
     "hello": {
       "from": "child",
@@ -214,6 +234,12 @@
       "required": ["outfitId"],
       "description": "Only from a child whose hello listed wardrobe: the owner put the set outfitId of her wardrobe on her on this child. The host keeps it as this child's and answers with outfit, or with error outfit_unknown when the set is not in her wardrobe or has no rig."
     },
+    "wardrobe": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["outfits"],
+      "description": "Only to a child whose hello listed wardrobe.list: her wardrobe on the host, for the child to show read only, so the owner can choose there what she wears on it (outfit.wear). Editing it stays on the host. outfits is every set in her wardrobe, in her order, each {outfitId, name, profile (bust or fullBody), wearable, rigAssetId?, portraitAssetId?}: wearable is whether it has a rig, so the child can wear it; rigAssetId and portraitAssetId are content ids the child fetches as for outfit. Sent after welcome and whenever her wardrobe changes."
+    },
     "work.recall": {
       "from": "child",
       "delivery": "request",
@@ -244,14 +270,20 @@
       "from": "host",
       "delivery": "latest",
       "required": ["sessions"],
-      "description": "Only to a child whose hello listed conversations: the site owner's recent private chats with her, for the child to show. Conversations live on the host; the child keeps them only as a display cache that goes with the link. sessions is the 10 most recently active (newest first; not a group's, not Work, not one they deleted), each {sessionId, title?, updatedAt, messages}, and messages its last 30 lines they and she said, oldest first, each {id, role (user or assistant), text, at}. text is as kept, at most 4000 characters; she said it, so a child reads it as it reads her reply. at and updatedAt are milliseconds since the epoch. When everything does not fit in limits.maxFrameBytes, the oldest lines go first. Sent after welcome."
+      "description": "Only to a child whose hello listed conversations: the site owner's recent private chats with her, for the child to show. Conversations live on the host; the child keeps them only as a display cache that goes with the link. sessions is the 10 most recently active (newest first; not a group's, not Work, not one they deleted), each {sessionId, title?, updatedAt, messages}, and messages its last 30 lines they and she said, oldest first, each {id, role (user or assistant), text, at}. text is as kept, at most 4000 characters; she said it, so a child reads it as it reads her reply. To a child whose hello listed conversations.live, messages also hold the lines she said unprompted outside a chat (role assistant, kind proactive; id say_ and the say id when it went out as a say, else pro_ and her line's number), each in the conversation that was the latest one when she said it. at and updatedAt are milliseconds since the epoch. When everything does not fit in limits.maxFrameBytes, the oldest lines go first. Sent after welcome."
+    },
+    "conversation": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["session"],
+      "description": "Only to a child whose hello listed conversations.live: one of the owner's recent private chats changed (a new one, or new lines on the site, on this child or by her), in the shape of one of conversations' sessions, with its last lines as they stand now. Sent while the link is open, as the change is seen (within a few seconds), for any of the sessions conversations would list; the child replaces its cache of that session with it, or adds it. The session a turn of this child is still being answered in may be sent before its turn ends; the child keeps showing its own turn until then."
     },
     "notice": {
       "from": "host",
       "delivery": "request",
       "required": ["id", "kind", "eventKey", "title", "body"],
       "optional": ["at"],
-      "description": "Only to a child whose hello listed notify: one of the site's notifications that is about her, to show as the child's own system notification. kind is one of noticeKinds: work (Work she did is done, failed or was cancelled), waiting (Work is waiting for the owner's reply), report (a report of hers is ready). eventKey is the site's event (agent.task_completed, agent.task_failed, agent.task_cancelled, agent.clarification, agent.merope.report_ready). id is the site notification's id: the same notification updated comes with the same id, and a child shows it once per id and kind. title and body are what the site's notification center shows. No other notification of the site comes here, and nothing say already brings: what she says to them on her own is a say. One that comes while the link is down stays in the site's notification center only."
+      "description": "Only to a child whose hello listed notify: one of the site's notifications that is about her, to show as the child's own system notification. kind is one of noticeKinds: work (Work she did is done, failed or was cancelled), waiting (Work is waiting for the owner's reply), report (a report of hers is ready), and, only to a child whose hello also listed reminders, reminder (one of the owner's reminders kept on the site is due, agent.reminder_due; title is the reminder's title). A reminder notice is sent only while the owner is using her on this child (its link is open and its presence holds); otherwise it stays in the site's notification center. eventKey is the site's event (agent.task_completed, agent.task_failed, agent.task_cancelled, agent.clarification, agent.merope.report_ready, agent.reminder_due). id is the site notification's id: the same notification updated comes with the same id, and a child shows it once per id and kind. title and body are what the site's notification center shows. No other notification of the site comes here, and nothing say already brings: what she says to them on her own is a say. One that comes while the link is down stays in the site's notification center only."
     },
     "proposals": {
       "from": "host",
@@ -279,7 +311,7 @@
       "idempotency": "id is the actId: made by the host once per request, the same on every resend.",
       "required": ["proposalId", "title", "instruction", "pickupBy", "maxRunMs"],
       "optional": ["expectedOutcome", "cap"],
-      "description": "Only to a child whose hello listed act, which it does only while the owner has switched on, on that child, letting the site ask it to act: her host asks it to run one Work task, the instruction of her proposal proposalId, which runs on the child (pi, and the computer use pi drives there); nothing else is ever asked, no single computer-use step and no scheduled task. It is sent when the owner accepts on the site, or she accepts on her own, a proposal of hers for this child (place mac); a proposal accepted on the child itself is not. pickupBy is milliseconds since the epoch: a child that has not started it by then refuses it (act_timeout). maxRunMs is the longest the run may take; the child stops it then. cap, when present, narrows the tools of the child's own that the run may use to these permission names; the child's own grants still decide, and a name it does not know grants nothing. The child answers with act.result: refused, or started and later finished. One request at a time per child."
+      "description": "Only to a child whose hello listed act, which it does only while the owner has switched on, on that child, letting the site ask it to act: her host asks it to run one Work task, the instruction of her proposal proposalId, which runs on the child (pi, and the computer use pi drives there); nothing else is ever asked, no single computer-use step and no scheduled task. It is sent when the owner accepts on the site, or she accepts on her own, a proposal of hers for this child (place mac); a proposal accepted on the child itself is not. pickupBy is milliseconds since the epoch: a child that has not started it by then refuses it (act_timeout). maxRunMs is the longest the run may take; the child stops it then. cap, when present, narrows the tools of the child's own that the run may use to these permission names, the site's, which capNames maps to the child's; the child's own grants still decide, and a name capNames does not map grants nothing. A cap is the host narrowing: it never asks the child for a grant of its own beyond its switch. The child answers with act.result: refused, or started and later finished. One request at a time per child."
     },
     "act.result": {
       "from": "child",

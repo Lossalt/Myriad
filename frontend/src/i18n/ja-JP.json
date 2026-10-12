@@ -749,7 +749,8 @@
       "failed": "処理できませんでした。もう一度お試しください。",
       "onMac": "あなたの Mac で",
       "sentToMac": "あなたの Mac に任せました",
-      "macUnavailable": "Mac がつながっていないか、その Mac でサイトからの依頼を許可していません。"
+      "macUnavailable": "Mac がつながっていないか、その Mac でサイトからの依頼を許可していません。",
+      "macBusy": "Mac はいま別のことをしています。終わってからもう一度どうぞ。"
     },
     "workOffer": {
       "kicker": "仕事",

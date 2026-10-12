@@ -13,6 +13,7 @@ pub mod mentions;
 pub mod onebot;
 pub mod phantasi;
 pub mod prompt;
+pub mod reminder;
 pub mod retry;
 pub mod schedule;
 pub mod semantic;

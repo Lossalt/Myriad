@@ -553,7 +553,8 @@ fn sanitize_music_status(value: &Value) -> Option<Value> {
             serde_json::json!({
                 "name": text("name", 80), "artist": text("artist", 80),
                 "album": text("album", 80), "source": text("source", 40),
-                "duration": song.get("duration").and_then(Value::as_u64).unwrap_or(0).min(86_400),
+                // Whole seconds; a player may report fractions.
+                "duration": song.get("duration").and_then(Value::as_f64).filter(|seconds| seconds.is_finite()).map_or(0, |seconds| seconds.round().clamp(0.0, 86_400.0) as u64),
             })
         });
     Some(serde_json::json!({
@@ -563,6 +564,8 @@ fn sanitize_music_status(value: &Value) -> Option<Value> {
         "currentSongIndex": obj.get("currentSongIndex").and_then(Value::as_u64).unwrap_or(0).min(10_000),
         "playlistLength": obj.get("playlistLength").and_then(Value::as_u64).unwrap_or(0).min(10_000),
         "currentLyric": obj.get("currentLyric").and_then(Value::as_str).unwrap_or("").chars().take(120).collect::<String>(),
+        // Where in the song it is, whole seconds (D41).
+        "currentTime": obj.get("currentTime").and_then(Value::as_f64).filter(|seconds| seconds.is_finite()).map(|seconds| seconds.round().clamp(0.0, 86_400.0) as u64),
     }))
 }
 

@@ -97,7 +97,8 @@ pub async fn list_intentions(
 /// A proposal for the owner's Mac is not run here: the Mac is asked to run
 /// it (`act` on her link), which it does only while its owner lets the site
 /// ask it to; with no such Mac linked nothing changes and the answer is 409
-/// `act_unavailable`. The answer then carries `act` instead of `work`.
+/// `act_unavailable`, and with that Mac doing something else 409 `act_busy`
+/// (the proposal stays open). The answer then carries `act` instead of `work`.
 pub async fn accept_intention(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
@@ -130,7 +131,7 @@ pub async fn accept_intention(
 /// Why the Mac was not asked, as a 409 carrying the link's code.
 fn act_refusal(code: &'static str) -> HttpError {
     let mut body = AppError::public_json(match code {
-        "act_busy" => "That Mac is already doing something the site asked",
+        "act_busy" => "That Mac is doing something else",
         "proposal_unknown" => "Intention state changed; refresh and try again",
         _ => "No Mac that lets the site ask it to act is connected",
     });
@@ -153,15 +154,13 @@ async fn accept_on_mac(
     if !linked {
         return Err(act_refusal("act_unavailable"));
     }
-    let accepted = store
-        .mark_accepted(&current.id, user_id, AcceptSource::User)
-        .await
-        .map_err(intention_error)?;
-    let act = crate::services::agent::link::act_request(db, &accepted, None)
+    // Asked first, accepted only once it is: a busy Mac leaves the
+    // proposal as it was, to accept again later (D38).
+    let act = crate::services::agent::link::act_request_accepting(db, &current)
         .await
         .map_err(act_refusal)?;
     let intention = store
-        .find(&accepted.id, user_id)
+        .find(&current.id, user_id)
         .await
         .map_err(intention_error)?;
     Ok(Json(json!({

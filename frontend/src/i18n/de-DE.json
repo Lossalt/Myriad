@@ -749,7 +749,8 @@
       "failed": "Das ist nicht durchgegangen. Bitte erneut versuchen.",
       "onMac": "Auf deinem Mac",
       "sentToMac": "An deinen Mac übergeben",
-      "macUnavailable": "Dein Mac ist nicht verbunden oder lässt keine Aufträge der Website zu."
+      "macUnavailable": "Dein Mac ist nicht verbunden oder lässt keine Aufträge der Website zu.",
+      "macBusy": "Dein Mac erledigt gerade etwas anderes. Versuch es danach noch einmal."
     },
     "workOffer": {
       "kicker": "Hilfe",

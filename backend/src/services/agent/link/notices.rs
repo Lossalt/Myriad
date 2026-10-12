@@ -3,7 +3,9 @@
 //! cancelled, Work waiting for the owner's reply, and a report of hers that
 //! is ready — and only to a child that said it shows notifications
 //! (`notify`). What she says to them on her own already comes as `say`, so
-//! her reaching out is not one of them.
+//! her reaching out is not one of them. A reminder of the owner's kept on
+//! the site that comes due (`reminder`) goes only to a child that also said
+//! it shows them (`reminders`), and only while the owner is using her there.
 
 use std::collections::VecDeque;
 
@@ -21,6 +23,7 @@ pub(super) fn kind_of(event_key: &str) -> Option<&'static str> {
         "agent.task_completed" | "agent.task_failed" | "agent.task_cancelled" => Some("work"),
         "agent.clarification" => Some("waiting"),
         "agent.merope.report_ready" => Some("report"),
+        "agent.reminder_due" => Some("reminder"),
         _ => None,
     }
 }
@@ -69,12 +72,22 @@ pub(super) struct Sent {
 impl Sent {
     const KEPT: usize = 256;
 
-    /// The notice for `event`, the first time it comes for the owner.
-    pub(super) fn first(&mut self, event: &NotificationEvent, owner: i32) -> Option<Outgoing> {
+    /// The notice for `event`, the first time it comes for the owner; a
+    /// reminder only when `reminders` (the child shows them and the owner is
+    /// using her there now).
+    pub(super) fn first(
+        &mut self,
+        event: &NotificationEvent,
+        owner: i32,
+        reminders: impl FnOnce() -> bool,
+    ) -> Option<Outgoing> {
         let NotificationEvent::NewNotification { notification } = event else {
             return None;
         };
         let outgoing = notice(notification, owner)?;
+        if outgoing.body["kind"] == "reminder" && !reminders() {
+            return None;
+        }
         let key = (
             notification.id.clone(),
             notification.event_key().unwrap_or_default().to_string(),

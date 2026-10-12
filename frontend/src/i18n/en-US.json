@@ -749,7 +749,8 @@
       "failed": "That did not go through. Please try again.",
       "onMac": "On your Mac",
       "sentToMac": "Sent to your Mac",
-      "macUnavailable": "Your Mac is not connected, or it does not let the site ask it to do things."
+      "macUnavailable": "Your Mac is not connected, or it does not let the site ask it to do things.",
+      "macBusy": "Your Mac is doing something else. Try again once it is done."
     },
     "workOffer": {
       "kicker": "Help",

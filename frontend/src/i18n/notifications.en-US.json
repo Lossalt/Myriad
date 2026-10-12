@@ -42,6 +42,7 @@
     "agent.merope.platform_activity": "Platform activity",
     "agent.merope.report_ready": "Report ready",
     "agent.merope.reach_out": "She wants to talk",
+    "agent.reminder_due": "A reminder is due",
     "heartbeat.succeeded": "Scheduled task succeeded",
     "heartbeat.failed": "Scheduled task failed",
     "heartbeat.seo_review": "Agent SEO",

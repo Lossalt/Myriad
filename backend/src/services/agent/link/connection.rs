@@ -29,6 +29,9 @@ use super::turns::{self, Turn};
 
 /// Frames a run follower or the mood follower may have waiting.
 const QUEUED_FRAMES: usize = 256;
+/// How often a child kept current (`conversations.live`) is checked for
+/// changes to her conversations.
+const CONVERSATIONS_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// A frame on its way to the child; the link numbers it as it goes out.
 pub(super) struct Outgoing {
@@ -140,6 +143,8 @@ pub(super) async fn serve_with(
         experience: false,
         proposals: None,
         acts: false,
+        wardrobe: None,
+        live: None,
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -204,6 +209,20 @@ struct Link {
     proposals: Option<Vec<(String, &'static str, i64)>>,
     /// The child said it takes `act`: the owner lets the site ask it to act.
     acts: bool,
+    /// Her wardrobe as the child was last told it, once it said it takes
+    /// `wardrobe.list`.
+    wardrobe: Option<Vec<Value>>,
+    /// Her conversations as the child was last told them, once it said it
+    /// takes `conversations.live`.
+    live: Option<Live>,
+}
+
+/// What a child kept current was last told of her conversations: the
+/// change digest, and each conversation as sent.
+#[derive(Default)]
+struct Live {
+    changes: String,
+    told: HashMap<String, String>,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -223,6 +242,9 @@ impl Link {
             self.timing.heartbeat,
         );
         beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut keep =
+            tokio::time::interval_at(Instant::now() + CONVERSATIONS_EVERY, CONVERSATIONS_EVERY);
+        keep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let why = tokio::select! {
                 why = &mut closed => Some(why.unwrap_or(Close::Unavailable)),
@@ -248,6 +270,10 @@ impl Link {
                 }
                 () = &mut hello_by, if !self.hello => Some(Close::Timeout),
                 _ = beat.tick() => self.beat().await,
+                _ = keep.tick(), if self.live.is_some() => {
+                    self.keep_conversations().await;
+                    None
+                }
             };
             let queued = std::mem::take(&mut self.queue);
             for outgoing in queued {
@@ -444,19 +470,50 @@ impl Link {
                 self.reply(super::outfit::frame(worn));
             }
             self.worn = Some(worn);
+            // Her wardrobe, read only, to choose from there.
+            if capabilities
+                .iter()
+                .any(|capability| capability == "wardrobe.list")
+            {
+                let listed = super::outfit::current_list(&self.db).await;
+                self.reply(super::outfit::list_frame(listed.clone()));
+                self.wardrobe = Some(listed);
+            }
         }
         // Her recent conversations, for the app to show (they stay here).
         if capabilities
             .iter()
             .any(|capability| capability == "conversations")
         {
-            match super::conversations::recent(&self.db, self.owner).await {
-                Ok(sessions) => self.reply(super::conversations::frame(
-                    sessions,
-                    CONTRACT.limits.max_frame_bytes,
-                )),
+            // Kept current, and with her lines said outside a chat (D37).
+            let live = capabilities
+                .iter()
+                .any(|capability| capability == "conversations.live");
+            let changes = if live {
+                super::conversations::changes(&self.db, self.owner)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            match super::conversations::recent_with(&self.db, self.owner, live).await {
+                Ok(sessions) => {
+                    if live {
+                        self.live = Some(Live {
+                            changes,
+                            told: told_conversations(&sessions),
+                        });
+                    }
+                    self.reply(super::conversations::frame(
+                        sessions,
+                        CONTRACT.limits.max_frame_bytes,
+                    ))
+                }
                 Err(error) => {
-                    tracing::warn!(%error, device = %self.device.id, "[link] could not read recent conversations")
+                    tracing::warn!(%error, device = %self.device.id, "[link] could not read recent conversations");
+                    if live {
+                        self.live = Some(Live::default());
+                    }
                 }
             }
         }
@@ -488,7 +545,19 @@ impl Link {
         if let Some(manager) = get_notification_manager() {
             let events = manager.subscribe();
             let notify = capabilities.iter().any(|capability| capability == "notify");
-            let task = tokio::spawn(follow_events(self.tx.clone(), self.owner, events, notify));
+            // Reminders due on the site, while the owner is using her here.
+            let reminders = (notify
+                && capabilities
+                    .iter()
+                    .any(|capability| capability == "reminders"))
+            .then(|| self.device.id.clone());
+            let task = tokio::spawn(follow_events(
+                self.tx.clone(),
+                self.owner,
+                events,
+                notify,
+                reminders,
+            ));
             self.moods = Some(task.abort_handle());
         }
         tracing::info!(device = %self.device.id, "[link] hello");
@@ -988,6 +1057,49 @@ impl Link {
         }
     }
 
+    /// A child kept current: each of her conversations that changed since
+    /// it was told goes as `conversation` (D37).
+    async fn keep_conversations(&mut self) {
+        let Some(live) = self.live.as_ref() else {
+            return;
+        };
+        let changes = match super::conversations::changes(&self.db, self.owner).await {
+            Ok(changes) => changes,
+            Err(error) => {
+                tracing::debug!(%error, device = %self.device.id, "[link] could not check her conversations");
+                return;
+            }
+        };
+        if changes == live.changes {
+            return;
+        }
+        let sessions = match super::conversations::recent_with(&self.db, self.owner, true).await {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                tracing::warn!(%error, device = %self.device.id, "[link] could not read recent conversations");
+                return;
+            }
+        };
+        let told = told_conversations(&sessions);
+        let previous = self.live.take().map(|live| live.told).unwrap_or_default();
+        // Oldest first, so the newest change is the last the child takes.
+        for session in sessions.into_iter().rev() {
+            let id = session["sessionId"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            if previous.get(&id) == told.get(&id) {
+                continue;
+            }
+            if let Some(frame) =
+                super::conversations::one_frame(session, CONTRACT.limits.max_frame_bytes)
+            {
+                self.reply(frame);
+            }
+        }
+        self.live = Some(Live { changes, told });
+    }
+
     /// Every heartbeat: the child is still there, and the device still one.
     async fn beat(&mut self) -> Option<Close> {
         if self.last_heard.elapsed() > self.timing.silence() {
@@ -1020,6 +1132,14 @@ impl Link {
                     self.reply(super::outfit::frame(worn));
                 }
                 self.worn = Some(now);
+            }
+        }
+        // Her wardrobe changed on the host.
+        if let Some(told) = &self.wardrobe {
+            let listed = super::outfit::current_list(&self.db).await;
+            if *told != listed {
+                self.reply(super::outfit::list_frame(listed.clone()));
+                self.wardrobe = Some(listed);
             }
         }
         // Her proposals changed (a new one, or one answered elsewhere).
@@ -1116,6 +1236,19 @@ where
     }
 }
 
+/// Each conversation as sent, by session id.
+fn told_conversations(sessions: &[Value]) -> HashMap<String, String> {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            Some((
+                session["sessionId"].as_str()?.to_string(),
+                session.to_string(),
+            ))
+        })
+        .collect()
+}
+
 pub(super) fn accepted(turn: &Turn, duplicate: bool) -> Outgoing {
     let mut body = json!({
         "turnId": turn.turn_id,
@@ -1156,6 +1289,7 @@ pub(super) async fn follow_events(
     owner: i32,
     mut events: tokio::sync::broadcast::Receiver<NotificationEvent>,
     notify: bool,
+    reminders: Option<String>,
 ) {
     use tokio::sync::broadcast::error::RecvError;
     let mut sent = super::notices::Sent::default();
@@ -1166,7 +1300,11 @@ pub(super) async fn follow_events(
                 mood,
                 activity,
             }) if user_id == owner => Some(mood_frame(&mood, &activity)),
-            Ok(event) if notify => sent.first(&event, owner),
+            Ok(event) if notify => sent.first(&event, owner, || {
+                reminders.as_deref().is_some_and(|device| {
+                    crate::services::agent::consciousness::native_presence(owner, device).is_some()
+                })
+            }),
             Ok(_) | Err(RecvError::Lagged(_)) => None,
             Err(RecvError::Closed) => return,
         };

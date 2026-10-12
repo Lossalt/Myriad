@@ -10,6 +10,7 @@
     { "key": "agent.merope.platform_activity", "source": "agent" },
     { "key": "agent.merope.report_ready", "source": "agent" },
     { "key": "agent.merope.reach_out", "source": "agent" },
+    { "key": "agent.reminder_due", "source": "agent" },
     { "key": "heartbeat.succeeded", "source": "heartbeat" },
     { "key": "heartbeat.failed", "source": "heartbeat" },
     { "key": "heartbeat.seo_review", "source": "heartbeat" },

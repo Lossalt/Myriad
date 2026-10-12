@@ -71,6 +71,7 @@ fn every_call_is_tested_and_version_lists_them() {
         "affect.transition",
         "making_sense.told_section",
         "meta.version",
+        "reminder.due",
         "speaking.acquaintance_section",
         "speaking.activity_section",
         "speaking.addressee_section",
@@ -530,4 +531,51 @@ fn buffers_belong_to_the_caller_until_freed_once() {
             myriad_core_buf_free(buf);
         }
     }
+}
+
+/// The reminder rule through the ABI is the crate's, in a named zone and a
+/// fixed offset alike.
+#[test]
+fn reminder_due_matches_the_crate() {
+    use chrono::{DateTime, Utc};
+    let at = |text: &str| {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
+    };
+    let york: chrono_tz::Tz = "America/New_York".parse().unwrap();
+    let now = at("2026-11-02T15:00:00Z");
+    let answer = ok(
+        "reminder.due",
+        json!({ "datetime": "2026-10-30T09:00:00", "repeat": "daily", "now": micros(now), "zone": "America/New_York" }),
+    );
+    let expected =
+        myriad_agent_rules::reminder::due("2026-10-30T09:00:00", "daily", None, now, &york);
+    assert_eq!(answer["due"], json!(expected.map(micros)));
+    assert_eq!(answer["latest"], answer["due"]);
+    let through = at("2026-11-02T14:00:00Z");
+    let again = ok(
+        "reminder.due",
+        json!({ "datetime": "2026-10-30T09:00:00", "repeat": "daily", "remindedThrough": micros(through), "now": micros(now), "zone": "America/New_York" }),
+    );
+    assert_eq!(again["due"], Value::Null);
+    assert_eq!(again["latest"], json!(micros(through)));
+    let fixed = ok(
+        "reminder.due",
+        json!({ "datetime": "2026-10-09T09:00", "repeat": "none", "now": micros(at("2026-10-10T00:00:00Z")), "zone": "+08:00" }),
+    );
+    assert_eq!(fixed["due"], json!(micros(at("2026-10-09T01:00:00Z"))));
+    let unread = ok(
+        "reminder.due",
+        json!({ "datetime": "明天早上", "repeat": "daily", "now": micros(now), "zone": "UTC" }),
+    );
+    assert_eq!(
+        (unread["due"].clone(), unread["latest"].clone()),
+        (Value::Null, Value::Null)
+    );
+    let (status, _) = ffi(
+        "reminder.due",
+        &json!({ "datetime": "x", "repeat": "none", "now": 0, "zone": "Mars/Base" }),
+    );
+    assert_eq!(status, STATUS_BAD_INPUT);
 }

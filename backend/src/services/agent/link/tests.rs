@@ -1877,7 +1877,7 @@ fn site_notice(
 fn her_life_on_the_app_has_the_fixtures_shape() {
     use crate::services::agent::consciousness::IntentStatus;
     use crate::services::agent::notification_preferences::NotificationEventKey as Key;
-    assert_eq!(CONTRACT.notice_kinds, ["work", "waiting", "report"]);
+    assert_eq!(CONTRACT.notice_kinds[..3], ["work", "waiting", "report"]);
     for capability in ["notify", "conversations", "proposals"] {
         assert!(
             CONTRACT.capabilities.iter().any(|c| c == capability),
@@ -2000,7 +2000,7 @@ async fn her_mood_and_notices_follow_the_owner_and_each_notice_comes_once() {
         let (events, receiver) = tokio::sync::broadcast::channel(16);
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let follower = tokio::spawn(super::connection::follow_events(
-            tx, OWNER, receiver, notify,
+            tx, OWNER, receiver, notify, None,
         ));
         let done = site_notice("agent_run_1", Key::AgentTaskCompleted, OWNER);
         for event in [
@@ -2358,7 +2358,13 @@ async fn her_host_asks_a_mac_that_lets_it_to_act() {
         record.expires_at = Some(record.created_at + chrono::Duration::hours(24));
         record
     };
-    for id in ["int_card", "int_web", "int_other", "int_refused"] {
+    for id in [
+        "int_card",
+        "int_web",
+        "int_other",
+        "int_refused",
+        "int_busy",
+    ] {
         store.create_proposed(made(id)).await.unwrap();
     }
     let accepted = |id: &'static str| {
@@ -2487,6 +2493,18 @@ async fn her_host_asks_a_mac_that_lets_it_to_act() {
         super::act_request(&site.db, &other, None).await,
         Err("act_busy")
     );
+    // Accepted on the site while that Mac is busy: refused, and the proposal
+    // is as it was, still to accept (D38).
+    let open = store.find("int_busy", OWNER).await.unwrap();
+    assert_eq!(
+        super::act_request_accepting(&site.db, &open).await,
+        Err("act_busy")
+    );
+    let unchanged = store.find("int_busy", OWNER).await.unwrap();
+    assert_eq!(
+        (unchanged.status, unchanged.updated_at),
+        (IntentStatus::Proposed, open.updated_at)
+    );
     child.send("ack", None, json!({})).await;
     for (phase, body) in [
         ("started", json!({ "actId": act, "phase": "started" })),
@@ -2516,11 +2534,21 @@ async fn her_host_asks_a_mac_that_lets_it_to_act() {
     // Refused there: accepted again, and that Mac is not asked again until it
     // links again.
     let refused = accepted("int_refused").await;
-    let act = super::act_request(&site.db, &refused, Some(vec!["calendar:read".into()]))
-        .await
-        .unwrap();
+    // The cap carries only the names a Mac knows (`capNames`, D42).
+    let act = super::act_request(
+        &site.db,
+        &refused,
+        Some(vec![
+            "calendar:read".into(),
+            "ai:search".into(),
+            "tapp:write".into(),
+            "mcp:execute".into(),
+        ]),
+    )
+    .await
+    .unwrap();
     let request = until(&mut child, "act.request").await;
-    assert_eq!(request["body"]["cap"], json!(["calendar:read"]));
+    assert_eq!(request["body"]["cap"], json!(["ai:search", "mcp:execute"]));
     child
         .send(
             "act.result",
@@ -2559,5 +2587,391 @@ async fn her_host_asks_a_mac_that_lets_it_to_act() {
     assert_eq!(failed.status, IntentStatus::Failed);
     assert_eq!(failed.result_summary.as_deref(), Some("act_revoked"));
     drop(again);
+    site.close().await;
+}
+
+// --- H2f: her wardrobe, conversations kept current, reminders, cap names ----
+
+#[test]
+fn her_wardrobe_her_lines_and_cap_names_have_the_contracts_shape() {
+    use crate::services::agent::notification_preferences::NotificationEventKey as Key;
+    // Her wardrobe as the app lists it: every set, wearable when it has a rig.
+    let listed = fixture("wardrobe")["body"]["outfits"].clone();
+    let profile = json!({
+        "activeOutfitId": "default",
+        "wardrobe": [
+            { "id": "default", "name": "日常", "rigAssetId": listed[0]["rigAssetId"], "portraitAssetId": listed[0]["portraitAssetId"], "outfit": { "motif": "x" } },
+            { "id": "coat", "name": " 外套 ", "profile": "fullBody", "rigAssetId": listed[1]["rigAssetId"] },
+            { "id": "sketch", "name": "草稿" },
+            { "name": "no id" },
+        ],
+    });
+    let sent = super::outfit::list_frame(super::outfit::listed(&profile));
+    assert_eq!(
+        (sent.t, &sent.body),
+        ("wardrobe", &fixture("wardrobe")["body"])
+    );
+    assert!(super::outfit::listed(&json!({})).is_empty());
+
+    // Her lines said outside a chat go into the conversation that was the
+    // latest then; one said before all of them, into the first one.
+    let session = fixture("conversation")["body"]["session"].clone();
+    let line = session["messages"][2].clone();
+    let mut without: Vec<Value> = vec![session.clone()];
+    without[0]["messages"].as_array_mut().unwrap().remove(2);
+    let mut older = json!({ "sessionId": "ses_older", "updatedAt": 1, "messages": [
+        { "id": "msg_1", "role": "user", "text": "早", "at": 1_760_140_000_000_i64 },
+    ] });
+    let mut sessions = vec![without[0].clone(), older.clone()];
+    super::conversations::place_said(&mut sessions, vec![line.clone()]);
+    assert_eq!(sessions[0], session, "placed by time, in order");
+    assert_eq!(sessions[1], older);
+    // Before every line shown: left out; between: the one before it.
+    let early =
+        json!({ "id": "pro_1", "role": "assistant", "text": "很早", "at": 1, "kind": "proactive" });
+    let between = json!({ "id": "pro_2", "role": "assistant", "text": "中间", "at": 1_760_140_100_000_i64, "kind": "proactive" });
+    let mut sessions = vec![without[0].clone(), older.clone()];
+    super::conversations::place_said(&mut sessions, vec![early, between.clone()]);
+    older["messages"].as_array_mut().unwrap().push(between);
+    assert_eq!(sessions[1], older);
+    assert_eq!(sessions[0], without[0]);
+    let one =
+        super::conversations::one_frame(session.clone(), CONTRACT.limits.max_frame_bytes).unwrap();
+    assert_eq!(
+        (one.t, &one.body),
+        ("conversation", &fixture("conversation")["body"])
+    );
+
+    // A reminder is a notice of its own kind, for an app that shows them.
+    assert_eq!(
+        CONTRACT.notice_kinds,
+        ["work", "waiting", "report", "reminder"]
+    );
+    let due = site_notice("reminder_1_1760140800", Key::ReminderDue, OWNER);
+    assert_eq!(
+        super::notices::notice(&due, OWNER).unwrap().body["kind"],
+        "reminder"
+    );
+    for capability in ["wardrobe.list", "conversations.live", "reminders"] {
+        assert!(
+            CONTRACT.capabilities.iter().any(|c| c == capability),
+            "{capability}"
+        );
+    }
+
+    // D42: the cap names a Mac knows are the site's own, each standing for
+    // the Mac's grant of the same name except MCP (per server there); a name
+    // not in the table is not sent.
+    let site_names = crate::services::agent::agent_footer::max_user_agent_permissions();
+    for (name, mac) in &CONTRACT.cap_names.mac {
+        assert!(
+            site_names.contains(name) || name == "system:admin",
+            "{name} is a site permission"
+        );
+        assert!(!mac.is_empty(), "{name}");
+        if name == "mcp:execute" {
+            assert_eq!(mac, &["mcp.*"]);
+        } else {
+            assert_eq!(mac, &[name.clone()], "{name}");
+        }
+    }
+    assert_eq!(
+        super::contract::cap_for_mac(vec![
+            "tapp:write".into(),
+            "http:fetch".into(),
+            "memory.read".into(),
+            "http:fetch".into(),
+            "reminder:write".into(),
+        ]),
+        ["http:fetch", "reminder:write"]
+    );
+}
+
+#[tokio::test]
+async fn a_reminder_due_on_the_site_reaches_the_app_only_while_they_use_her_there() {
+    use crate::services::agent::notification_preferences::NotificationEventKey as Key;
+    use crate::services::agent::notifications::NotificationEvent;
+    let device = "dev_reminders";
+    for (reminders, present, sent) in [
+        (None, true, false),
+        (Some(device), false, false),
+        (Some(device), true, true),
+    ] {
+        crate::services::agent::consciousness::forget_native_presence(OWNER, device);
+        if present {
+            remember_native_presence_for_test(device, false);
+        }
+        let (events, receiver) = tokio::sync::broadcast::channel(16);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let follower = tokio::spawn(super::connection::follow_events(
+            tx,
+            OWNER,
+            receiver,
+            true,
+            reminders.map(str::to_string),
+        ));
+        events
+            .send(NotificationEvent::NewNotification {
+                notification: site_notice("reminder_7_1760140800", Key::ReminderDue, OWNER),
+            })
+            .unwrap();
+        drop(events);
+        follower.await.unwrap();
+        let got: Vec<Value> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|outgoing| outgoing.body)
+            .collect();
+        assert_eq!(got.len(), usize::from(sent), "{reminders:?} {present}");
+        if sent {
+            assert_eq!(got[0]["kind"], "reminder");
+            assert_eq!(got[0]["eventKey"], "agent.reminder_due");
+        }
+    }
+    crate::services::agent::consciousness::forget_native_presence(OWNER, device);
+}
+
+#[tokio::test]
+async fn the_sites_reminders_come_due_once_by_the_shared_rule() {
+    use chrono::TimeZone;
+    let Some(site) = site().await else {
+        return;
+    };
+    let insert = |key: &str, datetime: &str, repeat: &str, status: &str| {
+        format!(
+            "INSERT INTO tapp_storage (tapp_id, user_id, key, value, created_at, updated_at) VALUES ('agent_reminders', {OWNER}, '{key}', \
+             '{{\"id\":\"{key}\",\"title\":\"交房租 {key}\",\"datetime\":\"{datetime}\",\"repeat\":\"{repeat}\",\"status\":\"{status}\"}}'::jsonb, now(), now())"
+        )
+    };
+    for (key, datetime, repeat, status) in [
+        (
+            "reminder_past",
+            "2026-01-01T09:00:00+08:00",
+            "none",
+            "active",
+        ),
+        ("reminder_daily", "2026-01-01T09:00:00Z", "daily", "active"),
+        ("reminder_later", "2999-01-01T09:00:00Z", "none", "active"),
+        ("reminder_done", "2026-01-01T09:00:00Z", "none", "done"),
+        ("reminder_words", "明天早上", "none", "active"),
+    ] {
+        site.db
+            .execute_unprepared(&insert(key, datetime, repeat, status))
+            .await
+            .unwrap();
+    }
+    let through = |db: DatabaseConnection, key: &'static str| async move {
+        let row = db
+            .query_one_raw(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DatabaseBackend::Postgres,
+                "SELECT value->'remindedThrough' AS at FROM tapp_storage WHERE key = $1",
+                [key.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        row.try_get::<Option<Value>>("", "at")
+            .unwrap()
+            .and_then(|at| at.as_i64())
+    };
+    let active = crate::services::agent::reminders::active(&site.db)
+        .await
+        .unwrap();
+    let keys: BTreeSet<String> = active.iter().map(|kept| kept.key.clone()).collect();
+    assert_eq!(
+        keys,
+        strings(&[
+            "reminder_past",
+            "reminder_daily",
+            "reminder_later",
+            "reminder_words"
+        ])
+    );
+    crate::services::agent::reminders::tick(site.db.clone()).await;
+    assert_eq!(
+        through(site.db.clone(), "reminder_past").await,
+        Some(
+            chrono::Utc
+                .with_ymd_and_hms(2026, 1, 1, 1, 0, 0)
+                .unwrap()
+                .timestamp_millis()
+        )
+    );
+    let daily = through(site.db.clone(), "reminder_daily").await.unwrap();
+    let today_9 = {
+        let now = chrono::Utc::now();
+        let nine = now.date_naive().and_hms_opt(9, 0, 0).unwrap().and_utc();
+        if nine <= now {
+            nine
+        } else {
+            nine - chrono::Duration::days(1)
+        }
+    };
+    assert_eq!(
+        daily,
+        today_9.timestamp_millis(),
+        "missed times fold into the latest"
+    );
+    for key in ["reminder_later", "reminder_done", "reminder_words"] {
+        assert_eq!(through(site.db.clone(), key).await, None, "{key}");
+    }
+    // Nothing comes twice; the same time is one notification.
+    let before = crate::services::agent::reminders::active(&site.db)
+        .await
+        .unwrap();
+    crate::services::agent::reminders::tick(site.db.clone()).await;
+    let after = crate::services::agent::reminders::active(&site.db)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    let kept = &after[0];
+    let at = chrono::Utc
+        .timestamp_millis_opt(kept.reminded_through.unwrap())
+        .unwrap();
+    let told = crate::services::agent::reminders::notification(kept, at, &chrono::Utc);
+    assert_eq!(told.event_key(), Some("agent.reminder_due"));
+    assert_eq!(told.title, kept.title);
+    assert_eq!(
+        told.id,
+        crate::services::agent::reminders::notification(kept, at, &chrono::Utc).id
+    );
+    site.close().await;
+}
+
+/// The next `conversation` for `session`, skipping the others.
+async fn conversation_of(child: &mut Child, session: &str) -> Value {
+    loop {
+        let frame = until(child, "conversation").await;
+        if frame["body"]["session"]["sessionId"] == session {
+            return frame["body"]["session"].clone();
+        }
+    }
+}
+
+#[tokio::test]
+async fn her_wardrobe_and_conversations_stay_current_on_the_app() {
+    let Some(site) = site().await else {
+        return;
+    };
+    let (_, token) = device(&site.db, "Mac").await;
+    let rig = "ab".repeat(32);
+    crate::services::agent::merope::upsert_persona_on(
+        &site.db,
+        "她".into(),
+        String::new(),
+        crate::services::agent::merope::PortraitUpdate::Keep,
+        crate::services::agent::merope::PersonaContractUpdate {
+            visual_profile: crate::services::agent::merope::JsonDocumentUpdate::Set(json!({
+                "activeOutfitId": "default",
+                "wardrobe": [
+                    { "id": "default", "name": "日常", "rigAssetId": rig },
+                    { "id": "sketch", "name": "草稿" },
+                ],
+            })),
+            ..Default::default()
+        },
+        OWNER,
+    )
+    .await
+    .unwrap();
+    chat_session(
+        &site.db,
+        "ses_one",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        false,
+        120,
+        &[("user", "早"), ("assistant", "早呀")],
+    )
+    .await;
+    crate::services::agent::merope::store::insert_proactive(
+        &site.db,
+        OWNER,
+        "我刚看到一只猫。",
+        Some("agent.merope.reach_out"),
+        true,
+        Some("say_cat"),
+    )
+    .await
+    .unwrap();
+
+    let mut child = Child::open(&site, &token).await;
+    child
+        .hello_with(&[
+            "rig",
+            "wardrobe",
+            "wardrobe.list",
+            "conversations",
+            "conversations.live",
+        ])
+        .await;
+    let outfit = until(&mut child, "outfit").await;
+    assert_eq!(outfit["body"]["outfitId"], "default");
+    let wardrobe = until(&mut child, "wardrobe").await;
+    assert_eq!(
+        wardrobe["body"]["outfits"],
+        json!([
+            { "outfitId": "default", "name": "日常", "profile": "bust", "wearable": true, "rigAssetId": rig },
+            { "outfitId": "sketch", "name": "草稿", "profile": "bust", "wearable": false },
+        ])
+    );
+    let conversations = until(&mut child, "conversations").await;
+    let lines = conversations["body"]["sessions"][0]["messages"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(lines.len(), 3, "{conversations}");
+    assert_eq!(lines[2]["id"], "say_say_cat");
+    assert_eq!(lines[2]["text"], "我刚看到一只猫。");
+    assert_eq!(lines[2]["kind"], "proactive");
+
+    // A new conversation on the site, and new lines in one shown: each comes
+    // as it is, without a reconnect.
+    chat_session(
+        &site.db,
+        "ses_two",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        false,
+        5,
+        &[("user", "在吗"), ("assistant", "在")],
+    )
+    .await;
+    // Each changed conversation comes as it is now (her earlier line may move to the new one,
+    // which was the latest when she said it, by its lines' times).
+    let one = conversation_of(&mut child, "ses_two").await;
+    assert!(one["messages"].as_array().unwrap().len() >= 2, "{one}");
+    site.db
+        .execute_unprepared(
+            "INSERT INTO agent_messages (session_id, role, content, created_at) VALUES ('ses_one', 'user', '还有一句', now()); \
+             UPDATE agent_sessions SET message_count = message_count + 1, last_active_at = now() WHERE id = 'ses_one'",
+        )
+        .await
+        .unwrap();
+    let again = conversation_of(&mut child, "ses_one").await;
+    let last = again["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["text"], "还有一句");
+    // Her line said outside a chat now: in the latest conversation.
+    crate::services::agent::merope::store::insert_proactive(
+        &site.db,
+        OWNER,
+        "下雨了。",
+        None,
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    let said = conversation_of(&mut child, "ses_one").await;
+    let last = said["messages"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (last["text"].as_str(), last["kind"].as_str()),
+        (Some("下雨了。"), Some("proactive"))
+    );
+    assert!(last["id"].as_str().is_some_and(|id| id.starts_with("pro_")));
+    drop(child);
     site.close().await;
 }

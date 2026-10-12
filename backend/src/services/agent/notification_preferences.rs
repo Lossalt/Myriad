@@ -43,6 +43,8 @@ pub enum NotificationEventKey {
     MeropeReportReady,
     /// She wants to talk: what she would say, while they are not with her.
     MeropeReachOut,
+    /// One of the owner's reminders is due.
+    ReminderDue,
     HeartbeatSucceeded,
     HeartbeatFailed,
     HeartbeatSeoReview,
@@ -77,7 +79,7 @@ pub enum NotificationEventKey {
 }
 
 impl NotificationEventKey {
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 40] = [
         Self::AgentTaskProgress,
         Self::AgentTaskCompleted,
         Self::AgentTaskFailed,
@@ -86,6 +88,7 @@ impl NotificationEventKey {
         Self::MeropePlatformActivity,
         Self::MeropeReportReady,
         Self::MeropeReachOut,
+        Self::ReminderDue,
         Self::HeartbeatSucceeded,
         Self::HeartbeatFailed,
         Self::HeartbeatSeoReview,
@@ -129,6 +132,7 @@ impl NotificationEventKey {
             Self::MeropePlatformActivity => "agent.merope.platform_activity",
             Self::MeropeReportReady => "agent.merope.report_ready",
             Self::MeropeReachOut => "agent.merope.reach_out",
+            Self::ReminderDue => "agent.reminder_due",
             Self::HeartbeatSucceeded => "heartbeat.succeeded",
             Self::HeartbeatFailed => "heartbeat.failed",
             Self::HeartbeatSeoReview => "heartbeat.seo_review",
@@ -175,6 +179,7 @@ impl NotificationEventKey {
             | Self::MeropePlatformActivity
             | Self::MeropeReportReady
             | Self::MeropeReachOut
+            | Self::ReminderDue
             | Self::SkillPruned
             | Self::SkillImproved
             | Self::SkillChanged => "agent",

@@ -27,10 +27,18 @@ pub(super) struct Contract {
     pub notice_kinds: Vec<String>,
     pub work_places: Vec<String>,
     pub act_statuses: Vec<String>,
+    pub cap_names: CapNames,
     pub envelope: FieldSpec,
     pub frames: BTreeMap<String, FrameSpec>,
     pub error_codes: BTreeMap<String, String>,
     pub close_codes: BTreeMap<String, CloseSpec>,
+}
+
+/// `capNames`: the site's permission names a cap may carry, and the Mac's
+/// grants each stands for.
+#[derive(Debug, Deserialize)]
+pub(super) struct CapNames {
+    pub mac: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,7 +167,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 21] = [
+pub(super) const HOST_FRAMES: [&str; 23] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -181,6 +189,8 @@ pub(super) const HOST_FRAMES: [&str; 21] = [
     "proposal.answered",
     "act.request",
     "act.cancel",
+    "wardrobe",
+    "conversation",
 ];
 
 /// Frame types the host takes from a child.
@@ -232,6 +242,18 @@ pub(super) const HOST_ERROR_CODES: [&str; 22] = [
     "act_cancelled",
     "act_revoked",
 ];
+
+/// The names of `cap` a Mac knows (`capNames`), in the order given: the
+/// rest stand for nothing there, so they are not sent.
+pub(super) fn cap_for_mac(cap: Vec<String>) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for name in cap {
+        if CONTRACT.cap_names.mac.contains_key(&name) && !kept.contains(&name) {
+            kept.push(name);
+        }
+    }
+    kept
+}
 
 /// `limits.idPattern`, without a regex engine: 1 to 64 of `A-Za-z0-9_.:-`.
 pub(super) fn valid_id(id: &str) -> bool {

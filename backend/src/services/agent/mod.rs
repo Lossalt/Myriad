@@ -25,6 +25,7 @@ pub mod perception_view;
 pub(crate) mod playback_direction;
 pub(crate) mod presence_window;
 pub mod queue;
+pub mod reminders;
 pub mod resource_create_pure;
 pub mod response_agent;
 pub mod run;

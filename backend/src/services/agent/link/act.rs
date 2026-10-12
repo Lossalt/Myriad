@@ -27,7 +27,9 @@ use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::services::agent::consciousness::{IntentRecord, IntentStatus, IntentStore};
+use crate::services::agent::consciousness::{
+    AcceptSource, IntentRecord, IntentStatus, IntentStore,
+};
 
 use super::connection::Outgoing;
 use super::contract::{CONTRACT, valid_id};
@@ -103,6 +105,26 @@ pub(crate) async fn request(
     proposal: &IntentRecord,
     cap: Option<Vec<String>>,
 ) -> Result<String, &'static str> {
+    ask(db, proposal, cap, false).await
+}
+
+/// The owner accepted on the site her proposal for their Mac, still open:
+/// the Mac is asked to run it, and only then is it accepted and running. A
+/// Mac that is busy or gone leaves the proposal as it was (D38); the Err is
+/// the code why, as [`request`]'s.
+pub(crate) async fn request_accepting(
+    db: &DatabaseConnection,
+    proposal: &IntentRecord,
+) -> Result<String, &'static str> {
+    ask(db, proposal, None, true).await
+}
+
+async fn ask(
+    db: &DatabaseConnection,
+    proposal: &IntentRecord,
+    cap: Option<Vec<String>>,
+    accept: bool,
+) -> Result<String, &'static str> {
     let owner = proposal.user_id;
     let resting = RESTING.lock().map(|set| set.clone()).unwrap_or_default();
     let wanted = proposal.proposal.device_id.as_deref();
@@ -124,8 +146,9 @@ pub(crate) async fn request(
     if !proposal.proposal.expected_outcome.trim().is_empty() {
         body["expectedOutcome"] = proposal.proposal.expected_outcome.clone().into();
     }
+    // Only names a Mac knows (`capNames`); the rest stand for nothing there.
     if let Some(cap) = cap {
-        body["cap"] = cap.into();
+        body["cap"] = super::contract::cap_for_mac(cap).into();
     }
     // One request at a time per Mac: kept before the proposal moves, so a
     // second one meanwhile finds it busy.
@@ -150,10 +173,23 @@ pub(crate) async fn request(
             },
         );
     }
-    if let Err(error) = IntentStore::new(db.clone())
-        .transition(&proposal.id, owner, IntentStatus::Running, None, None, None)
-        .await
-    {
+    let store = IntentStore::new(db.clone());
+    let accepted = if accept {
+        store
+            .mark_accepted(&proposal.id, owner, AcceptSource::User)
+            .await
+            .map(|_| ())
+    } else {
+        Ok(())
+    };
+    let moved = match accepted {
+        Ok(()) => store
+            .transition(&proposal.id, owner, IntentStatus::Running, None, None, None)
+            .await
+            .map(|_| ()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = moved {
         tracing::info!(%error, proposal = %proposal.id, "[link] proposal moved before the Mac was asked");
         if let Ok(mut acts) = ACTS.lock() {
             acts.remove(&id);

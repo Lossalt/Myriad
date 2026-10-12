@@ -176,10 +176,28 @@ fn player_status_line(music: Option<&Value>) -> String {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let label = if playing { "Playing" } else { "Paused" };
-    if artist.trim().is_empty() {
+    let line = if artist.trim().is_empty() {
         format!("{label}：{}", name.trim())
     } else {
         format!("{label}：{} — {}", name.trim(), artist.trim())
+    };
+    // Where in it, when the player says (D41).
+    let seconds = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .map(|seconds| seconds.round() as u64)
+    };
+    let clock = |seconds: u64| format!("{}:{:02}", seconds / 60, seconds % 60);
+    match (
+        seconds(music.get("currentTime")),
+        seconds(song.get("duration")).filter(|duration| *duration > 0),
+    ) {
+        (Some(at), Some(duration)) => {
+            format!("{line} ({} / {})", clock(at.min(duration)), clock(duration))
+        }
+        (Some(at), None) => format!("{line} ({})", clock(at)),
+        _ => line,
     }
 }
 
@@ -225,6 +243,13 @@ mod tests {
             "currentSong": { "name": "星河", "artist": "A" }
         })));
         assert!(section.contains("Playing：星河 — A"));
+        // Where in the song, when the player says.
+        let at = format_chat_player_section(Some(&json!({
+            "isPlaying": false,
+            "currentTime": 83.4,
+            "currentSong": { "name": "星河", "artist": "A", "duration": 225 }
+        })));
+        assert!(at.contains("Paused：星河 — A (1:23 / 3:45)"), "{at}");
         assert!(section.contains("[[music:play]]"));
         assert!(section.contains("Work"));
         assert!(!section.contains("playlist"));
