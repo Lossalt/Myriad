@@ -11,12 +11,14 @@
 //!   part of her own state (energy and the rest), so it reaches whatever she
 //!   judges, not only what she says, and narrows her when low.
 //! - **Her talks** ([`talks`], [`section`]): told in private, as what she
-//!   could say if she chose to, roughly and without who.
+//!   could say if she chose to, roughly and without who. In a group, only
+//!   her talks in other groups ([`talks_placed`], [`section_in_group`]), by
+//!   the group's name: a private talk never reaches a group.
 //!
 //! That holds by what goes in, not by asking the model to keep quiet: every
-//! input here is a time, a kind or a number. No line anyone wrote, no name,
-//! no group and no topic reaches this module, so nothing it tells can give
-//! one away. The caller keeps the people and groups apart (`person`, the
+//! input here is a time, a kind or a number, and in a group the names of the
+//! other groups. No line anyone wrote, no person's name and no topic reaches
+//! this module, so nothing it tells can give one away. The caller keeps the people and groups apart (`person`, the
 //! group's venue) only to leave out the one she is facing and to group what
 //! happened into talks; neither is ever told.
 
@@ -161,6 +163,21 @@ pub fn talks(
     since: DateTime<Utc>,
     facing: Facing<'_>,
 ) -> Vec<Talk> {
+    talks_placed(heard, moved, stung, first_met, since, facing)
+        .into_iter()
+        .map(|(_, talk)| talk)
+        .collect()
+}
+
+/// [`talks`], each with where it happened.
+pub fn talks_placed(
+    heard: &[Heard],
+    moved: &[Moved],
+    stung: &[Stung],
+    first_met: &[i32],
+    since: DateTime<Utc>,
+    facing: Facing<'_>,
+) -> Vec<(Place, Talk)> {
     let left_out = |person: i32, place: &Place| {
         person == facing.person
             || matches!((place, facing.group), (Place::Group(here), Some(there)) if here == there)
@@ -267,8 +284,11 @@ pub fn talks(
         }
     }
 
-    let mut talks: Vec<Talk> = spans.into_iter().map(|span| span.talk).collect();
-    talks.sort_by_key(|talk| std::cmp::Reverse(talk.ended));
+    let mut talks: Vec<(Place, Talk)> = spans
+        .into_iter()
+        .map(|span| (span.place, span.talk))
+        .collect();
+    talks.sort_by_key(|(_, talk)| std::cmp::Reverse(talk.ended));
     talks
 }
 
@@ -309,6 +329,49 @@ pub fn section(talks: &[Talk], now: DateTime<Utc>) -> String {
         lines.push(format!("- {besides}{}.", together(&rest)));
     }
     format!("{HEAD}\n{}", lines.join("\n"))
+}
+
+/// Her talks in other groups since she got up, as facts, in a group: each
+/// with the name of the group it was in (`None` when she does not have it),
+/// newest first, told as in private. No private talk and nothing done for
+/// anyone is here: those never reach a group. `None` when there were none.
+pub fn section_in_group(talks: &[(Option<String>, Talk)], now: DateTime<Utc>) -> Option<String> {
+    let talks: Vec<&(Option<String>, Talk)> = talks
+        .iter()
+        .filter(|(_, talk)| talk.kind == TalkKind::Group)
+        .collect();
+    if talks.is_empty() {
+        return None;
+    }
+    let (told_one_by_one, counted): (Vec<_>, Vec<_>) = talks
+        .into_iter()
+        .partition(|(_, talk)| left_something(talk));
+    let (told_one_by_one, more) =
+        told_one_by_one.split_at(told_one_by_one.len().min(TOLD_ONE_BY_ONE));
+    let mut lines = vec![
+        "Your talks in other groups since you got up: where, and how they went, not who or \
+         what about. Nobody here was there. What happened there they know nothing of unless \
+         you tell them; whether you would is as your personality would have it."
+            .to_string(),
+    ];
+    lines.extend(
+        told_one_by_one
+            .iter()
+            .map(|(group, talk)| format!("- {}", told_in(talk, now, group.as_deref()))),
+    );
+    let rest: Vec<&Talk> = more.iter().chain(&counted).map(|(_, talk)| talk).collect();
+    if !rest.is_empty() {
+        let besides = if told_one_by_one.is_empty() {
+            ""
+        } else {
+            "Besides these: "
+        };
+        lines.push(format!("- {besides}{}.", together(&rest)));
+    }
+    Some(format!(
+        "## Since you got up, in other groups\n{}",
+        lines.join("\n")
+    ))
 }
 
 /// One push of her emotion toward anyone since she got up (praise, a jab,
@@ -382,6 +445,11 @@ fn felt_with_hurt(talk: &Talk) -> f64 {
 }
 
 fn told(talk: &Talk, now: DateTime<Utc>) -> String {
+    told_in(talk, now, None)
+}
+
+/// [`told`], a group talk by the group's name when there is one.
+fn told_in(talk: &Talk, now: DateTime<Utc>, group: Option<&str>) -> String {
     let ago = rough_ago(now - talk.ended);
     let mut what = Vec::new();
     if talk.first_time {
@@ -417,9 +485,10 @@ fn told(talk: &Talk, now: DateTime<Utc>) -> String {
             format!("{ago}, {outcome}")
         }
         kind => {
-            let place = match kind {
-                TalkKind::Group => "in a group",
-                _ => "a private talk",
+            let place = match (kind, group) {
+                (TalkKind::Group, Some(group)) => format!("in the group 「{group}」"),
+                (TalkKind::Group, None) => "in a group".to_string(),
+                _ => "a private talk".to_string(),
             };
             format!(
                 "{ago}, {place}, {}",
@@ -624,6 +693,40 @@ mod tests {
         assert_eq!(talks.len(), 1, "{talks:?}");
         assert_eq!(talks[0].kind, TalkKind::Group);
         assert_eq!(talks[0].praised, 0, "the praise was the one she faces");
+    }
+
+    #[test]
+    fn in_a_group_only_other_groups_are_told_and_by_their_name() {
+        let heard = [
+            heard(2, Place::Private, 50),
+            heard(3, Place::Group("onebot:1".into()), 40),
+            heard(4, Place::Group("onebot:2".into()), 20),
+        ];
+        let moved = [
+            moved(2, Cause::Scold, 50, -30.0),
+            moved(3, Cause::Praise, 40, 25.0),
+        ];
+        let in_group = Facing {
+            person: 9,
+            group: Some("onebot:2"),
+        };
+        let placed = talks_placed(&heard, &moved, &[], &[], at(600), in_group);
+        let named: Vec<(Option<String>, Talk)> = placed
+            .into_iter()
+            .map(|(place, talk)| match place {
+                Place::Group(venue) if venue == "onebot:1" => (Some("摸鱼小队".into()), talk),
+                _ => (None, talk),
+            })
+            .collect();
+        let told = section_in_group(&named, now()).unwrap();
+        assert!(told.contains("in the group 「摸鱼小队」"), "{told}");
+        assert!(told.contains("they praised you"), "{told}");
+        assert!(
+            !told.contains("scolded"),
+            "a private talk never reaches a group: {told}"
+        );
+        assert!(!told.contains("private"), "{told}");
+        assert_eq!(section_in_group(&[], now()), None);
     }
 
     #[test]

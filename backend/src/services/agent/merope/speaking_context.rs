@@ -198,11 +198,12 @@ async fn how_she_differs_with(db: &sea_orm::DatabaseConnection, user_id: i32) ->
 }
 
 /// Her talks with others since she got up (see `myriad_merope::elsewhere`),
-/// as the section that tells them, in private. In a group, where people
-/// outside the community may be reading, nothing: how today has left her is
-/// part of her own state there as everywhere (`self_state`). Read as times, kinds and counts only: no
-/// message text, name, group or what a sore spot was about is selected here,
-/// so none of it can reach the prompt this goes into.
+/// as the section that tells them. In a group, where people outside the
+/// community may be reading, only her talks in other groups, by the group's
+/// name; how today has left her is part of her own state there as
+/// everywhere (`self_state`). Read as times, kinds and counts only: no
+/// message text, person's name or what a sore spot was about is selected
+/// here, so none of it can reach the prompt this goes into.
 pub(super) async fn since_she_got_up(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
@@ -210,9 +211,6 @@ pub(super) async fn since_she_got_up(
 ) -> Option<String> {
     use myriad_merope::elsewhere::{self, Cause, Facing, Heard, Moved, Place, Stung};
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-    if present.is_group() {
-        return None;
-    }
     let now = super::clock::now();
     let since = now - chrono::Duration::minutes(i64::from(super::timing::her_day().since_up));
     let facing = Facing {
@@ -246,7 +244,8 @@ pub(super) async fn since_she_got_up(
     let mut people: Vec<i32> = moved.iter().map(|moved| moved.person).collect();
     people.sort_unstable();
     people.dedup();
-    let told = |talks: &[elsewhere::Talk]| Some(elsewhere::section(talks, now));
+    let told =
+        |talks: &[elsewhere::Talk]| (!present.is_group()).then(|| elsewhere::section(talks, now));
     if people.is_empty() {
         return told(&[]);
     }
@@ -302,9 +301,21 @@ pub(super) async fn since_she_got_up(
             first_met.push(person);
         }
     }
-    told(&elsewhere::talks(
-        &heard, &moved, &stung, &first_met, since, facing,
-    ))
+    let placed = elsewhere::talks_placed(&heard, &moved, &stung, &first_met, since, facing);
+    // In a group, only her talks in other groups, by their names: a private
+    // talk never reaches a group.
+    if present.is_group() {
+        let mut named = Vec::new();
+        for (place, talk) in placed {
+            let name = match &place {
+                Place::Group(venue) => crate::services::channel_group::title(venue).await,
+                Place::Private | Place::Work => None,
+            };
+            named.push((name, talk));
+        }
+        return elsewhere::section_in_group(&named, now);
+    }
+    told(&placed.into_iter().map(|(_, talk)| talk).collect::<Vec<_>>())
 }
 
 /// Prompt sections for whoever this turn is speaking to. Empty when Merope is off.
@@ -789,13 +800,23 @@ mod tests {
             "nothing from before she got up: {for_hong}"
         );
 
-        // In a group, people outside the community may be reading: none of
-        // it. How today left her is in her own state there.
+        // In a group, people outside the community may be reading: only her
+        // talks in other groups, never a private one. In the group it all
+        // happened in, nothing; how today left her is in her own state there.
         assert_eq!(built(hong, Audience::group(group, hong)).await, None);
-        assert_eq!(
-            built(hong, Audience::group("telegram:-1", hong)).await,
-            None
+        let elsewhere = built(hong, Audience::group("telegram:-1", hong))
+            .await
+            .unwrap();
+        assert!(
+            elsewhere.contains("- Within the last hour, in a group, briefly; they praised you"),
+            "{elsewhere}"
         );
+        for kept in ["private", "scolded", "SECRET", "ming", "猫"] {
+            assert!(
+                !elsewhere.contains(kept),
+                "{kept} reached a group: {elsewhere}"
+            );
+        }
 
         // To the one who said it all, nobody else has talked with her.
         assert_eq!(
