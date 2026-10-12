@@ -6,7 +6,7 @@ import type { Anime25DDriver } from './driver'
 import type { PerformanceExpressionOffset } from './performanceExpressionShared'
 import { BODY_CONTROLS, faceLife, faceShift, sanitizeBodyPose } from '../events/performanceContract'
 import { ActingField, mappedControlValue } from './actingField'
-import { shiftTiming } from './faceShift'
+import { ARCS, carriesMomentum, shiftTiming } from './faceShift'
 
 // Semantic goals are mapped only here, never interpreted as arbitrary drivers.
 export const BODY_CONTROL_DRIVERS = {
@@ -39,6 +39,14 @@ interface Axis {
   /** Its own pace and start after a change of face (shiftTiming), else the pose's. */
   omega?: number
   startAt?: number
+  /** Its damping ratio, below 1 to go past the goal and back. */
+  zeta?: number
+  /** A wind-up: velocity given the other way as it sets off. */
+  kick?: number
+  /** The way it set off on, for the arc it bows another control by. */
+  from?: number
+  to?: number
+  arc?: number
 }
 
 interface PendingShift {
@@ -58,7 +66,11 @@ export class DirectedPoseController {
   private transientShare = 0
   private readonly transientAxes = new Set<BodyControl>()
   /** The director's scores over the standing pose, each beat by its own envelope. */
-  private readonly acting = new ActingField()
+  private readonly acting: ActingField
+  constructor(private readonly random: () => number = Math.random) {
+    this.acting = new ActingField(random)
+  }
+
   /** A change of face to carry on from where she is, applied on the next step. */
   private shifting: PendingShift | null = null
   /** What the composition last gave each control, and how fast it was moving (driver units). */
@@ -103,7 +115,9 @@ export class DirectedPoseController {
     if (shift !== undefined && (!same || dropped.length)) {
       this.shiftFrom([...Object.keys(this.pose?.targets ?? {}), ...Object.keys(next?.targets ?? {}), ...dropped] as BodyControl[], shift)
     } else if (shift === undefined && !same) {
-      for (const axis of this.axes.values()) { delete axis.omega; delete axis.startAt }
+      for (const axis of this.axes.values()) {
+        delete axis.omega; delete axis.startAt; delete axis.zeta; delete axis.kick; delete axis.from; delete axis.to; delete axis.arc
+      }
     }
     if (same) return
     this.pose = next
@@ -178,8 +192,12 @@ export class DirectedPoseController {
       const value = active ? mappedControlValue(key, goal) : target[driver]
       // Before its turn in a change of face, a control eases to a stop where it is.
       const waiting = axis.startAt !== undefined && time < axis.startAt
+      if (!waiting && axis.kick) {
+        axis.velocity += axis.kick
+        axis.kick = 0
+      }
       const rate = axis.omega ?? omega
-      spring(axis, 'value', 'velocity', waiting ? axis.value : value, rate, dt)
+      spring(axis, 'value', 'velocity', waiting ? axis.value : value, rate, dt, axis.zeta)
       spring(axis, 'weight', 'weightVelocity', active || waiting ? 1 : 0, rate, dt)
       axis.weight = Math.max(0, Math.min(1, axis.weight))
       if (!active && axis.weight < 0.0001) { this.axes.delete(key); continue }
@@ -218,12 +236,42 @@ export class DirectedPoseController {
       axis.weight = 1
       axis.weightVelocity = 0
       const goal = this.pose?.targets[key]
-      const timing = shiftTiming(pending.shift, key, axis.value, goal !== undefined ? mappedControlValue(key, goal) : base)
+      const to = goal !== undefined ? mappedControlValue(key, goal) : base
+      const timing = shiftTiming(pending.shift, key, axis.value, to)
       axis.omega = timing.omega
       axis.startAt = time + timing.delay
+      if (carriesMomentum(key)) {
+        axis.zeta = pending.shift.damping
+        axis.kick = -pending.shift.anticipation * (to - axis.value) * timing.omega
+        axis.from = axis.value
+        axis.to = to
+        axis.arc = pending.shift.arc * (this.random() < 0.5 ? -1 : 1)
+      } else {
+        delete axis.zeta; delete axis.kick; delete axis.from; delete axis.to; delete axis.arc
+      }
       this.axes.set(key, axis)
     }
     if (pending.shift.move) this.acting.addMove(`shift:${time}`, pending.shift.move, time)
+  }
+
+  /** The lids are on their way open or shut: a blink on top would read as a flutter. */
+  lidsMoving(): boolean {
+    return (['eyeOpenLeft', 'eyeOpenRight'] as const).some((key) => Math.abs(this.shown.get(key)?.velocity ?? 0) > LIDS_MOVING)
+  }
+
+  /** The bow each control's way takes off a straight line, onto another control (ARCS). */
+  private arcs(): Map<BodyControl, number> {
+    const bows = new Map<BodyControl, number>()
+    for (const [key, axis] of this.axes) {
+      const arc = ARCS[key]
+      if (!arc || axis.from === undefined || axis.to === undefined || !axis.arc) continue
+      const way = axis.to - axis.from
+      if (Math.abs(way) < 0.02) continue
+      const done = Math.max(0, Math.min(1, (axis.value - axis.from) / way))
+      const bow = Math.abs(way) * Math.abs(axis.arc) * arc.share * (arc.sided ? Math.sign(axis.arc) : 1) * Math.sin(Math.PI * done)
+      bows.set(arc.onto, (bows.get(arc.onto) ?? 0) + bow * axis.weight)
+    }
+    return bows
   }
 
   /**
@@ -255,6 +303,10 @@ export class DirectedPoseController {
       const driver = BODY_CONTROL_DRIVERS[key]
       target[driver] += mappedControlValue(key, offset) * (1 - this.interruption(key))
       if (key === 'eyeOpenLeft' || key === 'eyeOpenRight') target[driver] = Math.max(0, Math.min(1, target[driver]))
+    }
+    for (const [key, bow] of this.arcs()) {
+      if (!this.capabilities.has(BODY_CONTROLS[key].capability)) continue
+      target[BODY_CONTROL_DRIVERS[key]] += mappedControlValue(key, bow) * (1 - this.interruption(key))
     }
     if (final) this.remember(target)
   }
@@ -299,10 +351,24 @@ function transientOffsetKey(key: BodyControl): keyof PerformanceExpressionOffset
   return BODY_CONTROL_DRIVERS[key] as keyof PerformanceExpressionOffset
 }
 
-function spring(axis: Axis, position: 'value' | 'weight', velocity: 'velocity' | 'weightVelocity', goal: number, omega: number, dt: number): void {
+/** A damped spring toward `goal`, exactly over `dt`: critical without `zeta`, past the goal and back below 1. */
+function spring(axis: Axis, position: 'value' | 'weight', velocity: 'velocity' | 'weightVelocity', goal: number, omega: number, dt: number, zeta = 1): void {
   const displacement = axis[position] - goal
-  const coefficient = axis[velocity] + omega * displacement
-  const decay = Math.exp(-omega * dt)
-  axis[position] = goal + (displacement + coefficient * dt) * decay
-  axis[velocity] = (axis[velocity] - omega * coefficient * dt) * decay
+  if (zeta >= 0.999) {
+    const coefficient = axis[velocity] + omega * displacement
+    const decay = Math.exp(-omega * dt)
+    axis[position] = goal + (displacement + coefficient * dt) * decay
+    axis[velocity] = (axis[velocity] - omega * coefficient * dt) * decay
+    return
+  }
+  const damped = omega * Math.sqrt(1 - zeta * zeta)
+  const along = (axis[velocity] + zeta * omega * displacement) / damped
+  const decay = Math.exp(-zeta * omega * dt)
+  const cos = Math.cos(damped * dt)
+  const sin = Math.sin(damped * dt)
+  axis[position] = goal + decay * (displacement * cos + along * sin)
+  axis[velocity] = decay * ((along * damped - zeta * omega * displacement) * cos - (displacement * damped + zeta * omega * along) * sin)
 }
+
+/** Lids opening or closing faster than this (eyeOpen per second) are on their way somewhere. */
+const LIDS_MOVING = 0.8

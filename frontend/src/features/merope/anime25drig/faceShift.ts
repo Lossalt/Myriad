@@ -16,6 +16,28 @@ function stage(control: BodyControl): number {
 }
 
 /**
+ * The head, body and eyes' aim carry momentum: they may go past their goal
+ * and come back, wind up first, and travel in arcs. The lids, brows and
+ * mouth only open and close: they reach their goal and stop.
+ */
+export function carriesMomentum(control: BodyControl): boolean {
+  const order = stage(control)
+  return order === 0 || order === 3 || order === 4
+}
+
+/**
+ * A move along one control bows another off the straight line, at its
+ * middle: a turning head dips, a nod tips the head aside a little, a look
+ * across sinks slightly (driver keys, and how much of the way).
+ */
+export const ARCS: Partial<Record<BodyControl, { onto: BodyControl; share: number; sided?: true }>> = {
+  headTurn: { onto: 'headNod', share: -0.45 },
+  headNod: { onto: 'headTilt', share: 0.35, sided: true },
+  gazeHorizontal: { onto: 'gazeVertical', share: -0.25 },
+  torsoTurn: { onto: 'torsoRise', share: -0.3 },
+}
+
+/**
  * When a control sets off from where it is (`from`, a driver value) toward
  * its new goal (`to`), and how quickly it gets there as a spring rate: a far
  * way takes longer than a short one.

@@ -250,6 +250,12 @@ export interface FaceShift {
   durationMs: number
   staggerMs: number
   pauseMs: number
+  /** Damping ratio of the head, body and gaze (1: no overshoot; lower: past the goal and back). */
+  damping: number
+  /** A share of the way first taken the other way, as a wind-up. */
+  anticipation: number
+  /** How far a move bows off its straight line, as a share of its way. */
+  arc: number
   move?: ScoreMove
 }
 
@@ -264,5 +270,13 @@ export function faceShift(name: string | null | undefined): FaceShift {
   const move = raw.move
     ? sanitizeScoreMove({ ...raw.move, amount: extents[raw.move.amount as string], tempo: tempos[raw.move.tempo as string] })
     : null
-  return { durationMs: raw.durationMs, staggerMs: raw.staggerMs, pauseMs: raw.pauseMs, ...(move ? { move } : {}) }
+  return {
+    durationMs: raw.durationMs,
+    staggerMs: raw.staggerMs,
+    pauseMs: raw.pauseMs,
+    damping: raw.damping,
+    anticipation: raw.anticipation,
+    arc: raw.arc,
+    ...(move ? { move } : {}),
+  }
 }

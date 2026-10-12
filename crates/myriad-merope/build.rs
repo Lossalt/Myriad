@@ -546,7 +546,21 @@ fn main() {
             .as_str()
             .unwrap_or_else(|| panic!("face shift {name} needs a description"));
         for key in ["durationMs", "staggerMs", "pauseMs"] {
-            assert!(shift[key].as_u64().is_some(), "face shift {name} needs {key}");
+            assert!(
+                shift[key].as_u64().is_some(),
+                "face shift {name} needs {key}"
+            );
+        }
+        let damping = shift["damping"].as_f64().unwrap_or(-1.0);
+        assert!(
+            damping > 0.0 && damping <= 1.0,
+            "face shift {name} needs damping in (0, 1]"
+        );
+        for key in ["anticipation", "arc"] {
+            assert!(
+                shift[key].as_f64().is_some_and(|v| v >= 0.0),
+                "face shift {name} needs {key} >= 0"
+            );
         }
         generated.push_str(&format!(
             "    ({}, {}),\n",

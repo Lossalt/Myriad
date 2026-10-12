@@ -401,7 +401,7 @@ export class Anime25DMotionComposer {
     )
     this.unblinkedEyeOpenL = this.current.eyeOpenL
     this.unblinkedEyeOpenR = this.current.eyeOpenR
-    const blinkSuppressed = stylizedTargets.maniac > 0.03 || stylizedTargets.silly > 0.03
+    const blinkSuppressed = stylizedTargets.maniac > 0.03 || stylizedTargets.silly > 0.03 || this.directedPose.lidsMoving()
     if (
       this.gazeBlink.step(
         this.current.angleX,
