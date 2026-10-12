@@ -24,7 +24,7 @@ import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, HANGING_ARM, resolveDirectedArmIntent } from './armChoreography'
 import { ArmDrape, ArmPendulum, ArmSegment, BUST_ARM_SWING, FIGURE_ARM_SWING, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
-import { BODY_TURN_SHARE, bodyTurnAmount, headRidesBody, playbackBodyKeys } from './bodyTurnKeyforms'
+import { bodyKeyShare, bodyTurnAmount, headRidesBody } from './bodyTurnKeyforms'
 import {
   chestBodyExcitationY,
   chestBreathResidual,
@@ -174,7 +174,7 @@ export class Anime25DBodyFrames {
     this.anchors = playback.anchors
     this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance, playback)
     this.shellProfile = this.figure ? figureShellProfile(playback.shellProfile) : playback.shellProfile
-    this.bodyKeyShare = playbackBodyKeys(playback) ? (this.figure ? 1 : BODY_TURN_SHARE) : null
+    this.bodyKeyShare = bodyKeyShare(playback)
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -340,7 +340,7 @@ export class Anime25DBodyFrames {
     stepAnime25DTorsoShellRotation(
       this.torsoYaw,
       // The head's own turn: what it took from the directed torso turn is not followed back.
-      this.current.angleX - this.current.torsoTurn * headRidesBody(this.bodyKeyShare !== null, this.secondaryDeformationFrame.keyedHead === true),
+      this.current.angleX - this.current.torsoTurn * headRidesBody(this.bodyKeyShare, this.secondaryDeformationFrame.keyedHead === true),
       this.current.body,
       dt,
       this.torsoShellRotation,

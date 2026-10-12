@@ -17,7 +17,7 @@ import { allowsPointerGaze } from '../motion/policy'
 import { SingingGrooveController } from '../singing/singingGroove'
 import { AmbientMotionController } from './ambientMotion'
 import { Anime25DBehaviorMotionController } from './behaviorMotion'
-import { headRidesBody } from './bodyTurnKeyforms'
+import { bodyKeyShare, headRidesBody } from './bodyTurnKeyforms'
 import { BODY_CONTROL_DRIVERS, DirectedPoseController, INDEPENDENT_BODY_CONTROLS } from './directedPose'
 import { IDENTITY_DRIVER } from './driver'
 import {
@@ -188,7 +188,7 @@ export class Anime25DMotionComposer {
    */
   setFigure(playback: Pick<Anime25DPlayback, 'anchors' | 'bodyTurnKeyforms' | 'turnKeyforms'>): void {
     this.standing = isStandingFigure(playback.anchors)
-    this.headRidesBody = headRidesBody(Boolean(playback.bodyTurnKeyforms), Boolean(playback.turnKeyforms))
+    this.headRidesBody = headRidesBody(bodyKeyShare(playback), Boolean(playback.turnKeyforms))
   }
 
   directedBodyWeight(control: IndependentBodyControl): number {

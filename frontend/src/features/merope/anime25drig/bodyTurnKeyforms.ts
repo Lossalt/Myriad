@@ -168,7 +168,20 @@ export function addBodyTurn(point: { x: number; y: number }, bound: Readonly<Bou
  * staying on the viewer. Only a keyed head goes along: a computed turn slides
  * the head and the neck's top with it, shearing a choker against the collar.
  * Otherwise, nothing: angleX is the head's own angle, as before.
+ * `share` is how much of the torso's turn the body shows (bodyKeyShare).
  */
-export function headRidesBody(bodyKeyed: boolean, headKeyed: boolean): number {
-  return bodyKeyed && headKeyed ? (HEAD_YAW_SHARE * BODY_TURN_SHARE) / HEAD_TURN_RADIANS : 0
+export function headRidesBody(share: number | null, headKeyed: boolean): number {
+  return share !== null && headKeyed ? (HEAD_YAW_SHARE * share) / HEAD_TURN_RADIANS : 0
+}
+
+/**
+ * How much of the torso's turn a rig's body keys show: all of it on a
+ * standing figure, which turns on its whole cylinder (playbackBodyKeys),
+ * BODY_TURN_SHARE otherwise; null without body keys.
+ */
+export function bodyKeyShare(
+  playback: { bodyTurnKeyforms?: Anime25DTurnKeyforms; anchors: { groundY?: number } },
+): number | null {
+  if (!playbackBodyKeys(playback)) return null
+  return playback.anchors.groundY === undefined ? BODY_TURN_SHARE : 1
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addBodyTurn, bindBodyTurnKeyform, BODY_KEY_YAW, BODY_TURN_SHARE, bodyTurnAmount, bodyTurnKeyFamily, headRidesBody } from './bodyTurnKeyforms'
+import { addBodyTurn, bindBodyTurnKeyform, BODY_KEY_YAW, BODY_TURN_SHARE, bodyKeyShare, bodyTurnAmount, bodyTurnKeyFamily, headRidesBody } from './bodyTurnKeyforms'
 import { HEAD_TURN_RADIANS } from './headTurn'
 import { HEAD_YAW_SHARE } from './torsoDeformation'
 
@@ -59,11 +59,14 @@ test("a sleeve's shoulder and inner side go with the torso, its far side with it
 })
 
 test('a directed torso turn carries a keyed head as far round as the keyed body shows', () => {
-  // torsoTurn 1 turns the torso HEAD_YAW_SHARE, of which the body shows BODY_TURN_SHARE.
-  const shown = HEAD_YAW_SHARE * BODY_TURN_SHARE
-  assert.ok(Math.abs(headRidesBody(true, true) * HEAD_TURN_RADIANS - shown) < 1e-9)
-  assert.equal(headRidesBody(true, false), 0)
-  assert.equal(headRidesBody(false, true), 0)
+  // torsoTurn 1 turns the torso HEAD_YAW_SHARE; a standing figure shows all of it.
+  const figure = { bodyTurnKeyforms: { 'thigh:L': { plus: shifted(1, 0), minus: shifted(1, 0) } }, anchors: { groundY: 900 } }
+  assert.equal(bodyKeyShare(figure), 1)
+  assert.ok(Math.abs(headRidesBody(bodyKeyShare(figure), true) * HEAD_TURN_RADIANS - HEAD_YAW_SHARE) < 1e-9)
+  assert.equal(bodyKeyShare({ ...figure, anchors: {} }), BODY_TURN_SHARE)
+  assert.equal(bodyKeyShare({ anchors: { groundY: 900 } }), null)
+  assert.equal(headRidesBody(1, false), 0)
+  assert.equal(headRidesBody(null, true), 0)
 })
 
 test('a leg measured as thigh and shin takes each above and below its knee', () => {
