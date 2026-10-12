@@ -153,6 +153,12 @@ pub async fn reply(
     if let Some(block) = super::format_views_section(&super::views::touched(db, words, 2).await) {
         sections.push(block);
     }
+    // What she heard in groups about things, as with anyone in the group.
+    if let Some(block) =
+        myriad_merope::heard::section(&super::heard::brought_back(db, venue, words, 3).await)
+    {
+        sections.push(block);
+    }
     // The group's turtle soup: anyone may ask, and so may they.
     let table = super::soup::Table::Group(venue.to_string());
     let game = match super::soup::this_turn_at(&table, Some(&stranger.name), words, owner).await {

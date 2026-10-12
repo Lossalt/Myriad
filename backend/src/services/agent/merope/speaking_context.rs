@@ -425,6 +425,8 @@ pub(super) const RECENT_SPEAKING_DIARY_SOURCES: &[&str] = &[store::DIARY_SOURCE_
 
 /// Things she looked up on her own that a turn carries.
 const FOUND_OUT_LIMIT: usize = 2;
+/// Things she heard in groups a group's talk brings back.
+const HEARD_LIMIT: usize = 3;
 /// Her own days a conversation carries, most recent last.
 const OWN_DAYS_LIMIT: u64 = 3;
 /// Whose things keep getting to her, when her life comes to mind.

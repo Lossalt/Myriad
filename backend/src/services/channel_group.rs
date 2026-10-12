@@ -68,6 +68,7 @@ mod platform;
 mod reaching_out;
 mod run;
 mod speaking_up;
+mod title;
 mod transcript;
 mod turns;
 
@@ -89,6 +90,7 @@ pub use memory::{catch_up, groups_lately, record, take_back_kept};
 pub use muting::muted;
 pub use reaching_out::{come_back, share_first};
 pub use speaking_up::notice;
+pub use title::title;
 pub use transcript::names_here;
 pub use turns::handle;
 

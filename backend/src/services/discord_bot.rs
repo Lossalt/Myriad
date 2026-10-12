@@ -992,6 +992,19 @@ async fn discord_multipart(
     Ok((status, text))
 }
 
+/// What a channel is called, if Discord says.
+pub async fn channel_name(token: &str, channel_id: &str) -> Option<String> {
+    let path = format!("/channels/{channel_id}");
+    let (status, body) = discord_request(token, reqwest::Method::GET, &path, None)
+        .await
+        .ok()?;
+    if !(200..300).contains(&status) {
+        return None;
+    }
+    let value: Value = serde_json::from_str(&body).ok()?;
+    value.get("name")?.as_str().map(str::to_string)
+}
+
 async fn discord_request(
     token: &str,
     method: reqwest::Method,

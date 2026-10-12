@@ -1,9 +1,9 @@
 //! What she heard in group chats that is about things, not people: a book,
 //! a song, a game someone recommended; a fact or an explanation someone
-//! gave; news someone mentioned. Kept as her own, with no name and no group
-//! on it, it goes with her anywhere, the way a person says 「之前听人说过……」.
-//! Anything about a person stays where it was said, and so does a joke that
-//! only lands there.
+//! gave; news someone mentioned. Kept as her own, with no name of anyone on
+//! it but the group she heard it in, it goes with her from group to group,
+//! the way a person says 「之前在另一个群听人说过……」. Anything about a person
+//! stays where it was said, and so does a joke that only lands there.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -41,6 +41,47 @@ pub fn schema() -> Value {
         "required": ["things"],
         "additionalProperties": false
     })
+}
+
+/// Where she heard something the talk brings back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Where {
+    /// In the group she is talking in now.
+    Here,
+    /// In another group, by the name it goes by.
+    In(String),
+    /// In a group whose name she does not have.
+    SomeGroup,
+}
+
+/// Something she heard that the talk brings back: what, where, how long ago.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recalled {
+    pub thing: String,
+    pub heard: Where,
+    pub ago: String,
+}
+
+/// What she heard in groups that the talk brings back, as a section.
+pub fn section(recalled: &[Recalled]) -> Option<String> {
+    if recalled.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = recalled
+        .iter()
+        .map(|recalled| {
+            let heard = match &recalled.heard {
+                Where::Here => "here".to_string(),
+                Where::In(name) => format!("in the group 「{name}」"),
+                Where::SomeGroup => "in a group".to_string(),
+            };
+            format!("- {heard}, {}: {}", recalled.ago, recalled.thing)
+        })
+        .collect();
+    Some(format!(
+        "## Things you heard\nThings about the world you heard people say in groups, not about anyone; where you heard each, and how long ago:\n{}",
+        myriad_agent_rules::untrusted_block("heard", &lines.join("\n"))
+    ))
 }
 
 /// A line of the stretch: who said it (empty for hers) and what.
@@ -161,5 +202,28 @@ mod tests {
         assert!(input.contains(r#""who":"you""#));
         assert!(input.contains(r#""who":"老周""#));
         assert!(system().contains("not about any person"));
+    }
+
+    #[test]
+    fn what_she_heard_says_where_and_when_and_names_no_one() {
+        assert_eq!(section(&[]), None);
+        let block = section(&[
+            Recalled {
+                thing: "《星露谷》1.7 加了新农场".into(),
+                heard: Where::In("摸鱼小队".into()),
+                ago: "3 days ago".into(),
+            },
+            Recalled {
+                thing: "楼下新开的面馆不错".into(),
+                heard: Where::Here,
+                ago: "yesterday".into(),
+            },
+        ])
+        .unwrap();
+        assert!(
+            block.contains("- in the group 「摸鱼小队」, 3 days ago: 《星露谷》1.7 加了新农场")
+        );
+        assert!(block.contains("- here, yesterday: 楼下新开的面馆不错"));
+        assert!(block.contains("not about anyone"));
     }
 }

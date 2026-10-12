@@ -294,6 +294,13 @@ pub(super) async fn what_she_found(
         if let Some(block) = format_found_out_section(&found) {
             sections.push(block);
         }
+        // In a group, what she heard in any group about things: where, and when.
+        if let Some(here) = present.group_id() {
+            let heard = super::super::heard::brought_back(db, here, words, HEARD_LIMIT).await;
+            if let Some(block) = myriad_merope::heard::section(&heard) {
+                sections.push(block);
+            }
+        }
     }
 }
 

@@ -641,6 +641,24 @@ pub async fn send_typing(token: &str, chat_id: &str) -> Result<(), ConnectFailur
     parse_telegram_ok_payload(status, &body).map(|_| ())
 }
 
+/// What a group calls itself (`getChat`), if Telegram says.
+pub async fn chat_title(token: &str, chat_id: &str) -> Option<String> {
+    let (_, body) = telegram_request(
+        token,
+        "getChat",
+        Some(serde_json::json!({ "chat_id": chat_id })),
+        HTTP_TIMEOUT,
+    )
+    .await
+    .ok()?;
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    value
+        .get("result")?
+        .get("title")?
+        .as_str()
+        .map(str::to_string)
+}
+
 async fn telegram_multipart(
     token: &str,
     method: &str,

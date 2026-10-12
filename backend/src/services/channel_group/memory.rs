@@ -415,7 +415,7 @@ pub(super) fn take_in(venue: &str) {
                 hers: *hers,
             })
             .collect();
-        crate::services::agent::merope::group::heard::take_in(&db, owner, heard).await;
+        crate::services::agent::merope::group::heard::take_in(&db, owner, &venue, heard).await;
         // And what the group was like, while its talk is still at hand.
         crate::services::agent::merope::group::bits::go_over_stretch(&db, owner, &venue, stretch)
             .await;
