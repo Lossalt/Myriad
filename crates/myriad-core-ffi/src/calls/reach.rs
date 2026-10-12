@@ -145,6 +145,33 @@ pub(super) fn wrote_before(raw: &[u8]) -> Result<Value, Failure> {
     Ok(text(reach::wrote_before(&req.lines)))
 }
 
+/// The last times she wrote to them first, as the reach judge reads them
+/// (`myriad_merope::others::first_words_view`).
+pub(super) fn first_words_view(raw: &[u8]) -> Result<Value, Failure> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Entry {
+        ago: String,
+        /// None: no answer so far, and a day has not passed.
+        answered: Option<bool>,
+        /// What she wrote that time.
+        said: Option<String>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct In {
+        /// Newest first.
+        entries: Vec<Entry>,
+    }
+    let req: In = input(raw)?;
+    let entries: Vec<(String, Option<bool>, Option<String>)> = req
+        .entries
+        .into_iter()
+        .map(|entry| (entry.ago, entry.answered, entry.said))
+        .collect();
+    Ok(myriad_merope::others::first_words_view(&entries))
+}
+
 pub(super) fn writing_first(raw: &[u8]) -> Result<Value, Failure> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]

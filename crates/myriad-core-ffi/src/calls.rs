@@ -79,6 +79,7 @@ const CALLS: &[(&str, Call)] = &[
     ("memory.score_all", memory::score_all),
     ("memory.spread", memory::spread),
     ("meta.version", version),
+    ("others.first_words_view", reach::first_words_view),
     ("outfit.after_reply", outfit::after_reply),
     ("outfit.hold_wear", outfit::hold_wear),
     ("outfit.looks_from_profile", outfit::looks_from_profile),

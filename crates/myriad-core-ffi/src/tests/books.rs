@@ -2,7 +2,7 @@
 //! the C entry point and straight from the crate.
 
 use chrono::{DateTime, Duration, Utc};
-use myriad_merope::{library, reach, serial, threads};
+use myriad_merope::{library, others, reach, serial, threads};
 use serde_json::{Value, json};
 
 use super::{micros, ok, text};
@@ -11,6 +11,7 @@ pub(super) const TESTED: &[&str] = &[
     "library.csv_records",
     "library.from_aozora",
     "library.from_gutenberg",
+    "others.first_words_view",
     "outfit.after_reply",
     "outfit.hold_wear",
     "outfit.looks_from_profile",
@@ -320,6 +321,27 @@ fn writing_first_matches_the_crate() {
         reach::wrote_before(&lines)
     );
     assert_eq!(text("reach.wrote_before", json!({ "lines": [] })), None);
+    let first_words = vec![
+        (
+            "2 days ago".to_string(),
+            Some(false),
+            Some("今天上课咋样呀？".to_string()),
+        ),
+        ("an hour ago".to_string(), None, None),
+        ("a week ago".to_string(), Some(true), Some(String::new())),
+    ];
+    let entries: Vec<Value> = first_words
+        .iter()
+        .map(|(ago, answered, said)| json!({ "ago": ago, "answered": answered, "said": said }))
+        .collect();
+    assert_eq!(
+        ok("others.first_words_view", json!({ "entries": entries })),
+        others::first_words_view(&first_words)
+    );
+    assert_eq!(
+        ok("others.first_words_view", json!({ "entries": [] })),
+        json!([])
+    );
     for last_talked in [None, Some("3 days ago")] {
         assert_eq!(
             text(
