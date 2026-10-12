@@ -85,6 +85,15 @@ pub(crate) async fn ensure_user_lifecycle(db: &DatabaseConnection) -> Result<(),
     Ok(())
 }
 
+/// Her private conversations announce their changes on `myriad_conversations`
+/// (`migrations/conversation_changes.sql`), for databases that ran 004 before
+/// it was in it. Same file as 004; triggers already there are left as they are.
+pub(crate) async fn ensure_conversation_changes(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(include_str!("../../../migrations/conversation_changes.sql"))
+        .await?;
+    Ok(())
+}
+
 /// Federation foreign keys — **conservative by default**.
 ///
 /// # Policy (strict, no data mutation)

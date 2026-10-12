@@ -39,6 +39,11 @@ CREATE TRIGGER federation_room_membership_notify
     FOR EACH ROW EXECUTE FUNCTION federation_room_membership_notify();
 "#;
 
+/// Channel on which a change to someone's private conversations with her is
+/// announced, with that person's id (`conversation_changes.sql`), so a live
+/// link reads them again at once.
+pub const CONVERSATIONS_CHANNEL: &str = "myriad_conversations";
+
 pub const SOURCE_RECENT_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_phantasi_items_source_recent ON phantasi_items (source_id, published_at DESC NULLS LAST, id DESC)";
 
 /// The schema mark 0.6.1 writes once its startup heals have all run

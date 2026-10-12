@@ -6,12 +6,47 @@
 //! A child that also takes `conversations.live` (D37) is shown her lines
 //! said unprompted outside a chat too, each in the conversation that was the
 //! latest when she said it, and is kept current: each change to one of
-//! these conversations comes as `conversation` while its link is open.
+//! these conversations comes as `conversation` while its link is open, as
+//! soon as the database announces it (`myriad_conversations`, D45), with a
+//! slow check behind it for an announcement missed.
+
+use std::sync::OnceLock;
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
 
 use super::connection::Outgoing;
+
+/// Whose conversations changed, as the database announced it (D45): each
+/// live link of that person reads them again. `EVERYONE` after the listener
+/// reconnected, when a change may have gone unheard.
+static CHANGED: OnceLock<broadcast::Sender<i32>> = OnceLock::new();
+pub(super) const EVERYONE: i32 = 0;
+
+fn changed_sender() -> &'static broadcast::Sender<i32> {
+    CHANGED.get_or_init(|| broadcast::channel(256).0)
+}
+
+/// For a live link: who the next changes are for.
+pub(super) fn subscribe_changes() -> broadcast::Receiver<i32> {
+    changed_sender().subscribe()
+}
+
+/// One announcement on `myriad_conversations` (its payload is the person's
+/// id); anything else is ignored.
+pub(crate) fn heard_change(payload: &str) {
+    if let Ok(owner) = payload.trim().parse::<i32>()
+        && owner > 0
+    {
+        let _ = changed_sender().send(owner);
+    }
+}
+
+/// The listener (re)connected: changes made meanwhile were not heard.
+pub(crate) fn heard_nothing_for_a_while() {
+    let _ = changed_sender().send(EVERYONE);
+}
 
 /// The most recently active private chats sent.
 pub(super) const SESSIONS: i64 = 10;

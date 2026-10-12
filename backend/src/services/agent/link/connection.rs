@@ -29,9 +29,25 @@ use super::turns::{self, Turn};
 
 /// Frames a run follower or the mood follower may have waiting.
 const QUEUED_FRAMES: usize = 256;
-/// How often a child kept current (`conversations.live`) is checked for
-/// changes to her conversations.
-const CONVERSATIONS_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+/// A child kept current (`conversations.live`) is told of a change to her
+/// conversations as the database announces it (D45); this slow check is only
+/// behind it, for an announcement missed.
+const CONVERSATIONS_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own slow check, for the links served on its thread.
+    pub(super) static CONVERSATIONS_EVERY_IN_TEST: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn conversations_every() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(every) = CONVERSATIONS_EVERY_IN_TEST.with(std::cell::Cell::get) {
+        return every;
+    }
+    CONVERSATIONS_EVERY
+}
 
 /// A frame on its way to the child; the link numbers it as it goes out.
 pub(super) struct Outgoing {
@@ -242,9 +258,10 @@ impl Link {
             self.timing.heartbeat,
         );
         beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut keep =
-            tokio::time::interval_at(Instant::now() + CONVERSATIONS_EVERY, CONVERSATIONS_EVERY);
+        let every = conversations_every();
+        let mut keep = tokio::time::interval_at(Instant::now() + every, every);
         keep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut changed = super::conversations::subscribe_changes();
         loop {
             let why = tokio::select! {
                 why = &mut closed => Some(why.unwrap_or(Close::Unavailable)),
@@ -272,6 +289,12 @@ impl Link {
                 _ = beat.tick() => self.beat().await,
                 _ = keep.tick(), if self.live.is_some() => {
                     self.keep_conversations().await;
+                    None
+                }
+                heard = changed.recv(), if self.live.is_some() => {
+                    if self.changed_for_me(heard, &mut changed) {
+                        self.keep_conversations().await;
+                    }
                     None
                 }
             };
@@ -1054,6 +1077,29 @@ impl Link {
         .is_err()
         {
             self.error("bad_frame", Some(seq));
+        }
+    }
+
+    /// Whether an announcement (and any queued behind it) is about this
+    /// link's owner. One read covers them all; a lost one may be.
+    fn changed_for_me(
+        &self,
+        heard: Result<i32, tokio::sync::broadcast::error::RecvError>,
+        changed: &mut tokio::sync::broadcast::Receiver<i32>,
+    ) -> bool {
+        use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+        let mine = |owner: i32| owner == self.owner || owner == super::conversations::EVERYONE;
+        let mut read = match heard {
+            Ok(owner) => mine(owner),
+            Err(RecvError::Lagged(_)) => true,
+            Err(RecvError::Closed) => false,
+        };
+        loop {
+            match changed.try_recv() {
+                Ok(owner) => read |= mine(owner),
+                Err(TryRecvError::Lagged(_)) => read = true,
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return read,
+            }
         }
     }
 

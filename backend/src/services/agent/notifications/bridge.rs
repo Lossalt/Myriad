@@ -2,6 +2,8 @@
 //! A separate ephemeral channel carries capped persona observations between trusted
 //! processes; these are independent of toast preferences and are not replayed.
 //! LISTEN reconnect + periodic resync recover durable notification history.
+//! Changes to her private conversations are announced by the database itself
+//! (`myriad_conversations`) and handed to the live links here.
 use super::*;
 use sea_orm::DatabaseBackend;
 use std::time::Duration;
@@ -239,12 +241,17 @@ async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) 
     if listener.listen(CHANNEL).await.is_err()
         || listener.listen(PERSONA_CHANNEL).await.is_err()
         || listener.listen(MOOD_CHANNEL).await.is_err()
+        || listener
+            .listen(migration::CONVERSATIONS_CHANNEL)
+            .await
+            .is_err()
     {
         return;
     }
     // Clear cached data from before a reconnect; DB reads are authoritative.
     manager.history.write().await.clear();
     let _ = manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
+    crate::services::agent::link::conversations_unheard();
     // try_recv returns None after a connection loss, so silent reconnects
     // also generate resync instead of losing the gap invisibly.
     loop {
@@ -258,6 +265,12 @@ async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) 
                     receive_merope_state(&manager, message.payload());
                     continue;
                 }
+                // Announced by the database itself as each change commits
+                // (`conversation_changes.sql`), so every process hears it once.
+                if message.channel() == migration::CONVERSATIONS_CHANNEL {
+                    crate::services::agent::link::conversations_changed(message.payload());
+                    continue;
+                }
                 if let Ok(change) = serde_json::from_str::<Change>(message.payload()) {
                     if change.origin != origin() && change.id.len() <= 512 {
                         manager.receive_external(change).await;
@@ -267,6 +280,7 @@ async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) 
             Ok(None) => {
                 manager.history.write().await.clear();
                 let _ = manager.tx.send(NotificationEvent::Resync { lagged_by: 0 });
+                crate::services::agent::link::conversations_unheard();
             }
             Err(_) => return,
         }

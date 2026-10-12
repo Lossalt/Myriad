@@ -2846,11 +2846,48 @@ async fn conversation_of(child: &mut Child, session: &str) -> Value {
     }
 }
 
+/// The test database's address, as the schema fixtures read it.
+fn test_database_url() -> Option<String> {
+    std::env::var("FEDERATION_TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("MYRIAD_SCHEMA_DRIFT_DB"))
+        .or_else(|_| std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL"))
+        .ok()
+}
+
+/// What the notification bridge does in a running site (D45): each
+/// `myriad_conversations` announcement goes to the live links. Listening
+/// before it returns.
+async fn forward_conversation_changes() -> tokio::task::JoinHandle<()> {
+    let url = test_database_url().expect("a test database");
+    let mut listener = sea_orm::sqlx::postgres::PgListener::connect(&url)
+        .await
+        .unwrap();
+    listener
+        .listen(migration::CONVERSATIONS_CHANNEL)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        while let Ok(message) = listener.recv().await {
+            crate::services::agent::link::conversations_changed(message.payload());
+        }
+    })
+}
+
+/// The links this test serves check her conversations only this often by
+/// themselves (on this test's thread; each test has its own).
+fn conversations_checked_every(every: Duration) {
+    super::connection::CONVERSATIONS_EVERY_IN_TEST.with(|cell| cell.set(Some(every)));
+}
+
 #[tokio::test]
 async fn her_wardrobe_and_conversations_stay_current_on_the_app() {
     let Some(site) = site().await else {
         return;
     };
+    // Every change below reaches the app as the database announces it: the
+    // link's own check is too slow to bring any of them within the wait (D45).
+    conversations_checked_every(Duration::from_secs(3600));
+    let forwarder = forward_conversation_changes().await;
     let (_, token) = device(&site.db, "Mac").await;
     let rig = "ab".repeat(32);
     crate::services::agent::merope::upsert_persona_on(
@@ -2973,5 +3010,201 @@ async fn her_wardrobe_and_conversations_stay_current_on_the_app() {
     );
     assert!(last["id"].as_str().is_some_and(|id| id.starts_with("pro_")));
     drop(child);
+    forwarder.abort();
     site.close().await;
+}
+
+/// An announcement missed (the listener was down) is caught up by the slow
+/// check behind it: the change still comes, without a reconnect.
+#[tokio::test]
+async fn a_change_never_announced_still_comes_with_the_slow_check() {
+    let Some(site) = site().await else {
+        return;
+    };
+    conversations_checked_every(Duration::from_secs(1));
+    let (_, token) = device(&site.db, "Mac").await;
+    chat_session(
+        &site.db,
+        "ses_one",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        false,
+        120,
+        &[("user", "早"), ("assistant", "早呀")],
+    )
+    .await;
+    let mut child = Child::open(&site, &token).await;
+    child
+        .hello_with(&["conversations", "conversations.live"])
+        .await;
+    until(&mut child, "conversations").await;
+    // Nothing forwards the database's announcements in this test.
+    site.db
+        .execute_unprepared(
+            "INSERT INTO agent_messages (session_id, role, content, created_at) VALUES ('ses_one', 'user', '没人报的这句', now()); \
+             UPDATE agent_sessions SET message_count = message_count + 1, last_active_at = now() WHERE id = 'ses_one'",
+        )
+        .await
+        .unwrap();
+    let again = conversation_of(&mut child, "ses_one").await;
+    assert_eq!(
+        again["messages"].as_array().unwrap().last().unwrap()["text"],
+        "没人报的这句"
+    );
+    drop(child);
+    site.close().await;
+}
+
+/// The announcement's payload is the person's id; anything else wakes no one.
+#[tokio::test]
+async fn only_a_persons_id_is_an_announcement() {
+    let mut heard = super::conversations::subscribe_changes();
+    for payload in ["x", "0", "-3", "", "41 42", "99999999999"] {
+        crate::services::agent::link::conversations_changed(payload);
+    }
+    crate::services::agent::link::conversations_changed(" 7310046 ");
+    crate::services::agent::link::conversations_unheard();
+    // Other tests announce too; only this test's are looked for.
+    let mut got = Vec::new();
+    while let Ok(owner) = heard.try_recv() {
+        if owner == 7_310_046 || owner == super::conversations::EVERYONE {
+            got.push(owner);
+        }
+        assert!(owner >= 0, "{owner}");
+    }
+    assert_eq!(got, [7_310_046, super::conversations::EVERYONE]);
+}
+
+/// The database announces each change to someone's private conversations
+/// with her, with only their id, and nothing else: not Work, not a group's,
+/// not a write that leaves what the app shows as it was (D45). The startup
+/// heal can run the same file again.
+#[tokio::test]
+async fn her_conversations_announce_their_own_changes() {
+    let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = fixture.db.clone();
+    // Its own person: other tests on the same database announce for theirs.
+    const WHO: i32 = 7_310_045;
+    db.execute_unprepared(&format!(
+        "INSERT INTO users (id, username) VALUES ({WHO}, 'who{WHO}')"
+    ))
+    .await
+    .unwrap();
+    let mut listener = sea_orm::sqlx::postgres::PgListener::connect(&test_database_url().unwrap())
+        .await
+        .unwrap();
+    listener
+        .listen(migration::CONVERSATIONS_CHANNEL)
+        .await
+        .unwrap();
+    // Whether an announcement for WHO came within `wait`, after which the
+    // rest of what came for WHO is taken too.
+    async fn announced(listener: &mut sea_orm::sqlx::postgres::PgListener, wait: Duration) -> bool {
+        let mut heard = false;
+        let by = tokio::time::Instant::now() + wait;
+        while let Ok(Ok(message)) = tokio::time::timeout_at(by, listener.recv()).await {
+            if message.payload() == WHO.to_string() {
+                heard = true;
+            }
+        }
+        heard
+    }
+    let quiet = Duration::from_millis(400);
+    let write = |sql: String| {
+        let db = db.clone();
+        async move { db.execute_unprepared(&sql).await.unwrap() }
+    };
+
+    chat_session(
+        &db,
+        "ses_chat",
+        WHO,
+        r#"{"mode":"chat"}"#,
+        false,
+        60,
+        &[("user", "早")],
+    )
+    .await;
+    assert!(announced(&mut listener, quiet).await, "a new conversation");
+    chat_session(
+        &db,
+        "ses_work",
+        WHO,
+        r#"{"mode":"work"}"#,
+        false,
+        60,
+        &[("user", "查一下")],
+    )
+    .await;
+    chat_session(
+        &db,
+        "ses_room",
+        WHO,
+        r#"{"mode":"chat","venue":"room:abc"}"#,
+        false,
+        60,
+        &[("user", "大家好")],
+    )
+    .await;
+    write("UPDATE agent_messages SET content = '改了' WHERE session_id = 'ses_work'".into()).await;
+    assert!(
+        !announced(&mut listener, quiet).await,
+        "Work and a group's are not hers with them"
+    );
+
+    write("INSERT INTO agent_messages (session_id, role, content, created_at) VALUES ('ses_chat', 'assistant', '早呀', now())".into()).await;
+    assert!(announced(&mut listener, quiet).await, "a line");
+    write(
+        "UPDATE agent_messages SET metadata = '{\"cutOff\":true}' WHERE session_id = 'ses_chat'"
+            .into(),
+    )
+    .await;
+    write(
+        "UPDATE agent_sessions SET created_at = created_at, title = title WHERE id = 'ses_chat'"
+            .into(),
+    )
+    .await;
+    assert!(
+        !announced(&mut listener, quiet).await,
+        "nothing the app shows changed"
+    );
+    write("UPDATE agent_messages SET content = '早呀！' WHERE session_id = 'ses_chat' AND role = 'assistant'".into()).await;
+    assert!(announced(&mut listener, quiet).await, "a line edited");
+    write("UPDATE agent_sessions SET title = '早上' WHERE id = 'ses_chat'".into()).await;
+    assert!(announced(&mut listener, quiet).await, "renamed");
+    write("UPDATE agent_sessions SET archived = true WHERE id = 'ses_chat'".into()).await;
+    assert!(announced(&mut listener, quiet).await, "archived");
+    crate::services::agent::merope::store::insert_proactive(&db, WHO, "下雨了。", None, true, None)
+        .await
+        .unwrap();
+    assert!(
+        announced(&mut listener, quiet).await,
+        "her line said unprompted"
+    );
+    write("DELETE FROM agent_sessions WHERE id = 'ses_chat'".into()).await;
+    assert!(announced(&mut listener, quiet).await, "deleted");
+
+    // The heal runs the same file on every start: it adds nothing twice.
+    db.execute_unprepared(include_str!(
+        "../../../../migrations/conversation_changes.sql"
+    ))
+    .await
+    .unwrap();
+    let triggers = db
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT count(*)::bigint AS n FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = current_schema() AND t.tgname LIKE 'trg_agent_%_conversation_%'",
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap();
+    assert_eq!(triggers, 6);
+    drop(listener);
+    fixture.close().await;
 }

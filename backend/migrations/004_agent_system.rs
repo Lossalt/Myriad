@@ -602,6 +602,13 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             )
             .await?;
 
+        // 她和谁的私聊变了就在 `myriad_conversations` 上报一声（只有那人的 id），连着的子机
+        // 立刻重读，不再轮询。schema_check::ensure_conversation_changes 跑同一份文件。
+        manager
+            .get_connection()
+            .execute_unprepared(include_str!("conversation_changes.sql"))
+            .await?;
+
         // 同步她：设备凭据、心情变化与锚点、人设字段历史。schema_check::ensure_persona_sync_tables 跑同一份文件。
         manager
             .get_connection()
@@ -658,6 +665,15 @@ DROP TABLE IF EXISTS heartbeat_claims;
 
         manager
             .drop_table(Table::drop().table(AgentTasks::Table).to_owned())
+            .await?;
+
+        // Their triggers went with the tables.
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "DROP FUNCTION IF EXISTS agent_conversation_session_changed(), \
+                 agent_conversation_message_changed(), agent_conversation_said_changed()",
+            )
             .await?;
 
         Ok(())
