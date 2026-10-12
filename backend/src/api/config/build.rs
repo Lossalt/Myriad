@@ -125,14 +125,6 @@ pub(crate) async fn build_config(
                     required: false,
                 },
                 ConfigField {
-                    key: "aux_acting_model".to_string(),
-                    label: "Acting Model".to_string(),
-                    field_type: "text".to_string(),
-                    value: stored.aux_acting_model.clone(),
-                    placeholder: "Blank: the judgment model directs her acting".to_string(),
-                    required: false,
-                },
-                ConfigField {
                     key: "aux_embedding_model".to_string(),
                     label: "Embedding Model".to_string(),
                     field_type: "text".to_string(),

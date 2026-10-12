@@ -99,7 +99,6 @@ standard_fields! {
         lite_ai_source,
         lite_ai_model,
         aux_judge_model,
-        aux_acting_model,
         aux_embedding_model,
         aux_ai_source,
         pro_ai_source,

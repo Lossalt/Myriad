@@ -123,28 +123,6 @@ pub async fn create_lite_judge_ai_analyzer_with_timeout(
         .map(AiAnalyzer::with_light_thinking)
 }
 
-/// The acting model (`aux_acting_model`) when it is a chat model; `None`
-/// when it is blank or answers decisions instead (the director asks those
-/// directly).
-pub async fn create_acting_ai_analyzer_with_timeout(
-    request_timeout: Option<std::time::Duration>,
-) -> Option<AiAnalyzer> {
-    let resolved = GLOBAL_DYNAMIC_CONFIG
-        .read()
-        .await
-        .resolve_acting_ai_config()
-        .filter(|resolved| {
-            !resolved
-                .model
-                .trim()
-                .trim_start_matches('~')
-                .starts_with("typesafe/jev")
-        })?;
-    lite_analyzer(resolved, request_timeout)
-        .await
-        .map(AiAnalyzer::with_light_thinking)
-}
-
 /// The embedding model (`aux_embedding_model`), when one is set: what a
 /// memory means, as a vector. `None`: recall goes by words alone.
 pub async fn create_lite_embedding_analyzer_with_timeout(

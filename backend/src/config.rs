@@ -173,6 +173,15 @@ pub struct OmniVoice {
     pub voice: String,
 }
 
+/// Whether `model` answers typed decisions (TypeSafe Jev) rather than chat:
+/// it writes no text, so only judgments asked as questions can use it.
+pub fn is_decisions_model(model: &str) -> bool {
+    model
+        .trim()
+        .trim_start_matches('~')
+        .starts_with("typesafe/jev")
+}
+
 /// 解析后的 AI 配置（已根据 tier 确定具体的 provider/key/model）
 pub struct ResolvedAiConfig {
     pub provider: String,
@@ -395,14 +404,11 @@ pub struct DynamicConfig {
     /// Lite 的模型。留空就不用 Lite，没有单独的开关。
     pub lite_ai_model: String,
     /// Optional model for small typed judgments (affect appraisal, event
-    /// decisions, memory extraction, whether to look something up), on the
-    /// judgment and embedding source. Blank: Lite's own model.
+    /// decisions, memory extraction, whether to look something up, her
+    /// acting), on the judgment and embedding source. Blank: Lite's own model.
+    /// A decisions model (TypeSafe Jev) only answers typed questions: it
+    /// judges her acting, and judgments that write text stay on Lite's model.
     pub aux_judge_model: String,
-    /// Optional model that judges her acting (how she holds herself, tilts,
-    /// gestures), on the judgment and embedding source. A decisions model
-    /// (TypeSafe Jev) answers typed questions instead of writing a plan.
-    /// Blank: the judgment model directs her acting, as before.
-    pub aux_acting_model: String,
     /// Optional embedding model on the judgment and embedding source: recall
     /// then finds a memory by what it means, not only by its words. Blank:
     /// words only.
@@ -790,7 +796,6 @@ impl Default for DynamicConfig {
             lite_ai_model: String::new(),
             // 留空：判断也用 Lite 的模型，回忆只按字面。
             aux_judge_model: String::new(),
-            aux_acting_model: String::new(),
             aux_embedding_model: String::new(),
             aux_ai_source: String::new(),
             pro_enabled: false,
@@ -1458,37 +1463,35 @@ impl DynamicConfig {
     /// embedding source when both are set and that source can be used,
     /// whether Lite is on or not; otherwise Lite's own model on Lite's own
     /// source (a model name is never sent to a source it is not for).
-    /// Speaking stays on Lite's own model.
+    /// Speaking stays on Lite's own model, and so do these judgments when the
+    /// judgment model only answers decisions (it writes no text).
     pub fn resolve_lite_judge_ai_config(&self) -> Option<ResolvedAiConfig> {
-        let lite = self.resolve_strict_lite_ai_config();
         let judge = self.aux_judge_model.trim();
-        if judge.is_empty() {
-            return lite;
+        if judge.is_empty() || is_decisions_model(judge) {
+            return self.resolve_strict_lite_ai_config();
         }
-        match lite {
+        self.place_judge(judge)
+    }
+
+    /// The judgment model when it answers decisions (TypeSafe Jev), placed
+    /// as any judgment model is; `None` for a chat model or none.
+    pub fn resolve_decisions_ai_config(&self) -> Option<ResolvedAiConfig> {
+        let judge = self.aux_judge_model.trim();
+        if !is_decisions_model(judge) {
+            return None;
+        }
+        self.place_judge(judge)
+            .filter(|resolved| resolved.model == judge)
+    }
+
+    fn place_judge(&self, judge: &str) -> Option<ResolvedAiConfig> {
+        match self.resolve_strict_lite_ai_config() {
             // Never chosen: on Lite's source, as before.
             Some(lite) if !self.aux_chosen() => Some(ResolvedAiConfig {
                 model: judge.to_string(),
                 ..lite
             }),
             lite => self.on_aux_source(judge).or(lite),
-        }
-    }
-
-    /// The acting model (`aux_acting_model`) on the judgment and embedding
-    /// source, placed as the judgment model is; `None` when it is blank (the
-    /// judgment model directs her acting).
-    pub fn resolve_acting_ai_config(&self) -> Option<ResolvedAiConfig> {
-        let acting = self.aux_acting_model.trim();
-        if acting.is_empty() {
-            return None;
-        }
-        match self.resolve_strict_lite_ai_config() {
-            Some(lite) if !self.aux_chosen() => Some(ResolvedAiConfig {
-                model: acting.to_string(),
-                ..lite
-            }),
-            _ => self.on_aux_source(acting),
         }
     }
 
@@ -2009,20 +2012,26 @@ mod tests {
     }
 
     #[test]
-    fn acting_uses_its_own_model_on_the_judgment_source_and_blank_defers() {
+    fn a_decisions_judgment_model_judges_acting_and_text_judgments_stay_on_lite() {
         let mut config = DynamicConfig {
             lite_ai_model: "qwen/qwen3.8-omni-flash".to_string(),
+            aux_judge_model: "openai/gpt-6-luna".to_string(),
             ..DynamicConfig::default()
         };
         assert!(
-            config.resolve_acting_ai_config().is_none(),
-            "blank: the judgment model directs"
+            config.resolve_decisions_ai_config().is_none(),
+            "a chat judgment model writes its answers"
         );
-        config.aux_acting_model = " typesafe/jev-1.13 ".to_string();
+        config.aux_judge_model = " typesafe/jev-1.13 ".to_string();
         assert_eq!(
-            config.resolve_acting_ai_config().map(|r| r.model),
+            config.resolve_decisions_ai_config().map(|r| r.model),
             Some("typesafe/jev-1.13".to_string()),
-            "never chosen: on Lite's source, as the judgment model is"
+            "never chosen: on Lite's source, as any judgment model is"
+        );
+        assert_eq!(
+            config.resolve_lite_judge_ai_config().map(|r| r.model),
+            Some("qwen/qwen3.8-omni-flash".to_string()),
+            "judgments that write text stay on Lite's own model"
         );
     }
 

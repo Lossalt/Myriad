@@ -23,8 +23,8 @@ use super::MoodTransition;
 use super::motion_local::local_performance_plan;
 use super::store::get_persona;
 
-mod jev;
 mod prompt;
+mod questions;
 mod requests;
 
 use prompt::*;
@@ -121,11 +121,6 @@ pub struct PerformanceDirective {
 pub(in crate::services::agent) async fn director_analyzer(
     timeout: Duration,
 ) -> Option<crate::services::analyzer::AiAnalyzer> {
-    if let Some(acting) =
-        crate::services::ai::create_acting_ai_analyzer_with_timeout(Some(timeout)).await
-    {
-        return Some(acting);
-    }
     match crate::services::ai::create_lite_judge_ai_analyzer_with_timeout(Some(timeout)).await {
         Some(judge) => Some(judge),
         None => {
@@ -134,32 +129,31 @@ pub(in crate::services::agent) async fn director_analyzer(
     }
 }
 
-/// The acting model's source when it answers decisions (TypeSafe Jev)
+/// The judgment model's source when it answers decisions (TypeSafe Jev)
 /// rather than writing a plan.
 pub(in crate::services::agent) async fn decisions_source() -> Option<crate::config::ResolvedAiConfig>
 {
     crate::GLOBAL_DYNAMIC_CONFIG
         .read()
         .await
-        .resolve_acting_ai_config()
-        .filter(|source| jev::is_decisions_model(&source.model))
+        .resolve_decisions_ai_config()
 }
 
-/// What a decisions model makes of a moment, as the director's plan.
+/// What the judgment model makes of a moment by answering the questions, as
+/// the director's plan: on the decisions endpoint when `source` is given,
+/// otherwise `analyzer` answers as structured output.
 #[cfg(test)]
-pub(in crate::services::agent) async fn decisions_plan(
+pub(in crate::services::agent) async fn answered_plan(
     context: &MotionContext,
     persona: Option<&str>,
-    source: &crate::config::ResolvedAiConfig,
+    source: Option<&crate::config::ResolvedAiConfig>,
+    analyzer: &crate::services::analyzer::AiAnalyzer,
 ) -> anyhow::Result<String> {
-    jev::direct(
-        context,
-        context.rig_state.as_ref(),
-        persona,
-        source,
-        MOTION_TIMEOUT,
-    )
-    .await
+    let state = context.rig_state.as_ref();
+    match source {
+        Some(source) => questions::direct(context, state, persona, source, MOTION_TIMEOUT).await,
+        None => questions::direct_by_chat(context, state, persona, analyzer).await,
+    }
 }
 
 /// Runs exactly one Lite-tier call, falling back to the deterministic plan for
@@ -185,12 +179,13 @@ async fn direct_motion_inner(
         tracing::debug!(phase, "[MeropeMotion] Face hidden; ambient motion only");
         return None;
     }
-    // A decisions model judges her acting by typed questions. Standing acting
-    // (a score looped on time) stays with the chat director.
-    let decisions = decisions_source()
-        .await
-        .filter(|_| context.phase != MotionPhase::Presence);
-    let decided = if let Some(source) = decisions {
+    // The judgment model judges her acting by answering typed questions: a
+    // decisions model (TypeSafe Jev) on its own endpoint, a chat model as
+    // structured output. Standing acting (a score looped on time) is written
+    // by the chat director.
+    let decided = if context.phase == MotionPhase::Presence {
+        None
+    } else {
         let persona_row = match crate::services::process_db::database() {
             Ok(db) => get_persona(&db).await.ok().flatten(),
             Err(_) => None,
@@ -198,13 +193,23 @@ async fn direct_motion_inner(
         let persona = persona_row
             .as_ref()
             .map(|row| row.personality.trim().to_owned());
-        let call = jev::direct(
-            &context,
-            rig_state.as_ref(),
-            persona.as_deref().filter(|p| !p.is_empty()),
-            &source,
-            MOTION_TIMEOUT,
-        );
+        let persona = persona.as_deref().filter(|p| !p.is_empty());
+        let call = async {
+            if let Some(source) = decisions_source().await {
+                questions::direct(
+                    &context,
+                    rig_state.as_ref(),
+                    persona,
+                    &source,
+                    MOTION_TIMEOUT,
+                )
+                .await
+            } else if let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await {
+                questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer).await
+            } else {
+                Err(anyhow::anyhow!("no judgment model"))
+            }
+        };
         Some(
             tokio::time::timeout(
                 MOTION_TOTAL_TIMEOUT,
@@ -217,8 +222,6 @@ async fn direct_motion_inner(
             )
             .await,
         )
-    } else {
-        None
     };
     let chat_director = async {
         let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await else {
@@ -380,9 +383,9 @@ async fn direct_motion_inner(
 
 type DirectorAnswer = Option<Result<anyhow::Result<String>, tokio::time::error::Elapsed>>;
 
-/// The decisions model's answer; the chat director's when there was none, or
-/// when the decisions call failed (rather than ran out of time): a decisions
-/// call answers in well under a second, which leaves the chat director time.
+/// The plan from the answered questions; the chat director's when none were
+/// asked (standing acting), or when answering failed rather than ran out of
+/// time.
 async fn or_chat_director(
     decided: DirectorAnswer,
     phase: &str,
@@ -390,7 +393,7 @@ async fn or_chat_director(
 ) -> DirectorAnswer {
     match decided {
         Some(Ok(Err(error))) => {
-            tracing::warn!(phase, error = %error, "[MeropeMotion] Decisions call failed; asking the chat director");
+            tracing::warn!(phase, error = %error, "[MeropeMotion] Answering the acting questions failed; asking the chat director");
             chat_director.await
         }
         None => chat_director.await,

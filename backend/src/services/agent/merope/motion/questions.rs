@@ -1,10 +1,13 @@
-//! Her acting judged by a decisions model (TypeSafe Jev): it does not write
-//! text, it answers typed questions about the moment with how sure it is.
-//! The answers become the same plan the chat director writes, so everything
-//! after it (grounding, capability filter, playback) is shared.
+//! Her acting judged by typed questions about the moment, each answered with
+//! how sure the judgment model is: a decisions model (TypeSafe Jev) on its
+//! own endpoint, a chat model as structured output. The answers become the
+//! same plan the chat director writes, so everything after it (grounding,
+//! capability filter, playback) is shared.
 //!
-//! Measured on the motion cases (10-11): about 0.5 s a call against 4–9 s for
-//! a chat model, feeling and gesture mostly right, wrong answers mostly unsure.
+//! Measured on the motion cases (10-12, a bust, two rounds): Jev about 0.6–1.2 s
+//! a call; Luna answering about 2–8 s, none timed out; Luna writing the plan
+//! instead 4–10 s, two of twenty timed out and one sulk smiled. Wrong answers
+//! are mostly unsure, and unsure answers are not acted.
 
 use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
@@ -25,13 +28,14 @@ const FEELINGS: &[(&str, &str)] = &[
     ("warm", "fond, glad of them"),
     ("amused", "finds it funny, laughing"),
     ("puzzled", "honestly unsure, guessing"),
+    ("curious", "interested, wants to know more"),
     ("shy", "flustered by praise or attention"),
     ("sulky", "playfully put out"),
     ("low", "sad or worn"),
     ("excited", "eager, lit up"),
 ];
 
-/// How a sentence is said: the speech phrase intents, as Jev reads them.
+/// How a sentence is said: the speech phrase intents, as asked.
 const SAYING: &[(&str, &str)] = &[
     ("ask", "a real question or a guess put to them"),
     ("hesitate", "hesitating or puzzling it out, unsure"),
@@ -56,12 +60,6 @@ const GESTURES: &[(&str, &str)] = &[
     ("sigh", "tired, relieved, exasperated"),
     ("bounce", "delight, eagerness"),
 ];
-
-/// Whether `model` answers decisions rather than chat.
-pub(in crate::services::agent) fn is_decisions_model(model: &str) -> bool {
-    let model = model.trim().trim_start_matches('~');
-    model.starts_with("typesafe/jev")
-}
 
 /// The decisions endpoint on the source a chat base URL names
 /// (`https://openrouter.ai/api/v1` → `https://openrouter.ai/api/alpha/decisions`).
@@ -145,7 +143,7 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
     Value::Object(questions)
 }
 
-/// The moment as Jev reads it.
+/// The moment the questions are about.
 pub(super) fn state(context: &MotionContext, persona: Option<&str>) -> Value {
     json!({
         "she": persona.unwrap_or("a lively, warm companion"),
@@ -264,6 +262,12 @@ pub(super) fn plan_from_answers(
             set("mouthSmile", "clear");
             set("eyeSmile", "slight");
             ("warm", 1.1)
+        }
+        "curious" => {
+            // Interest leans in, the head a little to one side.
+            set("torsoPitch", "slight");
+            set("headTilt", &format!("{side}slight"));
+            ("steady", 1.05)
         }
         "shy" => {
             set("mouthSmile", "slight");
@@ -400,6 +404,98 @@ pub(super) async fn direct(
     Ok(plan_from_answers(&value["answers"], context, state).to_string())
 }
 
+/// The same questions put to a chat model, which answers each in the shape a
+/// decisions model does; the plan then comes out of the same answers.
+pub(super) fn chat_system_prompt(questions: &Value) -> String {
+    let mut prompt = String::from(
+        "You judge how a character acts at one moment of a chat: the input says who she is, what they said, what she replies and her mood. \
+Answer every question below about her, as JSON. `confidence` is how sure you are, from 0 to 1: \
+low when the moment does not show it plainly; what she does not show cannot be wrong. \
+For a yes/no question, `noul` is the probability that the answer is true. \
+For a scale, `score` runs from 0 (its first level) to the number of its last level.\n",
+    );
+    for (key, question) in questions.as_object().into_iter().flatten() {
+        prompt.push_str(&format!(
+            "\n{key}: {}\n",
+            question["instructions"].as_str().unwrap_or_default()
+        ));
+        match &question["criteria"] {
+            Value::Object(options) => {
+                for (option, means) in options {
+                    prompt.push_str(&format!(
+                        "  - {option}: {}\n",
+                        means.as_str().unwrap_or_default()
+                    ));
+                }
+            }
+            Value::Array(levels) => {
+                for (level, means) in levels.iter().enumerate() {
+                    prompt.push_str(&format!(
+                        "  {level}: {}\n",
+                        means.as_str().unwrap_or_default()
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    prompt
+}
+
+/// The answer each question takes from a chat model, constrained.
+pub(super) fn chat_schema(questions: &Value) -> Value {
+    let unit = json!({"type": "number", "minimum": 0, "maximum": 1});
+    let mut properties = Map::new();
+    for (key, question) in questions.as_object().into_iter().flatten() {
+        let answer = match question["type"].as_str() {
+            Some("noul") => json!({"type": "object", "additionalProperties": false,
+                "required": ["noul"], "properties": {"noul": unit}}),
+            Some("score") => {
+                let top = question["criteria"]
+                    .as_array()
+                    .map_or(0, |levels| levels.len().saturating_sub(1));
+                json!({"type": "object", "additionalProperties": false,
+                    "required": ["score", "confidence"],
+                    "properties": {"score": {"type": "number", "minimum": 0, "maximum": top}, "confidence": unit}})
+            }
+            _ => {
+                let options: Vec<&String> = question["criteria"]
+                    .as_object()
+                    .map(|options| options.keys().collect())
+                    .unwrap_or_default();
+                json!({"type": "object", "additionalProperties": false,
+                    "required": ["choice", "confidence"],
+                    "properties": {"choice": {"type": "string", "enum": options}, "confidence": unit}})
+            }
+        };
+        properties.insert(key.clone(), answer);
+    }
+    let required: Vec<String> = properties.keys().cloned().collect();
+    json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})
+}
+
+/// Asks a chat model the decisions questions about this moment; the plan as
+/// the chat director would have written it, for the shared parser.
+pub(super) async fn direct_by_chat(
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+    persona: Option<&str>,
+    analyzer: &crate::services::analyzer::AiAnalyzer,
+) -> anyhow::Result<String> {
+    let questions = questions(context, state);
+    let raw = analyzer
+        .analyze_json(
+            &chat_system_prompt(&questions),
+            &self::state(context, persona).to_string(),
+            "merope_acting_answers",
+            Some(&chat_schema(&questions)),
+        )
+        .await?;
+    let answers: Value = serde_json::from_str(super::strip_motion_json(&raw))?;
+    anyhow::ensure!(answers.is_object(), "answers must be an object");
+    Ok(plan_from_answers(&answers, context, state).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +529,7 @@ mod tests {
 
     #[test]
     fn a_decisions_model_is_asked_on_its_source_decisions_endpoint() {
+        use crate::config::is_decisions_model;
         assert!(
             is_decisions_model("typesafe/jev-1.13") && is_decisions_model(" ~typesafe/jev-latest")
         );
@@ -509,6 +606,54 @@ mod tests {
             value["phrases"],
             json!([{"text": "才、才没有呢……", "intent": "hesitate"}]),
             "unsure and plain sentences are left alone"
+        );
+    }
+
+    #[test]
+    fn a_chat_model_is_asked_every_question_in_the_shape_a_decisions_model_answers() {
+        let asked = questions(
+            &context("才、才没有呢……不过，谢谢你这么说。"),
+            Some(&bust()),
+        );
+        let schema = chat_schema(&asked);
+        let keys: Vec<&String> = asked.as_object().unwrap().keys().collect();
+        assert_eq!(
+            schema["required"].as_array().unwrap().len(),
+            keys.len(),
+            "every question must be answered"
+        );
+        let feeling = &schema["properties"]["feeling"]["properties"];
+        assert_eq!(
+            feeling["choice"]["enum"].as_array().unwrap().len(),
+            FEELINGS.len()
+        );
+        assert_eq!(schema["properties"]["own"]["required"], json!(["noul"]));
+        assert_eq!(
+            schema["properties"]["tilt"]["properties"]["score"]["maximum"], 3,
+            "a scale runs to its last level"
+        );
+        let prompt = chat_system_prompt(&asked);
+        assert!(prompt.contains("  - shy: flustered by praise or attention"));
+        assert!(prompt.contains("  3: strong tilt, as far as it goes"));
+    }
+
+    #[test]
+    fn curiosity_leans_in_with_a_slight_tilt() {
+        let answers = json!({
+            "feeling": {"type": "choice", "choice": "curious", "confidence": 0.8},
+            "own": {"type": "noul", "noul": 0.95},
+            "tilt": {"type": "score", "score": 0.0, "confidence": 0.7},
+        });
+        let value = plan_from_answers(&answers, &context("真的吗？学到哪一首了？"), Some(&bust()));
+        let targets = &value["baseline"]["pose"]["targets"];
+        assert_eq!(targets["torsoPitch"], "slight");
+        assert_eq!(
+            targets["headTilt"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches('-'),
+            "slight",
+            "a sure 'no tilt' does not undo it"
         );
     }
 

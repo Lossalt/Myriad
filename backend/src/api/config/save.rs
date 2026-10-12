@@ -430,7 +430,6 @@ pub(crate) fn collect_database_updates_with_vendor(
             "pro_enabled" => ("pro_enabled", JsonValue::Bool(field.value == "true")),
             "pro_ai_model" => ("pro_ai_model", JsonValue::String(field.value.clone())),
             "aux_judge_model" => ("aux_judge_model", JsonValue::String(field.value.clone())),
-            "aux_acting_model" => ("aux_acting_model", JsonValue::String(field.value.clone())),
             "aux_embedding_model" => (
                 "aux_embedding_model",
                 JsonValue::String(field.value.clone()),
@@ -536,8 +535,6 @@ pub(crate) fn collect_database_updates_with_vendor(
                 | "lite_ai_model"
                 // Cleared: judgments go back to Lite's own model.
                 | "aux_judge_model"
-                // Cleared: the judgment model directs her acting again.
-                | "aux_acting_model"
                 // Cleared: recall goes back to words alone.
                 | "aux_embedding_model"
                 // Cleared: judgments and embeddings go back to Lite's source.
@@ -1109,7 +1106,6 @@ mod tests {
             ("lite_ai_model", ""),
             ("pro_ai_model", "anthropic/claude-opus-5.5"),
             ("aux_judge_model", ""),
-            ("aux_acting_model", "typesafe/jev-1.13"),
             ("aux_embedding_model", "perplexity/pplx-embed-v1-0.6b"),
         ]))
         .unwrap();
@@ -1117,10 +1113,6 @@ mod tests {
         // Cleared: Lite is not used.
         assert_eq!(saved.get("lite_ai_model"), Some(&json!("")));
         assert_eq!(saved.get("aux_judge_model"), Some(&json!("")));
-        assert_eq!(
-            saved.get("aux_acting_model"),
-            Some(&json!("typesafe/jev-1.13"))
-        );
         assert_eq!(
             saved.get("aux_embedding_model"),
             Some(&json!("perplexity/pplx-embed-v1-0.6b"))

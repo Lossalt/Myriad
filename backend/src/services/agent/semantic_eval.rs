@@ -1954,7 +1954,7 @@ async fn run_semantic_suite() {
     } else {
         super::merope::motion::director_analyzer(director_timeout).await
     };
-    // A decisions model directs her acting as production lets it.
+    // A decisions judgment model answers on its own endpoint, as in production.
     let decisions = if mode == "live" && !director_on_lite {
         super::merope::motion::decisions_source().await
     } else {
@@ -1966,7 +1966,7 @@ async fn run_semantic_suite() {
         } else {
             "production"
         });
-        model_info["actingModel"] = json!(decisions.as_ref().map(|source| source.model.clone()));
+        model_info["decisionsModel"] = json!(decisions.as_ref().map(|source| source.model.clone()));
     }
     let mut rows = vec![];
     let probe = std::env::var("MEROPE_SEMANTIC_PROBE").ok();
@@ -2009,11 +2009,16 @@ async fn run_semantic_suite() {
         } else if gated(&case) {
             ("gated".into(), String::new())
         } else if case.kind == "motion"
-            && let Some(source) = &decisions
+            && let Some(director) = &director
         {
+            // Her acting is judged by answering the questions, as production does.
             let context = motion_context(&case);
-            let call =
-                super::merope::motion::decisions_plan(&context, case.soul.as_deref(), source);
+            let call = super::merope::motion::answered_plan(
+                &context,
+                case.soul.as_deref(),
+                decisions.as_ref(),
+                director,
+            );
             match tokio::time::timeout(Duration::from_secs(10), call).await {
                 Ok(Ok(output)) => ("returned".into(), output),
                 Ok(Err(_)) => ("request_error".into(), String::new()),

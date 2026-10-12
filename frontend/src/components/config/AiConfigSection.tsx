@@ -180,11 +180,9 @@ const ModelTierGroup: React.FC<
               label={
                 field.key === 'aux_judge_model'
                   ? t.config.aiAuxJudgeModelLabel
-                  : field.key === 'aux_acting_model'
-                    ? t.config.aiAuxActingModelLabel
-                    : field.key === 'aux_embedding_model'
-                      ? t.config.aiAuxEmbeddingModelLabel
-                      : t.config.openaiModelLabel
+                  : field.key === 'aux_embedding_model'
+                    ? t.config.aiAuxEmbeddingModelLabel
+                    : t.config.openaiModelLabel
               }
               required={field.required}
               value={field.value}
@@ -194,13 +192,11 @@ const ModelTierGroup: React.FC<
               placeholder={
                 field.key === 'aux_judge_model'
                   ? t.config.aiAuxJudgeModelPlaceholder
-                  : field.key === 'aux_acting_model'
-                    ? t.config.aiAuxActingModelPlaceholder
-                    : field.key === 'aux_embedding_model'
-                      ? t.config.aiAuxEmbeddingModelPlaceholder
-                      : field.key === 'lite_ai_model'
-                        ? t.config.aiLiteModelPlaceholder
-                        : field.placeholder
+                  : field.key === 'aux_embedding_model'
+                    ? t.config.aiAuxEmbeddingModelPlaceholder
+                    : field.key === 'lite_ai_model'
+                      ? t.config.aiLiteModelPlaceholder
+                      : field.placeholder
               }
               inputType={field.field_type as 'text' | 'password'}
               autoSelectOnMask
@@ -336,7 +332,7 @@ export const AiConfigSection: React.FC<AiConfigSectionProps> = ({
     add(getFieldValue('ai_source'), 'standard')
     if (liteEnabled) add(getFieldValue('lite_ai_source'), 'lite')
     if (proEnabled) add(getFieldValue('pro_ai_source'), 'pro')
-    if (getFieldValue('aux_judge_model') || getFieldValue('aux_acting_model') || getFieldValue('aux_embedding_model')) {
+    if (getFieldValue('aux_judge_model') || getFieldValue('aux_embedding_model')) {
       add(getFieldValue('aux_ai_source'), 'aux')
     }
     add(getFieldValue('ai_image_source'), 'image')
@@ -451,7 +447,7 @@ export const AiConfigSection: React.FC<AiConfigSectionProps> = ({
     [configFields],
   )
   const auxFields = useMemo(
-    () => fieldsByKey(configFields, ['aux_judge_model', 'aux_acting_model', 'aux_embedding_model']),
+    () => fieldsByKey(configFields, ['aux_judge_model', 'aux_embedding_model']),
     [configFields],
   )
   const textTierOptions = textSourceOptions ?? aiProviderOptions
