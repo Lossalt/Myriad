@@ -322,9 +322,18 @@ function varyLife(
 function envelope(item: Readonly<PoseItem>, time: number): number {
   const t = time - item.at
   if (t < 0) return 0
-  if (t < item.attack) return smooth(t / Math.max(1e-6, item.attack))
+  if (t < item.attack) {
+    const share = t / Math.max(1e-6, item.attack)
+    // A look or a turn of the head sets off at once and settles in; lids and mouth ease both ways.
+    return swings(item.control) ? 1 - (1 - share) ** 3 : smooth(share)
+  }
   if (t < item.attack + item.hold) return 1
   return 1 - smooth((t - item.attack - item.hold) / item.release)
+}
+
+/** Where she looks and how she holds her head and body: moves that set off at once. */
+function swings(control: BodyControl): boolean {
+  return control.startsWith('gaze') || control.startsWith('head') || control.startsWith('torso') || control.includes('Arm')
 }
 
 function smooth(t: number): number {
