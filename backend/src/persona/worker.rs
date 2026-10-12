@@ -57,8 +57,12 @@ pub async fn run() -> anyhow::Result<()> {
     );
     crate::SCHEMA_READY.store(true, Ordering::Release);
     crate::services::process_db::set_process_database(db.clone());
-    *crate::GLOBAL_DYNAMIC_CONFIG.write().await =
-        ConfigService::new(db.clone()).load_config().await?;
+    let dynamic_config = ConfigService::new(db.clone()).load_config().await?;
+    crate::services::config_service::install_dynamic_config(
+        &crate::GLOBAL_DYNAMIC_CONFIG,
+        dynamic_config,
+    )
+    .await;
     crate::services::agent::notifications::init_notifications(db.clone()).await;
     super::start(db.clone()).await?;
 
@@ -123,7 +127,11 @@ pub async fn run() -> anyhow::Result<()> {
                 crate::middleware::cors_runtime::set_cors_origins(core.cors_origins.clone());
                 *crate::GLOBAL_CONFIG.write().await = core;
                 let config = ConfigService::new(db).load_config().await?;
-                *crate::GLOBAL_DYNAMIC_CONFIG.write().await = config;
+                crate::services::config_service::install_dynamic_config(
+                    &crate::GLOBAL_DYNAMIC_CONFIG,
+                    config,
+                )
+                .await;
                 Ok(())
             }
         },

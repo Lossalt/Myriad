@@ -186,6 +186,7 @@ describe('uiBagOwnership', () => {
       'proxy_enabled',
       'proxy_url',
       'proxy_bypass',
+      'outbound_fake_ip_ranges',
       'gemini_base_url',
       'github_api_base_url',
     ] as const) {

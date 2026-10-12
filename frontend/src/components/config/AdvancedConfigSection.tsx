@@ -535,6 +535,23 @@ export const AdvancedConfigSection: React.FC<AdvancedConfigSectionProps> = ({
           layout="vertical"
         />
         <InputItem
+          itemKey="outbound_fake_ip_ranges"
+          label={t.config.outboundFakeIpRanges}
+          hint={t.config.outboundFakeIpRangesHint}
+          {...bindGuide(
+            'advanced.outboundFakeIpRanges',
+            g.advanced.outboundFakeIpRanges,
+          )}
+          value={getUiFieldValue('outbound_fake_ip_ranges')}
+          onChange={(v) =>
+            updateUiFieldValue('outbound_fake_ip_ranges', v)
+          }
+          placeholder={'198.18.0.0/15\nfdfe:dcba:9876::/48'}
+          multiline
+          rows={3}
+          layout="vertical"
+        />
+        <InputItem
           itemKey="gemini_base_url"
           label={t.config.geminiBaseUrl}
           value={getUiFieldValue('gemini_base_url')}

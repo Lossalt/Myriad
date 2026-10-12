@@ -965,6 +965,8 @@
   "proxyUrlPlaceholder": "http://127.0.0.1:7890 or socks5://127.0.0.1:1080",
   "proxyBypass": "Proxy Bypass List",
   "proxyBypassHint": "Domains that should bypass the proxy, separated by commas. Recommended for domestic services like Bilibili",
+  "outboundFakeIpRanges": "Fake-IP DNS ranges",
+  "outboundFakeIpRangesHint": "Enter the IPv4/IPv6 CIDRs used by your trusted local proxy, one per line or separated by commas. Leave empty to disable; example: 198.18.0.0/15. Only DNS answers are admitted; non-public IP literals in URLs remain blocked. Loopback, link-local, multicast and overlapping ranges are rejected. Maximum 64 entries.",
   "geminiBaseUrl": "Gemini API Base URL",
   "geminiBaseUrlHint": "Leave empty for official endpoint, or enter a third-party proxy service URL",
   "githubApiBaseUrl": "GitHub API Base URL",
@@ -1943,7 +1945,6 @@
   "onebotBotGroupsHint": "Off by default. When on, she reads the groups this account is in: she answers when @-mentioned or replied to, and otherwise decides for herself whether to join in. Use the list below to keep her to specific groups.",
   "onebotBotGroupIds": "Only these groups",
   "onebotBotGroupIdsHint": "Group numbers, separated by commas or spaces. Empty means every group this account is in. Groups outside the list are neither recorded nor answered.",
-
   "onebotBotHint": "The token is write-only; reads come back masked. Empty clears it. The URL can be cleared. Off or a bad token stays offline.",
   "onebotBotPhaseOffline": "Offline",
   "onebotBotPhaseConnecting": "Connecting",

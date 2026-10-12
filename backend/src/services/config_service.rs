@@ -7,6 +7,19 @@ use std::collections::HashMap;
 pub(crate) mod env_seed;
 pub(crate) mod legacy_ai_settings;
 
+/// Install a complete config and its process-wide policies under the same
+/// write lock. HTTP callers pass the config handle extracted from AppState;
+/// bootstrap and background services pass the process-shared handle.
+pub async fn install_dynamic_config(
+    target: &tokio::sync::RwLock<DynamicConfig>,
+    config: DynamicConfig,
+) {
+    let mut current = target.write().await;
+    crate::services::memory_profile::apply_from_saver_flag(config.memory_saver_enabled);
+    crate::services::outbound_security::apply_dynamic_config(&config);
+    *current = config;
+}
+
 /// Optional config string: null / "" / whitespace → None.
 /// Empty `Some("")` must not reach outbound auth headers.
 fn opt_nonempty_string(v: &JsonValue) -> Option<String> {
@@ -790,6 +803,24 @@ impl ConfigService {
             }
         }
 
+        // fake-IP DNS 例外（高级设置 · 网络）：缺省空；坏数据整体关闭。
+        if let Some(value) = map.get("outbound_fake_ip_ranges") {
+            match crate::services::outbound_security::parse_configured_fake_ip_ranges(value) {
+                Ok(ranges) => config.outbound_fake_ip_ranges = ranges,
+                Err(error) => {
+                    tracing::error!(%error, "Invalid stored fake-IP ranges; DNS exceptions disabled");
+                }
+            }
+        } else if let Some(value) = map.get("allow_rfc2544_benchmark_range") {
+            // Preserve the original PR's enabled switch until the CIDR field is
+            // first saved. An explicit empty new list always wins over it.
+            if value.as_bool() == Some(true)
+                || value.as_str().is_some_and(|v| v == "true" || v == "1")
+            {
+                config.outbound_fake_ip_ranges = vec!["198.18.0.0/15".into()];
+            }
+        }
+
         config
     }
 
@@ -883,6 +914,63 @@ async fn upsert_configuration(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn installing_dynamic_config_updates_and_revokes_process_policies() {
+        use crate::services::{memory_profile, outbound_security};
+
+        let _guard = memory_profile::test_profile_lock();
+        let previous_profile = memory_profile::active_profile();
+        let previous_outbound = outbound_security::fake_ip_ranges();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (enabled, disabled) = runtime.block_on(async {
+            let target = tokio::sync::RwLock::new(crate::config::DynamicConfig::default());
+            let config = crate::config::DynamicConfig {
+                memory_saver_enabled: true,
+                outbound_fake_ip_ranges: vec!["198.18.0.0/15".into(), "fdfe:dcba:9876::/48".into()],
+                ..Default::default()
+            };
+            super::install_dynamic_config(&target, config).await;
+            let enabled = (
+                target.read().await.outbound_fake_ip_ranges.clone(),
+                outbound_security::fake_ip_ranges(),
+                memory_profile::active_profile(),
+            );
+            super::install_dynamic_config(&target, Default::default()).await;
+            let disabled = (
+                target.read().await.outbound_fake_ip_ranges.clone(),
+                outbound_security::fake_ip_ranges(),
+                memory_profile::active_profile(),
+            );
+            (enabled, disabled)
+        });
+        memory_profile::apply(previous_profile);
+        outbound_security::set_fake_ip_ranges(&previous_outbound).unwrap();
+
+        let ranges = vec![
+            "198.18.0.0/15".to_string(),
+            "fdfe:dcba:9876::/48".to_string(),
+        ];
+        assert_eq!(
+            enabled,
+            (
+                ranges.clone(),
+                ranges,
+                memory_profile::resolve_profile(true)
+            )
+        );
+        assert_eq!(
+            disabled,
+            (
+                Vec::new(),
+                Vec::new(),
+                memory_profile::resolve_profile(false)
+            )
+        );
+    }
+
     /// CLAUDE.md: a configuration key the settings form saves must be read
     /// back from the database, or the saved value silently does nothing.
     #[test]
@@ -1273,6 +1361,52 @@ mod tests {
 
         let missing = ConfigService::parse_config(HashMap::new());
         assert!(!missing.precise_location_enabled);
+    }
+
+    #[test]
+    fn parses_fake_ip_cidrs_and_migrates_the_original_switch() {
+        for value in [
+            json!(["198.19.1.2/15", "fdfe:dcba:9876::1/48", "198.18.0.0/15"]),
+            json!("198.19.1.2/15, fdfe:dcba:9876::1/48\n198.18.0.0/15"),
+        ] {
+            let config = ConfigService::parse_config(HashMap::from([(
+                "outbound_fake_ip_ranges".into(),
+                value,
+            )]));
+            assert_eq!(
+                config.outbound_fake_ip_ranges,
+                ["198.18.0.0/15", "fdfe:dcba:9876::/48"]
+            );
+        }
+        for value in [json!(true), json!("true"), json!("1")] {
+            let config = ConfigService::parse_config(HashMap::from([(
+                "allow_rfc2544_benchmark_range".into(),
+                value,
+            )]));
+            assert_eq!(config.outbound_fake_ip_ranges, ["198.18.0.0/15"]);
+        }
+        for value in [
+            json!([]),
+            json!(""),
+            json!(["198.18.0.0/15", "bad"]),
+            json!(null),
+            json!([1]),
+            json!(["::/0"]),
+        ] {
+            let config = ConfigService::parse_config(HashMap::from([
+                ("allow_rfc2544_benchmark_range".into(), json!(true)),
+                ("outbound_fake_ip_ranges".into(), value),
+            ]));
+            assert!(
+                config.outbound_fake_ip_ranges.is_empty(),
+                "new empty/invalid data must not revive the legacy switch"
+            );
+        }
+        assert!(
+            ConfigService::parse_config(HashMap::new())
+                .outbound_fake_ip_ranges
+                .is_empty()
+        );
     }
 
     #[test]

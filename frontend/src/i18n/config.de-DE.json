@@ -965,6 +965,8 @@
   "proxyUrlPlaceholder": "http://127.0.0.1:7890 oder socks5://127.0.0.1:1080",
   "proxyBypass": "Proxy-Ausnahmeliste",
   "proxyBypassHint": "Domains, die den Proxy umgehen sollen, kommagetrennt. Empfohlen für lokale Dienste wie Bilibili",
+  "outboundFakeIpRanges": "Fake-IP-DNS-Bereiche",
+  "outboundFakeIpRangesHint": "IPv4/IPv6-CIDRs des vertrauenswürdigen lokalen Proxys eingeben, pro Zeile einen oder durch Kommas getrennt. Leer lassen zum Deaktivieren; Beispiel: 198.18.0.0/15. Nur DNS-Antworten werden zugelassen; nicht öffentliche IP-Adressen direkt in URLs bleiben gesperrt. Überschneidungen mit Loopback, Link-Local oder Multicast werden abgelehnt. Maximal 64 Einträge.",
   "geminiBaseUrl": "Gemini-API-Basis-URL",
   "geminiBaseUrlHint": "Leer für den offiziellen Endpunkt oder URL eines Drittanbieter-Proxys",
   "githubApiBaseUrl": "GitHub-API-Basis-URL",

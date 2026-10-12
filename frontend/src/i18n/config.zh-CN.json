@@ -965,6 +965,8 @@
   "proxyUrlPlaceholder": "http://127.0.0.1:7890 或 socks5://127.0.0.1:1080",
   "proxyBypass": "代理绕过列表",
   "proxyBypassHint": "不使用代理的域名，用逗号分隔。国内服务（如 Bilibili）建议添加到绕过列表",
+  "outboundFakeIpRanges": "fake-IP DNS 网段",
+  "outboundFakeIpRangesHint": "填写受信任本机代理使用的 IPv4/IPv6 CIDR，每行一个或用逗号分隔。留空关闭，例如 198.18.0.0/15。仅对 DNS 结果生效，非公网 IP 直填 URL 仍被拦截。禁止回环、链路本地、组播及覆盖这些地址的网段，最多 64 条。",
   "geminiBaseUrl": "Gemini API 基础地址",
   "geminiBaseUrlHint": "留空使用官方地址，可填写第三方代理服务地址",
   "githubApiBaseUrl": "GitHub API 基础地址",
@@ -2029,7 +2031,6 @@
   "onebotBotGroupsHint": "默认关闭。打开后她会读这个号所在的群：被 @ 或回复时回答，其余时候自己判断要不要插话。可以用下面的群号名单只留指定的群。",
   "onebotBotGroupIds": "只接收这些群",
   "onebotBotGroupIdsHint": "群号，用逗号或空格分隔。留空表示这个号所在的所有群。名单外的群不记录、不应答。",
-
   "onebotBotHint": "token 只写，读回是掩码。空值清除。地址可清空。关掉或 token 不对时机器人不在线。",
   "onebotBotPhaseOffline": "离线",
   "onebotBotPhaseConnecting": "连接中",
