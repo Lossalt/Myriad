@@ -352,14 +352,20 @@ pub(super) fn standing_combined_questions(state: Option<&RigStateSummary>) -> Va
 
 /// The sequence a combination of answers makes: at each moment, where her
 /// eyes are and the move she makes.
-fn combined_moments(answers: &Value, activity: &str) -> Vec<(Map<String, Value>, Option<Value>)> {
+fn combined_moments(
+    answers: &Value,
+    activity: &str,
+    standing_vertical: Option<f64>,
+) -> Vec<(Map<String, Value>, Option<Value>)> {
     let pick = |key: &str| answers[key]["choice"].as_str().unwrap_or_default();
     let side: f64 = if activity.len() % 2 == 0 { 1.0 } else { -1.0 };
-    let level = match pick("lookLevel") {
-        "low" => -0.35,
+    // How high her eyes stand, if she was asked for it control by control,
+    // is hers; the stretch's level only fills in when it was not.
+    let level = standing_vertical.unwrap_or(match pick("lookLevel") {
+        "low" => -0.65,
         "high" => 0.35,
         _ => 0.0,
-    };
+    });
     let aside = if pick("lookLevel") == "aside" {
         0.65 * side
     } else {
@@ -438,7 +444,12 @@ pub(super) fn standing_plan(
             Some("sweep") => 900,
             _ => 600,
         };
-        for (index, (look, mv)) in combined_moments(answers, &context.activity)
+        let standing_vertical = targets
+            .get("gazeVertical")
+            .and_then(Value::as_str)
+            .and_then(|tier| myriad_merope::tier_extent("gazeVertical", tier))
+            .map(f64::from);
+        for (index, (look, mv)) in combined_moments(answers, &context.activity, standing_vertical)
             .into_iter()
             .enumerate()
         {
@@ -695,7 +706,7 @@ mod tests {
             beats
                 .iter()
                 .filter(|beat| beat["pose"].is_object())
-                .all(|beat| beat["pose"]["targets"]["gazeVertical"] == -0.35)
+                .all(|beat| beat["pose"]["targets"]["gazeVertical"] == -0.65)
         );
         let nods = beats
             .iter()
