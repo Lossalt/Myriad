@@ -286,10 +286,12 @@ export default function SiteMotionWorkbench({
     persona.setManagingOutfitId(item.id)
   }
 
+  // The figure on the stage moves, the bust or a staged full body.
+  const stageManifest = staged ? staged.manifest : rigManifest
   const motionEnabled = Boolean(
-    rigManifest?.anime25dPlayback &&
-    isAnime25DPlayback(rigManifest.anime25dPlayback) &&
-    rigManifest.textures[0]?.url,
+    stageManifest?.anime25dPlayback &&
+    isAnime25DPlayback(stageManifest.anime25dPlayback) &&
+    stageManifest.textures[0]?.url,
   )
 
   const portraitStage = (
@@ -549,7 +551,7 @@ export default function SiteMotionWorkbench({
             ref={rigCharacterRef}
             activity={toMeropeActivity(activity)}
             fallbackUrl={staged ? staged.portraitUrl : portraitUrl}
-            manifest={staged ? staged.manifest : rigManifest}
+            manifest={stageManifest}
             mood={mood}
             manualControl
           />
