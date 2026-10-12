@@ -12,12 +12,12 @@
 use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
 
-use super::MotionContext;
-use super::prompt::{offered_body_controls, offered_score_moves};
+use super::offered::{offered_body_controls, offered_score_moves};
+use super::{MotionContext, presence};
 
 /// An answer less sure than this is left unacted; what she does not show
 /// cannot be wrong.
-const SURE: f64 = 0.3;
+pub(super) const SURE: f64 = 0.3;
 /// Her feeling is taken as her own unless the model is this sure it is not:
 /// quoting someone else scored 0.004–0.08 across Jev, Microsoft-Decision and
 /// Luna, while her own laugh at them scored as low as 0.44 (10-12).
@@ -27,7 +27,7 @@ const ANCHOR_CHARS: usize = 24;
 /// At most this many fragments are offered to land a beat on.
 const MAX_ANCHORS: usize = 8;
 
-const FEELINGS: &[(&str, &str)] = &[
+pub(super) const FEELINGS: &[(&str, &str)] = &[
     ("calm", "even, nothing stirred"),
     ("warm", "fond, glad of them"),
     ("amused", "finds it funny, laughing"),
@@ -52,16 +52,17 @@ const SAYING: &[(&str, &str)] = &[
     ("laugh", "she is actually laughing"),
     ("none", "none of these, said plainly"),
 ];
-/// How what she is doing on her own shows on her (standing acting).
-const WAYS: &[(&str, &str)] = &[
-    ("reading", "eyes down, moving along lines"),
-    ("listening", "eyes soft, small nods with the music"),
-    ("daydreaming", "gaze drifting off, lost in thought"),
-    ("looking-about", "looking about, browsing around"),
-    ("resting", "still and drowsy, eyes heavy"),
+/// The faces someone may ask her for by name, as asked.
+const ASKABLE: &[(&str, &str)] = &[
+    ("maniac", "laughing like a maniac"),
+    ("silly", "a silly, dopey face"),
+    ("cry", "a crying face"),
+    ("angry", "an angry face"),
+    ("speechless", "a speechless, done-with-this face"),
+    ("dizzy", "dizzy, seeing stars"),
+    ("lovestruck", "lovestruck, heart eyes"),
+    ("think", "a thinking face"),
 ];
-/// Her standing acting plays again each this many milliseconds.
-const STANDING_LOOP_MS: u64 = 20_000;
 /// At most this many sentences are asked about (speech phrases).
 const MAX_SENTENCES: usize = 6;
 
@@ -154,6 +155,28 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
             );
         }
     }
+    // A face asked for by name is hers to make or not: her reply says which.
+    // What the face can make, speaking or not: a face she agrees to make
+    // is made, even over her words.
+    let mut askable: Vec<(&str, &str)> = ASKABLE
+        .iter()
+        .copied()
+        .filter(|(intent, _)| {
+            state.is_none_or(|state| myriad_merope::cue_is_playable(&state.capabilities, intent))
+        })
+        .collect();
+    if !askable.is_empty()
+        && !context.user_text.trim().is_empty()
+        && context.response_text.is_some()
+    {
+        askable.push((
+            "none",
+            "they asked for none of these, or her reply does not go along",
+        ));
+        questions.insert("askedFor".into(), json!({"type": "choice",
+            "instructions": "Did they ask her to make one of these faces, and does her reply go along with making it?",
+            "criteria": criteria(&askable)}));
+    }
     Value::Object(questions)
 }
 
@@ -228,8 +251,18 @@ pub(super) fn sentences(reply: Option<&str>) -> Vec<String> {
     out
 }
 
+/// How far her head tilts, from the answer on its four-level scale.
+pub(super) fn tilt_tier(answers: &Value) -> Option<&'static str> {
+    match answers["tilt"]["score"].as_f64()? {
+        s if s >= 2.5 => Some("strong"),
+        s if s >= 1.5 => Some("clear"),
+        s if s >= 0.6 => Some("slight"),
+        _ => None,
+    }
+}
+
 /// How a feeling shows on her face and head, and the energy she carries it with.
-fn feeling_pose(
+pub(super) fn feeling_pose(
     feeling: &str,
     side: &str,
     set: &mut impl FnMut(&str, &str),
@@ -323,16 +356,8 @@ pub(super) fn plan_from_answers(
         }
         _ => "neutral",
     };
-    if let Some(score) = answers["tilt"]["score"].as_f64() {
-        let tier = match score {
-            s if s >= 2.5 => Some("strong"),
-            s if s >= 1.5 => Some("clear"),
-            s if s >= 0.6 => Some("slight"),
-            _ => None,
-        };
-        if let Some(tier) = tier {
-            set("headTilt", &format!("{side}{tier}"));
-        }
+    if let Some(tier) = tilt_tier(answers) {
+        set("headTilt", &format!("{side}{tier}"));
     }
     match sure("gaze") {
         Some("away-thinking") => {
@@ -369,17 +394,41 @@ pub(super) fn plan_from_answers(
         .enumerate()
         .filter_map(|(index, text)| {
             let intent = sure(&format!("say{index}"))?;
-            // A laugh in a quote is not hers.
-            (intent != "none" && (own || intent != "laugh"))
-                .then(|| json!({"text": text, "intent": intent}))
+            // A sentence she says plainly is "none" too, so the speech layer
+            // does not act its question mark or laughter instead; a laugh
+            // that is not hers is said plainly.
+            let intent = if own || intent != "laugh" {
+                intent
+            } else {
+                "none"
+            };
+            Some(json!({"text": text, "intent": intent}))
         })
         .collect();
+    // A face she agreed to make plays at once, over a steady face that
+    // leaves it room; directed body targets stay.
+    let asked = sure("askedFor").filter(|intent| *intent != "none");
+    let cues: Vec<Value> = asked
+        .map(|intent| {
+            let sticker = matches!(intent, "maniac" | "silly" | "cry" | "dizzy" | "lovestruck" | "angry");
+            json!({"intent": intent, "atMs": 0, "intensity": "strong", "tempo": "usual",
+                "fadeInMs": if sticker { 180 } else { 100 }, "fadeOutMs": if sticker { 420 } else { 220 },
+                "interrupt": "replace"})
+        })
+        .into_iter()
+        .collect();
+    let expression = if asked.is_some() {
+        "steady"
+    } else {
+        expression
+    };
     json!({
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy, "attention": 0.85,
             "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}},
-        "cues": [],
+        "cues": cues,
         "score": score,
+        "askedFor": asked,
     })
 }
 
@@ -391,7 +440,10 @@ fn asked(
     persona: Option<&str>,
 ) -> (Value, Value) {
     if context.phase == super::MotionPhase::Presence {
-        (presence_state(context, persona), presence_questions(state))
+        (
+            presence::presence_state(context, persona),
+            presence::presence_questions(state),
+        )
     } else {
         (self::state(context, persona), questions(context, state))
     }
@@ -399,7 +451,7 @@ fn asked(
 
 fn plan(answers: &Value, context: &MotionContext, state: Option<&RigStateSummary>) -> Value {
     if context.phase == super::MotionPhase::Presence {
-        presence_plan_from_answers(answers, context, state)
+        presence::presence_plan_from_answers(answers, context, state)
     } else {
         plan_from_answers(answers, context, state)
     }
@@ -448,292 +500,6 @@ pub(super) async fn direct(
     .await;
     anyhow::ensure!(status.is_success(), "decisions call failed: {status}");
     Ok(plan(&value["answers"], context, state).to_string())
-}
-
-/// What is asked about her standing acting: how she feels and how what she
-/// is doing on her own shows, from what this face can do.
-pub(super) fn presence_questions(state: Option<&RigStateSummary>) -> Value {
-    let criteria = |pairs: &[(&str, &str)]| -> Value {
-        pairs
-            .iter()
-            .map(|(name, means)| ((*name).to_owned(), json!(means)))
-            .collect::<Map<_, _>>()
-            .into()
-    };
-    let mut questions = Map::new();
-    questions.insert(
-        "feeling".into(),
-        json!({"type": "choice",
-        "instructions": "What she feels while she is at it.",
-        "criteria": criteria(FEELINGS)}),
-    );
-    questions.insert(
-        "way".into(),
-        json!({"type": "choice",
-        "instructions": "How what she is doing shows on her, to someone watching her face.",
-        "criteria": criteria(WAYS)}),
-    );
-    questions.insert("posture".into(), json!({"type": "choice",
-        "instructions": "How she holds herself while at it.",
-        "criteria": {"closed": "drawn in, guarded", "neutral": "at ease", "open": "open, relaxed", "leaning-in": "leaning in, absorbed"}}));
-    questions.insert("liveliness".into(), json!({"type": "choice",
-        "instructions": "How much she moves while at it.",
-        "criteria": {"still": "hardly moves", "gentle": "small, unhurried movements", "lively": "plenty of movement, into it"}}));
-    if offered_body_controls(state).contains(&"headTilt") {
-        questions.insert("tilt".into(), json!({"type": "score",
-            "instructions": "How far her head tilts to one side while she is at it.",
-            "criteria": ["no tilt", "slight tilt, small yet plainly seen", "clear tilt", "strong tilt, as far as it goes"]}));
-    }
-    Value::Object(questions)
-}
-
-/// What she is doing on her own, as the questions read it.
-pub(super) fn presence_state(context: &MotionContext, persona: Option<&str>) -> Value {
-    json!({
-        "she": persona.unwrap_or("a lively, warm companion"),
-        "nobody is talking with her; she is": context.activity,
-        "her mood": context.mood.band_after,
-    })
-}
-
-/// The answers as her standing acting: a baseline and a score of beats on
-/// time that plays again each loop, uneven within it so the repeat does not
-/// show.
-pub(super) fn presence_plan_from_answers(
-    answers: &Value,
-    context: &MotionContext,
-    state: Option<&RigStateSummary>,
-) -> Value {
-    let sure = |key: &str| -> Option<&str> {
-        let answer = &answers[key];
-        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
-            .then(|| answer["choice"].as_str())
-            .flatten()
-    };
-    let controls = offered_body_controls(state);
-    let moves = offered_score_moves(state);
-    // Uneven, but the same for the same activity: one direction serves everyone.
-    let mut seed = context.activity.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ b as u32).wrapping_mul(0x0100_0193)
-    });
-    let side = if seed % 2 == 0 { "" } else { "-" };
-    let mut jitter = |spread: u64| -> u64 {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        (seed as u64) % (spread * 2 + 1)
-    };
-    let other = if side.is_empty() { "-" } else { "" };
-    // A tier toward her side of the look this time.
-    let flip = |tier: &str| -> String {
-        match (side.is_empty(), tier.strip_prefix('-')) {
-            (true, _) => tier.to_owned(),
-            (false, Some(toward)) => toward.to_owned(),
-            (false, None) => format!("-{tier}"),
-        }
-    };
-    let mut targets = Map::new();
-    let mut set = |control: &str, tier: &str| {
-        if controls.contains(&control) {
-            targets.insert(control.to_owned(), json!(tier));
-        }
-    };
-    let feeling = sure("feeling").unwrap_or("calm");
-    let (expression, energy) = feeling_pose(feeling, side, &mut set);
-    let posture = match sure("posture") {
-        Some("closed") => "closed",
-        Some("open") => "open",
-        Some("leaning-in") => {
-            set("torsoPitch", "slight");
-            "open"
-        }
-        _ => "neutral",
-    };
-    if let Some(score) = answers["tilt"]["score"].as_f64() {
-        let tier = match score {
-            s if s >= 2.5 => Some("strong"),
-            s if s >= 1.5 => Some("clear"),
-            s if s >= 0.6 => Some("slight"),
-            _ => None,
-        };
-        if let Some(tier) = tier {
-            set("headTilt", &format!("{side}{tier}"));
-        }
-    }
-    let (pace, amount, liveliness) = match sure("liveliness") {
-        Some("still") => (1.4, "slight", 0.85),
-        Some("lively") => (0.75, "clear", 1.1),
-        _ => (1.0, "slight", 1.0),
-    };
-    let way = sure("way");
-    match way {
-        Some("reading") => {
-            set("gazeVertical", "-clear");
-            set("headNod", "-slight");
-        }
-        Some("listening") => {
-            set("eyeSmile", "slight");
-            set("gazeVertical", "-slight");
-        }
-        Some("daydreaming") => {
-            set("gazeHorizontal", &format!("{side}slight"));
-            set("gazeVertical", "slight");
-        }
-        Some("resting") => {
-            set("eyeOpenLeft", "-slight");
-            set("eyeOpenRight", "-slight");
-            set("gazeVertical", "-slight");
-        }
-        _ => {}
-    }
-    let pose_beat = |at: u64,
-                     pose: &[(&str, String)],
-                     transition: u64,
-                     hold: u64|
-     -> Option<Value> {
-        let offered: Map<String, Value> = pose
-            .iter()
-            .filter(|(control, _)| controls.contains(control))
-            .map(|(control, tier)| ((*control).to_owned(), json!(tier)))
-            .collect();
-        (!offered.is_empty()).then(|| {
-            json!({"atMs": at, "pose": {"targets": offered, "transitionMs": transition, "holdMs": hold}})
-        })
-    };
-    let move_beat = |at: u64, kind: &str, extra: Value| -> Option<Value> {
-        moves.contains(&kind).then(|| {
-            let mut beat = json!({"atMs": at, "move": {"kind": kind, "amount": amount}});
-            if let Value::Object(more) = extra {
-                beat["move"].as_object_mut().unwrap().extend(more);
-            }
-            beat
-        })
-    };
-    let mut score: Vec<Option<Value>> = Vec::new();
-    let every = |base: u64| (base as f64 * pace) as u64;
-    let mut at = jitter(400);
-    match way {
-        Some("reading") => {
-            // Line after line: eyes to the start of a line, then slowly along it.
-            let line = every(2_600);
-            while at + line < STANDING_LOOP_MS && score.len() < 12 {
-                score.push(pose_beat(
-                    at,
-                    &[("gazeHorizontal", "-slight".into())],
-                    200,
-                    300,
-                ));
-                score.push(pose_beat(
-                    at + 350,
-                    &[("gazeHorizontal", "slight".into())],
-                    line - 600,
-                    300,
-                ));
-                at += line + jitter(500);
-            }
-            score.push(move_beat(
-                STANDING_LOOP_MS - 2_500 - jitter(800),
-                "nod",
-                json!({"tempo": "slow"}),
-            ));
-        }
-        Some("listening") => {
-            while at < STANDING_LOOP_MS - 1_500 {
-                let count = if amount == "clear" { 3 } else { 2 };
-                score.push(move_beat(
-                    at,
-                    "nod",
-                    json!({"count": count, "tempo": "slow"}),
-                ));
-                at += every(4_200) + jitter(1_000);
-            }
-        }
-        Some("daydreaming") => {
-            let drifts = [
-                ("slight", "slight"),
-                ("-slight", "slight"),
-                ("slight", "-slight"),
-            ];
-            let mut index = 0;
-            while at < STANDING_LOOP_MS - 3_000 {
-                let (horizontal, vertical) = drifts[index % drifts.len()];
-                let horizontal = flip(horizontal);
-                score.push(pose_beat(
-                    at,
-                    &[
-                        ("gazeHorizontal", horizontal),
-                        ("gazeVertical", vertical.into()),
-                    ],
-                    1_500,
-                    3_500,
-                ));
-                index += 1;
-                at += every(5_500) + jitter(1_500);
-            }
-            if matches!(feeling, "low" | "calm") {
-                score.push(move_beat(
-                    9_000 + jitter(2_000),
-                    "sigh",
-                    json!({"tempo": "slow"}),
-                ));
-            }
-        }
-        Some("looking-about") => {
-            let directions = [
-                "left",
-                "up-right",
-                "right",
-                "down-left",
-                "up-left",
-                "down-right",
-            ];
-            let mut index = jitter(3) as usize;
-            while at < STANDING_LOOP_MS - 1_000 && score.len() < 10 {
-                score.push(move_beat(
-                    at,
-                    "glance",
-                    json!({"direction": directions[index % directions.len()]}),
-                ));
-                index += 1;
-                at += every(2_800) + jitter(800);
-            }
-            score.push(pose_beat(
-                6_000 + jitter(1_500),
-                &[("headTurn", format!("{side}slight"))],
-                900,
-                2_500,
-            ));
-            score.push(pose_beat(
-                14_000 + jitter(1_500),
-                &[("headTurn", format!("{other}slight"))],
-                900,
-                2_500,
-            ));
-        }
-        Some("resting") => {
-            score.push(move_beat(
-                7_000 + jitter(1_500),
-                "sigh",
-                json!({"tempo": "slow"}),
-            ));
-            score.push(move_beat(
-                15_000 + jitter(1_500),
-                "blink",
-                json!({"tempo": "slow"}),
-            ));
-        }
-        _ => {}
-    }
-    let mut score: Vec<Value> = score.into_iter().flatten().collect();
-    score.sort_by_key(|beat| beat["atMs"].as_u64().unwrap_or(0));
-    score.truncate(myriad_merope::SCORE_MAX_BEATS as usize);
-    json!({
-        "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy * liveliness, "attention": 0.6,
-            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}},
-        "cues": [],
-        "score": score,
-        "loopMs": STANDING_LOOP_MS,
-    })
 }
 
 /// The same questions put to a chat model, which answers each in the shape a
@@ -804,6 +570,17 @@ pub(super) fn chat_schema(questions: &Value) -> Value {
     }
     let required: Vec<String> = properties.keys().cloned().collect();
     json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})
+}
+
+/// What the director is asked about a moment, as the semantic eval records it.
+#[cfg(test)]
+pub(in crate::services::agent) fn semantic_contract(context: &MotionContext) -> Value {
+    let (asked_state, questions) = asked(context, context.rig_state.as_ref(), None);
+    // The body and the reply decide which questions are asked; kept beside them.
+    let input = json!({"moment": asked_state, "responseText": context.response_text,
+        "rig": context.rig_state, "questions": questions});
+    json!({"system": chat_system_prompt(&questions), "input": input.to_string(),
+        "schema": chat_schema(&questions), "schemaName": "merope_acting_answers"})
 }
 
 /// Asks a chat model the decisions questions about this moment; the plan as
@@ -936,8 +713,9 @@ mod tests {
         assert_eq!(value["score"][0]["move"]["kind"], "glance");
         assert_eq!(
             value["phrases"],
-            json!([{"text": "才、才没有呢……", "intent": "hesitate"}]),
-            "unsure and plain sentences are left alone"
+            json!([{"text": "才、才没有呢……", "intent": "hesitate"},
+                {"text": "不过，谢谢你这么说。", "intent": "none"}]),
+            "a plain sentence is said plainly; an unsure one is left to the speech layer"
         );
     }
 
@@ -1007,87 +785,48 @@ mod tests {
     }
 
     #[test]
-    fn her_standing_acting_is_a_looped_score_for_each_way_it_shows() {
-        let mut context = context("");
-        context.phase = MotionPhase::Presence;
-        context.response_text = None;
-        context.activity = "listening to 夜に駆ける".into();
-        let state = bust();
-        let asked = presence_questions(Some(&state));
-        assert!(asked["way"]["criteria"]["reading"].is_string());
-        for (way, _) in WAYS {
-            let answers = json!({
-                "feeling": {"type": "choice", "choice": "warm", "confidence": 0.8},
-                "way": {"type": "choice", "choice": way, "confidence": 0.9},
-                "liveliness": {"type": "choice", "choice": "gentle", "confidence": 0.7},
-            });
-            let value = presence_plan_from_answers(&answers, &context, Some(&state));
-            let raw = value.to_string();
-            assert!(
-                matches!(
-                    parse_motion_decision(&raw),
-                    Some(MotionDecision::Perform(_))
-                ),
-                "{way}: {raw}"
-            );
-            assert_eq!(value["loopMs"], STANDING_LOOP_MS);
-            let at: Vec<u64> = value["score"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|beat| beat["atMs"].as_u64().unwrap())
-                .collect();
-            assert!(!at.is_empty(), "{way} has beats");
-            assert!(at.windows(2).all(|w| w[0] <= w[1]), "{way}: in order");
-            assert!(
-                at.iter().all(|&ms| ms < STANDING_LOOP_MS),
-                "{way}: within the loop"
-            );
-            assert_eq!(
-                presence_plan_from_answers(&answers, &context, Some(&state)),
-                value,
-                "{way}: the same for everyone watching"
-            );
-        }
-    }
-
-    #[test]
-    fn reading_looks_down_and_moves_along_lines() {
-        let mut context = context("");
-        context.phase = MotionPhase::Presence;
-        context.activity = "reading 小王子".into();
-        let answers = json!({
-            "feeling": {"type": "choice", "choice": "calm", "confidence": 0.8},
-            "way": {"type": "choice", "choice": "reading", "confidence": 0.9},
-        });
-        let value = presence_plan_from_answers(&answers, &context, Some(&bust()));
-        assert_eq!(
-            value["baseline"]["pose"]["targets"]["gazeVertical"],
-            "-clear"
-        );
-        let along = value["score"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|beat| beat["pose"]["targets"]["gazeHorizontal"] == "slight")
-            .count();
-        assert!(along >= 4, "a run of lines in each loop: {along}");
-    }
-
-    #[test]
-    fn a_face_without_the_controls_gets_no_beats_it_cannot_play() {
-        let mut context = context("");
-        context.phase = MotionPhase::Presence;
-        context.activity = "looking around the site".into();
-        let mouth_only = myriad_merope::sanitize_rig_state(
-            &json!({"speaking": false, "capabilities": ["mouth-shapes"]}),
-        )
+    fn a_face_asked_for_by_name_is_hers_to_make_when_her_reply_goes_along() {
+        let mut asked = context("好啊，看我的！");
+        asked.user_text = "做一下狂笑".into();
+        // Speaking: a face she agrees to make is made even over her words.
+        let state = myriad_merope::sanitize_rig_state(&json!({"speaking": true, "capabilities":
+            ["head-body", "independent-eyes", "mouth-shapes", "maniac-mouth"]}))
         .unwrap();
+        let offered = questions(&asked, Some(&state));
+        assert!(offered["askedFor"]["criteria"]["maniac"].is_string());
+        assert!(
+            offered["askedFor"]["criteria"]["cry"].is_null(),
+            "a face this body cannot make is not offered"
+        );
         let answers = json!({
-            "way": {"type": "choice", "choice": "looking-about", "confidence": 0.9},
+            "feeling": {"type": "choice", "choice": "amused", "confidence": 0.9},
+            "own": {"type": "noul", "noul": 0.9},
+            "askedFor": {"type": "choice", "choice": "maniac", "confidence": 0.85},
         });
-        let value = presence_plan_from_answers(&answers, &context, Some(&mouth_only));
-        assert_eq!(value["score"], json!([]));
+        let value = plan_from_answers(&answers, &asked, Some(&state));
+        assert_eq!(value["cues"][0]["intent"], "maniac");
+        assert_eq!(value["cues"][0]["interrupt"], "replace");
+        assert_eq!(
+            value["baseline"]["expression"], "steady",
+            "room for the face"
+        );
+        assert!(super::super::semantic_valid(
+            &value.to_string(),
+            "好啊，看我的！"
+        ));
+
+        let declined = json!({"askedFor": {"type": "choice", "choice": "none", "confidence": 0.9}});
+        assert_eq!(
+            plan_from_answers(&declined, &asked, Some(&state))["cues"],
+            json!([])
+        );
+
+        let mut no_reply = asked.clone();
+        no_reply.response_text = None;
+        assert!(
+            questions(&no_reply, Some(&state))["askedFor"].is_null(),
+            "whether she goes along waits for her reply"
+        );
     }
 
     #[test]

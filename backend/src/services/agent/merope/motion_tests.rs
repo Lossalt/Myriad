@@ -1,11 +1,7 @@
 //! Unit tests for `motion.rs`, kept beside it so the module stays readable.
 
 use super::*;
-
-#[test]
-fn truncates_on_character_boundary() {
-    assert_eq!(truncate("你好吗", 2), "你好");
-}
+use myriad_merope::ChatPerformanceCue;
 
 #[test]
 fn phases_have_stable_wire_names() {
@@ -54,65 +50,6 @@ fn directive_wire_shape_is_camel_case_and_semantic_only() {
     assert_eq!(value["phrases"][0]["text"], "你觉得呢？");
 }
 
-#[test]
-fn motion_schema_exposes_new_expressions_only_as_semantic_cues() {
-    let schema = motion_schema(PERFORMANCE_CUE_INTENTS);
-    assert_eq!(
-        schema.pointer("/properties/phrases/maxItems"),
-        Some(&serde_json::json!(6))
-    );
-    assert_eq!(
-        schema.pointer("/properties/phrases/items/properties/intent/enum"),
-        Some(&serde_json::json!(PERFORMANCE_PHRASE_INTENTS))
-    );
-    let intents = schema
-        .pointer("/properties/cues/items/properties/intent/enum")
-        .and_then(serde_json::Value::as_array)
-        .unwrap();
-    assert!(intents.iter().any(|value| value == "think"));
-    assert!(intents.iter().any(|value| value == "dizzy"));
-    assert!(intents.iter().any(|value| value == "cry"));
-    assert!(intents.iter().any(|value| value == "angry"));
-    assert!(intents.iter().any(|value| value == "speechless"));
-    assert!(intents.iter().any(|value| value == "maniac"));
-    assert!(intents.iter().any(|value| value == "silly"));
-    assert!(intents.iter().any(|value| value == "lovestruck"));
-    let prompt = motion_system_prompt(PERFORMANCE_CUE_INTENTS);
-    assert!(prompt.contains("show the face this person would show"));
-    assert!(prompt.contains("Pick expressions by personality"));
-    assert!(!prompt.contains("只有文本明确表现"));
-    assert!(!prompt.contains("不要夸张"));
-    assert!(!prompt.contains("不要连续重复"));
-    assert!(!prompt.contains("rig.capabilities 为空"));
-    assert!(prompt.contains(&PERFORMANCE_BASELINE_EXPRESSIONS.join("/")));
-    assert!(prompt.contains(&PERFORMANCE_POSTURES.join("/")));
-    assert!(prompt.contains(&PERFORMANCE_CUE_INTENTS.join("/")));
-    assert!(!prompt.contains("angleZ"));
-    assert!(prompt.contains("previouslyIssuedPhrases"));
-    assert!(prompt.contains("omit baseline"));
-    assert!(prompt.contains("If there is no new intent"));
-    assert!(prompt.contains("Do not wait for words like 呆呆 / 狂笑 / 做一下"));
-    assert!(prompt.contains("self-deprecation"));
-    assert!(prompt.contains("jokes and self-deprecation use silly"));
-    assert!(prompt.contains("silly/cry that fit semantically play through the eyes"));
-    assert!(prompt.contains("Capability being available is not a reason to pick it"));
-    assert!(prompt.contains("refusal, dodge, hesitation do not automatically become coy"));
-    assert!(prompt.contains("needing closed eyes is not needing silly"));
-    assert!(prompt.contains("rig.activeBehaviors"));
-    assert!(prompt.contains("preparation→stroke→hold→recovery"));
-    assert!(prompt.contains("Music entrain is ongoing body rhythm"));
-    assert!(prompt.contains("persona"));
-    assert_eq!(
-        schema.pointer("/properties/continue/type"),
-        Some(&serde_json::json!("boolean"))
-    );
-    assert_eq!(
-        schema.pointer("/properties/baseline/type"),
-        Some(&serde_json::json!("object"))
-    );
-    assert!(schema.get("required").is_none());
-}
-
 fn rig(capabilities: &[&str], speaking: bool) -> RigStateSummary {
     myriad_merope::sanitize_rig_state(&serde_json::json!({
         "expression": "steady",
@@ -158,23 +95,6 @@ fn the_director_is_only_offered_cues_that_survive_the_filter() {
             .map(|cue| cue.intent)
             .collect();
         assert_eq!(survived, offered, "{capabilities:?} speaking={speaking}");
-
-        let schema = motion_schema(&offered);
-        let enumerated = schema
-            .pointer("/properties/cues/items/properties/intent/enum")
-            .and_then(|value| value.as_array())
-            .expect("intent enum");
-        assert_eq!(enumerated.len(), offered.len(), "{capabilities:?}");
-
-        // The prompt must not describe a cue the schema forbids.
-        let prompt = motion_system_prompt(&offered);
-        for intent in PERFORMANCE_CUE_INTENTS {
-            assert_eq!(
-                prompt.contains(&format!("- {intent}：")),
-                offered.contains(intent),
-                "{intent} for {capabilities:?}"
-            );
-        }
     }
 }
 
@@ -182,75 +102,6 @@ fn the_director_is_only_offered_cues_that_survive_the_filter() {
 #[test]
 fn a_missing_summary_still_offers_every_cue() {
     assert_eq!(offered_cue_intents(None), PERFORMANCE_CUE_INTENTS.to_vec());
-}
-
-#[test]
-fn motion_prompt_indexes_every_contract_expression() {
-    assert_eq!(
-        BASELINE_INDEX
-            .iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>(),
-        PERFORMANCE_BASELINE_EXPRESSIONS.to_vec()
-    );
-    assert_eq!(
-        POSTURE_INDEX
-            .iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>(),
-        PERFORMANCE_POSTURES.to_vec()
-    );
-    assert_eq!(
-        CUE_INDEX
-            .iter()
-            .map(|(name, _, _)| *name)
-            .collect::<Vec<_>>(),
-        PERFORMANCE_CUE_INTENTS.to_vec()
-    );
-    let prompt = motion_system_prompt(PERFORMANCE_CUE_INTENTS);
-    for name in PERFORMANCE_BASELINE_EXPRESSIONS {
-        assert!(prompt.contains(&format!("- {name}：")), "{name}");
-    }
-    for name in PERFORMANCE_POSTURES {
-        assert!(prompt.contains(&format!("- {name}：")), "{name}");
-    }
-    for name in PERFORMANCE_CUE_INTENTS {
-        assert!(prompt.contains(&format!("- {name}：")), "{name}");
-    }
-}
-
-#[test]
-fn motion_persona_payload_carries_temperament() {
-    let blank = crate::models::entities::agent_persona::Model {
-        id: "site".into(),
-        name: "瞳".into(),
-        personality: "气质：认真\n社交：慢热".into(),
-        persona_json: Some(serde_json::json!({
-            "summary": "认真，慢热，亲近之后会软。",
-            "temperament": ["慢热", "嘴硬心软", "认真起来很轴"],
-            "socialStyle": "先看，再靠近。",
-            "speechStyle": "话短，不客套。",
-        })),
-        visual_profile: None,
-        portrait_asset_id: None,
-        portrait_generation: None,
-        avatar_asset_id: None,
-        avatar_generation: None,
-        updated_by: None,
-        updated_at: chrono::Utc::now().into(),
-        zone: String::new(),
-        field_revs: serde_json::json!({}),
-    };
-    let payload = motion_persona_payload(Some(&blank), "restrained");
-    assert_eq!(payload["name"], "瞳");
-    assert_eq!(payload["motionStyle"], "restrained");
-    assert!(payload["personality"].as_str().unwrap().contains("认真"));
-    assert_eq!(payload["temperament"][0], "慢热");
-    assert_eq!(payload["socialStyle"], "先看，再靠近。");
-    let fallback = motion_persona_payload(None, "even");
-    assert_eq!(fallback["name"], "Arael");
-    assert_eq!(fallback["motionStyle"], "even");
-    assert!(fallback["temperament"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -274,23 +125,6 @@ fn empty_object_is_invalid_not_continue() {
     assert_eq!(parse_motion_decision("{}"), None);
     assert_eq!(parse_motion_decision(r#"{"cues":[]}"#), None);
     assert_eq!(parse_motion_decision(r#"{"continue":false}"#), None);
-}
-
-#[test]
-fn continue_schema_forbids_new_direction_without_requiring_the_flag() {
-    let schema = motion_schema(PERFORMANCE_CUE_INTENTS);
-    let branch = &schema["allOf"][0];
-    assert_eq!(branch["if"]["required"], serde_json::json!(["continue"]));
-    assert_eq!(branch["if"]["properties"]["continue"]["const"], true);
-    assert_eq!(
-        branch["then"]["not"]["required"],
-        serde_json::json!(["baseline"])
-    );
-    for field in ["cues", "phrases"] {
-        assert_eq!(branch["then"]["properties"][field]["maxItems"], 0);
-    }
-    // The contradictory shape observed in the live probe stays rejected.
-    assert!(parse_motion_decision(r#"{"continue":true,"cues":[{"intent":"respond","atMs":180,"fadeInMs":80,"fadeOutMs":400,"intensity":0.7,"interrupt":"replace","tempo":1.0}],"phrases":[]}"#).is_none());
 }
 
 #[test]
@@ -396,7 +230,7 @@ fn chat_director_phrase_only_decision_needs_no_replacement_pose() {
 /// MOTION_TIMEOUT >= 8s; MOTION_TOTAL_TIMEOUT > MOTION_TIMEOUT.
 /// Request paths must not `handle.await.ok().flatten()`.
 #[test]
-fn motion_lite_budget_clears_the_observed_success_latency() {
+fn the_director_budget_clears_the_observed_success_latency() {
     assert!(MOTION_TIMEOUT >= Duration::from_secs(8));
     assert!(MOTION_TOTAL_TIMEOUT > MOTION_TIMEOUT);
     let src = concat!(
@@ -411,7 +245,7 @@ fn motion_lite_budget_clears_the_observed_success_latency() {
 }
 
 #[test]
-fn a_dropped_lite_call_still_leaves_the_round_something_to_play() {
+fn a_director_with_no_answer_still_leaves_the_round_something_to_play() {
     let plan = local_performance_plan(
         MotionPhase::Delivery,
         &MoodTransition {
@@ -426,121 +260,9 @@ fn a_dropped_lite_call_still_leaves_the_round_something_to_play() {
             revision: 1,
         },
         None,
-        Some("已经好了。"),
         "even",
-        None,
     );
     assert!(!plan_is_empty(&plan));
-}
-
-#[test]
-fn user_can_ask_for_a_named_expression() {
-    assert_eq!(user_requested_cue("你能做一下呆呆的表情吗"), Some("silly"));
-    assert_eq!(user_requested_cue("做一下狂笑"), Some("maniac"));
-    assert_eq!(user_requested_cue("狂笑一下"), Some("maniac"));
-    assert_eq!(user_requested_cue("来个哭脸"), Some("cry"));
-    assert_eq!(user_requested_cue("哭一下"), Some("cry"));
-    assert_eq!(user_requested_cue("make a silly face"), Some("silly"));
-    assert_eq!(user_requested_cue("好开心"), None);
-    assert_eq!(user_requested_cue("昨晚我狂笑了一路"), None);
-    assert_eq!(user_requested_cue("做点好玩的表情"), None);
-    assert_eq!(user_requested_cue("你能告诉我昨天狂笑的事吗"), None);
-    assert_eq!(user_requested_cue("说说你犯蠢的事吧"), None);
-    // A Latin alias inside a longer word is not an ask, even next to a
-    // request marker: `cry` lives in `cryptic`, `think` in `thinking`.
-    assert_eq!(user_requested_cue("make a cryptic joke"), None);
-    assert_eq!(user_requested_cue("make a plan, thinking it through"), None);
-    assert_eq!(user_requested_cue("make a think face"), Some("think"));
-}
-
-#[test]
-fn asked_expression_waits_for_the_character_to_answer() {
-    assert_eq!(
-        play_along_requested_cue(MotionPhase::Reaction, "做一下狂笑", None),
-        None
-    );
-    assert_eq!(
-        play_along_requested_cue(MotionPhase::Delivery, "做一下狂笑", None),
-        None
-    );
-    assert_eq!(
-        play_along_requested_cue(MotionPhase::Delivery, "做一下狂笑", Some("  ")),
-        None
-    );
-    assert_eq!(
-        play_along_requested_cue(MotionPhase::Delivery, "做一下狂笑", Some("才不给你做。")),
-        None
-    );
-    assert_eq!(
-        play_along_requested_cue(MotionPhase::Delivery, "做一下狂笑", Some("好啊，看我的。")),
-        Some("maniac")
-    );
-}
-
-#[test]
-fn asked_expression_survives_lite_failure_when_the_face_can_play_it() {
-    let plan = apply_user_requested_cue(
-        ChatPerformancePlan::default(),
-        MotionPhase::Delivery,
-        "做一下狂笑",
-        Some("好啊，看我的。"),
-        None,
-    );
-    assert_eq!(plan.cues[0].intent, "maniac");
-    assert_eq!(plan.cues[0].fade_in_ms, 180);
-    assert_eq!(plan.cues[0].fade_out_ms, 420);
-    assert_eq!(plan.baseline.as_ref().unwrap().expression, "steady");
-    let cry = apply_user_requested_cue(
-        ChatPerformancePlan::default(),
-        MotionPhase::Delivery,
-        "来个哭脸",
-        Some("行，给你哭一个。"),
-        None,
-    );
-    assert_eq!(cry.baseline.as_ref().unwrap().expression, "steady");
-    let blocked = myriad_merope::sanitize_rig_state(&serde_json::json!({
-        "capabilities": ["head-body"]
-    }))
-    .unwrap();
-    let skipped = apply_user_requested_cue(
-        ChatPerformancePlan::default(),
-        MotionPhase::Delivery,
-        "做一下狂笑",
-        Some("好啊，看我的。"),
-        Some(&blocked),
-    );
-    assert!(skipped.cues.is_empty());
-    let too_early = apply_user_requested_cue(
-        ChatPerformancePlan::default(),
-        MotionPhase::Reaction,
-        "做一下狂笑",
-        None,
-        None,
-    );
-    assert!(too_early.cues.is_empty());
-}
-
-#[test]
-fn asked_mouth_expression_plays_even_while_speaking() {
-    let state = myriad_merope::sanitize_rig_state(&serde_json::json!({
-        "speaking": true,
-        "capabilities": ["head-body", "maniac-mouth"]
-    }))
-    .unwrap();
-    let lite = parse_performance_plan(
-            r#"{"cues":[{"intent":"listen","atMs":0,"intensity":1,"tempo":1,"fadeInMs":80,"fadeOutMs":120,"interrupt":"replace"},{"intent":"maniac","atMs":0,"intensity":1,"tempo":1,"fadeInMs":80,"fadeOutMs":120,"interrupt":"replace"}]}"#,
-        )
-        .unwrap();
-    let refined = refine_performance_plan(lite, &state);
-    assert!(refined.cues.iter().all(|cue| cue.intent != "maniac"));
-    let plan = apply_user_requested_cue(
-        refined,
-        MotionPhase::Delivery,
-        "做一下狂笑",
-        Some("好啊，看我的。"),
-        Some(&state),
-    );
-    assert_eq!(plan.cues[0].intent, "maniac");
 }
 
 #[test]
@@ -576,49 +298,47 @@ fn a_score_alone_is_a_performance_and_its_moves_follow_the_body() {
     );
 
     let head_only = rig(&["head-body"], false);
-    let schema = motion_schema_for_state(&offered_cue_intents(Some(&head_only)), Some(&head_only));
-    let kinds: Vec<&str> = schema
-        .pointer("/properties/score/items/properties/move/properties/kind/enum")
-        .and_then(|value| value.as_array())
-        .expect("move kinds")
-        .iter()
-        .filter_map(|value| value.as_str())
-        .collect();
+    let kinds = offered_score_moves(Some(&head_only));
     assert!(kinds.contains(&"nod") && kinds.contains(&"shrug"));
     assert!(!kinds.contains(&"beat"), "no hand beat without arms");
     assert!(
         !kinds.contains(&"glance"),
         "no eye glance without independent eyes"
     );
-    assert_eq!(
-        schema.pointer("/properties/score/items/properties/pose"),
-        schema.pointer("/properties/baseline/properties/pose"),
-        "a beat's pose uses the same controls as the standing pose"
-    );
-
-    let prompt = motion_system_prompt(PERFORMANCE_CUE_INTENTS);
-    for (kind, _, _) in myriad_merope::PERFORMANCE_SCORE_MOVES {
-        assert!(prompt.contains(&format!("- {kind}: ")), "{kind}");
-    }
 }
 
 #[test]
 fn standing_acting_is_directed_on_time_and_loops() {
     assert_eq!(MotionPhase::Presence.as_str(), "presence");
     assert_eq!(MotionPhase::Presence.activity(), "idle");
-    let prompt = motion_system_prompt(PERFORMANCE_CUE_INTENTS);
-    assert!(prompt.contains("presence means nobody is talking with her"));
-    let schema = motion_schema(PERFORMANCE_CUE_INTENTS);
-    assert_eq!(
-        schema
-            .pointer("/properties/loopMs/minimum")
-            .and_then(Value::as_u64),
-        Some(6_000)
+    assert!(STANDING_MIN_LOOP_MS <= STANDING_LOOP_MS && STANDING_LOOP_MS <= STANDING_MAX_LOOP_MS);
+}
+
+#[test]
+fn a_face_she_agreed_to_make_plays_even_while_she_speaks() {
+    let cue = ChatPerformanceCue {
+        intent: "maniac".into(),
+        at_ms: 0,
+        intensity: 1.3,
+        tempo: 1.0,
+        fade_in_ms: 180,
+        fade_out_ms: 420,
+        interrupt: "replace".into(),
+    };
+    let plan = ChatPerformancePlan {
+        baseline: None,
+        cues: vec![cue.clone()],
+    };
+    let speaking = rig(&["head-body", "mouth-shapes", "maniac-mouth"], true);
+    let filtered = refine_performance_plan(plan.clone(), &speaking);
+    assert!(filtered.cues.is_empty(), "the state filter alone drops it");
+    let kept = keep_agreed_face(filtered, Some(cue.clone()), &speaking);
+    assert_eq!(kept.cues[0].intent, "maniac");
+    let no_mouth = rig(&["head-body"], true);
+    let dropped = keep_agreed_face(
+        refine_performance_plan(plan, &no_mouth),
+        Some(cue),
+        &no_mouth,
     );
-    assert_eq!(
-        schema
-            .pointer("/properties/loopMs/maximum")
-            .and_then(Value::as_u64),
-        Some(60_000)
-    );
+    assert!(dropped.cues.is_empty(), "not a face this body can make");
 }

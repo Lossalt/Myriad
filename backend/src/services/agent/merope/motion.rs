@@ -1,15 +1,14 @@
-//! Strict-Lite semantic motion selection for Merope.
-//!
-//! The model selects a bounded expression/posture baseline, semantic cues, and
-//! grounded `phrases`. Anime2.5DRig driver values, lip sync, blinking, breathing
-//! and secondary motion remain deterministic on the client.
+//! Her acting, directed by one director: the judgment model answering typed
+//! questions about the moment (`questions`). Its answers become a bounded
+//! expression/posture baseline, cues, grounded `phrases` and a `score`; the
+//! floor (`motion_local`) shows her state until it lands or when it has
+//! nothing. Anime2.5DRig driver values, lip sync, blinking, breathing and
+//! secondary motion remain deterministic on the client.
 
 use std::time::{Duration, Instant};
 
 use myriad_merope::{
-    ChatPerformanceBaseline, ChatPerformanceCue, ChatPerformancePlan,
-    PERFORMANCE_BASELINE_EXPRESSIONS, PERFORMANCE_CUE_INTENTS, PERFORMANCE_INTERRUPT_MODES,
-    PERFORMANCE_PHRASE_INTENTS, PERFORMANCE_POSTURES, RIG_STATE_MOTION_STYLES, RigStateSummary,
+    ChatPerformancePlan, PERFORMANCE_CUE_INTENTS, RIG_STATE_MOTION_STYLES, RigStateSummary,
     ScoreBeat, SpeechPhrase, cue_is_playable, cue_survives_state, grounded_score,
     grounded_speech_phrases, parse_performance_plan, plan_is_empty, refine_performance_plan,
     round_motion_style,
@@ -17,26 +16,25 @@ use myriad_merope::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::entities::agent_persona;
-
 use super::MoodTransition;
 use super::motion_local::local_performance_plan;
 use super::store::get_persona;
 
-mod prompt;
+mod offered;
+mod presence;
 mod questions;
-mod requests;
 
-use prompt::*;
 #[cfg(test)]
-pub(in crate::services::agent) use prompt::{semantic_contract, semantic_valid};
-pub use requests::*;
+pub(in crate::services::agent) use offered::semantic_valid;
+#[cfg(test)]
+use offered::*;
+#[cfg(test)]
+pub(in crate::services::agent) use questions::semantic_contract;
 
 /// MOTION_TIMEOUT 9s; MOTION_TOTAL_TIMEOUT 10s.
-/// Streaming publishes `local_directive` first; Lite is a refinement.
+/// Streaming publishes `local_directive` first; the director refines it.
 const MOTION_TIMEOUT: Duration = Duration::from_secs(9);
 const MOTION_TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
-const MOTION_SCHEMA_NAME: &str = "merope_motion";
 /// A standing score's period: long enough not to read as a loop, short enough to come round.
 pub(super) const STANDING_LOOP_MS: u32 = 20_000;
 pub(super) const STANDING_MIN_LOOP_MS: u32 = 6_000;
@@ -157,8 +155,8 @@ pub(in crate::services::agent) async fn answered_plan(
     }
 }
 
-/// Runs exactly one Lite-tier call, falling back to the deterministic plan for
-/// callers (such as proactive speech) that have no live floor publisher.
+/// Asks the director once, falling back to the floor for callers (such as
+/// proactive speech) that have no live floor publisher.
 pub async fn direct_motion(context: MotionContext) -> Option<PerformanceDirective> {
     direct_motion_inner(context, true).await
 }
@@ -180,105 +178,61 @@ async fn direct_motion_inner(
         tracing::debug!(phase, "[MeropeMotion] Face hidden; ambient motion only");
         return None;
     }
-    // The judgment model judges her acting by answering typed questions: a
-    // decisions model (TypeSafe Jev) on its own endpoint, a chat model as
-    // structured output. Her standing acting too: the answers become a score
-    // looped on time. The chat director writes the plan only when answering
-    // fails.
-    let decided = {
-        let persona_row = match crate::services::process_db::database() {
-            Ok(db) => get_persona(&db).await.ok().flatten(),
-            Err(_) => None,
-        };
-        let persona = persona_row
-            .as_ref()
-            .map(|row| row.personality.trim().to_owned());
-        let persona = persona.as_deref().filter(|p| !p.is_empty());
-        let call = async {
-            if let Some(source) = decisions_source().await {
-                questions::direct(
-                    &context,
-                    rig_state.as_ref(),
-                    persona,
-                    &source,
-                    MOTION_TIMEOUT,
-                )
-                .await
-            } else if let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await {
-                questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer).await
-            } else {
-                Err(anyhow::anyhow!("no judgment model"))
-            }
-        };
-        Some(
-            tokio::time::timeout(
-                MOTION_TOTAL_TIMEOUT,
-                crate::services::ai_cost_ledger::with_site_ai_ledger(
-                    context.user_id,
-                    "merope",
-                    &format!("motion_{phase}"),
-                    call,
-                ),
-            )
-            .await,
-        )
+    // Her only director: the judgment model, answering typed questions about
+    // the moment (a decisions model on its own endpoint, a chat model as
+    // structured output); her standing acting too, as a score looped on time.
+    // When it has no answer, the floor already playing stands.
+    let persona_row = match crate::services::process_db::database() {
+        Ok(db) => get_persona(&db).await.ok().flatten(),
+        Err(_) => None,
     };
-    let chat_director = async {
-        let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await else {
-            tracing::debug!(
-                phase,
-                "[MeropeMotion] Lite unavailable; requested cues may still play"
-            );
-            return None;
-        };
-        let persona_row = match crate::services::process_db::database() {
-            Ok(db) => get_persona(&db).await.ok().flatten(),
-            Err(_) => None,
-        };
-        let input = motion_input(&context, persona_row.as_ref()).to_string();
-
-        // Offer only what this face can actually play. Constrained decoding
-        // then cannot spend the round's 0–2 cues on something the filter below
-        // would delete.
-        let offered = offered_cue_intents(rig_state.as_ref());
-        let schema = motion_schema_for_state(&offered, rig_state.as_ref());
-        let system_prompt = motion_system_prompt(&offered);
-        let call = analyzer.analyze_json(&system_prompt, &input, MOTION_SCHEMA_NAME, Some(&schema));
-        Some(
-            tokio::time::timeout(
-                MOTION_TOTAL_TIMEOUT,
-                crate::services::ai_cost_ledger::with_site_ai_ledger(
-                    context.user_id,
-                    "merope",
-                    &format!("motion_{phase}"),
-                    call,
-                ),
+    let persona = persona_row
+        .as_ref()
+        .map(|row| row.personality.trim().to_owned());
+    let persona = persona.as_deref().filter(|p| !p.is_empty());
+    let call = async {
+        if let Some(source) = decisions_source().await {
+            questions::direct(
+                &context,
+                rig_state.as_ref(),
+                persona,
+                &source,
+                MOTION_TIMEOUT,
             )
-            .await,
-        )
+            .await
+        } else if let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await {
+            questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer).await
+        } else {
+            Err(anyhow::anyhow!("no judgment model"))
+        }
     };
-    let result = or_chat_director(decided, phase, chat_director).await;
+    let result = tokio::time::timeout(
+        MOTION_TOTAL_TIMEOUT,
+        crate::services::ai_cost_ledger::with_site_ai_ledger(
+            context.user_id,
+            "merope",
+            &format!("motion_{phase}"),
+            call,
+        ),
+    )
+    .await;
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut phrases = Vec::new();
     let mut score = Vec::new();
     let mut loop_ms = None;
-    let lite_plan = match result {
-        None => None,
-        Some(Ok(Ok(raw))) => match parse_motion_decision(&raw) {
+    let mut asked_for = None;
+    let directed = match result {
+        Ok(Ok(raw)) => match parse_motion_decision(&raw) {
             Some(MotionDecision::Continue) => {
-                tracing::debug!(
-                    phase,
-                    elapsed_ms,
-                    "[MeropeMotion] Lite continued current acting"
-                );
-                // Deliberate continuation is not a failed model call. In
-                // particular, direct/proactive callers must not replay a local
-                // fallback baseline when the director asked to leave it alone.
+                tracing::debug!(phase, elapsed_ms, "[MeropeMotion] Director continued");
+                // Deliberate continuation is not a failed call: direct and
+                // proactive callers must not replay a floor over it.
                 return None;
             }
             Some(MotionDecision::Perform(parsed)) => {
                 if let Ok(value) = serde_json::from_str::<Value>(strip_motion_json(&raw)) {
+                    asked_for = value["askedFor"].as_str().map(str::to_owned);
                     phrases = grounded_speech_phrases(
                         &value["phrases"],
                         context.response_text.as_deref(),
@@ -303,71 +257,45 @@ async fn direct_motion_inner(
                 Some(parsed)
             }
             None => {
-                tracing::warn!(
-                    phase,
-                    elapsed_ms,
-                    "[MeropeMotion] Invalid Lite plan dropped"
-                );
+                tracing::warn!(phase, elapsed_ms, "[MeropeMotion] Invalid plan dropped");
                 None
             }
         },
-        Some(Ok(Err(error))) => {
-            tracing::warn!(phase, elapsed_ms, error = %error, "[MeropeMotion] Lite call dropped");
+        Ok(Err(error)) => {
+            tracing::warn!(phase, elapsed_ms, error = %error, "[MeropeMotion] Director had no answer");
             None
         }
-        Some(Err(_)) => {
-            tracing::warn!(
-                phase,
-                elapsed_ms,
-                "[MeropeMotion] Lite total timeout; plan dropped"
-            );
+        Err(_) => {
+            tracing::warn!(phase, elapsed_ms, "[MeropeMotion] Director timed out");
             None
         }
     };
-    let refined_by_lite = lite_plan.is_some();
-    let mut plan = if let Some(plan) = lite_plan {
+    let directed_here = directed.is_some();
+    let mut plan = if let Some(plan) = directed {
         plan
     } else if fallback_to_local {
         local_performance_plan(
             context.phase,
             &context.mood,
             context.task_success,
-            context.response_text.as_deref(),
             &context.motion_style,
-            Some(&context.user_text),
         )
     } else {
         return None;
     };
+    let asked =
+        asked_for.and_then(|intent| plan.cues.iter().find(|cue| cue.intent == intent).cloned());
     if let Some(state) = rig_state.as_ref() {
-        plan = refine_performance_plan(plan, state);
+        plan = keep_agreed_face(refine_performance_plan(plan, state), asked, state);
     }
-    // A named ask is not a command; overlay only after this turn's reply.
-    plan = apply_user_requested_cue(
-        plan,
-        context.phase,
-        &context.user_text,
-        context.response_text.as_deref(),
-        rig_state.as_ref(),
-    );
     if plan_is_empty(&plan) && phrases.is_empty() && score.is_empty() {
-        tracing::debug!(
-            phase,
-            elapsed_ms,
-            "[MeropeMotion] Lite plan had no capable cues"
-        );
+        tracing::debug!(phase, elapsed_ms, "[MeropeMotion] Plan had no capable cues");
         return None;
     }
     tracing::info!(
         phase,
         elapsed_ms,
-        source = if refined_by_lite { "lite" } else { "local" },
-        requested = play_along_requested_cue(
-            context.phase,
-            &context.user_text,
-            context.response_text.as_deref(),
-        )
-        .is_some(),
+        source = if directed_here { "director" } else { "floor" },
         "[MeropeMotion] plan ready"
     );
     Some(PerformanceDirective {
@@ -381,31 +309,29 @@ async fn direct_motion_inner(
     })
 }
 
-type DirectorAnswer = Option<Result<anyhow::Result<String>, tokio::time::error::Elapsed>>;
-
-/// The plan from the answered questions; the chat director's when none were
-/// asked (standing acting), or when answering failed rather than ran out of
-/// time.
-async fn or_chat_director(
-    decided: DirectorAnswer,
-    phase: &str,
-    chat_director: impl std::future::Future<Output = DirectorAnswer>,
-) -> DirectorAnswer {
-    match decided {
-        Some(Ok(Err(error))) => {
-            tracing::warn!(phase, error = %error, "[MeropeMotion] Answering the acting questions failed; asking the chat director");
-            chat_director.await
-        }
-        None => chat_director.await,
-        answered => answered,
+/// A face she agreed to make is made even over her words: it survives the
+/// state filter whenever the face can make it.
+fn keep_agreed_face(
+    mut plan: ChatPerformancePlan,
+    agreed: Option<myriad_merope::ChatPerformanceCue>,
+    state: &RigStateSummary,
+) -> ChatPerformancePlan {
+    if let Some(cue) = agreed.filter(|cue| {
+        cue_is_playable(&state.capabilities, &cue.intent)
+            && !plan.cues.iter().any(|kept| kept.intent == cue.intent)
+    }) {
+        plan.cues.insert(0, cue);
+        plan.cues.truncate(3);
     }
+    plan
 }
 
 /// The deterministic floor as a directive, with no network call and no await.
 ///
 /// Chat plays this the moment the round starts so the character reacts before
 /// it speaks. Non-streaming attaches it on the body; streaming Chat leaves
-/// `performance: None` and Lite replaces via PlaybackDirection / `PerformancePlan`.
+/// `performance: None` and the director replaces it via PlaybackDirection /
+/// `PerformancePlan`.
 pub fn local_directive(context: &MotionContext) -> Option<PerformanceDirective> {
     let rig_state = apply_round_motion_style(context.rig_state.clone(), &context.motion_style);
     if face_is_hidden(rig_state.as_ref()) {
@@ -415,20 +341,11 @@ pub fn local_directive(context: &MotionContext) -> Option<PerformanceDirective> 
         context.phase,
         &context.mood,
         context.task_success,
-        context.response_text.as_deref(),
         &context.motion_style,
-        Some(&context.user_text),
     );
     if let Some(state) = rig_state.as_ref() {
         plan = refine_performance_plan(plan, state);
     }
-    plan = apply_user_requested_cue(
-        plan,
-        context.phase,
-        &context.user_text,
-        context.response_text.as_deref(),
-        rig_state.as_ref(),
-    );
     if plan_is_empty(&plan) {
         return None;
     }
@@ -571,94 +488,92 @@ fn strip_motion_json(raw: &str) -> &str {
         .trim()
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
-}
-
+#[cfg(test)]
+/// A candidate judgment model tried on the director's questions (live acceptance).
 #[cfg(test)]
 pub(super) mod live_probe {
     use super::*;
+    use crate::models::entities::agent_persona;
 
+    fn moment(rig: &RigStateSummary) -> MotionContext {
+        MotionContext {
+            user_id: 0,
+            phase: MotionPhase::Delivery,
+            mood: MoodTransition {
+                before: 65.0,
+                after: 65.0,
+                arousal_before: 48.0,
+                arousal_after: 48.0,
+                band_before: "calm".into(),
+                band_after: "calm".into(),
+                delta: 0.0,
+                cause: "user_utterance".into(),
+                revision: 1,
+            },
+            activity: "talking".into(),
+            user_text: String::new(),
+            response_text: None,
+            previous_phrases: Vec::new(),
+            task_success: None,
+            rig_state: Some(rig.clone()),
+            motion_style: "even".into(),
+        }
+    }
+
+    /// The system prompt, schema and persona a candidate answers with.
     pub fn contract(
         persona: &agent_persona::Model,
         rig: &RigStateSummary,
     ) -> (String, Value, Value) {
-        let offered = offered_cue_intents(Some(rig));
+        let asked = questions::questions(&moment(rig), Some(rig));
         (
-            motion_system_prompt(&offered),
-            motion_schema(&offered),
-            motion_persona_payload(Some(persona), "even"),
+            questions::chat_system_prompt(&asked),
+            questions::chat_schema(&asked),
+            serde_json::json!(persona.personality),
         )
     }
 
+    /// Whether a candidate's answers become a plan production would play.
     pub fn valid(raw: &str, rig: &RigStateSummary) -> bool {
-        let Ok(unfiltered) = serde_json::from_str::<ChatPerformancePlan>(raw) else {
+        let Ok(answers) = serde_json::from_str::<Value>(strip_motion_json(raw)) else {
             return false;
         };
-        let Some(MotionDecision::Perform(plan)) = parse_motion_decision(raw) else {
-            return false;
-        };
-        // A smoke test must not pass merely because production's safe parser
-        // removed an invalid cue or clamped an out-of-range value.
-        plan == unfiltered
-            && plan.cues.len() <= 2
-            && plan.baseline.is_some()
-            && plan
-                .cues
-                .iter()
-                .all(|cue| cue_survives_state(rig, &cue.intent))
+        let context = moment(rig);
+        let asked = questions::questions(&context, Some(rig));
+        let answered = asked
+            .as_object()
+            .is_some_and(|asked| asked.keys().all(|key| answers[key].is_object()));
+        answered
+            && matches!(
+                parse_motion_decision(
+                    &questions::plan_from_answers(&answers, &context, Some(rig)).to_string()
+                ),
+                Some(MotionDecision::Perform(_))
+            )
     }
 
     #[test]
-    fn smoke_rejects_cues_discarded_by_the_production_sanitizer() {
+    fn a_candidate_must_answer_every_question() {
         let rig = myriad_merope::sanitize_rig_state(&serde_json::json!({})).unwrap();
-        let valid = serde_json::json!({"baseline":{"expression":"steady","posture":"neutral","motionEnergy":1.0,"attention":0.5},"cues":[]});
-        assert!(self::valid(&valid.to_string(), &rig));
-        let mut invalid = valid;
-        invalid["cues"] = serde_json::json!([{"intent":"not_a_cue","atMs":0,"intensity":1.0,"tempo":1.0,"fadeInMs":100,"fadeOutMs":200,"interrupt":"blend"}]);
-        assert!(!self::valid(&invalid.to_string(), &rig));
+        let answers = serde_json::json!({
+            "feeling": {"choice": "calm", "confidence": 0.8},
+            "own": {"noul": 0.9},
+            "posture": {"choice": "neutral", "confidence": 0.7},
+        });
+        let asked = questions::questions(&moment(&rig), Some(&rig));
+        let mut full = answers.clone();
+        for key in asked.as_object().unwrap().keys() {
+            if full[key].is_null() {
+                full[key] = serde_json::json!({"choice": "none", "confidence": 0.1, "score": 0.0});
+            }
+        }
+        assert!(self::valid(&full.to_string(), &rig));
+        if asked.as_object().unwrap().len() > 3 {
+            assert!(!self::valid(&answers.to_string(), &rig));
+        }
     }
 }
 
 #[cfg(test)]
 #[path = "motion_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod decisions_fallback_tests {
-    use super::*;
-
-    fn chat() -> impl std::future::Future<Output = DirectorAnswer> {
-        async { Some(Ok(Ok("chat".to_owned()))) }
-    }
-
-    #[tokio::test]
-    async fn a_failed_decisions_call_is_answered_by_the_chat_director() {
-        let failed: DirectorAnswer = Some(Ok(Err(anyhow::anyhow!("decisions call failed: 502"))));
-        let answer = or_chat_director(failed, "delivery", chat()).await;
-        assert_eq!(answer.unwrap().unwrap().unwrap(), "chat");
-    }
-
-    #[tokio::test]
-    async fn a_decisions_answer_stands_and_a_spent_budget_is_not_spent_again() {
-        let decided: DirectorAnswer = Some(Ok(Ok("jev".to_owned())));
-        let answer = or_chat_director(decided, "delivery", chat()).await;
-        assert_eq!(answer.unwrap().unwrap().unwrap(), "jev");
-        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
-            .await
-            .unwrap_err();
-        let timed_out: DirectorAnswer = Some(Err(elapsed));
-        assert!(
-            or_chat_director(timed_out, "delivery", chat())
-                .await
-                .unwrap()
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn without_a_decisions_model_the_chat_director_answers_as_before() {
-        let answer = or_chat_director(None, "delivery", chat()).await;
-        assert_eq!(answer.unwrap().unwrap().unwrap(), "chat");
-    }
-}

@@ -2453,15 +2453,16 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     );
     let stale = json!({"baseline":null,"cues":[],"phrases":[{"text":"也许可以试试。","intent":"hesitate"}]}).to_string();
     assert_eq!(grade(case, "returned", &stale), "contract_failure");
+    // The director is asked about this reply, sentence by sentence.
     let exported = request(case);
     let input: Value = serde_json::from_str(exported["input"].as_str().unwrap()).unwrap();
-    assert_eq!(input["previouslyIssuedPhrases"][0]["intent"], "hesitate");
     assert_eq!(input["responseText"], case.reply);
+    assert!(input["questions"]["say0"]["instructions"].is_string());
     assert!(
         exported["system"]
             .as_str()
             .unwrap()
-            .contains("omit baseline")
+            .contains("Answer every question")
     );
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
