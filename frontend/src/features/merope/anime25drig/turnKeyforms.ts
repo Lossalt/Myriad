@@ -67,13 +67,21 @@ function turnKeyFor(keyforms: Readonly<Anime25DTurnKeyforms> | undefined, layer:
   const lock = family === 'front-hair' ? /^front-hair-(\d+)$/.exec(layer.name ?? '') : null
   const iris = family.startsWith('eye:') && /iris|irides|lovestruck-heart/.test(layer.role) ? `iris:${layer.side}` : null
   const own = lock ? `front-hair:${lock[1]}` : iris
-  return (own ? keyforms[own] : undefined) ?? keyforms[family] ?? (ON_THE_FACE.test(family) ? keyforms.face : undefined)
+  const key = (own ? keyforms[own] : undefined) ?? keyforms[family]
+  if (!ON_THE_FACE.test(family)) return key
+  if (!key) return keyforms.face
+  const face = keyforms.face
+  if ((key.up && key.down) || !face?.up || !face.down) return key
+  return { ...key, up: { ...face.up, multiply: undefined }, down: { ...face.down, multiply: undefined } }
 }
 
 /**
- * Features drawn on the face turn with it when they have no key of their own:
- * a mouth too small to be found in every turned decomposition is not fitted
- * at all, and turned by the computed head it slides off a keyed face.
+ * Features drawn on the face turn with it when they have no key of their
+ * own: a mouth too small to be found in every turned decomposition is not
+ * fitted at all, and turned by the computed head it slides off a keyed face.
+ * One keyed across but not nodding nods with the skin under it, else the
+ * computed nod leaves it behind while the eyes and the face go down, and the
+ * features crowd together (or spread apart, the face raised).
  */
 const ON_THE_FACE = /^(mouth|nose|brow:[LR])$/
 

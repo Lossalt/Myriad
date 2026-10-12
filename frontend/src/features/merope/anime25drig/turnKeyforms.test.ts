@@ -85,6 +85,7 @@ test('a nod key adds to the turn key, as Live2D fills the corners from the edges
       down: lattice(5, () => [0, -4]),
     },
     nose: { plus: still, minus: still },
+    ears: { plus: still, minus: still },
   }
   assert.ok(isAnime25DTurnKeyforms(keyforms))
   const rest = new Float32Array([50, 50])
@@ -94,9 +95,11 @@ test('a nod key adds to the turn key, as Live2D fills the corners from the edges
   assert.ok(Math.abs(out.x - 10) < 0.05 && Math.abs(out.y + 6) < 0.05, `${out.x} ${out.y}`)
   turnKeyformOffset(bound, 0, 0, out, -0.5)
   assert.ok(Math.abs(out.x) < 0.05 && Math.abs(out.y - 2) < 0.05, `${out.x} ${out.y}`)
-  // Without nod keys the nod is left to the computed head.
+  // Without nod keys the nod is left to the computed head, but for a feature on the face, which nods with it.
+  const ears = bindTurnKeyform(keyforms, { group: 'head', role: 'ears', side: null }, rest)!
+  assert.equal(ears.up, null)
   const nose = bindTurnKeyform(keyforms, { group: 'head', role: 'nose', side: null }, rest)!
-  assert.equal(nose.up, null)
+  assert.ok(nose.up !== null && Math.abs(nose.up[1] + 6) < 0.05)
 })
 
 test('an accessory keyed like its host stays put on it: the carry brings the host turning, once', () => {
@@ -171,6 +174,23 @@ test('a mouth without a key of its own turns with the face', () => {
   const own = bindTurnKeyform({ face, mouth: { plus: shiftedLattice(2), minus: shiftedLattice(-2) } }, { group: 'head', role: 'mouth-close', side: null }, rest)!
   assert.ok(Math.abs(own.plus[0] - 2) < 1e-3)
   assert.equal(bindTurnKeyform(keyforms, { group: 'head', role: 'back-hair', side: null }, rest), null)
+})
+
+test('a feature keyed across but not nodding nods with the face under it', () => {
+  const nodded = (dy: number) => ({ box: [0, 0, 200, 200] as [number, number, number, number], grid: 2, back: [0, -dy, 0, -dy, 0, -dy, 0, -dy], multiply: [0.8, 0.8, 0.8] as [number, number, number] })
+  const face = { plus: shiftedLattice(6), minus: shiftedLattice(-6), up: nodded(-9), down: nodded(9) }
+  const mouthKey = { plus: shiftedLattice(2), minus: shiftedLattice(-2) }
+  const rest = Float32Array.of(100, 100)
+  const mouth = bindTurnKeyform({ face, mouth: mouthKey }, { group: 'head', role: 'mouth-close', side: null }, rest)!
+  // Its own turn stays; the nod is the face's, without the face's colour.
+  assert.ok(Math.abs(mouth.plus[0] - 2) < 1e-3)
+  assert.ok(Math.abs(mouth.down![1] - 9) < 1e-3 && Math.abs(mouth.up![1] + 9) < 1e-3)
+  assert.equal(mouth.multiply, null)
+  // A nod of its own still wins, and hair takes no nod from the face.
+  const ownNod = bindTurnKeyform({ face, mouth: { ...mouthKey, up: nodded(-3), down: nodded(3) } }, { group: 'head', role: 'mouth-close', side: null }, rest)!
+  assert.ok(Math.abs(ownNod.down![1] - 3) < 1e-3)
+  const hair = bindTurnKeyform({ face, 'back-hair': mouthKey }, { group: 'head', role: 'back-hair', side: null }, rest)!
+  assert.equal(hair.down, null)
 })
 
 function shiftedLattice(dx: number) {
