@@ -241,6 +241,20 @@ pub(super) fn plan_from_answers(
             targets.insert(control.to_owned(), json!(tier));
         }
     };
+    // Which way is not asked: it alternates with the reply, as a person's does.
+    let side = if context
+        .response_text
+        .as_deref()
+        .unwrap_or(&context.user_text)
+        .chars()
+        .count()
+        % 2
+        == 0
+    {
+        ""
+    } else {
+        "-"
+    };
     let (expression, energy) = match feeling {
         "warm" => {
             set("mouthSmile", "slight");
@@ -256,6 +270,8 @@ pub(super) fn plan_from_answers(
             ("warm", 0.9)
         }
         "sulky" => {
+            // A playful huff turns her head away from them.
+            set("headTurn", &format!("{side}clear"));
             set("mouthSmile", "-slight");
             ("tense", 1.0)
         }
@@ -279,20 +295,6 @@ pub(super) fn plan_from_answers(
             "open"
         }
         _ => "neutral",
-    };
-    // Which way is not asked: it alternates with the reply, as a person's does.
-    let side = if context
-        .response_text
-        .as_deref()
-        .unwrap_or(&context.user_text)
-        .chars()
-        .count()
-        % 2
-        == 0
-    {
-        ""
-    } else {
-        "-"
     };
     if let Some(score) = answers["tilt"]["score"].as_f64() {
         let tier = match score {
@@ -508,6 +510,20 @@ mod tests {
             json!([{"text": "才、才没有呢……", "intent": "hesitate"}]),
             "unsure and plain sentences are left alone"
         );
+    }
+
+    #[test]
+    fn a_huff_turns_her_head_away() {
+        let answers = json!({
+            "feeling": {"type": "choice", "choice": "sulky", "confidence": 0.99},
+            "own": {"type": "noul", "noul": 0.9},
+        });
+        let value = plan_from_answers(&answers, &context("哼，我可是等了好久的。"), Some(&bust()));
+        let turn = value["baseline"]["pose"]["targets"]["headTurn"]
+            .as_str()
+            .unwrap();
+        assert_eq!(turn.trim_start_matches('-'), "clear");
+        assert_eq!(value["baseline"]["expression"], "tense");
     }
 
     #[test]
