@@ -360,7 +360,7 @@ pub(super) async fn between_them(
     // What only she and this person share, or she and this group: each
     // heard only where it grew.
     let shared = match present.group_id() {
-        Some(venue) => bits::in_group(db, venue, BITS_LIMIT).await,
+        Some(venue) => bits::in_group(db, venue, BITS_LIMIT, words).await,
         None => bits::between(db, user_id, BITS_LIMIT).await,
     };
     if let Some(block) = format_bits_section(&shared, group) {
@@ -368,7 +368,7 @@ pub(super) async fn between_them(
     }
     // What the last days in this group were like: the group's own.
     if let Some(venue) = present.group_id() {
-        let days = bits::days_in(db, venue, GROUP_DAYS).await;
+        let days = bits::days_in(db, venue, GROUP_DAYS, words).await;
         if let Some(block) = format_group_days_section(&days) {
             sections.push(block);
         }

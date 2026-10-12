@@ -19,6 +19,8 @@ const FADE_AFTER: chrono::Duration = chrono::Duration::days(60);
 /// this long is being told once.
 const TOLD_ONCE_WITHIN: chrono::Duration = chrono::Duration::minutes(30);
 const TOLD_SHOWN: u64 = 3;
+/// Older tellings the talk can bring back besides those.
+const TOLD_BROUGHT_BACK: usize = 2;
 
 /// The words a judgment's answer says she is not sure of.
 fn unsure_in(raw: &str) -> Vec<String> {
@@ -65,12 +67,18 @@ pub async fn remember_told(db: &DatabaseConnection, venue: &str, told: &str, lin
     }
 }
 
-/// What people in the group told her about herself, latest first, as a
-/// section, if anything.
-pub async fn told_section(db: &DatabaseConnection, venue: &str) -> Option<String> {
-    let rows = unified::latest_in_venue(db, venue, SOURCE, TOLD_SHOWN)
-        .await
-        .ok()?;
+/// What people in the group told her about herself, latest first, and any
+/// older telling what was `said` brings back, as a section, if anything.
+pub async fn told_section(db: &DatabaseConnection, venue: &str, said: &str) -> Option<String> {
+    let rows = unified::fresh_and_brought(
+        db,
+        venue,
+        SOURCE,
+        TOLD_SHOWN as usize,
+        Some(said),
+        TOLD_BROUGHT_BACK,
+    )
+    .await;
     let now = chrono::Utc::now();
     let told: Vec<(String, String)> = rows
         .into_iter()

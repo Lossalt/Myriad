@@ -36,7 +36,7 @@ pub(super) async fn make_sense(
         making_sense::remember_told(db, &stored, told, said).await;
     }
     let sections: Vec<String> = [
-        making_sense::told_section(db, &stored).await,
+        making_sense::told_section(db, &stored, said).await,
         sense.as_ref().map(myriad_merope::making_sense::section),
     ]
     .into_iter()

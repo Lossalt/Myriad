@@ -416,6 +416,38 @@ pub(super) fn rank_marked(
     (chosen, next, filler)
 }
 
+/// Of `rows`, at most `limit` that `query` names by their words or their
+/// meaning, best first; none when it names none. For what is kept apart from
+/// ordinary recall and shown freshest first (a group's bits, its days): an
+/// older one still comes back when the talk comes to it. Reading them is not
+/// recalling them; what they keep of their own decides how long they last.
+pub async fn named_among<C: ConnectionTrait>(
+    db: &C,
+    rows: Vec<agent_memories::Model>,
+    query: &str,
+    limit: usize,
+) -> Vec<agent_memories::Model> {
+    if query.trim().is_empty() || rows.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let by_meaning = super::super::meaning::standing_out(
+        &super::super::meaning::closeness(db, &rows, query, super::super::meaning::FILL).await,
+    );
+    let (chosen, _, filler) = rank_marked(
+        rows,
+        Some(query),
+        limit,
+        &Priming::default(),
+        0.0,
+        &by_meaning,
+    );
+    chosen
+        .into_iter()
+        .filter(|(row, brought_to_mind)| !brought_to_mind && !filler.contains(&row.id))
+        .map(|(row, _)| row)
+        .collect()
+}
+
 /// Let the mind wander over a person's memories that `present` may hear:
 /// start from what is still on the mind (else somewhere recent), drift a few
 /// steps along association, and return where it settled. `avoid` holds ids

@@ -132,7 +132,7 @@ async fn offered(
     };
     let mut offered = Vec::with_capacity(seen.len());
     for (venue, lines, quiet_for, spoke_up_lately) in seen {
-        let shared = bits::in_group(db, &venue, 5)
+        let shared = bits::in_group(db, &venue, 5, None)
             .await
             .into_iter()
             .map(|(handle, how)| format!("{handle}: {how}"))

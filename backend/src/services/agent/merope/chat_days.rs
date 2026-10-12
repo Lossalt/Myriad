@@ -142,7 +142,7 @@ async fn day_lines(db: &DatabaseConnection, place: Place<'_>) -> BTreeMap<NaiveD
             .into_iter()
             .map(|(day, row)| (day, row.content))
             .collect(),
-        Place::In(venue) => super::bits::days_in(db, venue, 1000)
+        Place::In(venue) => super::bits::days_in(db, venue, 1000, None)
             .await
             .into_iter()
             .filter_map(|(day, text)| {

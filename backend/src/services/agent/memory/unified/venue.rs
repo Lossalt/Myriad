@@ -172,6 +172,29 @@ pub async fn latest_in_venue<C: ConnectionTrait>(
         .await
 }
 
+/// How many of one source in one venue the talk can bring back from.
+const LOOKED_OVER: u64 = 500;
+
+/// Of one source kept in one venue, the `fresh` freshest, then at most
+/// `brought` older ones that `words` bring back (see [`named_among`]).
+pub async fn fresh_and_brought<C: ConnectionTrait>(
+    db: &C,
+    venue: &str,
+    source: &str,
+    fresh: usize,
+    words: Option<&str>,
+    brought: usize,
+) -> Vec<agent_memories::Model> {
+    let mut rows = venue_source_rows(db, None, venue, source, LOOKED_OVER)
+        .await
+        .unwrap_or_default();
+    let older = rows.split_off(fresh.min(rows.len()));
+    if let Some(words) = words {
+        rows.extend(named_among(db, older, words, brought).await);
+    }
+    rows
+}
+
 /// Rows of one source kept in one venue (`private`, `group:<id>`), freshest
 /// first: one person's, or everyone's there when `user_id` is `None`.
 pub async fn venue_source_rows<C: ConnectionTrait>(

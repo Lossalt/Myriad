@@ -212,28 +212,40 @@ pub(super) async fn put_day(
     .await;
 }
 
-/// What the last days in a group (`venue` as sessions keep it) were like,
-/// oldest first: (date, what it was like).
-pub async fn days_in(db: &DatabaseConnection, venue: &str, limit: u64) -> Vec<(String, String)> {
+/// What days in a group (`venue` as sessions keep it) were like, oldest
+/// first: the last `limit`, and any older one what was `said` brings back:
+/// (date, what it was like).
+pub async fn days_in(
+    db: &DatabaseConnection,
+    venue: &str,
+    limit: u64,
+    said: Option<&str>,
+) -> Vec<(String, String)> {
     let circle = Circle::Group {
         venue: venue.to_string(),
         keeper: 0,
     };
-    let mut days: Vec<(String, String)> =
-        unified::venue_source_rows(db, None, &circle.audience().venue(), DAY_SOURCE, limit)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|row| {
-                let day = row
-                    .evidence
-                    .as_deref()
-                    .and_then(|evidence| serde_json::from_str::<Value>(evidence).ok())
-                    .and_then(|evidence| evidence.get("day")?.as_str().map(str::to_string))
-                    .unwrap_or_else(|| row.created_at.format("%Y-%m-%d").to_string());
-                (day, row.content)
-            })
-            .collect();
-    days.reverse();
+    let mut days: Vec<(String, String)> = unified::fresh_and_brought(
+        db,
+        &circle.audience().venue(),
+        DAY_SOURCE,
+        limit as usize,
+        said,
+        super::BROUGHT_BACK,
+    )
+    .await
+    .into_iter()
+    .map(|row| {
+        let day = row
+            .evidence
+            .as_deref()
+            .and_then(|evidence| serde_json::from_str::<Value>(evidence).ok())
+            .and_then(|evidence| evidence.get("day")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| row.created_at.format("%Y-%m-%d").to_string());
+        (day, row.content)
+    })
+    .collect();
+    // Freshest first, then what was brought back: by date, oldest first.
+    days.sort_by(|left, right| left.0.cmp(&right.0));
     days
 }

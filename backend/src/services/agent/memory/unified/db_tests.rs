@@ -244,3 +244,39 @@ async fn only_what_comes_to_her_mind_counts_as_recalled_not_what_is_read_behind_
     assert_eq!(quietly(ask()).await.unwrap().len(), 1);
     assert_eq!(uses(db.clone(), id).await, 1);
 }
+
+#[tokio::test]
+async fn a_group_keeps_its_freshest_in_view_and_the_talk_brings_back_an_older_one() {
+    let Some(db) = temp_db().await else {
+        return;
+    };
+    let venue = "group:onebot:42";
+    for content in [
+        "周五晚上一起打麻将，输的人唱歌",
+        "群主的咖啡永远是冰美式",
+        "复读机比赛",
+        "早安接龙",
+    ] {
+        remember_in_venue(&db, venue, content, "{}", "bit")
+            .await
+            .unwrap();
+    }
+    remember_in_venue(&db, "group:onebot:7", "麻将三缺一", "{}", "bit")
+        .await
+        .unwrap();
+    let kept = |rows: Vec<agent_memories::Model>| {
+        rows.into_iter().map(|row| row.content).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kept(fresh_and_brought(&db, venue, "bit", 2, Some("今晚谁来打麻将"), 2).await),
+        ["早安接龙", "复读机比赛", "周五晚上一起打麻将，输的人唱歌"]
+    );
+    assert_eq!(
+        kept(fresh_and_brought(&db, venue, "bit", 2, Some("今天天气不错"), 2).await),
+        ["早安接龙", "复读机比赛"]
+    );
+    assert_eq!(
+        kept(fresh_and_brought(&db, venue, "bit", 2, None, 2).await),
+        ["早安接龙", "复读机比赛"]
+    );
+}

@@ -236,7 +236,7 @@ pub async fn for_group_jokes(db: &DatabaseConnection, owner: i32) {
         if left_this_month(db).await == 0 {
             return;
         }
-        let jokes = super::bits::in_group(db, &venue, JOKES).await;
+        let jokes = super::bits::in_group(db, &venue, JOKES, None).await;
         if jokes.is_empty() {
             continue;
         }

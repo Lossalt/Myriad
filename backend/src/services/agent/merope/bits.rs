@@ -90,6 +90,10 @@ fn parse(raw: &str) -> Option<Changes> {
     super::call::parse(raw)
 }
 
+/// Older bits, or days, of a group the talk can bring back besides the
+/// freshest.
+const BROUGHT_BACK: usize = 2;
+
 /// A bit as kept: its handle and how it goes.
 fn bit_of(row: &crate::models::entities::agent_memories::Model) -> Option<(String, String)> {
     let evidence: Value = serde_json::from_str(row.evidence.as_deref()?).ok()?;
@@ -391,18 +395,31 @@ pub async fn between(db: &DatabaseConnection, user_id: i32, limit: u64) -> Vec<(
         .collect()
 }
 
-/// What she and this group share (`venue` as sessions keep it), freshest
-/// first: (handle, how).
-pub async fn in_group(db: &DatabaseConnection, venue: &str, limit: u64) -> Vec<(String, String)> {
+/// What she and this group share (`venue` as sessions keep it): the
+/// freshest `limit`, then any older one what was `said` brings back:
+/// (handle, how).
+pub async fn in_group(
+    db: &DatabaseConnection,
+    venue: &str,
+    limit: u64,
+    said: Option<&str>,
+) -> Vec<(String, String)> {
     let circle = Circle::Group {
         venue: venue.to_string(),
         keeper: 0,
     };
-    held_in(db, &circle, limit)
-        .await
-        .iter()
-        .filter_map(bit_of)
-        .collect()
+    unified::fresh_and_brought(
+        db,
+        &circle.audience().venue(),
+        SOURCE,
+        limit as usize,
+        said,
+        BROUGHT_BACK,
+    )
+    .await
+    .iter()
+    .filter_map(bit_of)
+    .collect()
 }
 
 #[cfg(test)]

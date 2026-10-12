@@ -139,12 +139,14 @@ pub async fn reply(
     if let Some(block) = super::format_doing_section(now.as_deref(), &[]) {
         sections.push(block);
     }
-    if let Some(block) =
-        super::format_bits_section(&super::bits::in_group(db, venue, 3).await, true)
-    {
+    if let Some(block) = super::format_bits_section(
+        &super::bits::in_group(db, venue, 3, Some(words)).await,
+        true,
+    ) {
         sections.push(block);
     }
-    if let Some(block) = super::format_group_days_section(&super::bits::days_in(db, venue, 3).await)
+    if let Some(block) =
+        super::format_group_days_section(&super::bits::days_in(db, venue, 3, Some(words)).await)
     {
         sections.push(block);
     }

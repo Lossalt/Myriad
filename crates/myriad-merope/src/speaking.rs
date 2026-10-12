@@ -580,7 +580,7 @@ pub fn format_group_days_section(days: &[(String, String)]) -> Option<String> {
         return None;
     }
     Some(format!(
-        "## Lately in this group\nWhat the last days here were like, as you remember them, oldest first:\n{}",
+        "## Days in this group\nWhat days here were like, as you remember them: the last few, and any older one the talk brings back, oldest first:\n{}",
         myriad_agent_rules::untrusted_block("group_days", &lines.join("\n"))
     ))
 }
@@ -803,7 +803,7 @@ mod tests {
             ("09-29".into(), "染川出了海龟汤，没人猜中".into()),
         ])
         .unwrap();
-        assert!(section.starts_with("## Lately in this group"));
+        assert!(section.starts_with("## Days in this group"));
         assert!(section.find("09-28").unwrap() < section.find("09-29").unwrap());
     }
 

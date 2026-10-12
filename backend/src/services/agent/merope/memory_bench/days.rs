@@ -450,14 +450,14 @@ pub(super) async fn her_day_in_a_group_a_stretch_at_a_time() {
         super::super::bits::go_over_stretch(&db, keeper, venue, morning),
     )
     .await;
-    let after_morning = super::super::bits::days_in(&db, venue, 10).await;
+    let after_morning = super::super::bits::days_in(&db, venue, 10, None).await;
     super::super::clock::as_of(
         as_of(21),
         super::super::bits::go_over_stretch(&db, keeper, venue, evening),
     )
     .await;
-    let days = super::super::bits::days_in(&db, venue, 10).await;
-    let bits = super::super::bits::in_group(&db, venue, 10).await;
+    let days = super::super::bits::days_in(&db, venue, 10, None).await;
+    let bits = super::super::bits::in_group(&db, venue, 10, None).await;
     isolated.drop().await;
     println!("-- after the morning: {after_morning:?}");
     println!("-- the day now: {days:?}");
