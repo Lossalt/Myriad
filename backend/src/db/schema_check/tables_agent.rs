@@ -19,6 +19,7 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("created_at", "timestamp with time zone")
                     .not_null()
                     .default_value("now()"),
+                ColumnDef::new("kept_from", "character varying"),
             ],
         },
         TableDef {

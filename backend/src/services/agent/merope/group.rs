@@ -49,7 +49,9 @@ pub mod sharing {
 }
 
 pub mod stickers {
-    pub(crate) use crate::services::agent::merope::stickers::{picture, resolve, sent};
+    pub(crate) use crate::services::agent::merope::stickers::{
+        keep_theirs, picture, resolve, sent,
+    };
 }
 
 pub mod strangers {

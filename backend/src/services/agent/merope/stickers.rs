@@ -1,9 +1,11 @@
 //! Her stickers (see `myriad_merope::stickers`): kept, offered to her by
 //! what they mean, made when she decides to, and counted a month at a time.
 //!
-//! A sticker is a picture of her, so it is only hers while she still looks
-//! like it: one drawn of how she looked before (another name, look or
-//! portrait) is not offered again. A group's sticker is offered only there.
+//! A sticker she made is a picture of her, so it is only hers while she still
+//! looks like it: one drawn of how she looked before (another name, look or
+//! portrait) is not offered again. Stickers people sent in groups she kept
+//! to send herself are offered beside hers, saying where she kept them
+//! (`kept`). A group's sticker is offered only there.
 
 use chrono::{Datelike, TimeZone, Utc};
 use sea_orm::{
@@ -16,6 +18,9 @@ use crate::services::agent::memory::lexical;
 use crate::services::image_generation::{self, ImageBackground, ImageReference};
 
 pub use myriad_merope::stickers::{Choice, MONTHLY};
+
+mod kept;
+pub use kept::keep as keep_theirs;
 
 /// Stickers offered to her in a turn, at most.
 const OFFERED: usize = 8;
@@ -103,23 +108,36 @@ pub async fn section(
     venue: Option<&str>,
     talk: &str,
 ) -> Option<String> {
-    current_identity(db).await?;
+    let can_make = current_identity(db).await.is_some();
     let stickers = offered(db, venue, talk).await;
+    if !can_make && stickers.is_empty() {
+        return None;
+    }
     offer(key, &stickers);
     let now = Utc::now();
-    let meanings: Vec<String> = stickers
-        .iter()
-        .map(|sticker| {
-            myriad_merope::stickers::offered_line(
-                &sticker.meaning,
-                sticker.sent,
-                sticker
-                    .last_sent_at
-                    .map(|at| now.signed_duration_since(at.with_timezone(&Utc))),
-            )
-        })
-        .collect();
-    myriad_merope::stickers::format_sticker_section(&meanings, left_this_month(db).await)
+    let mut meanings: Vec<String> = Vec::new();
+    for sticker in &stickers {
+        let line = myriad_merope::stickers::offered_line(
+            &sticker.meaning,
+            sticker.sent,
+            sticker
+                .last_sent_at
+                .map(|at| now.signed_duration_since(at.with_timezone(&Utc))),
+        );
+        meanings.push(match &sticker.kept_from {
+            Some(from) => myriad_merope::stickers::kept_line(
+                &line,
+                crate::services::channel_group::title(from).await.as_deref(),
+            ),
+            None => line,
+        });
+    }
+    let left = if can_make {
+        left_this_month(db).await
+    } else {
+        0
+    };
+    myriad_merope::stickers::format_sticker_section(&meanings, left)
 }
 
 /// Draw a new sticker of her and keep it: what it shows, what it means, and
@@ -202,6 +220,7 @@ pub async fn make_sticker(
         sent: Set(0),
         last_sent_at: Set(None),
         created_at: Set(Utc::now().fixed_offset()),
+        kept_from: Set(None),
     };
     match row.insert(db).await {
         Ok(model) => {
@@ -396,12 +415,15 @@ pub async fn current_identity(db: &DatabaseConnection) -> Option<String> {
     ))
 }
 
-/// Her stickers that are still of her and belong here (`venue` is a group,
-/// or none for anywhere else), those the talk touches first, then those
-/// she sends most.
+/// Her stickers that are still of her, and those she kept that she still
+/// uses, that belong here (`venue` is a group, or none for anywhere else),
+/// those the talk touches first, then those she sends most.
 pub async fn offered(db: &DatabaseConnection, venue: Option<&str>, talk: &str) -> Vec<Model> {
-    let Some(identity) = current_identity(db).await else {
-        return Vec::new();
+    let hers = match current_identity(db).await {
+        Some(identity) => Condition::all()
+            .add(Column::KeptFrom.is_null())
+            .add(Column::Identity.eq(identity)),
+        None => Condition::all().add(Column::Id.is_null()),
     };
     let belongs = match venue {
         Some(venue) => Condition::any()
@@ -410,7 +432,7 @@ pub async fn offered(db: &DatabaseConnection, venue: Option<&str>, talk: &str) -
         None => Condition::all().add(Column::Venue.is_null()),
     };
     let rows = Entity::find()
-        .filter(Column::Identity.eq(identity))
+        .filter(Condition::any().add(hers).add(kept::in_use()))
         .filter(belongs)
         .order_by_desc(Column::Sent)
         .order_by_desc(Column::CreatedAt)
@@ -458,12 +480,13 @@ pub(super) fn month_start() -> Option<chrono::DateTime<Utc>> {
         .map(|start| start.with_timezone(&Utc))
 }
 
-/// Stickers she made this month (in her zone).
+/// Stickers she made this month (in her zone); not those she kept.
 pub async fn made_this_month(db: &DatabaseConnection) -> usize {
     let Some(start) = month_start() else {
         return MONTHLY;
     };
     Entity::find()
+        .filter(Column::KeptFrom.is_null())
         .filter(Column::CreatedAt.gte(start))
         .count(db)
         .await

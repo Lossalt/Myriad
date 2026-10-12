@@ -108,13 +108,24 @@ pub fn offered_line(meaning: &str, sent: i32, last_sent_ago: Option<chrono::Dura
     }
 }
 
+/// An offered sticker someone sent that she kept, saying where she kept it
+/// (`group`: its name, when she has it).
+pub fn kept_line(line: &str, group: Option<&str>) -> String {
+    match group {
+        Some(group) => {
+            format!("{line} — not of you: kept from what someone sent in the group 「{group}」")
+        }
+        None => format!("{line} — not of you: kept from what someone sent in a group"),
+    }
+}
+
 /// The stickers offered to her this turn, numbered, and whether she can make
 /// a new one (with how many are left this month).
 pub fn format_sticker_section(meanings: &[String], left_this_month: usize) -> Option<String> {
     if meanings.is_empty() && left_this_month == 0 {
         return None;
     }
-    let mut section = "## Stickers\nStickers of your own, pictures of you. Send one only where a person would, not every time. To send one, put [[sticker:N]] on its own last line, N its number here; a sticker can also be your whole reply, with nothing else.".to_string();
+    let mut section = "## Stickers\nStickers you can send: your own, pictures of you, and any marked as ones you kept from what people sent in groups. Send one only where a person would, not every time. To send one, put [[sticker:N]] on its own last line, N its number here; a sticker can also be your whole reply, with nothing else.".to_string();
     if !meanings.is_empty() {
         let lines: Vec<String> = meanings
             .iter()

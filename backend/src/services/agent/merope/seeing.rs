@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use base64::Engine as _;
-use myriad_merope::seeing::{MONTHLY, Seen, parse, prompt};
+use myriad_merope::seeing::{MONTHLY, Seen, parse, prompt, sticker_prompt};
 use sea_orm::DatabaseConnection;
 use sha2::{Digest, Sha256};
 
@@ -40,14 +40,16 @@ pub async fn known(db: &DatabaseConnection, key: &str) -> Option<Seen> {
 }
 
 /// Look at a picture (its bytes, and what the app calls it), billed to
-/// `owner`; kept under `key` so it is known again. None when this month's
-/// looks are used up, or the picture cannot be read.
+/// `owner`; kept under `key` so it is known again. A sticker is looked at as
+/// she is (`soul`): whether she would keep it to send herself. None when this
+/// month's looks are used up, or the picture cannot be read.
 pub async fn look(
     db: &DatabaseConnection,
     owner: i32,
     key: &str,
     bytes: Vec<u8>,
     hint: Option<&str>,
+    soul: Option<&str>,
 ) -> Option<Seen> {
     if let Some(seen) = known(db, key).await {
         return Some(seen);
@@ -68,7 +70,10 @@ pub async fn look(
         .model()
         .await
         .ok()?
-        .look(&prompt(hint), &[picture])
+        .look(
+            &soul.map_or_else(|| prompt(hint), |soul| sticker_prompt(hint, soul)),
+            &[picture],
+        )
         .await
         .ok()?;
     let seen = parse(&raw)?;

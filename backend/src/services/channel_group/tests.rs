@@ -186,6 +186,7 @@ async fn pictures_read_as_she_saw_them_and_one_sent_again_is_counted() {
         group.lines[0].seen = vec![Some(myriad_merope::seeing::Seen {
             what: "一只翻白眼的猫".into(),
             says: Some("无语".into()),
+            ..Default::default()
         })];
     });
     assert_eq!(

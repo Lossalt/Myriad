@@ -1,4 +1,5 @@
-//! Her stickers: pictures of her she made herself (see `merope::stickers`).
+//! Her stickers: pictures of her she made herself, and stickers people sent
+//! in groups she kept to send herself (see `merope::stickers`).
 
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,9 @@ pub struct Model {
     pub sent: i32,
     pub last_sent_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
+    /// The group (as sessions keep it) she kept it from, when someone there
+    /// sent it; none for one she made.
+    pub kept_from: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

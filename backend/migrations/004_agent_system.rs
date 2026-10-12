@@ -521,7 +521,8 @@ CREATE TABLE IF NOT EXISTS merope_stickers (
     identity VARCHAR(64) NOT NULL,
     sent INTEGER NOT NULL DEFAULT 0,
     last_sent_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    kept_from VARCHAR(96)
 );
 CREATE INDEX IF NOT EXISTS idx_merope_stickers_created
     ON merope_stickers (created_at);

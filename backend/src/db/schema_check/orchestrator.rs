@@ -41,7 +41,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `ensure_memory_cues_table` 一起建）。
 /// 2026.10.13.1：她的私聊变了由数据库在 `myriad_conversations` 上报（三张表上的触发器，
 /// 随 004 与 `ensure_conversation_changes` 一起建）。
-pub const SCHEMA_VERSION: &str = "2026.10.13.1";
+/// 2026.10.13.2：她从群里收来的表情包记着收自哪个群 `merope_stickers.kept_from`
+/// （旧库走通用 ADD）。
+pub const SCHEMA_VERSION: &str = "2026.10.13.2";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
