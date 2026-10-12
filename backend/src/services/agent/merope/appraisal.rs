@@ -313,12 +313,11 @@ async fn appraise(
         "user_appraisal",
         saved.updated_at.timestamp_millis(),
     );
-    if let Some(manager) = crate::services::agent::notifications::get_notification_manager() {
-        // State only: no toast, transcript, speech, gesture or run sender.
-        // The reply can already be over; this is still the current input's
-        // persisted state, delivered through the existing user SSE stream.
-        manager.emit_merope_state(user_id, mood, super::current_activity(&saved).into());
-    }
+    // State only: no toast, transcript, speech, gesture or run sender.
+    // The reply can already be over; this is still the current input's
+    // persisted state, delivered through the existing user SSE stream and
+    // an app's link, in whichever process they are served.
+    super::announce_mood(db, user_id, mood, &saved).await;
     if !super::is_extremely_low(before.mood) && super::is_extremely_low(after.mood) {
         super::spawn_ingest(
             user_id,

@@ -138,6 +138,7 @@ pub(super) async fn serve_with(
         said: HashSet::new(),
         senses: Default::default(),
         experience: false,
+        proposals: None,
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -193,6 +194,9 @@ struct Link {
     senses: super::senses::Senses,
     /// The child said it sends `experience` (and asks `work.recall`).
     experience: bool,
+    /// Her open proposals as the child was last told them, once it said it
+    /// takes `proposals`.
+    proposals: Option<Vec<(String, &'static str, i64)>>,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -325,6 +329,7 @@ impl Link {
             "outfit.wear" if self.worn.is_some() => self.wear(inbound).await,
             "work.recall" if self.experience => self.recall(inbound),
             "experience" if self.experience => self.experienced(inbound).await,
+            "proposal.answer" if self.proposals.is_some() => self.answer_proposal(inbound).await,
             "ping" => self.reply(frame("pong", json!({}))),
             "ack" | "pong" => {}
             t if CONTRACT.frames.contains_key(t) => self.error("bad_frame", Some(inbound.seq)),
@@ -430,9 +435,35 @@ impl Link {
             }
             self.worn = Some(worn);
         }
+        // Her recent conversations, for the app to show (they stay here).
+        if capabilities
+            .iter()
+            .any(|capability| capability == "conversations")
+        {
+            match super::conversations::recent(&self.db, self.owner).await {
+                Ok(sessions) => self.reply(super::conversations::frame(
+                    sessions,
+                    CONTRACT.limits.max_frame_bytes,
+                )),
+                Err(error) => {
+                    tracing::warn!(%error, device = %self.device.id, "[link] could not read recent conversations")
+                }
+            }
+        }
+        // Her proposals as cards there.
+        if capabilities
+            .iter()
+            .any(|capability| capability == "proposals")
+        {
+            self.proposals = Some(Vec::new());
+            self.tell_proposals(true).await;
+        }
+        // Her mood as it changes, and the site's notifications about her
+        // for a child that shows notifications.
         if let Some(manager) = get_notification_manager() {
             let events = manager.subscribe();
-            let task = tokio::spawn(follow_moods(self.tx.clone(), self.owner, events));
+            let notify = capabilities.iter().any(|capability| capability == "notify");
+            let task = tokio::spawn(follow_events(self.tx.clone(), self.owner, events, notify));
             self.moods = Some(task.abort_handle());
         }
         tracing::info!(device = %self.device.id, "[link] hello");
@@ -800,6 +831,58 @@ impl Link {
         ));
     }
 
+    /// Her open proposals, sent when they changed since the child was told
+    /// (or always, with `always`).
+    async fn tell_proposals(&mut self, always: bool) {
+        let Some(told) = self.proposals.clone() else {
+            return;
+        };
+        let open = match super::proposals::open(&self.db, self.owner).await {
+            Ok(open) => open,
+            Err(error) => {
+                tracing::warn!(%error, device = %self.device.id, "[link] could not read proposals");
+                return;
+            }
+        };
+        let digest = super::proposals::digest(&open);
+        if always || told != digest {
+            self.reply(super::proposals::frame(&open));
+            self.proposals = Some(digest);
+        }
+    }
+
+    /// `proposal.answer`: the owner accepted or declined one of her
+    /// proposals on the app.
+    async fn answer_proposal(&mut self, inbound: Inbound) {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Answer {
+            proposal_id: String,
+            accept: bool,
+        }
+        let Ok(answer) = serde_json::from_value::<Answer>(inbound.body) else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        if !valid_id(&answer.proposal_id) {
+            self.error("bad_id", Some(inbound.seq));
+            return;
+        }
+        let answered = if answer.accept {
+            super::proposals::accept(
+                &self.db,
+                self.owner,
+                &answer.proposal_id,
+                super::proposals::Place::Site,
+            )
+            .await
+        } else {
+            super::proposals::decline(&self.db, self.owner, &answer.proposal_id).await
+        };
+        self.reply(answered);
+        self.tell_proposals(false).await;
+    }
+
     /// `outfit.wear`: the owner put a set of her wardrobe on her on the app.
     async fn wear(&mut self, inbound: Inbound) {
         let Some(outfit_id) = inbound
@@ -886,6 +969,8 @@ impl Link {
                 self.worn = Some(now);
             }
         }
+        // Her proposals changed (a new one, or one answered elsewhere).
+        self.tell_proposals(false).await;
         if self.takes_say {
             // Lines that could not be queued when said, and none that expired.
             let pending = super::say::pending(&self.device.id);
@@ -999,26 +1084,31 @@ async fn current_mood(db: &DatabaseConnection, owner: i32) -> Option<Outgoing> {
 }
 
 /// Her mood as it changes outside a run (the appraisal of what they said
-/// lands after the reply), for the site owner.
-async fn follow_moods(
+/// lands after the reply, a Work outcome moves her), for the site owner; and
+/// with `notify` the site's notifications about her, once each.
+pub(super) async fn follow_events(
     tx: mpsc::Sender<Outgoing>,
     owner: i32,
     mut events: tokio::sync::broadcast::Receiver<NotificationEvent>,
+    notify: bool,
 ) {
     use tokio::sync::broadcast::error::RecvError;
+    let mut sent = super::notices::Sent::default();
     loop {
-        match events.recv().await {
+        let outgoing = match events.recv().await {
             Ok(NotificationEvent::MeropeStateChanged {
                 user_id,
                 mood,
                 activity,
-            }) if user_id == owner => {
-                if tx.send(mood_frame(&mood, &activity)).await.is_err() {
-                    return;
-                }
-            }
-            Ok(_) | Err(RecvError::Lagged(_)) => {}
+            }) if user_id == owner => Some(mood_frame(&mood, &activity)),
+            Ok(event) if notify => sent.first(&event, owner),
+            Ok(_) | Err(RecvError::Lagged(_)) => None,
             Err(RecvError::Closed) => return,
+        };
+        if let Some(outgoing) = outgoing {
+            if tx.send(outgoing).await.is_err() {
+                return;
+            }
         }
     }
 }

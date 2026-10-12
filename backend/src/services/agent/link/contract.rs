@@ -24,6 +24,7 @@ pub(super) struct Contract {
     pub surfaces: Vec<String>,
     pub capabilities: Vec<String>,
     pub say_kinds: Vec<String>,
+    pub notice_kinds: Vec<String>,
     pub envelope: FieldSpec,
     pub frames: BTreeMap<String, FrameSpec>,
     pub error_codes: BTreeMap<String, String>,
@@ -154,7 +155,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 15] = [
+pub(super) const HOST_FRAMES: [&str; 19] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -170,11 +171,15 @@ pub(super) const HOST_FRAMES: [&str; 15] = [
     "outfit",
     "work.recalled",
     "experience.taken",
+    "conversations",
+    "notice",
+    "proposals",
+    "proposal.answered",
 ];
 
 /// Frame types the host takes from a child.
 #[cfg(test)]
-pub(super) const CHILD_FRAMES: [&str; 15] = [
+pub(super) const CHILD_FRAMES: [&str; 16] = [
     "hello",
     "input",
     "presence",
@@ -190,11 +195,12 @@ pub(super) const CHILD_FRAMES: [&str; 15] = [
     "outfit.wear",
     "work.recall",
     "experience",
+    "proposal.answer",
 ];
 
 /// Error codes the host itself sends (run.rejected may also carry an AI quota code).
 #[cfg(test)]
-pub(super) const HOST_ERROR_CODES: [&str; 14] = [
+pub(super) const HOST_ERROR_CODES: [&str; 15] = [
     "unknown_frame",
     "bad_frame",
     "not_ready",
@@ -209,6 +215,7 @@ pub(super) const HOST_ERROR_CODES: [&str; 14] = [
     "not_this_device",
     "too_large",
     "outfit_unknown",
+    "proposal_unknown",
 ];
 
 /// `limits.idPattern`, without a regex engine: 1 to 64 of `A-Za-z0-9_.:-`.

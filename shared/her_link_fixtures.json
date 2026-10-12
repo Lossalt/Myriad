@@ -226,6 +226,63 @@
       "t": "experience.taken", "seq": 15, "ack": 13, "at": 1760140880400,
       "body": { "id": "exp_0123456789abcdef0123456789abcdef" }
     },
+    {
+      "t": "conversations", "seq": 16, "ack": 15, "at": 1760140900000,
+      "body": {
+        "sessions": [
+          {
+            "sessionId": "ses_0123456789abcdef0123456789abcdef",
+            "title": "周末去哪",
+            "updatedAt": 1760140860000,
+            "messages": [
+              { "id": "msg_101", "role": "user", "text": "周末去哪走走？", "at": 1760140850000 },
+              { "id": "msg_102", "role": "assistant", "text": "去河边吧，风正好。", "at": 1760140860000 }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "t": "notice", "seq": 17, "ack": 15, "at": 1760140910000,
+      "body": {
+        "id": "agent_run_0123456789abcdef0123456789abcdef",
+        "kind": "work",
+        "eventKey": "agent.task_completed",
+        "title": "Agent task completed",
+        "body": "整理好了：周报按项目分组。",
+        "at": 1760140909000
+      }
+    },
+    {
+      "t": "proposals", "seq": 18, "ack": 15, "at": 1760140920000,
+      "body": {
+        "proposals": [
+          {
+            "id": "int_0123456789abcdef0123456789abcdef",
+            "title": "把下载文件夹整理一下",
+            "instruction": "把下载文件夹里超过一个月的安装包归档",
+            "expectedOutcome": "下载文件夹只留下最近一个月的文件",
+            "status": "proposed",
+            "createdAt": 1760140915000,
+            "expiresAt": 1760227315000,
+            "places": ["site"]
+          }
+        ]
+      }
+    },
+    {
+      "t": "proposal.answer", "seq": 16, "ack": 18, "at": 1760140930000,
+      "body": { "proposalId": "int_0123456789abcdef0123456789abcdef", "accept": true }
+    },
+    {
+      "t": "proposal.answered", "seq": 19, "ack": 16, "at": 1760140930200,
+      "body": {
+        "proposalId": "int_0123456789abcdef0123456789abcdef",
+        "accepted": true,
+        "runId": "run_fedcba9876543210fedcba9876543210",
+        "sessionId": "ses_fedcba9876543210fedcba9876543210"
+      }
+    },
     { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
     { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },
     { "t": "pong", "seq": 6, "ack": 8, "at": 1760140815020, "body": {} },

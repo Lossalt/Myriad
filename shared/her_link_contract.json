@@ -66,9 +66,12 @@
     "playback",
     "touch",
     "wardrobe",
-    "experience"
+    "experience",
+    "conversations",
+    "proposals"
   ],
   "sayKinds": ["greeting", "proactive", "face-to-face"],
+  "noticeKinds": ["work", "waiting", "report"],
   "frames": {
     "hello": {
       "from": "child",
@@ -232,6 +235,38 @@
       "required": ["id"],
       "description": "The experience id has been written on the host, and the child forgets it. Sent again whenever that id comes again."
     },
+    "conversations": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["sessions"],
+      "description": "Only to a child whose hello listed conversations: the site owner's recent private chats with her, for the child to show. Conversations live on the host; the child keeps them only as a display cache that goes with the link. sessions is the 10 most recently active (newest first; not a group's, not Work, not one they deleted), each {sessionId, title?, updatedAt, messages}, and messages its last 30 lines they and she said, oldest first, each {id, role (user or assistant), text, at}. text is as kept, at most 4000 characters; she said it, so a child reads it as it reads her reply. at and updatedAt are milliseconds since the epoch. When everything does not fit in limits.maxFrameBytes, the oldest lines go first. Sent after welcome."
+    },
+    "notice": {
+      "from": "host",
+      "delivery": "request",
+      "required": ["id", "kind", "eventKey", "title", "body"],
+      "optional": ["at"],
+      "description": "Only to a child whose hello listed notify: one of the site's notifications that is about her, to show as the child's own system notification. kind is one of noticeKinds: work (Work she did is done, failed or was cancelled), waiting (Work is waiting for the owner's reply), report (a report of hers is ready). eventKey is the site's event (agent.task_completed, agent.task_failed, agent.task_cancelled, agent.clarification, agent.merope.report_ready). id is the site notification's id: the same notification updated comes with the same id, and a child shows it once per id and kind. title and body are what the site's notification center shows. No other notification of the site comes here, and nothing say already brings: what she says to them on her own is a say. One that comes while the link is down stays in the site's notification center only."
+    },
+    "proposals": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["proposals"],
+      "description": "Only to a child whose hello listed proposals: Work she proposes to the site owner and that is still open, newest first (at most 20), each {id, title, instruction, expectedOutcome, status (proposed, or accepted and not started yet), createdAt, expiresAt?, places}. places is where accepting it runs the Work: site. An empty list means none is open. Sent after welcome and whenever the list changes."
+    },
+    "proposal.answer": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["proposalId", "accept"],
+      "description": "Only from a child whose hello listed proposals: the site owner accepted (accept true) or declined one of her proposals on this child. Accepting is their own consent, as on the site: the Work starts on the site for them as their current role allows, under the permissions they granted, and runs there. Answered with proposal.answered, then proposals again."
+    },
+    "proposal.answered": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["proposalId", "accepted"],
+      "optional": ["runId", "sessionId", "code"],
+      "description": "The answer to proposal.answer. accepted true: the Work started on the site, runId and sessionId its run and Work session there (its outcome reaches the child as a notice). accepted false after a decline: the proposal is closed. accepted false with code: nothing changed, and code says why (proposal_unknown, agent_access_denied, internal_error, or the code the site's run gate refused with)."
+    },
     "ack": {
       "from": "child",
       "delivery": "control",
@@ -272,7 +307,8 @@
     "internal_error": "Something failed on the host; trying again later may work.",
     "not_this_device": "A runId that is not one this device's turns started.",
     "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB; work.recall: query limits.maxTextChars characters).",
-    "outfit_unknown": "outfit.wear named a set that is not in her wardrobe, or has no rig."
+    "outfit_unknown": "outfit.wear named a set that is not in her wardrobe, or has no rig.",
+    "proposal_unknown": "proposal.answer named a proposal that is not open: answered already, expired, or not hers to the site owner."
   },
   "closeCodes": {
     "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },

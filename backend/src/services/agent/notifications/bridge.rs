@@ -10,6 +10,75 @@ const CHANNEL: &str = "myriad_notification_changes";
 // Ephemeral persona observations are separate from durable notification rows:
 // disabling a toast must not disable the persona's observation of a conversation.
 const PERSONA_CHANNEL: &str = "myriad_persona_observations";
+// Her mood as it changed outside a run, for whichever process carries it to
+// the person (an open link, a page's stream). Ephemeral: a listener that
+// misses one reads her current mood the next time it is asked.
+const MOOD_CHANNEL: &str = "myriad_persona_mood";
+
+#[derive(Serialize, Deserialize)]
+struct MoodChange {
+    origin: String,
+    user_id: i32,
+    mood: crate::services::agent::merope::MoodTransition,
+    activity: String,
+}
+
+fn valid_mood_change(change: &MoodChange) -> bool {
+    change.user_id > 0
+        && !change.activity.is_empty()
+        && change.activity.len() <= 64
+        && change.mood.cause.len() <= 64
+        && change.mood.band_before.len() <= 32
+        && change.mood.band_after.len() <= 32
+        && [
+            change.mood.before,
+            change.mood.after,
+            change.mood.arousal_before,
+            change.mood.arousal_after,
+            change.mood.delta,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+}
+
+pub(super) async fn publish_merope_state(
+    db: &DatabaseConnection,
+    user_id: i32,
+    mood: &crate::services::agent::merope::MoodTransition,
+    activity: &str,
+) {
+    let change = MoodChange {
+        origin: origin().into(),
+        user_id,
+        mood: mood.clone(),
+        activity: activity.into(),
+    };
+    if !valid_mood_change(&change) {
+        return;
+    }
+    let Ok(payload) = serde_json::to_string(&change) else {
+        return;
+    };
+    if let Err(error) = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pg_notify($1, $2)",
+            vec![MOOD_CHANNEL.into(), payload.into()],
+        ))
+        .await
+    {
+        tracing::warn!(%error, "persona mood wakeup failed");
+    }
+}
+
+/// Another process's mood change, heard here as this process's own.
+fn receive_merope_state(manager: &NotificationManager, payload: &str) {
+    if let Ok(change) = serde_json::from_str::<MoodChange>(payload) {
+        if change.origin != origin() && valid_mood_change(&change) {
+            manager.emit_merope_state(change.user_id, change.mood, change.activity);
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct PersonaObservation {
@@ -167,7 +236,10 @@ async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) 
             return;
         }
     };
-    if listener.listen(CHANNEL).await.is_err() || listener.listen(PERSONA_CHANNEL).await.is_err() {
+    if listener.listen(CHANNEL).await.is_err()
+        || listener.listen(PERSONA_CHANNEL).await.is_err()
+        || listener.listen(MOOD_CHANNEL).await.is_err()
+    {
         return;
     }
     // Clear cached data from before a reconnect; DB reads are authoritative.
@@ -180,6 +252,10 @@ async fn listen(pool: sea_orm::sqlx::PgPool, manager: Arc<NotificationManager>) 
             Ok(Some(message)) => {
                 if message.channel() == PERSONA_CHANNEL {
                     receive_persona_observation(message.payload());
+                    continue;
+                }
+                if message.channel() == MOOD_CHANNEL {
+                    receive_merope_state(&manager, message.payload());
                     continue;
                 }
                 if let Ok(change) = serde_json::from_str::<Change>(message.payload()) {
@@ -252,6 +328,104 @@ impl NotificationManager {
 mod tests {
     use super::*;
     use sea_orm::{ConnectOptions, Database};
+
+    fn mood(cause: &str) -> crate::services::agent::merope::MoodTransition {
+        let before = myriad_merope::affect::Affect {
+            mood: 70.0,
+            arousal: 48.0,
+            emotion: 70.0,
+            emotion_arousal: 48.0,
+        };
+        let after = myriad_merope::affect::Affect {
+            mood: 71.65,
+            ..before
+        };
+        crate::services::agent::merope::MoodTransition::from_affect(
+            &before,
+            &after,
+            cause,
+            1_760_140_900_000,
+        )
+    }
+
+    fn quiet_manager() -> NotificationManager {
+        let (tx, _) = broadcast::channel(8);
+        NotificationManager {
+            tx,
+            history: RwLock::new(VecDeque::new()),
+            max_history: 8,
+            db: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn another_process_mood_is_heard_as_this_ones_and_its_own_is_not_heard_twice() {
+        let manager = quiet_manager();
+        let mut events = manager.subscribe();
+        let change = |origin: String, user_id: i32, activity: &str| {
+            serde_json::to_string(&MoodChange {
+                origin,
+                user_id,
+                mood: mood("task_ok"),
+                activity: activity.into(),
+            })
+            .unwrap()
+        };
+        // Its own was already heard when it was announced here.
+        receive_merope_state(&manager, &change(origin().into(), 7, "idle"));
+        // Nothing that is not a mood change for someone.
+        receive_merope_state(&manager, &change("other".into(), 0, "idle"));
+        receive_merope_state(&manager, &change("other".into(), 7, ""));
+        receive_merope_state(&manager, &change("other".into(), 7, &"x".repeat(65)));
+        receive_merope_state(&manager, "not json");
+        assert!(events.try_recv().is_err());
+        receive_merope_state(&manager, &change("other".into(), 7, "working"));
+        match events.try_recv().unwrap() {
+            NotificationEvent::MeropeStateChanged {
+                user_id,
+                mood,
+                activity,
+            } => {
+                assert_eq!((user_id, activity.as_str()), (7, "working"));
+                assert_eq!(mood.cause, "task_ok");
+                assert_eq!(mood.revision, 1_760_140_900_000);
+            }
+            other => panic!("{other:?}"),
+        }
+        // A payload stays far below PostgreSQL's NOTIFY cap.
+        assert!(change("x".repeat(36), i32::MAX, &"x".repeat(64)).len() < 1024);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable MYRIAD_NOTIFICATION_BRIDGE_TEST_DB"]
+    async fn a_mood_change_crosses_connections() {
+        let url = std::env::var("MYRIAD_NOTIFICATION_BRIDGE_TEST_DB").unwrap();
+        let db = Database::connect(url).await.unwrap();
+        let mut listener =
+            sea_orm::sqlx::postgres::PgListener::connect_with(db.get_postgres_connection_pool())
+                .await
+                .unwrap();
+        listener.listen(MOOD_CHANNEL).await.unwrap();
+        publish_merope_state(&db, 1234567, &mood("task_fail"), "idle").await;
+        let message = tokio::time::timeout(Duration::from_secs(2), listener.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.channel(), MOOD_CHANNEL);
+        // Heard by another process (another origin) as its own event.
+        let mut change: MoodChange = serde_json::from_str(message.payload()).unwrap();
+        change.origin = "another process".into();
+        let manager = quiet_manager();
+        let mut events = manager.subscribe();
+        receive_merope_state(&manager, &serde_json::to_string(&change).unwrap());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            NotificationEvent::MeropeStateChanged {
+                user_id: 1234567,
+                ..
+            }
+        ));
+    }
 
     #[tokio::test]
     #[ignore = "requires a disposable MYRIAD_NOTIFICATION_BRIDGE_TEST_DB"]

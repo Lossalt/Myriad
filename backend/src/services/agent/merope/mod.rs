@@ -79,6 +79,8 @@ pub use ingest::{
     tick_speak_intents,
 };
 pub(crate) use ingest::{InPerson, in_person};
+#[cfg(test)]
+pub(crate) use ingest::apply_task_mood;
 pub use motion::{
     MotionContext, MotionPhase, PerformanceDirective, direct_motion, local_directive,
     refine_motion, resolve_round_motion_style,
@@ -368,6 +370,24 @@ pub fn current_activity(state: &crate::models::entities::agent_addressee_state::
     let age =
         (chrono::Utc::now() - state.activity_updated_at.with_timezone(&chrono::Utc)).num_seconds();
     effective_activity(&state.activity, age)
+}
+
+/// Her mood moved outside a run (a run carries its own): the person hears it
+/// wherever they are with her, the site's page or an app's link, whichever
+/// process serves that.
+pub async fn announce_mood(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    mood: MoodTransition,
+    saved: &crate::models::entities::agent_addressee_state::Model,
+) {
+    crate::services::agent::notifications::announce_merope_state(
+        db,
+        user_id,
+        mood,
+        current_activity(saved).to_string(),
+    )
+    .await;
 }
 
 pub fn activity_is_busy(activity: &str) -> bool {

@@ -1472,6 +1472,22 @@ mod tests {
     }
 }
 
+/// Her mood changed outside a run (a Work outcome, how their words read to
+/// her, music they listened to): every listener of this process hears it
+/// now, and every other process's through the notification bridge, so the
+/// link that carries her mood to an app hears it wherever it is served.
+pub async fn announce_merope_state(
+    db: &DatabaseConnection,
+    user_id: i32,
+    mood: super::merope::MoodTransition,
+    activity: String,
+) {
+    bridge::publish_merope_state(db, user_id, &mood, &activity).await;
+    if let Some(manager) = get_notification_manager() {
+        manager.emit_merope_state(user_id, mood, activity);
+    }
+}
+
 /// First-party, ephemeral cross-process observation; never returned to a TAPP.
 pub async fn publish_persona_observation(
     db: &DatabaseConnection,

@@ -1790,3 +1790,518 @@ async fn what_the_app_did_becomes_part_of_her() {
     drop(child);
     site.close().await;
 }
+
+// --- Her life on the app beside the chat (H2d) ----------------------------
+
+fn proposal_record(
+    id: &str,
+    status: crate::services::agent::consciousness::IntentStatus,
+) -> crate::services::agent::consciousness::IntentRecord {
+    use crate::services::agent::consciousness::{AcceptSource, IntentRecord, WorkProposal};
+    use chrono::TimeZone;
+    let card = &fixture("proposals")["body"]["proposals"][0];
+    let created = chrono::Utc
+        .timestamp_millis_opt(card["createdAt"].as_i64().unwrap())
+        .unwrap();
+    IntentRecord {
+        id: id.into(),
+        user_id: OWNER,
+        source_event_id: format!("evt_{id}"),
+        summary: card["title"].as_str().unwrap().into(),
+        reason_code: "tidy_up".into(),
+        status,
+        proposal: WorkProposal {
+            title: card["title"].as_str().unwrap().into(),
+            instruction: card["instruction"].as_str().unwrap().into(),
+            expected_outcome: card["expectedOutcome"].as_str().unwrap().into(),
+            source_event_id: format!("evt_{id}"),
+        },
+        work_session_id: None,
+        work_run_id: None,
+        result_summary: None,
+        created_at: created,
+        updated_at: created,
+        expires_at: Some(
+            chrono::Utc
+                .timestamp_millis_opt(card["expiresAt"].as_i64().unwrap())
+                .unwrap(),
+        ),
+        accept_source: AcceptSource::User,
+    }
+}
+
+fn site_notice(
+    id: &str,
+    key: crate::services::agent::notification_preferences::NotificationEventKey,
+    user: i32,
+) -> crate::services::agent::notifications::Notification {
+    use crate::services::agent::notifications::{
+        Notification, NotificationPriority, NotificationType,
+    };
+    use chrono::TimeZone;
+    let fixture = fixture("notice");
+    let mut notification = Notification::new(
+        user,
+        NotificationType::TaskCompleted,
+        NotificationPriority::Normal,
+        fixture["body"]["title"].as_str().unwrap(),
+        fixture["body"]["body"].as_str().unwrap(),
+    )
+    .with_event(key, json!({}));
+    notification.id = id.into();
+    notification.created_at = chrono::Utc
+        .timestamp_millis_opt(fixture["body"]["at"].as_i64().unwrap())
+        .unwrap();
+    notification
+}
+
+#[test]
+fn her_life_on_the_app_has_the_fixtures_shape() {
+    use crate::services::agent::consciousness::IntentStatus;
+    use crate::services::agent::notification_preferences::NotificationEventKey as Key;
+    assert_eq!(CONTRACT.notice_kinds, ["work", "waiting", "report"]);
+    for capability in ["notify", "conversations", "proposals"] {
+        assert!(
+            CONTRACT.capabilities.iter().any(|c| c == capability),
+            "{capability}"
+        );
+    }
+    // A notice is the site notification as its center shows it.
+    let fixture_notice = fixture("notice");
+    let id = fixture_notice["body"]["id"].as_str().unwrap();
+    let sent =
+        super::notices::notice(&site_notice(id, Key::AgentTaskCompleted, OWNER), OWNER).unwrap();
+    assert_eq!((sent.t, &sent.body), ("notice", &fixture_notice["body"]));
+    for (key, kind) in [
+        (Key::AgentTaskFailed, Some("work")),
+        (Key::AgentTaskCancelled, Some("work")),
+        (Key::AgentClarification, Some("waiting")),
+        (Key::MeropeReportReady, Some("report")),
+        // Not hers to bring to the app: progress, her reaching out (a `say`
+        // there), and everything else of the site's.
+        (Key::AgentTaskProgress, None),
+        (Key::MeropeReachOut, None),
+        (Key::MeropePlatformActivity, None),
+        (Key::FederationRoomMessage, None),
+        (Key::UpdaterSucceeded, None),
+    ] {
+        let notice = super::notices::notice(&site_notice("n_1", key, OWNER), OWNER);
+        assert_eq!(
+            notice.map(|notice| notice.body["kind"].clone()),
+            kind.map(Value::from),
+            "{key:?}"
+        );
+    }
+    // Another person's never; an id the pattern does not take, as a stable digest.
+    assert!(
+        super::notices::notice(
+            &site_notice("n_1", Key::AgentTaskCompleted, OWNER + 1),
+            OWNER
+        )
+        .is_none()
+    );
+    let long = "n".repeat(80);
+    let a =
+        super::notices::notice(&site_notice(&long, Key::AgentTaskCompleted, OWNER), OWNER).unwrap();
+    let b =
+        super::notices::notice(&site_notice(&long, Key::AgentTaskCompleted, OWNER), OWNER).unwrap();
+    assert_eq!(a.body["id"], b.body["id"]);
+    assert!(a.body["id"].as_str().is_some_and(valid_id));
+
+    // Her recent conversations, and within the frame limit the oldest lines go first.
+    let conversations = fixture("conversations");
+    let sessions = conversations["body"]["sessions"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let sent = super::conversations::frame(sessions.clone(), CONTRACT.limits.max_frame_bytes);
+    assert_eq!(
+        (sent.t, &sent.body),
+        ("conversations", &conversations["body"])
+    );
+    let mut many = Vec::new();
+    for session in 0..3 {
+        let messages: Vec<Value> = (0..30)
+            .map(|line| json!({ "id": format!("msg_{session}_{line}"), "role": "user", "text": "字".repeat(200), "at": line }))
+            .collect();
+        many.push(json!({ "sessionId": format!("ses_{session}"), "updatedAt": 3 - session, "messages": messages }));
+    }
+    let budget = 40 * 1024;
+    let sent = super::conversations::frame(many, budget + 4096);
+    assert!(
+        sent.body.to_string().len() <= budget,
+        "{}",
+        sent.body.to_string().len()
+    );
+    let kept = sent.body["sessions"].as_array().unwrap();
+    assert_eq!(
+        kept[0]["messages"].as_array().unwrap().len(),
+        30,
+        "the newest whole"
+    );
+    let last = kept.last().unwrap()["messages"].as_array().unwrap();
+    assert_eq!(
+        last.last().unwrap()["id"],
+        format!("msg_{}_29", kept.len() - 1),
+        "a conversation keeps its newest lines"
+    );
+
+    // Her proposals as cards; the app is told again only when they change.
+    let card = &fixture("proposals")["body"]["proposals"][0];
+    let record = proposal_record(card["id"].as_str().unwrap(), IntentStatus::Proposed);
+    let sent = super::proposals::frame(std::slice::from_ref(&record));
+    assert_eq!(
+        (sent.t, &sent.body),
+        ("proposals", &fixture("proposals")["body"])
+    );
+    let mut accepted = record.clone();
+    accepted.status = IntentStatus::Accepted;
+    assert_ne!(
+        super::proposals::digest(&[record.clone()]),
+        super::proposals::digest(&[accepted])
+    );
+    assert_eq!(
+        super::proposals::digest(&[record.clone()]),
+        super::proposals::digest(&[record])
+    );
+}
+
+#[tokio::test]
+async fn her_mood_and_notices_follow_the_owner_and_each_notice_comes_once() {
+    use crate::services::agent::notification_preferences::NotificationEventKey as Key;
+    use crate::services::agent::notifications::NotificationEvent;
+    let mood: MoodTransition =
+        serde_json::from_value(fixture("mood")["body"]["mood"].clone()).unwrap();
+    for notify in [true, false] {
+        let (events, receiver) = tokio::sync::broadcast::channel(16);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let follower = tokio::spawn(super::connection::follow_events(
+            tx, OWNER, receiver, notify,
+        ));
+        let done = site_notice("agent_run_1", Key::AgentTaskCompleted, OWNER);
+        for event in [
+            NotificationEvent::MeropeStateChanged {
+                user_id: OWNER + 1,
+                mood: mood.clone(),
+                activity: "idle".into(),
+            },
+            NotificationEvent::NewNotification {
+                notification: site_notice("agent_run_0", Key::AgentTaskProgress, OWNER),
+            },
+            NotificationEvent::NewNotification {
+                notification: done.clone(),
+            },
+            // Updated in place (its center replaces it): not shown again.
+            NotificationEvent::NewNotification {
+                notification: done.clone(),
+            },
+            NotificationEvent::NewNotification {
+                notification: site_notice("agent_run_2", Key::AgentTaskCompleted, OWNER + 1),
+            },
+            NotificationEvent::MeropeStateChanged {
+                user_id: OWNER,
+                mood: mood.clone(),
+                activity: "idle".into(),
+            },
+        ] {
+            events.send(event).unwrap();
+        }
+        drop(events);
+        follower.await.unwrap();
+        let mut got = Vec::new();
+        while let Ok(outgoing) = rx.try_recv() {
+            got.push((outgoing.t, outgoing.body["id"].clone()));
+        }
+        let mut expected = Vec::new();
+        if notify {
+            expected.push(("notice", json!("agent_run_1")));
+        }
+        expected.push(("mood", Value::Null));
+        assert_eq!(got, expected, "notify {notify}");
+    }
+}
+
+#[tokio::test]
+async fn a_work_outcome_moves_her_where_every_process_hears_it() {
+    let Some(site) = site().await else {
+        return;
+    };
+    let mut listener =
+        sea_orm::sqlx::postgres::PgListener::connect_with(site.db.get_postgres_connection_pool())
+            .await
+            .unwrap();
+    listener.listen("myriad_persona_mood").await.unwrap();
+    crate::services::agent::merope::apply_task_mood(&site.db, OWNER, "agent.task_completed").await;
+    let change = loop {
+        let message = tokio::time::timeout(WAIT, listener.recv())
+            .await
+            .expect("a mood change in time")
+            .unwrap();
+        let change: Value = serde_json::from_str(message.payload()).unwrap();
+        if change["user_id"] == OWNER {
+            break change;
+        }
+    };
+    assert_eq!(change["mood"]["cause"], "task_ok");
+    assert!(change["mood"]["after"].as_f64().unwrap() > change["mood"]["before"].as_f64().unwrap());
+    assert!(
+        change["activity"]
+            .as_str()
+            .is_some_and(|activity| !activity.is_empty())
+    );
+    // A step that does not move her is not told.
+    crate::services::agent::merope::apply_task_mood(&site.db, OWNER, "agent.clarification").await;
+    let quiet = tokio::time::timeout(Duration::from_millis(300), listener.recv()).await;
+    assert!(
+        quiet.is_err() || {
+            let change: Value = serde_json::from_str(quiet.unwrap().unwrap().payload()).unwrap();
+            change["user_id"] != OWNER
+        }
+    );
+    drop(listener);
+    site.close().await;
+}
+
+async fn chat_session(
+    db: &DatabaseConnection,
+    id: &str,
+    user: i32,
+    context: &str,
+    archived: bool,
+    active_secs_ago: i64,
+    lines: &[(&str, &str)],
+) {
+    db.execute_unprepared(&format!(
+        "INSERT INTO agent_sessions (id, user_id, title, context, message_count, archived, created_at, last_active_at) \
+         VALUES ('{id}', {user}, 'title {id}', '{context}', {n}, {archived}, now() - interval '1 day', now() - interval '{active_secs_ago} seconds')",
+        n = lines.len()
+    ))
+    .await
+    .unwrap();
+    for (index, (role, text)) in lines.iter().enumerate() {
+        db.execute_unprepared(&format!(
+            "INSERT INTO agent_messages (session_id, role, content, created_at) \
+             VALUES ('{id}', '{role}', '{text}', now() - interval '{active_secs_ago} seconds' - interval '{back} seconds')",
+            back = lines.len() - index
+        ))
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn her_conversations_and_proposals_reach_the_app() {
+    use crate::services::agent::consciousness::{IntentStatus, IntentStore};
+    let Some(site) = site().await else {
+        return;
+    };
+    let (_, token) = device(&site.db, "Mac").await;
+    chat_session(
+        &site.db,
+        "ses_old",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        false,
+        600,
+        &[("user", "早"), ("assistant", "早呀")],
+    )
+    .await;
+    chat_session(
+        &site.db,
+        "ses_new",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        false,
+        60,
+        &[
+            ("user", "周末去哪走走？"),
+            ("assistant", "去河边吧，风正好。"),
+            ("system", "失败的一轮"),
+        ],
+    )
+    .await;
+    // Not shown there: a group's, Work, one they deleted, another person's.
+    chat_session(
+        &site.db,
+        "ses_group",
+        OWNER,
+        r#"{"mode":"chat","venue":"telegram:-1"}"#,
+        false,
+        10,
+        &[("user", "群里的话")],
+    )
+    .await;
+    chat_session(
+        &site.db,
+        "ses_work",
+        OWNER,
+        r#"{"mode":"work"}"#,
+        false,
+        10,
+        &[("user", "办事")],
+    )
+    .await;
+    chat_session(
+        &site.db,
+        "ses_gone",
+        OWNER,
+        r#"{"mode":"chat"}"#,
+        true,
+        10,
+        &[("user", "删掉的")],
+    )
+    .await;
+    let store = IntentStore::new(site.db.clone());
+    for (id, minutes_ago) in [("int_decline", 1), ("int_accept", 0)] {
+        let mut record = proposal_record(id, IntentStatus::Proposed);
+        record.created_at = chrono::Utc::now() - chrono::Duration::minutes(minutes_ago);
+        record.updated_at = record.created_at;
+        record.expires_at = Some(record.created_at + chrono::Duration::hours(24));
+        store.create_proposed(record).await.unwrap();
+    }
+
+    // A child that did not say it takes them gets neither, and may not answer.
+    let mut plain = Child::open(&site, &token).await;
+    plain.hello_with(&["rig"]).await;
+    let asked = plain
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "int_accept", "accept": true }),
+        )
+        .await;
+    assert_eq!(
+        plain.expect("error").await["body"],
+        json!({ "code": "bad_frame", "ref": asked })
+    );
+    drop(plain);
+
+    let mut child = Child::open(&site, &token).await;
+    let welcome = child
+        .hello_with(&["rig", "conversations", "proposals"])
+        .await;
+    assert_eq!(
+        welcome["body"]["capabilities"],
+        json!(["rig", "conversations", "proposals"])
+    );
+    let conversations = child.expect("conversations").await;
+    let sessions = conversations["body"]["sessions"].as_array().unwrap();
+    let ids: Vec<&str> = sessions
+        .iter()
+        .map(|session| session["sessionId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["ses_new", "ses_old"], "{conversations}");
+    let lines: Vec<(&str, &str)> = sessions[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| {
+            (
+                line["role"].as_str().unwrap(),
+                line["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("user", "周末去哪走走？"),
+            ("assistant", "去河边吧，风正好。")
+        ]
+    );
+    assert_eq!(sessions[0]["title"], "title ses_new");
+    assert!(
+        sessions[0]["messages"][0]["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("msg_") && valid_id(id))
+    );
+    let proposals = child.expect("proposals").await;
+    let open: Vec<&str> = proposals["body"]["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|card| card["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(open, ["int_accept", "int_decline"]);
+    assert_eq!(proposals["body"]["proposals"][0]["places"], json!(["site"]));
+
+    // Declined there: closed, and the cards shrink.
+    child
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "int_decline", "accept": false }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("proposal.answered").await["body"],
+        json!({ "proposalId": "int_decline", "accepted": false })
+    );
+    let after = child.expect("proposals").await;
+    assert_eq!(after["body"]["proposals"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        store.find("int_decline", OWNER).await.unwrap().status,
+        IntentStatus::Abandoned
+    );
+    // Answered already, or never one: nothing changes.
+    for id in ["int_decline", "int_nobody"] {
+        child
+            .send(
+                "proposal.answer",
+                None,
+                json!({ "proposalId": id, "accept": true }),
+            )
+            .await;
+        assert_eq!(
+            child.expect("proposal.answered").await["body"],
+            json!({ "proposalId": id, "accepted": false, "code": "proposal_unknown" })
+        );
+    }
+    let bad = child
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "has space", "accept": true }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "bad_id", "ref": bad })
+    );
+
+    // Accepted there: the owner's own consent, and the Work runs on the site.
+    child
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "int_accept", "accept": true }),
+        )
+        .await;
+    let answered = child.expect("proposal.answered").await;
+    assert_eq!(answered["body"]["accepted"], true, "{answered}");
+    let run_id = answered["body"]["runId"].as_str().unwrap().to_string();
+    assert!(
+        answered["body"]["sessionId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    let run = crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
+        .await
+        .expect("her Work runs on the site for the owner");
+    run.abort_execution().await;
+    let accepted = store.find("int_accept", OWNER).await.unwrap();
+    assert_eq!(
+        accepted.accept_source,
+        crate::services::agent::consciousness::AcceptSource::User
+    );
+    assert_ne!(accepted.status, IntentStatus::Proposed);
+    // The Work's session is a Work one: not among the conversations shown.
+    let recent = super::conversations::recent(&site.db, OWNER).await.unwrap();
+    assert!(
+        recent
+            .iter()
+            .all(|session| session["sessionId"] != answered["body"]["sessionId"])
+    );
+    drop(child);
+    site.close().await;
+}

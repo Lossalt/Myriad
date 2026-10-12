@@ -30,12 +30,21 @@
 //! Her experience on the app ([`experience`]): Work a child that takes
 //! `experience` runs starts from her Work memories, asked for over the
 //! link, and what it did comes back up to become part of her.
+//!
+//! Her life on the app beside the chat: a child that takes `conversations`
+//! is shown her recent chats with the owner ([`conversations`]); one that
+//! takes `notify` is told the site's notifications about her ([`notices`]);
+//! one that takes `proposals` shows her Work proposals as cards the owner
+//! can answer there ([`proposals`]).
 
 mod body;
 mod connection;
 mod contract;
+mod conversations;
 mod experience;
+mod notices;
 mod outfit;
+mod proposals;
 mod say;
 mod senses;
 mod turns;

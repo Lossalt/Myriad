@@ -308,7 +308,7 @@ fn task_mood_outcome(event_key: &str) -> Option<bool> {
     }
 }
 
-async fn apply_task_mood(db: &DatabaseConnection, user_id: i32, event_key: &str) {
+pub(crate) async fn apply_task_mood(db: &DatabaseConnection, user_id: i32, event_key: &str) {
     let Some(succeeded) = task_mood_outcome(event_key) else {
         return;
     };
@@ -323,6 +323,15 @@ async fn apply_task_mood(db: &DatabaseConnection, user_id: i32, event_key: &str)
         return;
     };
     let after = affect_from_state(&saved);
+    // A Work outcome moves her outside any run: the person hears it there.
+    let cause = if succeeded { "task_ok" } else { "task_fail" };
+    let mood = super::super::MoodTransition::from_affect(
+        &previous,
+        &after,
+        cause,
+        saved.updated_at.with_timezone(&Utc).timestamp_millis(),
+    );
+    super::super::announce_mood(db, user_id, mood, &saved).await;
     if !is_extremely_low(previous.mood) && is_extremely_low(after.mood) {
         spawn(
             user_id,

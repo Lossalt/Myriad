@@ -214,6 +214,11 @@ pub async fn post_music_listening(
             .with_timezone(&chrono::Utc)
             .timestamp_millis(),
     );
+    // Heard where the person is with her too (an app's link), not only by
+    // the page that asked.
+    if credit.credited {
+        merope::announce_mood(&db, user_id, mood.clone(), &credit.state).await;
+    }
     Ok(Json(json!({
         "credited": credit.credited,
         "nextCreditInSeconds": credit.next_credit_in_seconds,
