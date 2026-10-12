@@ -776,6 +776,7 @@ mod tests {
                 pose: None,
                 face: None,
                 shift: None,
+                via: None,
             }),
             cues: vec![crate::ChatPerformanceCue {
                 intent: "listen".into(),
@@ -863,6 +864,7 @@ mod tests {
                 pose: None,
                 face: None,
                 shift: None,
+                via: None,
             }),
             cues: vec![
                 crate::ChatPerformanceCue {

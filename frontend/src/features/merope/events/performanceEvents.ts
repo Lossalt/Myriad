@@ -18,6 +18,7 @@ import {
   PERFORMANCE_CUE_INTENTS,
   PERFORMANCE_INTERRUPT_MODES,
   PERFORMANCE_POSTURES,
+  PLAIN_FACE,
   sanitizeBodyPose,
   sanitizeScore,
   sanitizeSpeechPhrases,
@@ -282,6 +283,7 @@ function sanitizeBaseline(value: unknown): PerformanceBaseline | null {
     ...(pose ? { pose } : {}),
     ...(typeof value.face === 'string' && Object.hasOwn(FACE_PRESETS, value.face) ? { face: value.face } : {}),
     ...(typeof value.shift === 'string' && FACE_SHIFT_NAMES.includes(value.shift) ? { shift: value.shift } : {}),
+    ...(typeof value.via === 'string' && (value.via === PLAIN_FACE || Object.hasOwn(FACE_PRESETS, value.via)) ? { via: value.via } : {}),
   }
 }
 

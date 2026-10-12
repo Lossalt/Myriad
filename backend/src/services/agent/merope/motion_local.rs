@@ -49,6 +49,7 @@ fn local_baseline(
         pose: None,
         face: None,
         shift: None,
+        via: None,
     }
 }
 

@@ -545,7 +545,7 @@ fn main() {
         let description = shift["description"]
             .as_str()
             .unwrap_or_else(|| panic!("face shift {name} needs a description"));
-        for key in ["durationMs", "staggerMs", "pauseMs"] {
+        for key in ["durationMs", "staggerMs", "pauseMs", "viaMs"] {
             assert!(
                 shift[key].as_u64().is_some(),
                 "face shift {name} needs {key}"

@@ -71,3 +71,29 @@ test('a change of face goes through her in order: the eyes first, the head after
   assert.ok(started('pause', 'eyeX') > started('ease', 'eyeX') + 0.25)
   assert.ok(started('snap', 'angleX') < started('slow', 'angleX'))
 })
+
+test('a change may pass through another look on the way: there first, held a moment, then on', () => {
+  const random = Math.random
+  Math.random = () => 0.5
+  try {
+    const pose = controller()
+    pose.set(look('drowsy'), 0, 'drowsy', null)
+    play(pose, 0, 1.5)
+    // Dozing to delight, waking up surprised on the way (surprised opens the eyes wide, excited less so).
+    pose.set(look('excited'), 1.5, 'excited', 'ease', 'surprised')
+    const frames = play(pose, 1.5, 4)
+    const wide = frames.map((frame) => frame.eyeWide)
+    const peak = Math.max(...wide)
+    assert.ok(peak > 0.9, `surprised on the way: ${peak}`)
+    assert.ok(Math.abs(wide.at(-1)! - 0.65) < 0.05, `then excited: ${wide.at(-1)}`)
+    const peakAt = wide.indexOf(peak) / FPS
+    assert.ok(peakAt > 0.3 && peakAt < 1.3, `held a moment before going on: ${peakAt}`)
+    // A newer change before it goes on is the one that holds.
+    pose.set(look('content'), 4, 'content', 'ease', 'plain')
+    pose.set(look('shy'), 4.1, 'shy', 'ease')
+    const after = play(pose, 4.1, 6.5)
+    assert.ok(after.at(-1)!.eyeX > 0.3, 'shy, not content, at the end')
+  } finally {
+    Math.random = random
+  }
+})

@@ -430,7 +430,7 @@ export class Anime25DPlayer {
   }
 
   setBearing(bearing: PerformanceBaseline | null): void {
-    this.motion.directedPose.set(bearing?.pose, this.time, bearing?.face ?? null, bearing?.shift ?? null)
+    this.motion.directedPose.set(bearing?.pose, this.time, bearing?.face ?? null, bearing?.shift ?? null, bearing?.via ?? null)
     this.motion.performanceExpression.setBearingAttention(bearing?.attention ?? null)
     this.setTarget({
       ...(bearing ? baselineDriverPatch(bearing) : restEnergyDriverPatch()),
