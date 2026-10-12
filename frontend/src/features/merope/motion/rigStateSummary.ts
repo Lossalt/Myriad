@@ -14,6 +14,7 @@ import type { BehaviorSnapshot } from './behavior'
 import type { MotionSourceId } from './channels'
 import type { MotionRuntime } from './runtime'
 import {
+  FACE_PRESETS,
   PERFORMANCE_BASELINE_EXPRESSIONS,
   PERFORMANCE_POSTURES,
 } from '../events/performanceContract'
@@ -197,6 +198,7 @@ export function captureRigStateSummary(
         ? true
         : document.visibilityState !== 'hidden',
     faceVisible: facts.faceVisible,
+    ...(baseline?.face ? { face: baseline.face } : {}),
   }
   return sanitizeRigStateSummary(summary) ?? summary
 }
@@ -281,6 +283,7 @@ export function sanitizeRigStateSummary(
         : 'even',
     pageVisible: value.pageVisible !== false,
     faceVisible: value.faceVisible !== false,
+    ...(typeof value.face === 'string' && Object.hasOwn(FACE_PRESETS, value.face) ? { face: value.face } : {}),
   }
 }
 

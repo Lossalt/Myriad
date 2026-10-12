@@ -1,0 +1,37 @@
+import type { BodyControl } from '../../../services/agent/types'
+import type { FaceShift } from '../events/performanceContract'
+import { BODY_CONTROLS } from '../events/performanceContract'
+import { mappedControlValue } from './actingField'
+
+/**
+ * The order a change of face travels through her: the eyes go first, the
+ * brows and mouth with them, the head after, the body last.
+ */
+function stage(control: BodyControl): number {
+  if (control.startsWith('gaze')) return 0
+  if (control.startsWith('eye') || control === 'cry' || control === 'dizzy') return 1
+  if (control.startsWith('head')) return 3
+  if (control.startsWith('torso') || control.includes('Arm') || control.endsWith('Sway')) return 4
+  return 2
+}
+
+/**
+ * When a control sets off from where it is (`from`, a driver value) toward
+ * its new goal (`to`), and how quickly it gets there as a spring rate: a far
+ * way takes longer than a short one.
+ */
+export function shiftTiming(
+  shift: Readonly<FaceShift>,
+  control: BodyControl,
+  from: number,
+  to: number,
+): { delay: number; omega: number } {
+  const limits = BODY_CONTROLS[control]
+  const span = Math.abs(mappedControlValue(control, limits.max) - mappedControlValue(control, limits.min)) || 1
+  const share = Math.min(1, Math.abs(to - from) / span)
+  const seconds = (shift.durationMs / 1000) * (0.6 + 0.8 * share)
+  return {
+    delay: (shift.pauseMs + stage(control) * shift.staggerMs) / 1000,
+    omega: 6 / seconds,
+  }
+}

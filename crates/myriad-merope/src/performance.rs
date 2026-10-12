@@ -7,8 +7,8 @@ use crate::rig_contract::{
     PERFORMANCE_BASELINE_EXPRESSIONS, PERFORMANCE_BODY_CONTROL_RESTS,
     PERFORMANCE_BODY_CONTROL_TIERS, PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS,
     PERFORMANCE_ENERGY_LEVELS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_FACE_PRESETS,
-    PERFORMANCE_INTENSITY_LEVELS, PERFORMANCE_INTERRUPT_MODES, PERFORMANCE_POSTURES,
-    PERFORMANCE_TEMPO_LEVELS,
+    PERFORMANCE_FACE_SHIFTS, PERFORMANCE_INTENSITY_LEVELS, PERFORMANCE_INTERRUPT_MODES,
+    PERFORMANCE_POSTURES, PERFORMANCE_TEMPO_LEVELS,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -36,6 +36,10 @@ pub struct ChatPerformanceBaseline {
     /// look's own life over them, again and again while it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face: Option<String>,
+    /// How she gets from the look before to this one (`faceShifts`); the
+    /// body settles naturally without.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shift: Option<String>,
 }
 
 /// Normalized semantic goals, not renderer drivers or per-frame commands.
@@ -208,6 +212,8 @@ struct RawBaseline {
     pose: Option<RawBodyPose>,
     #[serde(default)]
     face: Option<String>,
+    #[serde(default)]
+    shift: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,6 +288,11 @@ fn sanitize_baseline(baseline: RawBaseline) -> Option<ChatPerformanceBaseline> {
             PERFORMANCE_FACE_PRESETS
                 .iter()
                 .any(|(name, _, _)| name == face)
+        }),
+        shift: baseline.shift.filter(|shift| {
+            PERFORMANCE_FACE_SHIFTS
+                .iter()
+                .any(|(name, _)| name == shift)
         }),
     })
 }

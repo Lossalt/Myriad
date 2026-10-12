@@ -67,6 +67,8 @@ export interface RigStateSummary {
   motionStyle: RigMotionStyle
   pageVisible: boolean
   faceVisible: boolean
+  /** The look her face holds now (facePresets), for the director to change from. */
+  face?: string
 }
 
 export interface ProcessContext {
@@ -166,6 +168,8 @@ export interface PerformanceBaseline {
   pose?: BodyPose
   /** The contract's look her face holds (facePresets), whose life the body plays. */
   face?: string
+  /** How she gets from the look before to this one (faceShifts); naturally without. */
+  shift?: string
 }
 
 export interface PerformanceCue {

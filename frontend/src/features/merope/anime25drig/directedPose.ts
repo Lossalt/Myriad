@@ -1,10 +1,12 @@
 import type { BodyControl, BodyPose } from '../../../services/agent/types'
+import type { FaceShift } from '../events/performanceContract'
 import type { MotionChannelPolicy } from '../motion/policy'
 import type { ResolvedScore } from '../motion/scoreTimeline'
 import type { Anime25DDriver } from './driver'
 import type { PerformanceExpressionOffset } from './performanceExpressionShared'
-import { BODY_CONTROLS, faceLife, sanitizeBodyPose } from '../events/performanceContract'
+import { BODY_CONTROLS, faceLife, faceShift, sanitizeBodyPose } from '../events/performanceContract'
 import { ActingField, mappedControlValue } from './actingField'
+import { shiftTiming } from './faceShift'
 
 // Semantic goals are mapped only here, never interpreted as arbitrary drivers.
 export const BODY_CONTROL_DRIVERS = {
@@ -34,6 +36,14 @@ interface Axis {
   velocity: number
   weight: number
   weightVelocity: number
+  /** Its own pace and start after a change of face (shiftTiming), else the pose's. */
+  omega?: number
+  startAt?: number
+}
+
+interface PendingShift {
+  controls: Set<BodyControl>
+  shift: FaceShift
 }
 
 /** Full target restatements with continuous retarget/release, on the player's clock. */
@@ -49,6 +59,12 @@ export class DirectedPoseController {
   private readonly transientAxes = new Set<BodyControl>()
   /** The director's scores over the standing pose, each beat by its own envelope. */
   private readonly acting = new ActingField()
+  /** A change of face to carry on from where she is, applied on the next step. */
+  private shifting: PendingShift | null = null
+  /** What the composition last gave each control, and how fast it was moving (driver units). */
+  private readonly shown = new Map<BodyControl, { value: number; velocity: number }>()
+  private stepTime = 0
+  private shownTime = 0
 
   setPolicy(policy: MotionChannelPolicy): void { this.policy = policy }
 
@@ -74,14 +90,32 @@ export class DirectedPoseController {
     this.capabilities = new Set(capabilities)
   }
 
-  /** The held pose; with `face`, also the look her face holds (null for none), whose life plays over it. */
-  set(pose: BodyPose | null | undefined, time: number, face?: string | null): void {
-    if (face !== undefined) this.setFace(face, time)
+  /**
+   * The held pose; with `face`, also the look her face holds (null for none),
+   * whose life plays over it. With `shift` (how she gets there, faceShifts)
+   * the change starts from where every control is and how it is moving, not
+   * from the old goals: nothing jumps, fades or plays out.
+   */
+  set(pose: BodyPose | null | undefined, time: number, face?: string | null, shift?: string | null): void {
+    const dropped = face !== undefined ? this.acting.setFace(face, faceLife(face), time) : []
     const next = sanitizeBodyPose(pose)
-    if (next && this.pose && time < this.expiresAt && poseKey(next) === poseKey(this.pose)) return
+    const same = Boolean(next && this.pose && time < this.expiresAt && poseKey(next) === poseKey(this.pose))
+    if (shift !== undefined && (!same || dropped.length)) {
+      this.shiftFrom([...Object.keys(this.pose?.targets ?? {}), ...Object.keys(next?.targets ?? {}), ...dropped] as BodyControl[], shift)
+    } else if (shift === undefined && !same) {
+      for (const axis of this.axes.values()) { delete axis.omega; delete axis.startAt }
+    }
+    if (same) return
     this.pose = next
     if (next) this.transitionSeconds = next.transitionMs / 1000
     this.expiresAt = next && next.holdMs > 0 ? time + next.holdMs / 1000 : Infinity
+  }
+
+  private shiftFrom(controls: readonly BodyControl[], shift: string | null): void {
+    const pending = this.shifting ?? { controls: new Set<BodyControl>(), shift: faceShift(shift) }
+    for (const control of controls) pending.controls.add(control)
+    pending.shift = faceShift(shift)
+    this.shifting = pending
   }
 
   setScore(score: Readonly<ResolvedScore>, time: number, nowMs: number): void {
@@ -92,9 +126,10 @@ export class DirectedPoseController {
     this.acting.setSpeaking(speaking)
   }
 
-  /** The look her face holds, whose life plays over it while it holds. */
+  /** The look her face holds, whose life plays over it while it holds; what it was doing settles from where it is. */
   setFace(face: string | null | undefined, time: number): void {
-    this.acting.setFace(face ?? null, faceLife(face), time)
+    const dropped = this.acting.setFace(face ?? null, faceLife(face), time)
+    if (dropped.length) this.shiftFrom(dropped, null)
   }
 
   /** How much directed motion, standing pose or score, drives a control now. */
@@ -119,7 +154,7 @@ export class DirectedPoseController {
   apply(dt: number, time: number, target: Anime25DDriver, vocalizing: boolean): void {
     if (!(dt > 0) || !Number.isFinite(dt)) return
     this.step(dt, time, target)
-    this.write(target, vocalizing)
+    this.write(target, vocalizing, undefined, true)
   }
 
   /** Advance once; expression previews and final composition read the same state. */
@@ -141,11 +176,54 @@ export class DirectedPoseController {
       const goal = allowed ? goals[key] : undefined
       const active = goal !== undefined
       const value = active ? mappedControlValue(key, goal) : target[driver]
-      spring(axis, 'value', 'velocity', value, omega, dt)
-      spring(axis, 'weight', 'weightVelocity', active ? 1 : 0, omega, dt)
+      // Before its turn in a change of face, a control eases to a stop where it is.
+      const waiting = axis.startAt !== undefined && time < axis.startAt
+      const rate = axis.omega ?? omega
+      spring(axis, 'value', 'velocity', waiting ? axis.value : value, rate, dt)
+      spring(axis, 'weight', 'weightVelocity', active || waiting ? 1 : 0, rate, dt)
       axis.weight = Math.max(0, Math.min(1, axis.weight))
       if (!active && axis.weight < 0.0001) { this.axes.delete(key); continue }
     }
+    this.stepTime = time
+    if (this.shifting) this.carryOn(this.shifting, time, target)
+    this.shifting = null
+  }
+
+  /**
+   * A change of face from where she is: each control's held axis takes the
+   * value the composition showed last, moving as fast as it was, so with the
+   * last look's life gone the output does not move this frame; from there it
+   * sets off toward its new goal (or back to her own pose) on its own pace
+   * and turn (shiftTiming).
+   */
+  private carryOn(pending: Readonly<PendingShift>, time: number, target: Readonly<Anime25DDriver>): void {
+    const elapsed = Math.max(0, time - this.shownTime)
+    for (const key of pending.controls) {
+      if (!this.capabilities.has(BODY_CONTROLS[key].capability)) continue
+      const held = 1 - this.interruption(key)
+      if (held < 0.02) continue
+      const driver = BODY_CONTROL_DRIVERS[key]
+      const base = target[driver]
+      const shown = this.shown.get(key)
+      const desired = shown ? shown.value + shown.velocity * elapsed : base
+      // Undo what still lies over the axis: the remaining beats, then the moves.
+      const sample = this.acting.values.get(key)
+      const over = sample ? sample.weight * held : 0
+      if (over > 0.98) continue
+      const offset = mappedControlValue(key, this.acting.offsets.get(key) ?? 0) * held
+      const under = (desired - offset - (sample?.value ?? 0) * over) / (1 - over)
+      const axis = this.axes.get(key) ?? { value: base, velocity: 0, weight: 0, weightVelocity: 0 }
+      axis.value = base + (under - base) / held
+      axis.velocity = shown?.velocity ?? 0
+      axis.weight = 1
+      axis.weightVelocity = 0
+      const goal = this.pose?.targets[key]
+      const timing = shiftTiming(pending.shift, key, axis.value, goal !== undefined ? mappedControlValue(key, goal) : base)
+      axis.omega = timing.omega
+      axis.startAt = time + timing.delay
+      this.axes.set(key, axis)
+    }
+    if (pending.shift.move) this.acting.addMove(`shift:${time}`, pending.shift.move, time)
   }
 
   /**
@@ -153,7 +231,7 @@ export class DirectedPoseController {
    * What is `riding` (her breath, the beats of her voice) stays on top of a directed
    * axis instead of being held still with the rest: a held tilt still nods as she talks.
    */
-  write(target: Anime25DDriver, vocalizing: boolean, riding?: Readonly<Partial<Record<keyof Anime25DDriver, number>>>): void {
+  write(target: Anime25DDriver, vocalizing: boolean, riding?: Readonly<Partial<Record<keyof Anime25DDriver, number>>>, final = riding !== undefined): void {
     for (const [key, axis] of this.axes) {
       const driver = BODY_CONTROL_DRIVERS[key]
       if (this.policy?.[controlChannel(key)] === 'preview') continue
@@ -178,6 +256,19 @@ export class DirectedPoseController {
       target[driver] += mappedControlValue(key, offset) * (1 - this.interruption(key))
       if (key === 'eyeOpenLeft' || key === 'eyeOpenRight') target[driver] = Math.max(0, Math.min(1, target[driver]))
     }
+    if (final) this.remember(target)
+  }
+
+  /** What the final composition shows, for a change of face to carry on from. */
+  private remember(target: Readonly<Anime25DDriver>): void {
+    const elapsed = this.stepTime - this.shownTime
+    for (const key of Object.keys(BODY_CONTROL_DRIVERS) as BodyControl[]) {
+      const value = target[BODY_CONTROL_DRIVERS[key]]
+      const last = this.shown.get(key)
+      const velocity = last && elapsed > 0 ? (value - last.value) / elapsed : 0
+      this.shown.set(key, { value, velocity })
+    }
+    this.shownTime = this.stepTime
   }
 }
 

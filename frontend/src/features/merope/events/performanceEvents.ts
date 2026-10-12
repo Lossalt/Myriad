@@ -13,6 +13,7 @@ import {
 } from './meropeAffectState'
 import {
   FACE_PRESETS,
+  FACE_SHIFT_NAMES,
   PERFORMANCE_BASELINE_EXPRESSIONS,
   PERFORMANCE_CUE_INTENTS,
   PERFORMANCE_INTERRUPT_MODES,
@@ -280,6 +281,7 @@ function sanitizeBaseline(value: unknown): PerformanceBaseline | null {
     attention: clamp(value.attention, 0, 1),
     ...(pose ? { pose } : {}),
     ...(typeof value.face === 'string' && Object.hasOwn(FACE_PRESETS, value.face) ? { face: value.face } : {}),
+    ...(typeof value.shift === 'string' && FACE_SHIFT_NAMES.includes(value.shift) ? { shift: value.shift } : {}),
   }
 }
 

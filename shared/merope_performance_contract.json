@@ -53,6 +53,12 @@
     "sparkles": {"min": 0, "max": 1, "tiers": {"strong": 1}, "capability": "sparkles", "description": "Sparkles drawn beside her head: excited, delighted, a bright idea."},
     "blush": {"min": 0, "max": 1, "capability": "blush", "description": "Drawn blush across her cheeks: shy, flustered, touched."}
   },
+  "faceShifts": {
+    "ease": {"description": "settles into the new look naturally: eyes first, the head after", "durationMs": 520, "staggerMs": 60, "pauseMs": 0},
+    "snap": {"description": "snaps out of what she was in, at once, with a small start: woken up, caught off guard, suddenly delighted", "durationMs": 220, "staggerMs": 15, "pauseMs": 0, "move": {"kind": "startle", "amount": "slight", "tempo": "quick"}},
+    "slow": {"description": "drifts into it slowly, half reluctant; the head lags behind the eyes", "durationMs": 1300, "staggerMs": 160, "pauseMs": 0},
+    "pause": {"description": "goes still for a beat, then changes: taken aback, it sinks in first", "durationMs": 600, "staggerMs": 60, "pauseMs": 380}
+  },
   "facePresets": {
     "content": {"description": "eyes closed in a smile (^ ^), content and happy", "targets": {"eyeOpenLeft": "-strong", "eyeOpenRight": "-strong", "eyeSmile": "strong", "mouthSmile": "clear", "browLift": "slight"}, "life": {"periodMs": 6000, "beats": [{"atMs": 0, "pose": {"targets": {"headTilt": "slight"}, "transitionMs": 1400, "holdMs": 1300}}, {"atMs": 3000, "pose": {"targets": {"headTilt": "-slight"}, "transitionMs": 1400, "holdMs": 1300}}]}},
     "tender": {"description": "soft smiling eyes, gentle smile, head tilted: tender", "targets": {"eyeSmile": "clear", "mouthSmile": "clear", "headTilt": "slight", "eyeOpenLeft": "-slight", "eyeOpenRight": "-slight"}, "life": {"periodMs": 7000, "beats": [{"atMs": 2000, "move": {"kind": "nod", "amount": "slight", "tempo": "slow"}}, {"atMs": 5200, "move": {"kind": "blink", "amount": "slight", "tempo": "slow"}}]}},

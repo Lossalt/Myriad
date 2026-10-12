@@ -161,6 +161,10 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
     if let Some(question) = control::face_question(state, "while she says it") {
         questions.insert("face".into(), question);
     }
+    questions.insert(
+        "shift".into(),
+        control::shift_question(state, "while she says it"),
+    );
     Value::Object(questions)
 }
 
@@ -444,7 +448,8 @@ pub(super) fn plan_from_answers(
     json!({
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy, "attention": 0.85,
-            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face},
+            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face,
+            "shift": sure("shift")},
         "cues": cues,
         "score": score,
         "askedFor": asked,

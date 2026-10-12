@@ -1,7 +1,7 @@
 import type { BodyControl, ScoreMove } from '../../../services/agent/types'
 import type { FaceLife } from '../events/performanceContract'
 import type { ResolvedScore } from '../motion/scoreTimeline'
-import { BODY_CONTROLS } from '../events/performanceContract'
+import { BODY_CONTROLS, SCORE_MOVES } from '../events/performanceContract'
 import { angleZForHeadRoll, HEAD_TILT_RADIANS } from './poseScale'
 import { scoreMoveOffsets, scoreMoveSeconds } from './scoreMoves'
 
@@ -134,19 +134,34 @@ export class ActingField {
    * over and over until the look changes; what is under way of the last
    * look's life plays out.
    */
-  setFace(name: string | null, life: Readonly<FaceLife> | null, time: number): void {
-    if ((this.face?.name ?? null) === (life ? name : null)) return
-    this.poses = this.poses.filter((item) => !item.face || item.at <= time)
-    this.moves = this.moves.filter((item) => !item.face || item.at <= time)
+  setFace(name: string | null, life: Readonly<FaceLife> | null, time: number): BodyControl[] {
+    if ((this.face?.name ?? null) === (life ? name : null)) return []
+    // What the last look's life was doing is left where it is, for the caller
+    // to carry on from (DirectedPoseController's shift), not played out or faded.
+    const dropped = new Set<BodyControl>()
+    for (const item of this.poses) { if (item.face && item.at <= time) dropped.add(item.control)
+}
+    for (const item of this.moves) {
+      if (item.face && item.at <= time) { for (const control of SCORE_MOVES[item.move.kind].controls) dropped.add(control)
+}
+    }
+    this.poses = this.poses.filter((item) => !item.face)
+    this.moves = this.moves.filter((item) => !item.face)
     if (!name || !life) {
       this.face = null
-      return
+      return [...dropped]
     }
     this.faceScoreId -= 1
     const beats = life.beats.map((beat, index) => ({ id: `face:${name}:${index}`, atMs: beat.atMs, ...(beat.pose ? { pose: beat.pose } : {}), ...(beat.move ? { move: beat.move } : {}) }))
     const periodSeconds = life.periodMs / 1000
     this.face = { name, loop: { scoreId: this.faceScoreId, beats, startNowMs: 0, periodSeconds, cycleAt: time, cycle: 0 }, length: periodSeconds }
     this.lay(this.faceScoreId, false, varyLife(beats, periodSeconds, this.random, true), (atMs) => time + atMs / 1000, '', time, true)
+    return [...dropped]
+  }
+
+  /** A single move from now, such as the start of a change of face. */
+  addMove(id: string, move: Readonly<ScoreMove>, time: number): void {
+    this.moves.push({ id, scoreId: 0, standing: false, at: time, move })
   }
 
   /** Advances to `time`; `drivable` says which controls this body has. */

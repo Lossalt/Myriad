@@ -244,3 +244,25 @@ export function faceLife(face: string | null | undefined): FaceLife | null {
   })
   return beats.length ? { periodMs: life.periodMs, beats } : null
 }
+
+/** How she gets from one look to the next (the contract's faceShifts). */
+export interface FaceShift {
+  durationMs: number
+  staggerMs: number
+  pauseMs: number
+  move?: ScoreMove
+}
+
+const FACE_SHIFTS = contract.faceShifts as Record<string, Omit<FaceShift, 'move'> & { move?: Record<string, unknown> }>
+export const FACE_SHIFT_NAMES = Object.keys(FACE_SHIFTS)
+
+/** A shift by name, its move read as the director's are; an unknown or missing name settles naturally. */
+export function faceShift(name: string | null | undefined): FaceShift {
+  const raw = FACE_SHIFTS[name ?? ''] ?? FACE_SHIFTS.ease
+  const tempos = contract.levels.tempo as Record<string, number>
+  const extents = contract.extentTiers as Record<string, number>
+  const move = raw.move
+    ? sanitizeScoreMove({ ...raw.move, amount: extents[raw.move.amount as string], tempo: tempos[raw.move.tempo as string] })
+    : null
+  return { durationMs: raw.durationMs, staggerMs: raw.staggerMs, pauseMs: raw.pauseMs, ...(move ? { move } : {}) }
+}

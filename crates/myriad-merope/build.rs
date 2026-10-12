@@ -536,6 +536,25 @@ fn main() {
         ));
     }
     generated.push_str("];\n");
+    generated.push_str("/// How she gets from one look to the next: (name, description).\n");
+    generated.push_str("pub const PERFORMANCE_FACE_SHIFTS: &[(&str, &str)] = &[\n");
+    for (name, shift) in performance_contract["faceShifts"]
+        .as_object()
+        .expect("missing performance faceShifts")
+    {
+        let description = shift["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("face shift {name} needs a description"));
+        for key in ["durationMs", "staggerMs", "pauseMs"] {
+            assert!(shift[key].as_u64().is_some(), "face shift {name} needs {key}");
+        }
+        generated.push_str(&format!(
+            "    ({}, {}),\n",
+            serde_json::to_string(name).unwrap(),
+            serde_json::to_string(description).unwrap()
+        ));
+    }
+    generated.push_str("];\n");
     let output =
         PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("merope_rig_contract.rs");
     fs::write(output, generated).expect("write generated rig contract");

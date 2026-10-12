@@ -190,6 +190,9 @@ pub struct RigStateSummary {
     pub motion_style: String,
     pub page_visible: bool,
     pub face_visible: bool,
+    /// The look her face holds now (`facePresets`), if one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +226,8 @@ struct RawSummary {
     page_visible: bool,
     #[serde(default = "default_true")]
     face_visible: bool,
+    #[serde(default)]
+    face: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -428,6 +433,11 @@ fn sanitize_raw(raw: RawSummary) -> RigStateSummary {
         motion_style: allow(raw.motion_style.as_deref(), RIG_STATE_MOTION_STYLES, "even"),
         page_visible: raw.page_visible,
         face_visible: raw.face_visible,
+        face: raw.face.filter(|face| {
+            crate::PERFORMANCE_FACE_PRESETS
+                .iter()
+                .any(|(name, _, _)| name == face)
+        }),
     }
 }
 
@@ -765,6 +775,7 @@ mod tests {
                 attention: 1.0,
                 pose: None,
                 face: None,
+                shift: None,
             }),
             cues: vec![crate::ChatPerformanceCue {
                 intent: "listen".into(),
@@ -851,6 +862,7 @@ mod tests {
                 attention: 0.8,
                 pose: None,
                 face: None,
+                shift: None,
             }),
             cues: vec![
                 crate::ChatPerformanceCue {

@@ -48,6 +48,7 @@ fn local_baseline(
         attention: phase_attention(phase),
         pose: None,
         face: None,
+        shift: None,
     }
 }
 

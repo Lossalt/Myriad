@@ -80,6 +80,7 @@ fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummar
     if let Some(question) = face_question(state, when) {
         questions.insert("face".into(), question);
     }
+    questions.insert("shift".into(), shift_question(state, when));
     questions.insert(
         "feeling".into(),
         json!({"type": "choice",
@@ -197,6 +198,24 @@ pub(super) fn face_question(state: Option<&RigStateSummary>, when: &str) -> Opti
         "criteria": criteria(&faces)}))
 }
 
+/// How she gets from the look she holds now to the one she takes `when`:
+/// the body carries on from where it is, at that pace and in that order.
+pub(super) fn shift_question(state: Option<&RigStateSummary>, when: &str) -> Value {
+    let now = state
+        .and_then(|state| state.face.as_deref())
+        .and_then(|face| {
+            myriad_merope::PERFORMANCE_FACE_PRESETS
+                .iter()
+                .find(|(name, _, _)| *name == face)
+        })
+        .map_or("her ordinary face", |(_, means, _)| *means);
+    json!({"type": "choice",
+        "instructions": format!(
+            "Her face now: {now}. If her look changes {when}, how she gets from this one to the next."
+        ),
+        "criteria": criteria(myriad_merope::PERFORMANCE_FACE_SHIFTS)})
+}
+
 /// The look she chose, whole: a look is tuned as one, so it holds over a
 /// control answered on its own (two eyes answered apart read as a wink);
 /// her other answers fill what it leaves. With `own` false only her
@@ -305,7 +324,8 @@ pub(super) fn control_plan(
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": sure("posture").unwrap_or("neutral"),
             "motionEnergy": energy, "attention": "usual",
-            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face},
+            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face,
+            "shift": sure("shift")},
         "cues": agreed_face(asked),
         "score": score,
         "askedFor": asked,
@@ -601,7 +621,8 @@ pub(super) fn standing_plan(
     json!({
         "baseline": {"expression": sure("expression").unwrap_or("steady"),
             "posture": sure("posture").unwrap_or("neutral"), "motionEnergy": energy, "attention": "loose",
-            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}, "face": face},
+            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}, "face": face,
+            "shift": sure("shift")},
         "cues": [],
         "score": score,
         "loopMs": STANDING_LOOP_MS,
@@ -937,5 +958,34 @@ mod tests {
         unknown["baseline"]["face"] = json!("cackling");
         let plan = myriad_merope::parse_performance_plan(&unknown.to_string()).unwrap();
         assert_eq!(plan.baseline.unwrap().face, None);
+    }
+
+    #[test]
+    fn how_she_gets_from_the_face_she_holds_to_the_next_is_asked_and_kept() {
+        let drowsy = myriad_merope::sanitize_rig_state(&json!({"face": "drowsy", "capabilities":
+            ["head-body", "independent-eyes", "mouth-shapes"]}))
+        .unwrap();
+        let moment = context("中奖了！", "真的吗！太好了！");
+        let asked = control_questions(&moment, Some(&drowsy));
+        let instructions = asked["shift"]["instructions"].as_str().unwrap();
+        assert!(instructions.contains("lids heavy"), "{instructions}");
+        assert!(asked["shift"]["criteria"]["snap"].is_string());
+        let answers = json!({"face": {"choice": "excited", "confidence": 0.9},
+            "shift": {"choice": "snap", "confidence": 0.8}});
+        let value = control_plan(&answers, &moment, Some(&drowsy));
+        assert_eq!(value["baseline"]["shift"], "snap");
+        let plan = myriad_merope::parse_performance_plan(&value.to_string()).unwrap();
+        assert_eq!(plan.baseline.unwrap().shift.as_deref(), Some("snap"));
+        // No face of her own yet: she still comes from her ordinary one; a made-up shift is dropped.
+        assert!(
+            control_questions(&moment, Some(&bust()))["shift"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("her ordinary face")
+        );
+        let mut unknown = value.clone();
+        unknown["baseline"]["shift"] = json!("teleport");
+        let plan = myriad_merope::parse_performance_plan(&unknown.to_string()).unwrap();
+        assert_eq!(plan.baseline.unwrap().shift, None);
     }
 }
