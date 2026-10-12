@@ -305,7 +305,15 @@ async fn would_write(
     .await
     .unwrap_or_default();
     let now = Utc::now();
-    let first_words: Vec<(String, Option<bool>)> = super::store::first_words(
+    // What she said each time, as she would glance up the chat: what she
+    // last wrote about is hers to weigh too.
+    let said: std::collections::HashMap<DateTime<Utc>, String> =
+        super::store::first_words_said(db, EVENT_KEY, user_id, FIRST_WORDS_SHOWN as u64)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    let first_words: Vec<(String, Option<bool>, Option<String>)> = super::store::first_words(
         db,
         EVENT_KEY,
         Some(user_id),
@@ -316,7 +324,13 @@ async fn would_write(
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(_, at, answered)| (myriad_merope::doing::ago_text(now - at), answered))
+    .map(|(_, at, answered)| {
+        (
+            myriad_merope::doing::ago_text(now - at),
+            answered,
+            said.get(&at).cloned(),
+        )
+    })
     .collect();
     let soup_games = match reason.to_try {
         Some(_) => soup_games_with(db, user_id).await,

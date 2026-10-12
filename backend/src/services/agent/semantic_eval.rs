@@ -121,6 +121,13 @@ struct Case {
     /// Her unprompted lines, placed into the history as production does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     said_unprompted: Vec<String>,
+    /// What they are to her, as she last put it (reach_judge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    us: Option<String>,
+    /// The last times she wrote to them first, as production shows them:
+    /// how long ago, whether they answered, what she said (reach_judge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first_words: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     own_days: Vec<String>,
     /// Memories their words brought to mind without naming them.
@@ -1181,6 +1188,8 @@ fn request(case: &Case) -> Value {
                 "remembered":case.remembered,
                 "yourOwnTime":{"now":case.own_time.as_ref().and_then(|own| own["now"].as_str()),
                     "wouldTell":case.own_time.as_ref().map(|own| own["wouldTell"].clone()).filter(Value::is_array).unwrap_or(json!([]))},
+                "whatTheyAreToYou":case.us,
+                "yourLastFirstWords":case.first_words.clone().unwrap_or(json!([])),
                 "recentTalk":case.history.iter().map(|line| format!("{}: {}", if line.role == "user" { "they" } else { "you" }, line.text)).collect::<Vec<_>>()});
             json!({"system":system,"schema":schema,"schemaName":"merope_reach_out",
                 "input":input.to_string()})
@@ -2467,7 +2476,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 129;
+const MIND_CASES: usize = 132;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
