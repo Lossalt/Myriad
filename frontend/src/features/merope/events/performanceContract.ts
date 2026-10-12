@@ -21,10 +21,15 @@ export const PERFORMANCE_INTERRUPT_MODES =
 export const BODY_CONTROLS = contract.bodyControls
 export const BODY_POSE_TIMING = contract.bodyPoseTiming
 
+interface RawFaceLife {
+  periodMs: number
+  beats: Array<{ atMs: number; pose?: { targets: Record<string, string> }; move?: Record<string, unknown> }>
+}
+
 /** Whole looks of her face: each control at one of its named tiers. */
 export const FACE_PRESETS = contract.facePresets as Record<
   string,
-  { description: string; targets: Record<string, string> }
+  { description: string; targets: Record<string, string>; life?: RawFaceLife }
 >
 
 interface ControlRange {
@@ -204,4 +209,33 @@ function sanitizeScoreMove(value: unknown): ScoreMove | null {
     count: Math.max(1, Math.min(SCORE_TIMING.maxCount, Math.round(count))),
     tempo: Math.max(SCORE_TIMING.minTempo, Math.min(SCORE_TIMING.maxTempo, tempo)),
   }
+}
+
+/** A look's life: what the body does over and over while her face holds it. */
+export interface FaceLife {
+  periodMs: number
+  beats: ScoreBeat[]
+}
+
+/**
+ * The life the contract gives a look, its tiers and tempos read as the
+ * director's are; null for a look without one, or no look.
+ */
+export function faceLife(face: string | null | undefined): FaceLife | null {
+  const life = face ? FACE_PRESETS[face]?.life : undefined
+  if (!life) return null
+  const tempos = contract.levels.tempo as Record<string, number>
+  const extents = contract.extentTiers as Record<string, number>
+  const beats = life.beats.flatMap((raw) => {
+    const targets = raw.pose
+      ? Object.fromEntries(Object.entries(raw.pose.targets).map(([control, tier]) =>
+          [control, tierExtent(control as BodyControl, tier)]))
+      : undefined
+    const move = raw.move
+      ? { ...raw.move, amount: extents[raw.move.amount as string], tempo: tempos[(raw.move.tempo as string) ?? 'usual'] }
+      : undefined
+    const beat = sanitizeScoreBeat({ atMs: raw.atMs, ...(raw.pose ? { pose: { ...raw.pose, targets } } : {}), ...(move ? { move } : {}) })
+    return beat ? [beat] : []
+  })
+  return beats.length ? { periodMs: life.periodMs, beats } : null
 }

@@ -38,5 +38,7 @@ export interface Anime25DWorkbenchPort {
   setDriver: (partial: Partial<Anime25DDriver>) => void
   replaceDriver: (driver: Anime25DDriver) => void
   blinkNow: () => void
+  /** Plays a look's life (the contract's facePresets) over the hand-set face; null stops it. */
+  playFaceLife: (face: string | null) => void
   debugSnapshot: () => Anime25DDebugSnapshot | null
 }

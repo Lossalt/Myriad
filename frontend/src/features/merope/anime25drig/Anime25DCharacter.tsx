@@ -293,6 +293,9 @@ const Anime25DCharacter = forwardRef<Anime25DCharacterHandle, Props>(
         enterManualControl()
         playerRef.current?.replaceTarget(driver)
       },
+      playFaceLife(face) {
+        playerRef.current?.playFaceLife(face)
+      },
       blinkNow() {
         playerRef.current?.blinkNow()
       },

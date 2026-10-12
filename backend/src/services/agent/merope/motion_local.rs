@@ -47,6 +47,7 @@ fn local_baseline(
         motion_energy: baseline_energy(motion_style, &mood.band_after),
         attention: phase_attention(phase),
         pose: None,
+        face: None,
     }
 }
 

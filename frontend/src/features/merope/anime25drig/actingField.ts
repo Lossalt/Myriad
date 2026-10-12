@@ -1,4 +1,5 @@
 import type { BodyControl, ScoreMove } from '../../../services/agent/types'
+import type { FaceLife } from '../events/performanceContract'
 import type { ResolvedScore } from '../motion/scoreTimeline'
 import { angleZForHeadRoll, HEAD_TILT_RADIANS } from './poseScale'
 import { scoreMoveOffsets, scoreMoveSeconds } from './scoreMoves'
@@ -28,6 +29,8 @@ interface PoseItem {
   id: string
   scoreId: number
   standing: boolean
+  /** Part of the life of the look her face holds: it neither takes her up nor waits for her. */
+  face?: boolean
   control: BodyControl
   value: number
   at: number
@@ -40,6 +43,7 @@ interface MoveItem {
   id: string
   scoreId: number
   standing: boolean
+  face?: boolean
   at: number
   move: ScoreMove
 }
@@ -81,6 +85,9 @@ export class ActingField {
   private replyScoreId = 0
   private standingScoreId = 0
   private loop: Loop | null = null
+  /** The look her face holds, and its life playing again each period. */
+  private face: { name: string; loop: Loop } | null = null
+  private faceScoreId = 0
   private speaking = false
   private engaged = 0
   /** Per standing score: how much it is still the one playing. */
@@ -103,8 +110,8 @@ export class ActingField {
     const standing = score.standing !== undefined
     const current = standing ? this.standingScoreId : this.replyScoreId
     if (score.id !== current) {
-      this.poses = this.poses.filter((item) => item.standing !== standing || item.at <= time)
-      this.moves = this.moves.filter((item) => item.standing !== standing || item.at <= time)
+      this.poses = this.poses.filter((item) => item.face || item.standing !== standing || item.at <= time)
+      this.moves = this.moves.filter((item) => item.face || item.standing !== standing || item.at <= time)
       if (standing) {
         this.standingScoreId = score.id
         this.standingShares.set(score.id, this.standingShares.get(score.id) ?? 0)
@@ -118,14 +125,34 @@ export class ActingField {
     this.lay(score.id, standing, score.beats, (atMs) => time + (atMs - nowMs) / 1000, '', time)
   }
 
+  /**
+   * The look her face holds (null for none). Its life plays from now on,
+   * over and over until the look changes; what is under way of the last
+   * look's life plays out.
+   */
+  setFace(name: string | null, life: Readonly<FaceLife> | null, time: number): void {
+    if ((this.face?.name ?? null) === (life ? name : null)) return
+    this.poses = this.poses.filter((item) => !item.face || item.at <= time)
+    this.moves = this.moves.filter((item) => !item.face || item.at <= time)
+    if (!name || !life) {
+      this.face = null
+      return
+    }
+    this.faceScoreId -= 1
+    const beats = life.beats.map((beat, index) => ({ id: `face:${name}:${index}`, atMs: beat.atMs, ...(beat.pose ? { pose: beat.pose } : {}), ...(beat.move ? { move: beat.move } : {}) }))
+    this.face = { name, loop: { scoreId: this.faceScoreId, beats, startNowMs: 0, periodSeconds: life.periodMs / 1000, cycleAt: time, cycle: 0 } }
+    this.lay(this.faceScoreId, false, beats, (atMs) => time + atMs / 1000, '', time, true)
+  }
+
   /** Advances to `time`; `drivable` says which controls this body has. */
   step(dt: number, time: number, drivable: (control: BodyControl) => boolean): void {
     this.continueLoop(time)
+    this.continueFace(time)
     this.poses = this.poses.filter((item) => time < item.at + item.attack + item.hold + item.release)
     this.moves = this.moves.filter((item) => time < item.at + scoreMoveSeconds(item.move))
     // How taken up she is: speaking, or the director's reply beats playing.
     let reply = 0
-    for (const item of this.poses) { if (!item.standing) reply = Math.max(reply, envelope(item, time))
+    for (const item of this.poses) { if (!item.standing && !item.face) reply = Math.max(reply, envelope(item, time))
 }
     const step = Number.isFinite(dt) ? Math.max(0, dt) : 0
     const busy = Math.max(this.speaking ? 1 : 0, reply)
@@ -180,6 +207,17 @@ export class ActingField {
     }
   }
 
+  private continueFace(time: number): void {
+    const loop = this.face?.loop
+    if (!loop) return
+    while (time >= loop.cycleAt + loop.periodSeconds - 1) {
+      loop.cycle += 1
+      loop.cycleAt += loop.periodSeconds
+      const cycleAt = loop.cycleAt
+      this.lay(loop.scoreId, false, loop.beats, (atMs) => cycleAt + atMs / 1000, `#${loop.cycle}`, time, true)
+    }
+  }
+
   private lay(
     scoreId: number,
     standing: boolean,
@@ -187,6 +225,7 @@ export class ActingField {
     at: (atMs: number) => number,
     suffix: string,
     time: number,
+    face = false,
   ): void {
     for (const beat of beats) {
       const id = beat.id + suffix
@@ -201,7 +240,7 @@ export class ActingField {
             continue
           }
           this.poses.push({
-            id, scoreId, standing, control, value: mappedControlValue(control, value),
+            id, scoreId, standing, ...(face ? { face } : {}), control, value: mappedControlValue(control, value),
             at: start, attack, hold, release: Math.max(MIN_RELEASE_SECONDS, attack),
           })
         }
@@ -211,7 +250,7 @@ export class ActingField {
         if (known) {
           if (known.at > time) known.at = start
         } else {
-          this.moves.push({ id, scoreId, standing, at: start, move: beat.move })
+          this.moves.push({ id, scoreId, standing, ...(face ? { face } : {}), at: start, move: beat.move })
         }
       }
     }

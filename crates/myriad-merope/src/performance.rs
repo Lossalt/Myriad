@@ -6,8 +6,9 @@ use crate::rig_contract::{
     BODY_POSE_MIN_TRANSITION_MS, BODY_POSE_TRANSITION_MS, PERFORMANCE_ATTENTION_LEVELS,
     PERFORMANCE_BASELINE_EXPRESSIONS, PERFORMANCE_BODY_CONTROL_RESTS,
     PERFORMANCE_BODY_CONTROL_TIERS, PERFORMANCE_BODY_CONTROLS, PERFORMANCE_CUE_INTENTS,
-    PERFORMANCE_ENERGY_LEVELS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_INTENSITY_LEVELS,
-    PERFORMANCE_INTERRUPT_MODES, PERFORMANCE_POSTURES, PERFORMANCE_TEMPO_LEVELS,
+    PERFORMANCE_ENERGY_LEVELS, PERFORMANCE_EXTENT_TIERS, PERFORMANCE_FACE_PRESETS,
+    PERFORMANCE_INTENSITY_LEVELS, PERFORMANCE_INTERRUPT_MODES, PERFORMANCE_POSTURES,
+    PERFORMANCE_TEMPO_LEVELS,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,6 +31,11 @@ pub struct ChatPerformanceBaseline {
     pub attention: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pose: Option<BodyPose>,
+    /// The contract's look her face holds (`facePresets`), when one was
+    /// chosen whole: its targets are in `pose`, and the body plays the
+    /// look's own life over them, again and again while it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<String>,
 }
 
 /// Normalized semantic goals, not renderer drivers or per-frame commands.
@@ -200,6 +206,8 @@ struct RawBaseline {
     attention: f32,
     #[serde(default)]
     pose: Option<RawBodyPose>,
+    #[serde(default)]
+    face: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,6 +277,12 @@ fn sanitize_baseline(baseline: RawBaseline) -> Option<ChatPerformanceBaseline> {
         motion_energy: baseline.motion_energy.clamp(0.2, 1.4),
         attention: baseline.attention.clamp(0.0, 1.0),
         pose,
+        // A look the contract does not know is no look at all.
+        face: baseline.face.filter(|face| {
+            PERFORMANCE_FACE_PRESETS
+                .iter()
+                .any(|(name, _, _)| name == face)
+        }),
     })
 }
 

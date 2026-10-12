@@ -364,6 +364,8 @@ export class Anime25DPlayer {
     return { ...this.current }
   }
 
+  playFaceLife(face: string | null): void { this.motion.directedPose.setFace(face, this.time) }
+
   blinkNow(): void {
     this.motion.blinkNow(this.time)
   }
@@ -428,7 +430,7 @@ export class Anime25DPlayer {
   }
 
   setBearing(bearing: PerformanceBaseline | null): void {
-    this.motion.directedPose.set(bearing?.pose, this.time)
+    this.motion.directedPose.set(bearing?.pose, this.time, bearing?.face ?? null)
     this.motion.performanceExpression.setBearingAttention(bearing?.attention ?? null)
     this.setTarget({
       ...(bearing ? baselineDriverPatch(bearing) : restEnergyDriverPatch()),

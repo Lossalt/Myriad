@@ -3,7 +3,7 @@ import type { MotionChannelPolicy } from '../motion/policy'
 import type { ResolvedScore } from '../motion/scoreTimeline'
 import type { Anime25DDriver } from './driver'
 import type { PerformanceExpressionOffset } from './performanceExpressionShared'
-import { BODY_CONTROLS, sanitizeBodyPose } from '../events/performanceContract'
+import { BODY_CONTROLS, faceLife, sanitizeBodyPose } from '../events/performanceContract'
 import { ActingField, mappedControlValue } from './actingField'
 
 // Semantic goals are mapped only here, never interpreted as arbitrary drivers.
@@ -74,7 +74,9 @@ export class DirectedPoseController {
     this.capabilities = new Set(capabilities)
   }
 
-  set(pose: BodyPose | null | undefined, time: number): void {
+  /** The held pose; with `face`, also the look her face holds (null for none), whose life plays over it. */
+  set(pose: BodyPose | null | undefined, time: number, face?: string | null): void {
+    if (face !== undefined) this.setFace(face, time)
     const next = sanitizeBodyPose(pose)
     if (next && this.pose && time < this.expiresAt && poseKey(next) === poseKey(this.pose)) return
     this.pose = next
@@ -88,6 +90,11 @@ export class DirectedPoseController {
 
   setSpeaking(speaking: boolean): void {
     this.acting.setSpeaking(speaking)
+  }
+
+  /** The look her face holds, whose life plays over it while it holds. */
+  setFace(face: string | null | undefined, time: number): void {
+    this.acting.setFace(face ?? null, faceLife(face), time)
   }
 
   /** How much directed motion, standing pose or score, drives a control now. */

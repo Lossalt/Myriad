@@ -396,7 +396,7 @@ pub(super) fn plan_from_answers(
         Some("aside") => set("gazeHorizontal", &format!("{side}clear")),
         _ => {}
     }
-    control::lay_face(&mut targets, answers, state, own);
+    let face = control::lay_face(&mut targets, answers, state, own);
     let mut score = Vec::new();
     // Delight or a sigh for someone else's feeling is not hers to act.
     if let Some(kind) = sure("gesture")
@@ -444,7 +444,7 @@ pub(super) fn plan_from_answers(
     json!({
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy, "attention": 0.85,
-            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}},
+            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face},
         "cues": cues,
         "score": score,
         "askedFor": asked,

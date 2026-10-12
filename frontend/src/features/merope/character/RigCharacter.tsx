@@ -221,6 +221,7 @@ const RigCharacter = forwardRef<RigCharacterHandle, Props>(
       zoomPoseCorrectionHead: on => animeRef.current?.zoomPoseCorrectionHead(on),
       replaceDriver: (driver) => animeRef.current?.replaceDriver(driver),
       blinkNow: () => animeRef.current?.blinkNow(),
+      playFaceLife: (face) => animeRef.current?.playFaceLife(face),
       debugSnapshot: () => animeRef.current?.debugSnapshot() ?? null,
       setMotionPolicy: (policy) => {
         motionPolicyRef.current = policy

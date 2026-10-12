@@ -12,6 +12,7 @@ import {
   writeMeropeState,
 } from './meropeAffectState'
 import {
+  FACE_PRESETS,
   PERFORMANCE_BASELINE_EXPRESSIONS,
   PERFORMANCE_CUE_INTENTS,
   PERFORMANCE_INTERRUPT_MODES,
@@ -278,6 +279,7 @@ function sanitizeBaseline(value: unknown): PerformanceBaseline | null {
     motionEnergy: clamp(value.motionEnergy, 0.2, 1.4),
     attention: clamp(value.attention, 0, 1),
     ...(pose ? { pose } : {}),
+    ...(typeof value.face === 'string' && Object.hasOwn(FACE_PRESETS, value.face) ? { face: value.face } : {}),
   }
 }
 

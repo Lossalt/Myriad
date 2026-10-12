@@ -97,7 +97,10 @@ export function MotionPanel({
                 type="button"
                 size="sm"
                 disabled={!motionEnabled}
-                onClick={() => applyPreset(preset.driver)}
+                onClick={() => {
+                  characterRef.current?.playFaceLife(null)
+                  applyPreset(preset.driver)
+                }}
               >
                 {presetLabel(labels, preset.id)}
               </SettingsButton>
@@ -114,7 +117,10 @@ export function MotionPanel({
               type="button"
               size="sm"
               disabled={!motionEnabled}
-              onClick={resetPose}
+              onClick={() => {
+                characterRef.current?.playFaceLife(null)
+                resetPose()
+              }}
             >
               {labels.anime25dResetPose}
             </SettingsButton>
@@ -129,7 +135,10 @@ export function MotionPanel({
                 type="button"
                 size="sm"
                 disabled={!motionEnabled}
-                onClick={() => applyPreset(preset.driver)}
+                onClick={() => {
+                  applyPreset(preset.driver)
+                  characterRef.current?.playFaceLife(preset.id)
+                }}
               >
                 {facePresetLabel(labels, preset.id)}
               </SettingsButton>

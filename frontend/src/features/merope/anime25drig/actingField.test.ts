@@ -75,3 +75,26 @@ test("a director's head tilt shows as its share of the full tilt, its slight one
   assert.ok(slight > 8 && slight < 9, `${slight}`)
   assert.equal(mappedControlValue('headTurn', 0.4), 0.4, 'other controls as they are')
 })
+
+test('a look plays its life again each period while it holds, through speech and reply beats, and stops when it changes', () => {
+  const field = new ActingField()
+  const life = { periodMs: 2000, beats: [{ atMs: 500, offsetMs: 0, pose: { targets: { headTilt: 0.5 }, transitionMs: 200, holdMs: 300 } }] }
+  field.setFace('humming', life, 0)
+  const tilted = (from: number, to: number) => {
+    let most = 0
+    run(field, from, to, () => { most = Math.max(most, value(field, 'headTilt')?.weight ?? 0) })
+    return most
+  }
+  assert.ok(tilted(0, 2) > 0.95)
+  // It is her face, not the standing acting: speech and a reply's beats leave it playing.
+  field.setSpeaking(true)
+  field.setScore({ id: 7, beats: [tilt('7:0', 0, -0.2, 300)] }, 2, 0)
+  assert.ok(tilted(2.3, 4) > 0.95, 'the next period plays')
+  // A standing score is not held back by it.
+  field.setSpeaking(false)
+  field.setScore({ id: 8, beats: [{ id: '8:0', atMs: 0, pose: { targets: { gazeVertical: 0.3 }, transitionMs: 200, holdMs: 20000 } }], standing: { loopMs: 0 } }, 4, 0)
+  run(field, 4, 6)
+  assert.ok((value(field, 'gazeVertical')?.weight ?? 0) > 0.95)
+  field.setFace(null, null, 6)
+  assert.equal(tilted(7, 10), 0)
+})

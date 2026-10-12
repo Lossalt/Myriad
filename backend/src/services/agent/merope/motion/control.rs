@@ -200,28 +200,25 @@ pub(super) fn face_question(state: Option<&RigStateSummary>, when: &str) -> Opti
 /// The look she chose, whole: a look is tuned as one, so it holds over a
 /// control answered on its own (two eyes answered apart read as a wink);
 /// her other answers fill what it leaves. With `own` false only her
-/// bearing is taken.
+/// bearing is taken. The look is named back when it is hers, so the body
+/// plays its life over it.
 pub(super) fn lay_face(
     targets: &mut Map<String, Value>,
     answers: &Value,
     state: Option<&RigStateSummary>,
     own: bool,
-) {
-    let Some(face) = sure(answers, "face").filter(|face| *face != "none") else {
-        return;
-    };
+) -> Option<&'static str> {
+    let face = sure(answers, "face").filter(|face| *face != "none")?;
     let controls = offered_body_controls(state);
-    let Some((_, _, look)) = myriad_merope::PERFORMANCE_FACE_PRESETS
+    let (name, _, look) = myriad_merope::PERFORMANCE_FACE_PRESETS
         .iter()
-        .find(|(name, _, _)| *name == face)
-    else {
-        return;
-    };
+        .find(|(name, _, _)| *name == face)?;
     for (control, tier) in look.iter() {
         if controls.contains(control) && (own || is_bearing(control)) {
             targets.insert((*control).to_owned(), json!(tier));
         }
     }
+    own.then_some(*name)
 }
 
 /// The standing targets the answers give, control by control; with `own`
@@ -268,7 +265,7 @@ pub(super) fn control_plan(
     };
     let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
     let mut targets = answered_targets(answers, state, own);
-    lay_face(&mut targets, answers, state, own);
+    let face = lay_face(&mut targets, answers, state, own);
     let energy = sure("energy").unwrap_or("usual");
     let amount = match energy {
         "low" => "slight",
@@ -308,7 +305,7 @@ pub(super) fn control_plan(
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": sure("posture").unwrap_or("neutral"),
             "motionEnergy": energy, "attention": "usual",
-            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}},
+            "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face},
         "cues": agreed_face(asked),
         "score": score,
         "askedFor": asked,
@@ -519,7 +516,7 @@ pub(super) fn standing_plan(
             .flatten()
     };
     let mut targets = answered_targets(answers, state, true);
-    lay_face(&mut targets, answers, state, true);
+    let face = lay_face(&mut targets, answers, state, true);
     // How she holds her head over the stretch, unless a control said already.
     let controls = offered_body_controls(state);
     let head = match answers["headPose"]["choice"].as_str() {
@@ -604,7 +601,7 @@ pub(super) fn standing_plan(
     json!({
         "baseline": {"expression": sure("expression").unwrap_or("steady"),
             "posture": sure("posture").unwrap_or("neutral"), "motionEnergy": energy, "attention": "loose",
-            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}},
+            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}, "face": face},
         "cues": [],
         "score": score,
         "loopMs": STANDING_LOOP_MS,
@@ -922,5 +919,23 @@ mod tests {
         assert_eq!(value["cues"][0]["intent"], "maniac");
         assert_eq!(value["baseline"]["expression"], "steady");
         assert_eq!(value["askedFor"], "maniac");
+    }
+
+    #[test]
+    fn a_look_she_takes_is_named_for_its_life_and_survives_the_plan() {
+        let moment = context("你在干嘛", "我在哼歌呀。");
+        let answers = |own: f64| json!({"own": {"noul": own}, "face": {"choice": "humming", "confidence": 0.9}});
+        let value = control_plan(&answers(0.9), &moment, Some(&bust()));
+        assert_eq!(value["baseline"]["face"], "humming");
+        let plan = myriad_merope::parse_performance_plan(&value.to_string()).unwrap();
+        assert_eq!(plan.baseline.unwrap().face.as_deref(), Some("humming"));
+        // Someone else's look keeps only her bearing, and no life of its own.
+        let quoted = control_plan(&answers(0.05), &moment, Some(&bust()));
+        assert!(quoted["baseline"]["face"].is_null());
+        // A name the contract does not know is dropped.
+        let mut unknown = value.clone();
+        unknown["baseline"]["face"] = json!("cackling");
+        let plan = myriad_merope::parse_performance_plan(&unknown.to_string()).unwrap();
+        assert_eq!(plan.baseline.unwrap().face, None);
     }
 }

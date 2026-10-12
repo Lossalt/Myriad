@@ -164,6 +164,8 @@ export interface PerformanceBaseline {
   motionEnergy: number
   attention: number
   pose?: BodyPose
+  /** The contract's look her face holds (facePresets), whose life the body plays. */
+  face?: string
 }
 
 export interface PerformanceCue {
