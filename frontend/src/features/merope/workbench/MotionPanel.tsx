@@ -4,6 +4,7 @@ import type { Anime25DPlayback } from '../anime25drig/types'
 import type { RigCharacterHandle } from '../character/RigCharacter'
 import type { DriverSliderKey } from './motionControls'
 import type { WorkbenchDriver } from './useWorkbenchDriver'
+import { useState } from 'react'
 import {
   InfoActionCard,
   SettingGroup,
@@ -18,6 +19,7 @@ import {
   envelopeProbeLabel,
   EXPRESSION_GROUPS,
   expressionLabel,
+  FACE_SHIFT_BUTTONS,
   inspectFields,
 } from './motionControls'
 import { MovingPartsPanel } from './MovingPartsPanel'
@@ -50,6 +52,7 @@ export function MotionPanel({
   const { t } = useI18n()
   const labels = t.merope
   const { driver, snapshot, applyDriver, patchDriver, applyPreset, resetPose } = motion
+  const [shift, setShift] = useState('ease')
 
   const sliderCluster = (title: string, keys: DriverSliderKey[]) => (
     <div className="merope-motion-home__cluster">
@@ -98,8 +101,9 @@ export function MotionPanel({
                   size="sm"
                   disabled={!motionEnabled}
                   onClick={() => {
-                    applyPreset(button.driver)
-                    characterRef.current?.playFaceLife(button.kind === 'face' ? button.id : null)
+                    // A look of hers comes over her own face the way the director's does; a drawn one is set.
+                    applyPreset(button.kind === 'face' ? {} : button.driver)
+                    characterRef.current?.playFace(button.kind === 'face' ? button.id : null, shift)
                   }}
                 >
                   {expressionLabel(labels, button)}
@@ -108,6 +112,23 @@ export function MotionPanel({
             </div>
           </div>
         ))}
+        <div className="merope-motion-home__chips">
+          <strong>{labels.faceShiftTitle}</strong>
+          <div>
+            {FACE_SHIFT_BUTTONS.map(([id, label]) => (
+              <SettingsButton
+                key={id}
+                type="button"
+                size="sm"
+                aria-pressed={shift === id}
+                disabled={!motionEnabled}
+                onClick={() => setShift(id)}
+              >
+                {labels[label]}
+              </SettingsButton>
+            ))}
+          </div>
+        </div>
         <div className="merope-motion-home__chips">
           <strong>{labels.expressionsActions}</strong>
           <div>
@@ -124,7 +145,7 @@ export function MotionPanel({
               size="sm"
               disabled={!motionEnabled}
               onClick={() => {
-                characterRef.current?.playFaceLife(null)
+                characterRef.current?.playFace(null, shift)
                 resetPose()
               }}
             >

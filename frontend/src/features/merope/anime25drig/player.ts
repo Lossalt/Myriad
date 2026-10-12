@@ -364,7 +364,7 @@ export class Anime25DPlayer {
     return { ...this.current }
   }
 
-  playFaceLife(face: string | null): void { this.motion.directedPose.setFace(face, this.time) }
+  playFace(face: string | null, shift: string | null): void { this.motion.directedPose.preview(face, shift, this.time) }
 
   blinkNow(): void {
     this.motion.blinkNow(this.time)

@@ -197,6 +197,14 @@ export const EXPRESSION_GROUPS: ReadonlyArray<{ title: StringLabel; buttons: rea
   },
 ]
 
+/** How the workbench's looks come over her face, as the director's ways of changing (faceShifts). */
+export const FACE_SHIFT_BUTTONS = [
+  ['ease', 'faceShiftEase'],
+  ['snap', 'faceShiftSnap'],
+  ['slow', 'faceShiftSlow'],
+  ['pause', 'faceShiftPause'],
+] as const satisfies ReadonlyArray<readonly [string, StringLabel]>
+
 export function expressionLabel(labels: Labels, button: Pick<ExpressionButton, 'kind' | 'id'>): string {
   return button.kind === 'face' ? facePresetLabel(labels, button.id) : presetLabel(labels, button.id)
 }
