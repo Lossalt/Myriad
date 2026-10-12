@@ -1284,9 +1284,10 @@ impl AiAnalyzer {
     }
 
     /// [`Self::analyze_stream_parts`] with images the model sees alongside
-    /// the prompt. Gemini gets `inlineData` parts and OpenAI-compatible
-    /// endpoints a content array with data-URL `image_url`s; other protocols
-    /// get the text alone. No images: exactly the text path.
+    /// the prompt. Gemini gets `inlineData` parts, OpenAI-compatible endpoints
+    /// a content array with data-URL `image_url`s, and Anthropic base64
+    /// `image` blocks; other protocols get the text alone. No images: exactly
+    /// the text path.
     pub async fn analyze_stream_parts_with_images<F, Fut>(
         &self,
         prompt: &str,
@@ -1297,7 +1298,12 @@ impl AiAnalyzer {
         F: FnMut(StreamDelta) -> Fut + Send,
         Fut: Future<Output = bool> + Send,
     {
-        if images.is_empty() || !matches!(self.provider, AiProvider::Gemini | AiProvider::OpenAI) {
+        if images.is_empty()
+            || !matches!(
+                self.provider,
+                AiProvider::Gemini | AiProvider::OpenAI | AiProvider::Anthropic
+            )
+        {
             if !images.is_empty() {
                 tracing::info!(
                     provider = ?self.provider,
@@ -1344,6 +1350,32 @@ impl AiAnalyzer {
                 .into_error());
             }
             return super::sse::consume_text_sse(response, on_delta, gemini_stream_deltas).await;
+        }
+        if self.provider == AiProvider::Anthropic {
+            let url = text_protocol::endpoint(self.provider, self.base_url.as_deref());
+            let response = self
+                .authenticate(self.client.post(&url))
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .json(&self.prepare_body(&anthropic_image_request(&self.model, prompt, images))?)
+                .send()
+                .await
+                .context("Failed to send streaming image request to Anthropic API")?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = Self::read_limited_error_text(response).await;
+                return Err(ProviderCallFailure::http(
+                    status,
+                    anyhow::anyhow!("Anthropic streaming API error {}: {}", status, error_text),
+                )
+                .into_error());
+            }
+            return super::sse::consume_text_sse(
+                response,
+                on_delta,
+                self.protocol_stream_extractor(),
+            )
+            .await;
         }
         let response = self
             .post_openai_stream(openai_image_request(&self.model, prompt, images))
@@ -1448,6 +1480,27 @@ fn gemini_image_request(prompt: &str, images: &[ImageInput]) -> serde_json::Valu
     serde_json::json!({ "contents": [{ "parts": parts }] })
 }
 
+/// The Messages API takes images as base64 `image` blocks, before the text
+/// that asks about them.
+fn anthropic_image_request(model: &str, prompt: &str, images: &[ImageInput]) -> serde_json::Value {
+    let mut content: Vec<serde_json::Value> = images
+        .iter()
+        .map(|image| {
+            serde_json::json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": image.mime, "data": image.base64 }
+            })
+        })
+        .collect();
+    content.push(serde_json::json!({ "type": "text", "text": prompt }));
+    serde_json::json!({
+        "model": model,
+        "max_tokens": 4096,
+        "stream": true,
+        "messages": [{ "role": "user", "content": content }],
+    })
+}
+
 fn openai_image_request(model: &str, prompt: &str, images: &[ImageInput]) -> serde_json::Value {
     let mut content = vec![serde_json::json!({ "type": "text", "text": prompt })];
     content.extend(images.iter().map(|image| {
@@ -1508,6 +1561,13 @@ mod image_request_tests {
             gemini["contents"][0]["parts"][1]["inlineData"]["mimeType"],
             "image/webp"
         );
+        let anthropic = anthropic_image_request("m", "看看这个", &[image()]);
+        let blocks = &anthropic["messages"][0]["content"];
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/webp");
+        assert_eq!(blocks[0]["source"]["data"], "AAAA");
+        assert_eq!(blocks[1]["text"], "看看这个");
+        assert_eq!(anthropic["stream"], true);
         let openai = openai_image_request("m", "看看这个", &[image()]);
         let content = &openai["messages"][0]["content"];
         assert_eq!(content[0]["text"], "看看这个");

@@ -141,36 +141,41 @@ fn work_out(venue: String, word: Watched) {
             kept.worked_out_at = kept.uses;
         }
         keep_watched(&db, &venue, watched).await;
-        let usual = call::Ask::new(Voice::Judge, owner, "word_usually")
-            .within(CALL_TIMEOUT)
-            .json_raw(
-                usual_system(),
-                &usual_input(&word.term),
-                USUAL_SCHEMA,
-                &usual_schema(),
-            )
-            .await
-            .ok()
-            .and_then(|raw| parse_usual(&raw))
-            .flatten();
-        let Ok(raw) = call::Ask::new(Voice::Judge, owner, "word_here")
-            .within(CALL_TIMEOUT)
-            .json_raw(
-                here_system(),
-                &here_input(&word.term, &word.lines, usual.as_deref()),
-                HERE_SCHEMA,
-                &here_schema(),
-            )
-            .await
-        else {
-            return;
-        };
-        let Some(Some(meaning)) = parse_here(&raw) else {
+        let Some(meaning) = own_meaning(owner, &word.term, &word.lines).await else {
             tracing::info!(%venue, "[Merope] a word she watched is not the group's own");
             return;
         };
         keep(&db, &venue, &word, &meaning).await;
     });
+}
+
+/// What `term` means as the group uses it in `lines`, when that is the
+/// group's own: what it usually means first, from the word alone, then the
+/// group's use beside it. Billed to `owner`.
+async fn own_meaning(owner: i32, term: &str, lines: &[String]) -> Option<String> {
+    let usual = call::Ask::new(Voice::Judge, owner, "word_usually")
+        .within(CALL_TIMEOUT)
+        .json_raw(
+            usual_system(),
+            &usual_input(term),
+            USUAL_SCHEMA,
+            &usual_schema(),
+        )
+        .await
+        .ok()
+        .and_then(|raw| parse_usual(&raw))
+        .flatten();
+    let raw = call::Ask::new(Voice::Judge, owner, "word_here")
+        .within(CALL_TIMEOUT)
+        .json_raw(
+            here_system(),
+            &here_input(term, lines, usual.as_deref()),
+            HERE_SCHEMA,
+            &here_schema(),
+        )
+        .await
+        .ok()?;
+    parse_here(&raw).flatten()
 }
 
 /// Keep what `word` means in the group `venue`, in place of what she made of
@@ -233,4 +238,55 @@ pub async fn section_for(db: &DatabaseConnection, here: &str, text: &str) -> Opt
         });
     }
     myriad_merope::jargon::section(&known)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Whether the site's judgment model tells a group's own word from one
+    /// used as it usually is, from how people there use it.
+    /// `cargo test --bin myriad-backend a_groups_own_word -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "spends on the site's judgment model"]
+    async fn a_groups_own_word_is_told_from_a_usual_one() {
+        let config_db = super::super::super::semantic_eval::load_configured_lite().await;
+        config_db.close().await.ok();
+        let cases: [(&str, [&str; 4], bool); 3] = [
+            (
+                "阿伟",
+                [
+                    "阿伟又在群里发红包了 群主就是大方",
+                    "群公告是阿伟昨天改的",
+                    "@阿伟 你这个群主能不能管管刷屏的",
+                    "阿伟说周末全群线下聚会 他请客",
+                ],
+                true,
+            ),
+            (
+                "yyds",
+                [
+                    "这家火锅yyds",
+                    "周杰伦yyds 不接受反驳",
+                    "这个插件yyds 省了我一小时",
+                    "新出的角色yyds",
+                ],
+                false,
+            ),
+            (
+                "饭团",
+                [
+                    "饭团又炸服了 谁去重启一下",
+                    "谁还没有饭团的白名单",
+                    "饭团今晚十点维护 别上线",
+                    "我在饭团里盖了个城堡 坐标发群里了",
+                ],
+                true,
+            ),
+        ];
+        for (term, lines, own) in cases {
+            let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+            let meaning = super::own_meaning(1, term, &lines).await;
+            println!("{term}: {meaning:?}");
+            assert_eq!(meaning.is_some(), own, "{term}: {meaning:?}");
+        }
+    }
 }
