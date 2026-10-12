@@ -78,6 +78,7 @@ impl Agent {
             &request,
             mood_transition.clone(),
             &round_motion_style,
+            false,
         )
         .await;
     }
@@ -116,12 +117,7 @@ impl Agent {
         } else {
             None
         };
-        // Her figure is only on the site: a group or a chat app has no one
-        // to perform to, and directing motion there is paying for nothing.
-        let seen = request
-            .context
-            .as_ref()
-            .is_none_or(|context| context.venue.is_none() && context.channel_chat.is_none());
+        let seen = super::motion_overlay::on_her_face(&request);
         if let Some(mood) = mood_transition.clone().filter(|_| seen) {
             let reaction_context = motion_context(
                 &request,

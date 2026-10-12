@@ -511,11 +511,14 @@ where
     (delivery, MotionRefinementGuard { task, published })
 }
 
+/// `live`: the run is streamed to her face, so after the floor the judgment
+/// model directs the answer on the run's playback channel, as a chat reply's.
 pub(super) async fn attach_motion_to_result(
     result: Result<AgentResponse, String>,
     request: &UserRequest,
     mood: Option<crate::services::agent::merope::MoodTransition>,
     motion_style: &str,
+    live: bool,
 ) -> Result<AgentResponse, String> {
     let mut response = result?;
     let Some(mood) = mood else {
@@ -543,7 +546,69 @@ pub(super) async fn attach_motion_to_result(
     // The body carries the floor so a non-streaming client still gets acting.
     // Do not await Lite here — that would put its timeout in front of the reply.
     response.performance = crate::services::agent::merope::local_directive(&context);
+    if live && on_her_face(request) {
+        direct_on_playback(request, context).await;
+    }
     Ok(response)
+}
+
+/// Her figure is only on the site: a group or a chat app has no one to
+/// perform to, and directing motion there is paying for nothing.
+pub(super) fn on_her_face(request: &UserRequest) -> bool {
+    request
+        .context
+        .as_ref()
+        .is_none_or(|context| context.venue.is_none() && context.channel_chat.is_none())
+}
+
+/// Directs an answer already sent, on its run's playback channel; the
+/// client plays it while that answer is still being said.
+async fn direct_on_playback(
+    request: &UserRequest,
+    context: crate::services::agent::merope::MotionContext,
+) {
+    let Some(run_id) = request
+        .context
+        .as_ref()
+        .and_then(|context| context.run_id.as_deref())
+    else {
+        return;
+    };
+    let Some(live) = super::run_hub::get_live_run_for_user(run_id, request.user_id)
+        .await
+        .map(|run| run.playback_direction.clone())
+    else {
+        return;
+    };
+    let directed = direct_answer(
+        live.clone(),
+        context,
+        crate::services::agent::merope::refine_motion,
+    );
+    if !super::merope::background::spawn("answer motion", directed) {
+        live.finish();
+    }
+}
+
+async fn direct_answer<F, Fut>(
+    live: super::playback_direction::PlaybackDirection,
+    context: crate::services::agent::merope::MotionContext,
+    refine: F,
+) where
+    F: FnOnce(crate::services::agent::merope::MotionContext) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Option<crate::services::agent::merope::PerformanceDirective>>
+        + Send
+        + 'static,
+{
+    let directed = tokio::select! {
+        biased;
+        _ = live.cancelled() => return,
+        directed = refine(context) => directed,
+    };
+    if let Some(performance) = directed {
+        live.publish(performance);
+    }
+    live.finish();
 }
 
 #[cfg(test)]
@@ -552,6 +617,30 @@ pub(super) mod motion_refinement_tests {
     use crate::services::agent::merope::{MoodTransition, MotionContext, MotionPhase};
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_work_answer_is_directed_on_its_playback_channel_after_it_is_sent() {
+        let live = super::super::playback_direction::PlaybackDirection::default();
+        let directed = crate::services::agent::merope::local_directive(&context()).unwrap();
+        let sent = directed.clone();
+        direct_answer(live.clone(), context(), move |_| async move { Some(sent) }).await;
+        let snapshot = live.read_after(0).await;
+        assert_eq!(snapshot.version, 1);
+        assert!(snapshot.closed, "finished once directed");
+        assert!(snapshot.performance.is_some(), "the direction stays to be read");
+
+        let cancelled = super::super::playback_direction::PlaybackDirection::default();
+        cancelled.close();
+        direct_answer(cancelled.clone(), context(), move |_| async move {
+            Some(directed)
+        })
+        .await;
+        assert_eq!(
+            cancelled.read_after(0).await.version,
+            0,
+            "a cancelled answer is not directed"
+        );
+    }
 
     #[tokio::test]
     async fn chat_refinement_preserves_independent_body_control_even_without_unanchored_cues() {

@@ -767,7 +767,7 @@ export const AgentEngine: React.FC = () => {
             }
             if (event.runId) {
               performanceRunId = event.runId
-              if (mode === 'chat') startPlaybackDirection({ runId: event.runId, messageId: assistantMessageId, generation })
+              startPlaybackDirection({ runId: event.runId, messageId: assistantMessageId, generation }, mode)
               updateMessageExecution(assistantMessageId, {
                 runId: event.runId,
               })
@@ -1021,7 +1021,7 @@ export const AgentEngine: React.FC = () => {
               if (streamedSummary) updateMessageExecution(assistantMessageId, { statusMessage: streamedSummary })
               if (speech.end()) markTurnTraceOnce('first_sentence')
               utterance.end()
-              if (mode === 'chat') playbackDirection.textEnded(assistantMessageId)
+              playbackDirection.textEnded(assistantMessageId)
             }
             break
           }
@@ -1094,7 +1094,7 @@ export const AgentEngine: React.FC = () => {
 
           case 'task_completed': {
             utterance.end()
-            if (mode === 'chat') playbackDirection.textEnded(assistantMessageId)
+            playbackDirection.textEnded(assistantMessageId)
             const completedEvent =
               event as import('../../services/agent/types').TaskCompletedEvent
             const taskInfo = completedEvent.response?.task as

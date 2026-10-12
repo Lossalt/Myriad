@@ -1,3 +1,4 @@
+import type { AgentPanelMode } from '../../../components/agent-panel/agentPanelMode'
 import type { PlaybackDirectionScope } from '../motion/playbackDirection'
 import { getAgentPanelMode } from '../../../components/agent-panel/agentPanelMode'
 import { API_URL } from '../../../config'
@@ -20,6 +21,8 @@ import { getSpeechPipeline } from '../speech/speechPipelineHost'
 import { deliverTurnLine } from './engineFace'
 
 let enabled = false
+/** The panel mode of the turn being directed: a work answer is acted too. */
+let directedMode: AgentPanelMode = 'chat'
 let timer: ReturnType<typeof setInterval> | null = null
 
 function stopChecking(): void {
@@ -71,7 +74,7 @@ export const playbackDirection = new PlaybackDirectionClient({
     isLiveMotionGeneration(generation) &&
     liveFaceVisible() &&
     document.visibilityState === 'visible' &&
-    getAgentPanelMode() === 'chat',
+    getAgentPanelMode() === directedMode,
   playing: ({ messageId, generation }) =>
     getSpeechPipeline().isBusyWith(messageId) ||
     getProductionMotionRuntime().speech.hasPlayback({
@@ -81,7 +84,7 @@ export const playbackDirection = new PlaybackDirectionClient({
     }),
   sanitize: sanitizePerformanceDirective,
   deliver: (scope, performance) => {
-    deliverTurnLine('chat', { ...scope, performance })
+    deliverTurnLine(directedMode, { ...scope, performance })
   },
   note: (reason, scope) =>
     markTurnTrace('director_delivery', {
@@ -108,7 +111,11 @@ export function retainPlaybackDirection(): () => void {
   }
 }
 
-export function startPlaybackDirection(scope: PlaybackDirectionScope): void {
+export function startPlaybackDirection(
+  scope: PlaybackDirectionScope,
+  mode: AgentPanelMode = 'chat',
+): void {
+  directedMode = mode
   playbackDirection.start(scope)
   if (!playbackDirection.isActive || timer != null) return
   timer = setInterval(() => {

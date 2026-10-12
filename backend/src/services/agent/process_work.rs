@@ -12,7 +12,14 @@ impl Agent {
     ) -> Result<AgentResponse, String> {
         super::merope::note_chat_diary(&self.db, request.user_id, &request.raw_input).await;
         let result = self.start_work_loop(request.clone(), None).await;
-        attach_motion_to_result(result, &request, mood_transition, &round_motion_style).await
+        attach_motion_to_result(
+            result,
+            &request,
+            mood_transition,
+            &round_motion_style,
+            false,
+        )
+        .await
     }
 
     pub(super) async fn process_work_with_progress(
@@ -26,6 +33,6 @@ impl Agent {
         let result = self
             .start_work_loop(request.clone(), Some(progress_tx))
             .await;
-        attach_motion_to_result(result, &request, mood_transition, &round_motion_style).await
+        attach_motion_to_result(result, &request, mood_transition, &round_motion_style, true).await
     }
 }
