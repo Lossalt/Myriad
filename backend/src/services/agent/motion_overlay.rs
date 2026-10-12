@@ -370,6 +370,8 @@ where
         let mut analyzed = String::new();
         let mut calls = 0;
         let mut playback_observed = false;
+        // The faces she agreed to make this round, already played.
+        let mut played = std::collections::HashSet::new();
         let cancelled = async {
             if let Some(live) = &live {
                 live.cancelled().await;
@@ -391,16 +393,17 @@ where
                 _ = &mut cancelled => None,
                 result = refine(reaction) => result,
             };
-            if let Some(mut performance) = result
+            if let Some(performance) = result
                 && updates.borrow().is_none()
             {
-                performance.plan.cues.clear();
+                let agreed = agreed_faces(&performance);
                 let sent = if let Some(live) = &live {
                     live.publish(performance)
                 } else {
                     try_publish_motion(&tx, performance)
                 };
                 if sent {
+                    played.extend(agreed);
                     did_publish.store(
                         MotionPublication::Refined as u8,
                         std::sync::atomic::Ordering::Release,
@@ -456,9 +459,13 @@ where
                 result = refine(context.clone()) => result,
             };
             if let Some(mut performance) = result {
-                // Spoken beats must use grounded phrase timing. Unanchored cues
-                // from an old window must not replay the immediate local beat.
-                performance.plan.cues.clear();
+                // Spoken beats must use grounded phrase timing. A face she
+                // agreed to make is the director's only cue; it plays once a
+                // round, not again with every window that still agrees.
+                performance
+                    .plan
+                    .cues
+                    .retain(|cue| !played.contains(&cue.intent));
                 if let Some(observation) = live.as_ref().and_then(|slot| slot.observation()) {
                     performance.phrases = myriad_merope::grounded_speech_phrases(
                         &serde_json::to_value(&performance.phrases).unwrap_or_default(),
@@ -483,12 +490,14 @@ where
                     continue;
                 }
                 let issued = performance.phrases.clone();
+                let agreed = agreed_faces(&performance);
                 let sent = if let Some(live) = &live {
                     live.publish(performance)
                 } else {
                     try_publish_motion(&tx, performance)
                 };
                 if sent {
+                    played.extend(agreed);
                     for phrase in issued {
                         context
                             .previous_phrases
@@ -509,6 +518,15 @@ where
         }
     });
     (delivery, MotionRefinementGuard { task, published })
+}
+
+fn agreed_faces(performance: &crate::services::agent::merope::PerformanceDirective) -> Vec<String> {
+    performance
+        .plan
+        .cues
+        .iter()
+        .map(|cue| cue.intent.clone())
+        .collect()
 }
 
 /// `live`: the run is streamed to her face, so after the floor the judgment
@@ -643,7 +661,7 @@ pub(super) mod motion_refinement_tests {
     }
 
     #[tokio::test]
-    async fn chat_refinement_preserves_independent_body_control_even_without_unanchored_cues() {
+    async fn chat_refinement_preserves_body_control_and_plays_an_agreed_face_once() {
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let live = super::super::playback_direction::PlaybackDirection::default();
         let (mut delivery, guard) = spawn_chat_motion_refinement_in(
@@ -662,11 +680,22 @@ pub(super) mod motion_refinement_tests {
             .await
             .unwrap();
         let performance = result.performance.unwrap();
-        assert!(performance.plan.cues.is_empty());
+        assert!(
+            !performance.plan.cues.is_empty(),
+            "the face she agreed to plays"
+        );
         let pose = performance.plan.baseline.unwrap().pose.unwrap();
         assert_eq!(pose.targets["headTurn"], -0.8);
         assert_eq!(pose.targets["torsoTurn"], 0.7);
         assert_eq!(pose.targets["rightArmRaise"], 0.0);
+        delivery.observe("我在听你说。然后呢？", &tx);
+        let again = tokio::time::timeout(Duration::from_secs(1), live.read_after(result.version))
+            .await
+            .unwrap();
+        assert!(
+            again.performance.unwrap().plan.cues.is_empty(),
+            "a later window that still agrees does not play it again"
+        );
         live.close();
         drop(delivery);
         guard.stop().await;

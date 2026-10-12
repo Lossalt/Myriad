@@ -162,7 +162,7 @@ pub(in crate::services::agent) async fn answered_plan(
     };
     match source {
         Some(source) => questions::direct(context, state, persona, source, budget).await,
-        None => questions::direct_by_chat(context, state, persona, analyzer).await,
+        None => questions::direct_by_chat(context, state, persona, analyzer, budget).await,
     }
 }
 
@@ -210,7 +210,8 @@ async fn direct_motion_inner(
         if let Some(source) = decisions_source().await {
             questions::direct(&context, rig_state.as_ref(), persona, &source, budget).await
         } else if let Some(analyzer) = director_analyzer(budget).await {
-            questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer).await
+            questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer, budget)
+                .await
         } else {
             Err(anyhow::anyhow!("no judgment model"))
         }

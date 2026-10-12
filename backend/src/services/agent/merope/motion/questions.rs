@@ -517,25 +517,51 @@ pub(super) async fn direct(
     let (asked_state, asked) = asked(context, state, persona, true);
     let answers = decide(source, asked_state, asked, timeout).await?;
     let mut plan = plan(&answers, context, state, true);
-    // A new look: the way there, asked of this change once it is known.
-    if let Some((from, to)) = super::way::change(&answers, state) {
-        let left = timeout.saturating_sub(started.elapsed());
-        if left > std::time::Duration::from_millis(400) {
-            let (way_state, way) = super::way::questions(&from, &to, context, state);
-            match decide(source, way_state, way, left).await {
-                Ok(way) => {
-                    let passed = super::way::passed(&way);
-                    if !passed.is_empty() && plan["baseline"].is_object() {
-                        plan["baseline"]["via"] = json!(passed);
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!(%error, "[Merope] the way between looks went unasked")
-                }
+    let left = timeout.saturating_sub(started.elapsed());
+    ask_the_way(
+        &mut plan,
+        &answers,
+        context,
+        state,
+        left,
+        |way_state, way, left| decide(source, way_state, way, left),
+    )
+    .await;
+    Ok(plan.to_string())
+}
+
+/// A new look: the way there, asked of this change once it is known, in
+/// the time `left`; unasked or unanswered, the look comes straight.
+async fn ask_the_way<F, Fut>(
+    plan: &mut Value,
+    answers: &Value,
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+    left: std::time::Duration,
+    ask: F,
+) where
+    F: FnOnce(Value, Value, std::time::Duration) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Value>>,
+{
+    let Some((from, to)) = super::way::change(answers, state) else {
+        return;
+    };
+    if left <= std::time::Duration::from_millis(400) {
+        return;
+    }
+    let (way_state, way) = super::way::questions(&from, &to, context, state);
+    match tokio::time::timeout(left, ask(way_state, way, left)).await {
+        Ok(Ok(way)) => {
+            let passed = super::way::passed(&way);
+            if !passed.is_empty() && plan["baseline"].is_object() {
+                plan["baseline"]["via"] = json!(passed);
             }
         }
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "[Merope] the way between looks went unasked")
+        }
+        Err(_) => tracing::debug!("[Merope] the way between looks took too long"),
     }
-    Ok(plan.to_string())
 }
 
 /// One round of questions to the decisions model; its answers.
@@ -668,19 +694,48 @@ pub(super) async fn direct_by_chat(
     state: Option<&RigStateSummary>,
     persona: Option<&str>,
     analyzer: &crate::services::analyzer::AiAnalyzer,
+    timeout: std::time::Duration,
 ) -> anyhow::Result<String> {
+    let started = std::time::Instant::now();
     let (asked_state, questions) = asked(context, state, persona, false);
+    let answers = chat_answers(analyzer, &asked_state, &questions).await?;
+    let mut plan = plan(&answers, context, state, false);
+    // Two questions take a chat model no longer than the whole set did; it
+    // waits no longer than that for the way, so a slow one cannot hold the look.
+    let first = started.elapsed();
+    let left = timeout
+        .saturating_sub(first)
+        .min(first.max(std::time::Duration::from_millis(1500)));
+    ask_the_way(
+        &mut plan,
+        &answers,
+        context,
+        state,
+        left,
+        |way_state, way, _| async move { chat_answers(analyzer, &way_state, &way).await },
+    )
+    .await;
+    Ok(plan.to_string())
+}
+
+/// One round of questions put to a chat model; its answers, shaped as a
+/// decisions model gives them.
+async fn chat_answers(
+    analyzer: &crate::services::analyzer::AiAnalyzer,
+    state: &Value,
+    questions: &Value,
+) -> anyhow::Result<Value> {
     let raw = analyzer
         .analyze_json(
-            &chat_system_prompt(&questions),
-            &asked_state.to_string(),
+            &chat_system_prompt(questions),
+            &state.to_string(),
             "merope_acting_answers",
-            Some(&chat_schema(&questions)),
+            Some(&chat_schema(questions)),
         )
         .await?;
     let answers: Value = serde_json::from_str(super::strip_motion_json(&raw))?;
     anyhow::ensure!(answers.is_object(), "answers must be an object");
-    Ok(plan(&answers, context, state, false).to_string())
+    Ok(answers)
 }
 
 #[cfg(test)]
@@ -937,5 +992,64 @@ mod tests {
             "an unsure posture stays neutral"
         );
         assert_eq!(value["score"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn the_way_is_asked_of_a_new_look_and_never_holds_it() {
+        let drowsy = myriad_merope::sanitize_rig_state(&json!({"face": "drowsy",
+            "capabilities": ["head-body", "independent-eyes", "mouth-shapes", "sparkles"]}))
+        .unwrap();
+        let context = context("诶？！真的吗？！");
+        let excited = json!({"face": {"choice": "excited", "confidence": 0.9}});
+        let surprised = json!({"first": {"choice": "surprised", "confidence": 0.9},
+            "then": {"choice": "none", "confidence": 0.9}});
+        let quick = std::time::Duration::from_secs(2);
+
+        let mut plan = json!({"baseline": {"face": "excited"}});
+        let answer = surprised.clone();
+        ask_the_way(
+            &mut plan,
+            &excited,
+            &context,
+            Some(&drowsy),
+            quick,
+            |_, way, _| async move {
+                assert!(way["first"]["criteria"]["surprised"].is_string());
+                Ok(answer)
+            },
+        )
+        .await;
+        assert_eq!(plan["baseline"]["via"], json!(["surprised"]));
+
+        // A slow answer is not waited for: the look comes straight.
+        let mut plan = json!({"baseline": {"face": "excited"}});
+        let answer = surprised.clone();
+        ask_the_way(
+            &mut plan,
+            &excited,
+            &context,
+            Some(&drowsy),
+            std::time::Duration::from_millis(500),
+            |_, _, _| async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                Ok(answer)
+            },
+        )
+        .await;
+        assert!(plan["baseline"]["via"].is_null());
+
+        // The same look again has no way to ask.
+        let mut plan = json!({"baseline": {"face": "drowsy"}});
+        let same = json!({"face": {"choice": "drowsy", "confidence": 0.9}});
+        ask_the_way(
+            &mut plan,
+            &same,
+            &context,
+            Some(&drowsy),
+            quick,
+            |_, _, _| async { panic!("asked of no change") },
+        )
+        .await;
+        assert!(plan["baseline"]["via"].is_null());
     }
 }
