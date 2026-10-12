@@ -63,9 +63,10 @@ test('shared eye and eyebrow local deformation is byte-identical to upstream', (
     breathHead: 0,
   })
   for (const fixture of featureLayers()) {
+    const shared = sharedExpression(fixture, expression)
     const expected = runtimeLayer(fixture)
-    deformUpstreamRuntimeLayer(expected, expression, FRAME)
-    const actual = localFeatureVertices(fixture, expression)
+    deformUpstreamRuntimeLayer(expected, shared, FRAME)
+    const actual = localFeatureVertices(fixture, shared)
     assert.deepEqual(actual, expected.cur, fixture.role)
   }
 })
@@ -82,9 +83,10 @@ test('shared local stage composes with shader transforms like upstream deform', 
       breathHead: 0.5 + 0.5 * Math.sin(time * 1.4 - 0.6),
     })
     for (const fixture of featureLayers()) {
+      const shared = sharedExpression(fixture, expression)
       const expected = runtimeLayer(fixture)
-      deformUpstreamRuntimeLayer(expected, expression, FRAME)
-      const actual = composePlayerTransforms(fixture, expression)
+      deformUpstreamRuntimeLayer(expected, shared, FRAME)
+      const actual = composePlayerTransforms(fixture, shared)
       for (let index = 0; index < actual.length; index += 1) {
         assert.ok(
           Math.abs(actual[index] - expected.cur[index]) < 0.0001,
@@ -139,6 +141,39 @@ test('binding holds the live driver reference without per-frame reconstruction',
   assert.equal(binding.expression, expression)
   expression.eyeX = 0.73
   assert.equal(binding.expression.eyeX, 0.73)
+})
+
+/**
+ * The lid is ours: a partly closed eye closes hinged at its corners
+ * (closeLid), so the white and lashes match upstream only fully open.
+ */
+function sharedExpression(
+  fixture: Anime25DPlaybackLayer,
+  expression: UpstreamRuntimeExpression,
+): UpstreamRuntimeExpression {
+  return fixture.role === 'eyelash' || fixture.role === 'eyewhite'
+    ? { ...expression, eyeOpenL: 1, eyeOpenR: 1 }
+    : expression
+}
+
+test('a closing lid is hinged at the corners: they stay, the lashes ride down whole', () => {
+  const eye = FRAME.anchors.eyeL!
+  const middle = (eye.x0 + eye.x1) / 2
+  const fixture = layer('eyelash', 'eyeOpen', 'L', eye.x0 - 8, eye.y0 - 10, eye.x1 - eye.x0 + 16, eye.y1 - eye.y0 + 12, 1.3)
+  const at = (x: number, y: number, open: number) => {
+    const binding = bindAnime25DUpstreamFeature(fixture, eye, FRAME.faceScale, runtimeExpression({ eyeOpenL: open, eyeCY: 0, eyeCAng: 0, eyeScaleL: 1 }))!
+    const point = { x, y }
+    deformAnime25DUpstreamFeaturePoint(point, binding)
+    return point
+  }
+  // A corner, and the lash wing past it, do not move as she squints.
+  assert.equal(at(eye.x0, eye.closeY, 0.35).y, at(eye.x0, eye.closeY, 1).y)
+  assert.equal(at(eye.x0 - 6, eye.y0, 0.35).y, at(eye.x0 - 6, eye.y0, 1).y)
+  // Over the middle the lid comes down, and the lashes above its edge keep their thickness.
+  const top = at(middle, eye.y0 - 8, 0.35).y - at(middle, eye.y0 - 8, 1).y
+  const edge = at(middle, eye.y0, 0.35).y - at(middle, eye.y0, 1).y
+  assert.ok(edge > (eye.closeY - eye.y0) * 0.5)
+  assert.ok(Math.abs(top - edge) < 1e-9)
 })
 
 function featureLayers(): Anime25DPlaybackLayer[] {

@@ -145,7 +145,7 @@ export function deformAnime25DUpstreamFeaturePoint(
   }
   if (input.kind === 'eye-open-lid') {
     const eye = input.eye!
-    point.y = eye.closeY + (point.y - eye.closeY) * (1 - 0.85 * (1 - eyeOpen))
+    closeLid(point, eye, 1 - 0.85 * (1 - eyeOpen))
     smileLids(point, eye, smileAmount(expression.eyeSmile))
     wideLids(point, eye, smileAmount(expression.eyeWide))
     return
@@ -156,6 +156,22 @@ export function deformAnime25DUpstreamFeaturePoint(
       ? expression.browAngL + expression.browAngSym
       : expression.browAngR - expression.browAngSym) * 0.3
   rotateAround(point, input.centerX, input.centerY, rotation)
+}
+
+/**
+ * The upper lid comes down hinged at the corners: below its edge (an arch
+ * over the eye, at the closing line at the corners) the eye is drawn
+ * together toward the closing line, `open` of its height kept; above it the
+ * lashes ride down with the edge under them, keeping their thickness. The
+ * corners and the lash wings beyond them stay as drawn, so a squint narrows
+ * in the middle instead of flattening into a slit with blade-thin corners.
+ */
+function closeLid(point: Anime25DMutablePoint, eye: Anime25DEyeAnchor, open: number): void {
+  const halfWidth = Math.max(1, (eye.x1 - eye.x0) / 2)
+  const across = Math.min(1, Math.abs(point.x - (eye.x0 + eye.x1) / 2) / halfWidth)
+  const edge = eye.closeY - (eye.closeY - eye.y0) * Math.sqrt(1 - across * across)
+  if (point.y >= edge) point.y = eye.closeY + (point.y - eye.closeY) * open
+  else point.y += (eye.closeY - edge) * (1 - open)
 }
 
 /** At a full smile the lower lid rises this share of the eye's height, at its middle. */
