@@ -16,9 +16,5 @@ test("a figure's body keys come with its head keys and are cut as the playback i
   assert.deepEqual(head.face.plus.box, [120, 190, 320, 390])
   assert.deepEqual(body.topwear.minus.box, [120, 190, 320, 390])
   assert.equal(placeBodyTurnKeyforms({ canvas: [1000, 2000], keyforms: { face: key } }, document, frame), undefined)
-  const weighted = { ...keys, weightKeyforms: { legwear: key } }
-  assert.ok(isDocumentTurnKeyforms(weighted))
-  assert.deepEqual(placeBodyTurnKeyforms(weighted as never, document, frame, 'weightKeyforms')!.legwear.plus.box, [120, 190, 320, 390])
-  assert.equal(placeBodyTurnKeyforms(keys as never, document, frame, 'weightKeyforms'), undefined)
   assert.equal(placeBodyTurnKeyforms(keys as never, { width: 500, height: 2000 }, frame), undefined)
 })

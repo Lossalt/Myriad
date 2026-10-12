@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addBodyTurn, bindBodyTurnKeyform, BODY_KEY_YAW, BODY_TURN_SHARE, bodyTurnAmount, bodyTurnKeyFamily, headRidesBody, KeyedBodyTurn, weightShift } from './bodyTurnKeyforms'
+import { addBodyTurn, bindBodyTurnKeyform, BODY_KEY_YAW, BODY_TURN_SHARE, bodyTurnAmount, bodyTurnKeyFamily, headRidesBody } from './bodyTurnKeyforms'
 import { HEAD_TURN_RADIANS } from './headTurn'
 import { HEAD_YAW_SHARE } from './torsoDeformation'
 
@@ -58,17 +58,6 @@ test("a sleeve's shoulder and inner side go with the torso, its far side with it
   assert.ok(Math.abs(offset(2) + 20) < 1e-3, 'outer side, low')
 })
 
-test("the head is carried by the 'head' key at the neck pivot", () => {
-  const keyed = KeyedBodyTurn.bind({ head: { plus: shifted(12, 3), minus: shifted(-8, 0) } }, { x: 100, y: 100 })!
-  const frame: { bodyTurn?: number } = {}
-  const full = BODY_KEY_YAW / BODY_TURN_SHARE
-  assert.ok(Math.abs(keyed.step(frame, yawed(full), 1)! - 12) < 1e-3)
-  assert.ok(Math.abs(frame.bodyTurn! - 1) < 1e-9)
-  assert.ok(Math.abs(keyed.step(frame, yawed(-full / 2), 1)! + 4) < 1e-3)
-  assert.equal(KeyedBodyTurn.bind(undefined, { x: 0, y: 0 }), null)
-  assert.equal(KeyedBodyTurn.bind({ topwear: { plus: shifted(1, 0), minus: shifted(1, 0) } }, { x: 0, y: 0 })!.step(frame, yawed(0.1), 1), null)
-})
-
 test('a directed torso turn carries a keyed head as far round as the keyed body shows', () => {
   // torsoTurn 1 turns the torso HEAD_YAW_SHARE, of which the body shows BODY_TURN_SHARE.
   const shown = HEAD_YAW_SHARE * BODY_TURN_SHARE
@@ -89,18 +78,4 @@ test('a leg measured as thigh and shin takes each above and below its knee', () 
   assert.ok(Math.abs(x(4) + 4) < 1e-3, 'ankle')
   // The other leg has no keys of its own.
   assert.equal(bindBodyTurnKeyform(keys, { group: 'body', role: 'legwear', side: 'R' }, rest, 80), null)
-})
-
-test('the weight shift follows the stance springs, and with its keys the head rides it too', () => {
-  assert.equal(weightShift({ bendL: 1, bendR: 0 }), 1)
-  assert.ok(Math.abs(weightShift({ bendL: 0.2, bendR: 0.7 }) + 0.5) < 1e-9)
-  const body = { head: { plus: shifted(10, 0), minus: shifted(-10, 0) } }
-  const weight = { head: { plus: shifted(4, 0), minus: shifted(-4, 0) } }
-  const keyed = KeyedBodyTurn.bind(body, { x: 100, y: 100 }, weight)!
-  assert.ok(keyed.weighted)
-  const frame = { standing: { bendL: 1, bendR: 0 } }
-  assert.ok(Math.abs(keyed.step(frame, yawed(0), 1)! - 4) < 1e-3)
-  assert.equal(KeyedBodyTurn.bind(body, { x: 100, y: 100 })!.weighted, false)
-  // Weight keys without body keys are not used.
-  assert.equal(KeyedBodyTurn.bind(undefined, { x: 0, y: 0 }, weight), null)
 })

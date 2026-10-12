@@ -7,8 +7,6 @@ export interface DocumentTurnKeyforms {
   keyforms: Anime25DTurnKeyforms
   /** A standing figure's body turn keys (bodyTurnKeyforms), on the same document. */
   bodyKeyforms?: Anime25DTurnKeyforms
-  /** Its weight-shift keys (weightKeyforms), on the same document. */
-  weightKeyforms?: Anime25DTurnKeyforms
 }
 
 const keyed = new WeakMap<Blob, DocumentTurnKeyforms>()
@@ -24,10 +22,9 @@ export function turnKeyformsFor(file: Blob): DocumentTurnKeyforms | undefined {
 
 export function isDocumentTurnKeyforms(value: unknown): value is DocumentTurnKeyforms {
   if (!value || typeof value !== 'object') return false
-  const { canvas, keyforms, bodyKeyforms, weightKeyforms } = value as Record<string, unknown>
+  const { canvas, keyforms, bodyKeyforms } = value as Record<string, unknown>
   return Array.isArray(canvas) && canvas.length === 2 && canvas.every((v) => Number.isFinite(v) && v > 0) &&
-    isAnime25DTurnKeyforms(keyforms) && (bodyKeyforms === undefined || isAnime25DTurnKeyforms(bodyKeyforms)) &&
-    (weightKeyforms === undefined || isAnime25DTurnKeyforms(weightKeyforms))
+    isAnime25DTurnKeyforms(keyforms) && (bodyKeyforms === undefined || isAnime25DTurnKeyforms(bodyKeyforms))
 }
 
 /**
@@ -44,14 +41,13 @@ export function placeTurnKeyforms(
   return placed(keys.keyforms, frame)
 }
 
-/** The body turn (or weight-shift) keys that came with a decomposition, in the playback's pixels (placeTurnKeyforms). */
+/** The body turn keys that came with a decomposition, in the playback's pixels (placeTurnKeyforms). */
 export function placeBodyTurnKeyforms(
   keys: DocumentTurnKeyforms,
   document: { width: number; height: number },
   frame: { x: number; y: number },
-  which: 'bodyKeyforms' | 'weightKeyforms' = 'bodyKeyforms',
 ): Anime25DTurnKeyforms | undefined {
-  const found = keys[which]
+  const found = keys.bodyKeyforms
   if (!found || keys.canvas[0] !== document.width || keys.canvas[1] !== document.height) return undefined
   return placed(found, frame)
 }

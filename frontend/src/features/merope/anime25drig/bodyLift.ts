@@ -1,5 +1,3 @@
-import { applyBodyStance } from './standing'
-
 /**
  * Shared final-space upper-body posture. The chest/head translate as a unit;
  * the lower transition absorbs extension without treating the crop as a joint.
@@ -14,13 +12,6 @@ export interface BodyLift {
   pitch?: number
   depth?: number
   shoulderY?: number
-  /**
-   * A standing figure's soles. Shifting its weight, everything from the hips
-   * at `lowerY` up moves by `stanceShift` while the soles stay on the ground
-   * and the legs lean between them. A bust has no ground.
-   */
-  groundY?: number
-  stanceShift?: number
 }
 
 export function applyBodyLift(point: { x: number; y: number }, field?: Readonly<BodyLift>): void {
@@ -36,7 +27,6 @@ export function applyBodyLift(point: { x: number; y: number }, field?: Readonly<
     point.x = field.centerX + (point.x - field.centerX) / Math.sqrt(1 + gradient)
     point.y -= amount * t * t * (3 - 2 * t)
   }
-  applyBodyStance(point, field)
 }
 
 /**

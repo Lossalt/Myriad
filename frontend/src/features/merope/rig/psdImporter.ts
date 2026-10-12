@@ -60,12 +60,10 @@ export async function prepareRigPsdImport(
   const headKeyforms = keys && placeTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
   const turnKeyforms = headKeyforms && Object.keys(headKeyforms).length > 0 ? headKeyforms : undefined
   const bodyTurnKeyforms = keys && placeBodyTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame)
-  const weightKeyforms = keys && placeBodyTurnKeyforms(keys, prepared.documentFrame, prepared.documentFrame, 'weightKeyforms')
   const playback = prepared.source.anime25dPlayback
   if (playback) {
     if (turnKeyforms) playback.turnKeyforms = turnKeyforms
     if (bodyTurnKeyforms) playback.bodyTurnKeyforms = bodyTurnKeyforms
-    if (weightKeyforms) playback.weightKeyforms = weightKeyforms
     // Kept with the rig, so its page shows the mode it was made in.
     playback.enhancement = {
       turn: Boolean(turnKeyforms),

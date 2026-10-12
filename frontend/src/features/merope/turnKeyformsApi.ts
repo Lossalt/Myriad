@@ -143,7 +143,6 @@ export async function decomposeWithTurnKeyforms(
         canvas: keys.canvas,
         keyforms: keys.keyforms,
         ...(keys.bodyKeyforms ? { bodyKeyforms: keys.bodyKeyforms } : {}),
-        ...(keys.weightKeyforms ? { weightKeyforms: keys.weightKeyforms } : {}),
       })
     }
     return file

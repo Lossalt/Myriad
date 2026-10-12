@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ArmChoreography, ELBOW_FLEX, ELBOW_REACH, ELBOW_SHARE, FOLLOW_SHARE, resolveDirectedArmIntent, WEIGHT_OPEN } from './armChoreography'
+import { ArmChoreography, ELBOW_FLEX, ELBOW_REACH, ELBOW_SHARE, FOLLOW_SHARE, resolveDirectedArmIntent } from './armChoreography'
 import { ARM_MAX_RADIANS, ArmPendulum, ArmSegment, FOREARM } from './armPendulum'
 
 const DT = 1 / 60
 const NO_ELBOWS = { L: false, R: false }
-const BUST = { open: 0, sway: 0, headTurn: 0, weight: null, dynamic: true }
+const BUST = { open: 0, sway: 0, headTurn: 0, dynamic: true }
 
 test('directed sides replace shared shoulder and elbow recruitment, and reach actual bounded arm physics', () => {
   const automatic = { open: 0.5, bend: 0.2, reach: 0.3 }
@@ -51,7 +51,7 @@ test('a partial directed arm contribution is not multiplied by its authority twi
   }
 })
 
-function hold(arms: ArmChoreography, intent: Partial<typeof BUST> & { weight?: number | null }, seconds: number, elbows = NO_ELBOWS) {
+function hold(arms: ArmChoreography, intent: Partial<typeof BUST>, seconds: number, elbows = NO_ELBOWS) {
   for (let t = 0; t < seconds * 60; t++) arms.step({ ...BUST, ...intent }, elbows, DT)
 }
 
@@ -90,7 +90,7 @@ test('with nothing to choose by, gestures alternate arms; without dynamics the f
   assert.equal(small.R.open, 0.04)
 })
 
-test('an arm with an elbow lifts partly at the elbow; the hip under the weight pushes its arm out', () => {
+test('an arm with an elbow lifts partly at the elbow', () => {
   const arms = new ArmChoreography()
   arms.step({ ...BUST, open: 1, headTurn: 0.5, dynamic: false }, { L: false, R: true }, DT)
   assert.ok(Math.abs(arms.R.open - (1 - ELBOW_SHARE)) < 1e-9)
@@ -101,11 +101,4 @@ test('an arm with an elbow lifts partly at the elbow; the hip under the weight p
   assert.equal(arms.L.reach, 0)
   arms.step({ ...BUST, open: -0.6, headTurn: 0.5, dynamic: false }, { L: false, R: true }, DT)
   assert.equal(arms.R.reach, 0, 'drawing the arms in does not push the forearm back')
-  const standing = new ArmChoreography()
-  standing.step({ ...BUST, weight: 1, dynamic: false }, NO_ELBOWS, DT)
-  assert.equal(standing.R.open, WEIGHT_OPEN)
-  assert.equal(standing.L.open, 0)
-  standing.step({ ...BUST, weight: -0.5, dynamic: false }, NO_ELBOWS, DT)
-  assert.equal(standing.L.open, WEIGHT_OPEN * 0.5)
-  assert.equal(standing.R.open, 0)
 })

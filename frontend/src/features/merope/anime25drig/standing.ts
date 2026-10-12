@@ -1,4 +1,3 @@
-import type { BodyLift } from './bodyLift'
 import type { Anime25DPlaybackAnchors } from './types'
 
 /**
@@ -31,22 +30,12 @@ function heldSwing(swing: number, length: number): number {
   return most * Math.tanh(swing / most)
 }
 
-/**
- * The free leg, the one without the weight: its knee bends in towards the
- * other, by this share of the leg length, and its heel lifts by this share
- * while the toes stay down. The knee and ankle sit this far down from the
- * hips; the free foot keeps this share of the knee's inward travel.
- */
-const KNEE_IN = 0.05
-const HEEL_LIFT = 0.024
+/** The knee and ankle sit this far down from the hips, as shares of the leg. */
 const KNEE_AT = 0.45
 const ANKLE_AT = 0.85
 /** A found knee or ankle this far off the usual proportions is a misreading. */
 const KNEE_RANGE = [0.25, 0.65] as const
 const ANKLE_RANGE = [0.7, 0.97] as const
-const FOOT_FOLLOW = 0.15
-/** How much of the heel's lift the tip of the shoe keeps. */
-const TOE_LIFT = 0.12
 /** The pelvis tilts with the weight, the weight-bearing hip up, by this many radians. */
 const PELVIS_TILT = 0.045
 /** Weight passes from leg to leg like this: a soft spring that settles just past. */
@@ -242,22 +231,6 @@ export class Anime25DStanding {
   }
 }
 
-/** The weight shift: a straight leg from the planted sole to the moved hip. */
-export function applyBodyStance(point: { x: number; y: number }, field: Readonly<BodyLift>): void {
-  const shift = field.stanceShift ?? 0
-  const ground = field.groundY ?? field.lowerY
-  if (!shift || !(ground > field.lowerY)) return
-  point.x += shift * Math.max(0, Math.min(1, (ground - point.y) / (ground - field.lowerY)))
-}
-
-/** The shader's `applyBodyStance`. stance: hips (lowerY), ground, shift. */
-export const BODY_STANCE_GLSL = `
-vec2 bodyStance(vec2 p, vec3 stance) {
-  if (stance.z == 0.0 || !(stance.y > stance.x)) return p;
-  return vec2(p.x + stance.z * clamp((stance.y - p.y) / (stance.y - stance.x), 0.0, 1.0), p.y);
-}
-`
-
 /**
  * A standing figure's skirt hangs on its hips and each leg stands on its own
  * sole; a bust's lower clothing is cut off with the frame.
@@ -360,46 +333,4 @@ export function applySkirtTrail(
   const swing = heldSwing(frame.skirtSwing, length)
   point.x += swing * along * along
   point.y -= (restX - binding.centerX) * (swing / length) * along
-}
-
-/** Moves one rest point of a standing figure's layer with its stance. */
-export function applyStanding(
-  point: { x: number; y: number },
-  binding: Readonly<StandingBinding>,
-  restX: number,
-  restY: number,
-  frame: Readonly<Anime25DStandingFrame>,
-): void {
-  if (binding.kind === 'skirt') {
-    // Held at the waist, freest at the hem, which tilts with the pelvis.
-    const length = Math.max(1, binding.bottomY - binding.topY)
-    const along = clamp01((restY - binding.topY) / length)
-    point.x += heldSwing(frame.skirtSwing, length) * along * along
-    point.y -= (restX - binding.centerX) * frame.pelvisTilt * along
-    return
-  }
-  const span = Math.max(1, binding.groundY - binding.hipY)
-  const t = clamp01((restY - binding.hipY) / span)
-  // The top of the leg rides the tilted pelvis; the sole stays on the ground.
-  point.y -= (binding.hipX - binding.centerX) * frame.pelvisTilt * (1 - t)
-  const bend = binding.side === 'L' ? frame.bendL : frame.bendR
-  if (!(bend > 0)) return
-  const { hipAt, kneeAt, ankleAt } = binding
-  // Thigh and shin stay straight, from the hip joint to a knee that moves
-  // inwards and on to the foot.
-  const knee =
-    t <= hipAt
-      ? 0
-      : t < kneeAt
-        ? (t - hipAt) / (kneeAt - hipAt)
-        : 1 - (1 - FOOT_FOLLOW) * (t - kneeAt) / (1 - kneeAt)
-  point.x += binding.inward * bend * KNEE_IN * span * knee
-  // The shin rises with the heel; the shoe tips forward onto its toes.
-  const lift =
-    t <= kneeAt
-      ? 0
-      : t < ankleAt
-        ? (t - kneeAt) / (ankleAt - kneeAt)
-        : 1 - (1 - TOE_LIFT) * (t - ankleAt) / (1 - ankleAt)
-  point.y -= bend * HEEL_LIFT * span * lift
 }

@@ -181,11 +181,8 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
   const standing = bindStanding(baseRole, baseRole === 'bottomwear' ? skirtSpan(playback.layers, source) : source, playback.anchors)
   const kneeY = standing?.kind === 'leg' ? standing.hipY + standing.kneeAt * (standing.groundY - standing.hipY) : undefined
   const bodyTurnKeyform = bindBodyTurnKeyform(playbackBodyKeys(playback), source, rest, kneeY)
-  // A standing figure's bones carry every layer; they shift its weight
-  // themselves, so the weight-shift keys are not used beside them.
-  const { figure, figureSkin, partSways } = bindFigureLayer(baseRole, source, playback)
-  // Weight-shift keys are used beside body keys only (KeyedBodyTurn).
-  const weightKeyform = playback.bodyTurnKeyforms && !figure ? bindBodyTurnKeyform(playback.weightKeyforms, source, rest, kneeY) : null
+  // A standing figure's bones carry every layer and shift its weight themselves.
+  const { figureSkin, partSways } = bindFigureLayer(baseRole, source, playback)
   const deformationPolicy = resolveAnime25DLayerDeformationPolicy({
     standing: Boolean(standing),
     // A part on a standing leg goes with the leg, not with the body as a whole.
@@ -199,7 +196,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     shellDeformation: Boolean(
       shellMode && shellProfile.enabled && shellProfile.blend > 0,
     ),
-    torsoShellDeformation: Boolean(bodyTurnKeyform || weightKeyform) || Boolean(
+    torsoShellDeformation: Boolean(bodyTurnKeyform) || Boolean(
       torsoShellMode &&
       shellProfile.enabled &&
       shellProfile.blend > 0 &&
@@ -270,7 +267,6 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     turnFeature: turnFeatures.get(source) ?? null,
     turnKeyform: bindTurnKeyform(playback.turnKeyforms, source, rest),
     bodyTurnKeyform,
-    weightKeyform,
     standing,
     figureSkin,
     partSways,

@@ -10,8 +10,8 @@ import { bindTurnKey, turnKeyformOffset } from './turnKeyforms'
  * shape it takes with the whole figure turned BODY_KEY_YAW either way, its
  * feet where they stood, as a lattice like the head's turn keys ('plus'
  * toward +x). A turn in between mixes rest and key linearly by the torso's
- * yaw. The head goes along whole, by the 'head' key at the neck pivot; its
- * own turn stays with the head keys.
+ * yaw. Only the legs and shoes keep their keys (playbackBodyKeys); the rest
+ * turns on the torso's cylinder, and the head keeps its own turn keys.
  */
 export const BODY_KEY_YAW = (20 * Math.PI) / 180
 /**
@@ -127,74 +127,6 @@ function sewnToTorso(arm: BoundTurnKeyform, torso: BoundTurnKeyform, rest: Float
 function smooth(value: number): number {
   const t = Math.max(0, Math.min(1, value))
   return t * t * (3 - 2 * t)
-}
-
-/**
- * A figure's keyed body turn: how far through it the torso is, and how far
- * that carries the head (its 'head' key at the neck pivot). With weight-shift
- * keys too (weightKeyforms, kept only beside body keys), the head also rides
- * the weight's 'head' key, and the hips' computed shift is left out (weighted).
- */
-export class KeyedBodyTurn {
-  private readonly carry = { x: 0, y: 0 }
-  private readonly weightCarry = { x: 0, y: 0 }
-
-  private constructor(
-    private readonly head: BoundTurnKeyform | null,
-    private readonly weightHead: BoundTurnKeyform | null,
-    readonly weighted: boolean,
-    /** How much of the torso's turn the keys show (BODY_TURN_SHARE; all of it for a figure's legs). */
-    private readonly share: number,
-  ) {}
-
-  static bind(
-    keyforms: Readonly<Anime25DTurnKeyforms> | undefined,
-    neckPivot: { x: number; y: number },
-    weightKeyforms?: Readonly<Anime25DTurnKeyforms>,
-    share = BODY_TURN_SHARE,
-  ): KeyedBodyTurn | null {
-    if (!keyforms) return null
-    const at = Float32Array.of(neckPivot.x, neckPivot.y)
-    return new KeyedBodyTurn(
-      keyforms.head ? bindTurnKey(keyforms.head, at) : null,
-      weightKeyforms?.head ? bindTurnKey(weightKeyforms.head, at) : null,
-      Boolean(weightKeyforms),
-      share,
-    )
-  }
-
-  /**
-   * Writes how far through the keyed turn the body is (frame.bodyTurn) and
-   * returns the head's sideways carry in it and in the weight shift, or null
-   * without a head key.
-   */
-  step(
-    frame: { bodyTurn?: number; standing?: Readonly<StandingBends> | null },
-    rotation: Readonly<Anime25DTorsoShellRotation>,
-    activation: number,
-  ): number | null {
-    const amount = bodyTurnAmount(rotation, activation, this.share)
-    frame.bodyTurn = amount
-    if (!this.head) return null
-    turnKeyformOffset(this.head, 0, amount, this.carry)
-    if (!this.weightHead || !frame.standing) return this.carry.x
-    turnKeyformOffset(this.weightHead, 0, weightShift(frame.standing), this.weightCarry)
-    return this.carry.x + this.weightCarry.x
-  }
-}
-
-interface StandingBends {
-  bendL: number
-  bendR: number
-}
-
-/**
- * How far through the keyed weight shift a standing figure is (−1…1): +1 with
- * the weight on the leg on the right of the picture, the left one free and
- * bent (the stance's springs, so the keys pass from leg to leg as they do).
- */
-export function weightShift(standing: Readonly<StandingBends>): number {
-  return Math.max(-1, Math.min(1, standing.bendL - standing.bendR))
 }
 
 /** How far through the keyed turn the body is (−1…1), from the torso's yaw. */

@@ -2,8 +2,8 @@
  * Two arms are not one mirrored bar. A gesture is made by one arm, the side
  * the head turns to, while the other comes along later and less; a raised
  * forearm does part of a lift at the elbow instead of the whole arm turning
- * stiff from the shoulder; and a standing figure's hip, moved out over the
- * leg that takes the weight, nudges the arm hanging beside it.
+ * stiff from the shoulder. A standing figure's arms are not choreographed:
+ * they hang and go as its body carries them (HANGING_ARM).
  */
 
 export type ArmSide = 'L' | 'R'
@@ -15,11 +15,6 @@ export interface ArmIntent {
   sway: number
   /** `angleX` after composition: positive turns the head towards image right. */
   headTurn: number
-  /**
-   * A standing figure's weight, +1 with the hips over the leg on the right of
-   * the picture; null for a bust.
-   */
-  weight: number | null
   /** False freezes dynamics: each arm sits exactly on its share. */
   dynamic: boolean
 }
@@ -87,9 +82,6 @@ export const ELBOW_FLEX = 0.18
  * comes up in front, its forearm seen shorter. This much reach per lift.
  */
 export const ELBOW_REACH = 0.8
-/** The hip under the weight pushes its arm out by this much of a full lift. */
-export const WEIGHT_OPEN = 0.2
-
 export class ArmChoreography {
   readonly L: ArmSideIntent = { open: 0, bend: 0, reach: 0 }
   readonly R: ArmSideIntent = { open: 0, bend: 0, reach: 0 }
@@ -118,17 +110,15 @@ export class ArmChoreography {
     } else {
       this.followed += (followTarget - this.followed) * (1 - Math.exp(-step / FOLLOW_SECONDS))
     }
-    const weight = intent.weight === null ? 0 : Math.max(-1, Math.min(1, finite(intent.weight)))
     for (const side of ['L', 'R'] as const) {
       const lift = side === this.follower ? this.followed : open
-      const hip = WEIGHT_OPEN * Math.max(0, side === 'R' ? weight : -weight)
       const out = this[side]
       if (elbows[side]) {
-        out.open = lift * (1 - ELBOW_SHARE) + hip
+        out.open = lift * (1 - ELBOW_SHARE)
         out.bend = lift * ELBOW_FLEX
         out.reach = forwardReach(lift)
       } else {
-        out.open = lift + hip
+        out.open = lift
         out.bend = 0
         out.reach = 0
       }

@@ -24,7 +24,7 @@ import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import { ArmChoreography, HANGING_ARM, resolveDirectedArmIntent } from './armChoreography'
 import { ArmDrape, ArmPendulum, ArmSegment, BUST_ARM_SWING, FIGURE_ARM_SWING, FOREARM, HAND, REACH } from './armPendulum'
 import { applyBodyLift, BodyLiftResponse } from './bodyLift'
-import { headRidesBody, KeyedBodyTurn, playbackBodyKeys } from './bodyTurnKeyforms'
+import { BODY_TURN_SHARE, bodyTurnAmount, headRidesBody, playbackBodyKeys } from './bodyTurnKeyforms'
 import {
   chestBodyExcitationY,
   chestBreathResidual,
@@ -103,7 +103,7 @@ export class Anime25DBodyFrames {
   private readonly torsoYaw: Anime25DTorsoYawState = { value: 0, velocity: 0 }
   private bodyLiftResponse = new BodyLiftResponse()
   private bodyPitchResponse = new BodyLiftResponse()
-  private readonly bodyLiftField = { centerX: 0, upperY: 0, lowerY: 1, amount: 0, pitch: 0, depth: 0, shoulderY: 0, groundY: 0, stanceShift: 0 }
+  private readonly bodyLiftField = { centerX: 0, upperY: 0, lowerY: 1, amount: 0, pitch: 0, depth: 0, shoulderY: 0 }
 
   /** Each sleeve hangs from its shoulder; its swing is simulated, not authored. */
   private readonly armPendulums = { L: new ArmPendulum(1), R: new ArmPendulum(-1) } as const
@@ -153,7 +153,8 @@ export class Anime25DBodyFrames {
   /** A full figure's stance on its ground; a bust has none. */
   private standing: Anime25DStanding | null = null
   /** A keyed body turn (bodyTurnKeyforms); without one the torso is a cylinder. */
-  private keyedBodyTurn: KeyedBodyTurn | null = null
+  /** The share of the torso's turn its body keys show; null without body keys. */
+  private bodyKeyShare: number | null = null
   /** A standing figure's bones (figureSkeleton); a bust has none. */
   private figure: FigureBody | null = null
 
@@ -173,9 +174,7 @@ export class Anime25DBodyFrames {
     this.anchors = playback.anchors
     this.figure = FigureBody.of(playback.anchors, playback.partProfile, playback.figureStance, playback)
     this.shellProfile = this.figure ? figureShellProfile(playback.shellProfile) : playback.shellProfile
-    // The bones shift a figure's weight; its weight-shift keys are not used beside them.
-    this.keyedBodyTurn = KeyedBodyTurn.bind(playbackBodyKeys(playback), playback.anchors.neckPivot,
-      this.figure ? undefined : playback.weightKeyforms, this.figure ? 1 : undefined)
+    this.bodyKeyShare = playbackBodyKeys(playback) ? (this.figure ? 1 : BODY_TURN_SHARE) : null
     this.chestProfile = playback.chestProfile
     this.neckDepth =
       playback.layers.find((layer) => layer.role === 'neck')?.depth ?? 0.95
@@ -341,7 +340,7 @@ export class Anime25DBodyFrames {
     stepAnime25DTorsoShellRotation(
       this.torsoYaw,
       // The head's own turn: what it took from the directed torso turn is not followed back.
-      this.current.angleX - this.current.torsoTurn * headRidesBody(Boolean(this.keyedBodyTurn), this.secondaryDeformationFrame.keyedHead === true),
+      this.current.angleX - this.current.torsoTurn * headRidesBody(this.bodyKeyShare !== null, this.secondaryDeformationFrame.keyedHead === true),
       this.current.body,
       dt,
       this.torsoShellRotation,
@@ -437,9 +436,6 @@ export class Anime25DBodyFrames {
       pitch: Math.max(-1, Math.min(1, e.bodyPitch + this.bodyPitchResponse.value * (1 - this.motion.directedBodyWeight('torsoPitch')))) * 0.18,
       depth: this.shellProfile.torso.enabled ? Math.min(this.shellProfile.torso.radiusZ, span * 0.45) : 0,
       shoulderY: anchors.neckBottom,
-      groundY: this.standing?.groundY ?? anchors.bodyPivot.y,
-      // Keyed, the weight shift moves the hips itself; with bones, the pelvis does.
-      stanceShift: this.keyedBodyTurn?.weighted || this.figure ? 0 : (this.standing?.shift(e.body) ?? 0),
     })
     this.renderFrame.bodyLift = this.bodyLiftField
     frame.headAngleY = e.angleY
@@ -459,8 +455,8 @@ export class Anime25DBodyFrames {
     // A figure turns on the whole cylinder (playbackBodyKeys); a bust's shell is a partial guess.
     frame.torsoShellBlend = this.shellProfile.enabled && this.shellProfile.torso.enabled
       ? (this.figure ? this.shellActivation : frame.shellBlend * this.shellProfile.torso.blend) : 0
-    frame.torsoNeckOffsetX = this.keyedBodyTurn?.step(frame, this.torsoShellRotation, this.shellActivation) ??
-      anime25DTorsoNeckOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
+    if (this.bodyKeyShare !== null) frame.bodyTurn = bodyTurnAmount(this.torsoShellRotation, this.shellActivation, this.bodyKeyShare)
+    frame.torsoNeckOffsetX = anime25DTorsoNeckOffsetX(anchors.neckPivot.x, this.shellProfile.torso, this.torsoShellRotation, frame.torsoShellBlend)
     writeAnime25DShellRotation(e.angleX, e.angleY, this.shellRotation)
     updateHeadTurn(this.headTurn, e.angleX, e.angleY)
     this.renderFrame.bodyPivotX = anchors.bodyPivot.x
@@ -624,9 +620,6 @@ export class Anime25DBodyFrames {
         open: e.armY,
         sway: e.armPos,
         headTurn: e.angleX,
-        // The weight is on the leg the hips move over; a figure's hips go
-        // with its chest, so no hip juts out against an arm.
-        weight: this.standing && !this.figure ? this.standing.weight(e.body) : null,
         dynamic: e.phys,
       },
       this.armElbows,
