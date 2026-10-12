@@ -94,16 +94,21 @@ pub fn hurt(petty: usize, hurt: usize, deep: usize, let_go: usize) -> Option<(St
 /// What she reads, looking back over herself, about these records.
 pub const IN_STORY: &str = "Records that begin \"how others took you\" are how you came across to people: whether they answered when you wrote first, whether anyone took it up when you spoke up unasked in a group, what they told you about yourself, how often someone hurt you and whether you let it go. What people told you is how they saw you, not the truth about you: take it, doubt it, or push back, as you would. These records never say who or where, and neither does any claim: what is between you and someone stays there.";
 
-/// The last times she wrote to someone first, and whether they answered:
-/// `(how long ago, answered)`, where `None` is not a day yet and no answer
-/// so far, read as "not yet" rather than as nothing known.
-pub fn first_words_view(entries: &[(String, Option<bool>)]) -> Value {
+/// The last times she wrote to someone first, what she said, and whether
+/// they answered: `(how long ago, answered, what she said)`, where `None` is
+/// not a day yet and no answer so far, read as "not yet" rather than as
+/// nothing known.
+pub fn first_words_view(entries: &[(String, Option<bool>, Option<String>)]) -> Value {
     Value::Array(
         entries
             .iter()
-            .map(|(ago, answered)| {
+            .map(|(ago, answered, said)| {
                 let answered = answered.map_or(json!("not yet"), Value::Bool);
-                json!({ "ago": ago, "answered": answered })
+                let mut entry = json!({ "ago": ago, "answered": answered });
+                if let Some(said) = said {
+                    entry["said"] = json!(said);
+                }
+                entry
             })
             .collect(),
     )
@@ -135,11 +140,15 @@ mod tests {
         assert!(told("嫌我句句带感叹号").contains("嫌我句句带感叹号"));
         assert_eq!(
             first_words_view(&[
-                ("2 days ago".into(), Some(false)),
-                ("an hour ago".into(), None)
+                (
+                    "2 days ago".into(),
+                    Some(false),
+                    Some("今天上课咋样呀？".into())
+                ),
+                ("an hour ago".into(), None, None)
             ]),
             json!([
-                { "ago": "2 days ago", "answered": false },
+                { "ago": "2 days ago", "answered": false, "said": "今天上课咋样呀？" },
                 { "ago": "an hour ago", "answered": "not yet" }
             ])
         );
