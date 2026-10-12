@@ -484,6 +484,58 @@ fn main() {
             f32_lit(performance_contract["scoreTiming"][key].as_f64().expect(key))
         ));
     }
+    // Looks drawn from her own controls, named so the director can pick a
+    // whole face at once; every control and tier must exist.
+    generated.push_str(
+        "pub const PERFORMANCE_FACE_PRESETS: &[(&str, &str, &[(&str, &str)])] = &[\n",
+    );
+    for (name, preset) in performance_contract["facePresets"]
+        .as_object()
+        .expect("missing performance facePresets")
+    {
+        let description = preset["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("face preset {name} needs a description"));
+        let targets: Vec<String> = preset["targets"]
+            .as_object()
+            .unwrap_or_else(|| panic!("face preset {name} needs targets"))
+            .iter()
+            .map(|(control, tier)| {
+                let tier = tier.as_str().expect("face preset tier");
+                let body = body_controls
+                    .get(control)
+                    .unwrap_or_else(|| panic!("face preset {name} names unknown control {control}"));
+                let strength = tier.trim_start_matches('-');
+                let named = body
+                    .get("tiers")
+                    .unwrap_or(&performance_contract["extentTiers"])
+                    .get(strength)
+                    .is_some();
+                let rest = body.get("rest").and_then(|r| r.as_f64()).unwrap_or(0.0_f64.clamp(
+                    body["min"].as_f64().unwrap(),
+                    body["max"].as_f64().unwrap(),
+                ));
+                let room = if tier.starts_with('-') {
+                    body["min"].as_f64().unwrap() < rest
+                } else {
+                    body["max"].as_f64().unwrap() > rest
+                };
+                assert!(named && room, "face preset {name}: {control} has no tier {tier}");
+                format!(
+                    "({}, {})",
+                    serde_json::to_string(control).unwrap(),
+                    serde_json::to_string(tier).unwrap()
+                )
+            })
+            .collect();
+        generated.push_str(&format!(
+            "    ({}, {}, &[{}]),\n",
+            serde_json::to_string(name).unwrap(),
+            serde_json::to_string(description).unwrap(),
+            targets.join(", ")
+        ));
+    }
+    generated.push_str("];\n");
     let output =
         PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("merope_rig_contract.rs");
     fs::write(output, generated).expect("write generated rig contract");

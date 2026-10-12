@@ -77,6 +77,9 @@ fn is_bearing(control: &str) -> bool {
 /// Her feeling, face, bearing and every control this face has, `when` she
 /// is at it (saying it, or what she is doing on her own).
 fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummary>, when: &str) {
+    if let Some(question) = face_question(state, when) {
+        questions.insert("face".into(), question);
+    }
     questions.insert(
         "feeling".into(),
         json!({"type": "choice",
@@ -156,6 +159,64 @@ pub(super) fn control_questions(context: &MotionContext, state: Option<&RigState
     Value::Object(questions)
 }
 
+/// The looks drawn from her own controls (`facePresets` in the contract)
+/// that this face can show, offered as a whole face at once.
+fn offered_faces(state: Option<&RigStateSummary>) -> Vec<(&'static str, &'static str)> {
+    let controls = offered_body_controls(state);
+    myriad_merope::PERFORMANCE_FACE_PRESETS
+        .iter()
+        .filter(|(_, _, targets)| {
+            let shown = targets
+                .iter()
+                .filter(|(control, _)| controls.contains(control))
+                .count();
+            shown * 2 >= targets.len()
+        })
+        .map(|(name, means, _)| (*name, *means))
+        .collect()
+}
+
+pub(super) fn face_question(state: Option<&RigStateSummary>, when: &str) -> Option<Value> {
+    let mut faces = offered_faces(state);
+    if faces.is_empty() {
+        return None;
+    }
+    faces.push((
+        "none",
+        "none of these: her face as the other answers make it",
+    ));
+    Some(json!({"type": "choice",
+        "instructions": format!("Which of these whole looks her face takes {when}, if any."),
+        "criteria": criteria(&faces)}))
+}
+
+/// The look she chose, whole: a look is tuned as one, so it holds over a
+/// control answered on its own (two eyes answered apart read as a wink);
+/// her other answers fill what it leaves. With `own` false only her
+/// bearing is taken.
+pub(super) fn lay_face(
+    targets: &mut Map<String, Value>,
+    answers: &Value,
+    state: Option<&RigStateSummary>,
+    own: bool,
+) {
+    let Some(face) = sure(answers, "face").filter(|face| *face != "none") else {
+        return;
+    };
+    let controls = offered_body_controls(state);
+    let Some((_, _, look)) = myriad_merope::PERFORMANCE_FACE_PRESETS
+        .iter()
+        .find(|(name, _, _)| *name == face)
+    else {
+        return;
+    };
+    for (control, tier) in look.iter() {
+        if controls.contains(control) && (own || is_bearing(control)) {
+            targets.insert((*control).to_owned(), json!(tier));
+        }
+    }
+}
+
 /// The standing targets the answers give, control by control; with `own`
 /// false only her bearing stays.
 fn answered_targets(
@@ -199,7 +260,8 @@ pub(super) fn control_plan(
             .flatten()
     };
     let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
-    let targets = answered_targets(answers, state, own);
+    let mut targets = answered_targets(answers, state, own);
+    lay_face(&mut targets, answers, state, own);
     let energy = sure("energy").unwrap_or("usual");
     let amount = match energy {
         "low" => "slight",
@@ -450,6 +512,7 @@ pub(super) fn standing_plan(
             .flatten()
     };
     let mut targets = answered_targets(answers, state, true);
+    lay_face(&mut targets, answers, state, true);
     // How she holds her head over the stretch, unless a control said already.
     let controls = offered_body_controls(state);
     let head = match answers["headPose"]["choice"].as_str() {
@@ -759,6 +822,63 @@ mod tests {
             parse_motion_decision(&value.to_string()),
             Some(MotionDecision::Perform(_))
         ));
+    }
+
+    #[test]
+    fn a_whole_look_is_laid_under_her_own_answers() {
+        let state = bust();
+        let asked = control_questions(&context("你好", "嗯，好。"), Some(&state));
+        assert!(asked["face"]["criteria"]["content"].is_string());
+        assert!(asked["face"]["criteria"]["none"].is_string());
+        let answers = json!({
+            "own": {"noul": 0.9},
+            "face": {"choice": "content", "confidence": 0.7},
+            "body.mouthSmile": {"choice": "strong", "confidence": 0.8},
+            "body.eyeOpenRight": {"choice": "-slight", "confidence": 0.8},
+            "body.headTurn": {"choice": "slight", "confidence": 0.8},
+        });
+        let value = control_plan(&answers, &context("好听吗", "好好听。"), Some(&state));
+        let targets = &value["baseline"]["pose"]["targets"];
+        assert_eq!(targets["eyeOpenLeft"], "-strong", "eyes closed in a smile");
+        assert_eq!(targets["eyeOpenRight"], "-strong", "both of them");
+        assert_eq!(
+            targets["headTurn"], "slight",
+            "what the look leaves is hers"
+        );
+        assert_eq!(targets["eyeSmile"], "strong");
+        assert_eq!(targets["mouthSmile"], "clear", "the look holds whole");
+        assert!(semantic_valid(&value.to_string(), "好好听。"));
+
+        let quoted = json!({"own": {"noul": 0.05}, "face": {"choice": "shy", "confidence": 0.9}});
+        let value = control_plan(
+            &quoted,
+            &context("她怎么了", "她说她很害羞。"),
+            Some(&state),
+        );
+        let targets = &value["baseline"]["pose"]["targets"];
+        assert_eq!(
+            targets["gazeVertical"], "-clear",
+            "where she looks stays hers"
+        );
+        assert!(targets["mouthSmile"].is_null() && targets["eyeOpenLeft"].is_null());
+    }
+
+    #[test]
+    fn every_look_in_the_contract_is_one_her_controls_can_make() {
+        for (name, _, targets) in myriad_merope::PERFORMANCE_FACE_PRESETS {
+            assert!(!targets.is_empty(), "{name}");
+            for (control, tier) in *targets {
+                assert!(
+                    myriad_merope::extent_tiers(control)
+                        .iter()
+                        .any(|t| t == tier),
+                    "{name}: {control} {tier}"
+                );
+            }
+        }
+        let mouth_only =
+            myriad_merope::sanitize_rig_state(&json!({"capabilities": ["mouth-shapes"]})).unwrap();
+        assert!(offered_faces(Some(&mouth_only)).len() < offered_faces(Some(&bust())).len());
     }
 
     #[test]

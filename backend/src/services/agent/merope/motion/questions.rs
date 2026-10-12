@@ -158,6 +158,9 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
     if let Some(question) = asked_for_question(context, state) {
         questions.insert("askedFor".into(), question);
     }
+    if let Some(question) = control::face_question(state, "while she says it") {
+        questions.insert("face".into(), question);
+    }
     Value::Object(questions)
 }
 
@@ -393,6 +396,7 @@ pub(super) fn plan_from_answers(
         Some("aside") => set("gazeHorizontal", &format!("{side}clear")),
         _ => {}
     }
+    control::lay_face(&mut targets, answers, state, own);
     let mut score = Vec::new();
     // Delight or a sigh for someone else's feeling is not hers to act.
     if let Some(kind) = sure("gesture")
