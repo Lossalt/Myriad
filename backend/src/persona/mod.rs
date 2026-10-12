@@ -40,6 +40,16 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
     agent::init_task_store(db.clone()).await;
     tracing::info!("✅ Agent task store initialized");
 
+    // The site is her host: no device stays her parent end (D10).
+    match services::persona_sync::devices::heal_parent_rows(&db).await {
+        Ok(0) => {}
+        Ok(healed) => tracing::info!(
+            healed,
+            "[sync] devices made her parent end are children again"
+        ),
+        Err(error) => tracing::warn!(%error, "[sync] could not heal devices made her parent end"),
+    }
+
     // Re-create run hubs + wait-loops for waiting_for_input tasks so
     // answer/subscribe work after process restart.
     services::agent::run::restore_waiting_runs_after_boot(&db).await;

@@ -367,6 +367,20 @@ pub async fn seen<C: ConnectionTrait>(db: &C, id: &str) -> Result<(), DbErr> {
     Ok(())
 }
 
+/// Gives every device that was made her parent end back to being a child:
+/// the site is her host (D10), and a device cannot be one here. Idempotent;
+/// the persona worker runs it once as it starts. Host leases replace roles
+/// with a migration later. How many rows it changed.
+pub async fn heal_parent_rows<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
+    Ok(db
+        .execute_raw(statement(
+            "UPDATE agent_sync_devices SET role = 'child' WHERE role = 'parent'",
+            vec![],
+        ))
+        .await?
+        .rows_affected())
+}
+
 /// The live device that is her parent end, if one is; otherwise the site is.
 pub async fn parent<C: ConnectionTrait>(db: &C, user_id: i32) -> Result<Option<String>, DbErr> {
     db.query_one_raw(statement(
@@ -565,6 +579,19 @@ mod tests {
             authenticate(db, &old_token, None).await,
             Err(Refused::Revoked)
         ));
+
+        // A device left as her parent end from before is a child again once
+        // the persona worker starts; the site is her host. Twice is once.
+        let (left, _) = add(db, 41, "left as parent").await.unwrap();
+        set_role(db, 41, &left.id, Role::Parent)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(parent(db, 41).await.unwrap(), Some(left.id.clone()));
+        // The Mac removed above while it was the parent end is healed too.
+        assert_eq!(heal_parent_rows(db).await.unwrap(), 2);
+        assert_eq!(parent(db, 41).await.unwrap(), None);
+        assert_eq!(heal_parent_rows(db).await.unwrap(), 0);
 
         fixture.close().await;
     }

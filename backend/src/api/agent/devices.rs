@@ -25,6 +25,9 @@ pub(crate) fn device_json(device: &Device, now: chrono::DateTime<Utc>) -> Value 
         "revokedAt": device.revoked_at.map(|at| at.to_rfc3339()),
         "revokedReason": device.revoked_reason,
         "stale": device.stale(now),
+        // Its link to her is open now (lastSeenAt is when it last was).
+        "connected": device.revoked_at.is_none()
+            && crate::services::agent::link::is_open(&device.id),
     })
 }
 

@@ -118,16 +118,21 @@ export function AgentDevicesGroup() {
     const badges: ManagedListItem['badges'] = []
     if (device.revokedAt) {
       badges.push({ label: removedWhy(device), tone: 'muted' })
-    } else if (device.stale) {
+    } else if (device.stale && !device.connected) {
       badges.push({ label: c.agentDevicesStale, tone: 'warn' })
     }
     return {
       id: device.id,
       title: device.name,
       subtitle: `${device.tokenHint}… · ${format(c.agentDevicesAdded, { time: when(device.createdAt) })}`,
-      meta: device.lastSeenAt
-        ? format(c.agentDevicesLastSynced, { time: when(device.lastSeenAt) })
-        : c.agentDevicesNeverSynced,
+      // Connected now, or when it last was: her link records it as it opens.
+      meta: device.connected
+        ? c.agentDevicesConnected
+        : device.lastSeenAt
+          ? format(c.agentDevicesLastConnected, {
+              time: when(device.lastSeenAt),
+            })
+          : c.agentDevicesNeverConnected,
       badges,
       actions: device.revokedAt
         ? []

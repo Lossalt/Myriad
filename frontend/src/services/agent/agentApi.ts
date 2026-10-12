@@ -61,6 +61,8 @@ export interface SyncDevice {
   revokedReason: 'owner_revoked' | 'owner_changed' | 'device_left' | null
   /** Live and not seen for 30 days. Never removed for it. */
   stale: boolean
+  /** Its link to her is open right now. */
+  connected?: boolean
 }
 
 export interface SyncDeviceList {

@@ -87,6 +87,14 @@ fn say_sender(owner: i32, device_id: &str) -> Option<mpsc::Sender<connection::Ou
     })
 }
 
+/// The device has a link open now: what the owner's device list shows as
+/// connected.
+pub(crate) fn is_open(device_id: &str) -> bool {
+    OPEN.lock()
+        .map(|open| open.contains_key(device_id))
+        .unwrap_or(false)
+}
+
 /// Forgets the link `id` when it is still the device's.
 fn forget(device_id: &str, id: u64) {
     if let Ok(mut open) = OPEN.lock() {
