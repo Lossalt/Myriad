@@ -329,3 +329,39 @@ async fn from_other_groups_comes_only_what_is_theirs_and_never_the_private() {
     venues.sort();
     assert_eq!(venues, ["group:onebot:1", "group:telegram:3"]);
 }
+
+#[tokio::test]
+async fn a_memory_comes_to_mind_by_when_it_was_kept_for_and_is_said_as_it_was() {
+    let Some(db) = temp_db().await else {
+        return;
+    };
+    let wants = remember(&db, fact(7, "想找人一起练日语口语"))
+        .await
+        .unwrap()
+        .unwrap();
+    remember(&db, fact(7, "养了一只叫年糕的猫")).await.unwrap();
+    assert!(
+        keep_cues(&db, &wants, &["有人问有什么文化活动推荐时".into()])
+            .await
+            .unwrap()
+    );
+    assert!(!keep_cues(&db, &wants, &["再写一次".into()]).await.unwrap());
+    let recalled = recall(
+        &db,
+        7,
+        &Audience::private(7),
+        Some("最近有什么文化活动推荐吗"),
+        &MemoryKind::ABOUT_PERSON,
+        1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(recalled.len(), 1);
+    assert_eq!(recalled[0].content, "想找人一起练日语口语");
+    let missing: Vec<String> = without_cues(&db, 7, &["chat"], 10)
+        .await
+        .into_iter()
+        .map(|row| row.content)
+        .collect();
+    assert_eq!(missing, ["养了一只叫年糕的猫"]);
+}

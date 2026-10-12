@@ -134,6 +134,13 @@ async fn settle_session(
         updates
             .updates
             .push(super::super::chat_remember::ChatMemoryUpdate {
+                // When it would be worth remembering, as production keeps it.
+                cues: item["whenFor"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|cue| cue.as_str().map(str::to_string))
+                    .collect(),
                 fact: Some(fact.clone()),
                 // What it changes goes with the first: it says how it is now.
                 supersedes: if updates.updates.is_empty() {

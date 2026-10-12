@@ -41,7 +41,10 @@ pub(super) fn the_chinese_memory_set_reads_as_the_bench_needs() {
 /// Chinese, as her conversations mostly are: everything the people of the
 /// Chinese set said is one pool, and each question should bring its answer
 /// lines into the first five, by meaning and by words. `MEROPE_MEMORY_BENCH=
-/// tests/merope/memory-zh.json MEROPE_MEMORY_EMBEDDING_MODEL=<model>`.
+/// tests/merope/memory-zh.json MEROPE_MEMORY_EMBEDDING_MODEL=<model>`. With
+/// `MEROPE_MEMORY_BENCH_CUES=1`, each line is also read with when it would
+/// come to mind, written as production writes it for what she knows
+/// (`myriad_merope::cues`), and found both ways again.
 #[tokio::test]
 #[ignore = "spends on the site's embedding model; see the module docs"]
 pub(super) async fn meaning_in_chinese() {
@@ -90,6 +93,24 @@ pub(super) async fn meaning_in_chinese() {
             concepts: &[],
         })
         .collect();
+    let cued: Vec<String> = if std::env::var("MEROPE_MEMORY_BENCH_CUES").is_ok() {
+        with_cues(&lines).await
+    } else {
+        Vec::new()
+    };
+    let cued_vectors = if cued.is_empty() {
+        Vec::new()
+    } else {
+        embedder.embed(&cued).await.expect("cued pool embedded")
+    };
+    let cued_documents: Vec<crate::services::agent::memory::lexical::Document> = cued
+        .iter()
+        .map(|text| crate::services::agent::memory::lexical::Document {
+            text,
+            concepts: &[],
+        })
+        .collect();
+    let (mut cued_meaning, mut cued_words) = (0, 0);
     let (mut by_meaning, mut by_words, mut needed) = (0, 0, 0);
     for (question, asked) in questions.iter().zip(&asked_vectors) {
         let answers: Vec<usize> = pool
@@ -128,6 +149,32 @@ pub(super) async fn meaning_in_chinese() {
             found(&words),
             answers.len()
         );
+        if !cued.is_empty() {
+            let meaning = first(
+                cued_vectors
+                    .iter()
+                    .map(|vector| crate::services::agent::memory::meaning::cosine(asked, vector))
+                    .collect(),
+            );
+            let words = first(
+                crate::services::agent::memory::lexical::score_all(
+                    &question.question,
+                    &cued_documents,
+                )
+                .into_iter()
+                .map(|score| if score.strong { score.value } else { 0.0 })
+                .collect(),
+            );
+            println!(
+                "  with cues: meaning {}/{} words {}/{}",
+                found(&meaning),
+                answers.len(),
+                found(&words),
+                answers.len()
+            );
+            cued_meaning += found(&meaning);
+            cued_words += found(&words);
+        }
         by_meaning += found(&meaning);
         by_words += found(&words);
         needed += answers.len();
@@ -139,4 +186,27 @@ pub(super) async fn meaning_in_chinese() {
         vectors.first().map_or(0, Vec::len),
         asked.len()
     );
+    if !cued.is_empty() {
+        println!("with cues: meaning {cued_meaning}/{needed}, words {cued_words}/{needed}");
+    }
+}
+
+/// Each line with when it would come to mind after it, as production writes
+/// it for what she knows; a line it gave none for, as it is.
+async fn with_cues(lines: &[String]) -> Vec<String> {
+    use myriad_merope::cues::{AT_ONCE, SCHEMA_NAME, input, parse, schema, system};
+    let mut cued: Vec<String> = lines.to_vec();
+    for (batch, chunk) in lines.chunks(AT_ONCE).enumerate() {
+        let raw = super::super::call::Ask::new(super::super::call::Voice::Judge, 1, "memory_cues")
+            .within(Duration::from_secs(60))
+            .json_raw(system(), &input(chunk), SCHEMA_NAME, &schema())
+            .await
+            .expect("cues written");
+        for (index, cues) in parse(&raw, chunk.len()).expect("cues parsed") {
+            let line = &mut cued[batch * AT_ONCE + index];
+            println!("  {line} → {}", cues.join(" / "));
+            *line = format!("{line}\n{}", cues.join("\n"));
+        }
+    }
+    cued
 }

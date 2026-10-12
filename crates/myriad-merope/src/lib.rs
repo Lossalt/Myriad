@@ -12,6 +12,7 @@ pub mod chat_history;
 pub mod chat_music;
 pub mod chat_remember;
 pub mod contrast;
+pub mod cues;
 pub mod curiosity;
 pub mod diary;
 pub mod doing;

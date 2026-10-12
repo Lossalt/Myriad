@@ -9,10 +9,11 @@
 //!
 //! Vectors live in `agent_memory_embeddings`, one per memory, under the model
 //! that made them and a digest of the text: an edited memory, or another
-//! model, is embedded again. Recall embeds what it is asked in the same
-//! request as a few memories still without one, so memories gain vectors as
-//! they come up and nothing runs in the background. When no model is set, or
-//! it does not answer in time, recall goes by words alone.
+//! model, is embedded again. Recall embeds what it is asked; the memories it
+//! went through still without a vector are embedded behind the reply, a batch
+//! at a time, so they gain vectors as they come up and a reply never waits on
+//! them. When no model is set, or it does not answer in time, recall goes by
+//! words alone.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -27,7 +28,7 @@ use crate::services::retained_cache::RetainedCache;
 
 /// Past this, recall goes by words: a reply does not wait on meaning.
 const ASK_WITHIN: Duration = Duration::from_secs(2);
-/// Memories without a vector embedded alongside one question.
+/// Memories without a vector embedded in one batch.
 const FILL_PER_ASK: usize = 63;
 /// A memory stands out by meaning when it is this many deviations above how
 /// close the rest of them are: what closeness means differs by model, how
@@ -239,7 +240,72 @@ pub async fn closeness<C: ConnectionTrait>(
     query: &str,
     fill: usize,
 ) -> HashMap<String, f64> {
-    closeness_within(db, rows, query, fill, ASK_WITHIN).await
+    closeness_within(db, rows, query, fill, ASK_WITHIN, Fill::Behind).await
+}
+
+/// How memories still without a vector get one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fill {
+    /// Behind the reply, which goes on with the vectors already there: a
+    /// batch can take longer than a reply should wait.
+    Behind,
+    /// Before going on, within the same time as the question (a bench
+    /// filling its store at once).
+    #[cfg(test)]
+    Before,
+}
+
+/// Whether memories are being given vectors behind a reply now: one batch at
+/// a time.
+static FILLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How long a batch behind a reply may take.
+const FILL_BEHIND_WITHIN: Duration = Duration::from_secs(30);
+
+/// Embed `missing` together and keep each vector; the vectors, by memory id.
+async fn embed_and_keep<C: ConnectionTrait>(
+    db: &C,
+    meaning: &Meaning,
+    missing: &[agent_memories::Model],
+    within: Duration,
+) -> HashMap<String, Vector> {
+    let model = meaning.model.as_str();
+    let texts: Vec<String> = missing
+        .iter()
+        .map(|row| row.content.trim().to_string())
+        .collect();
+    let mut vectors = HashMap::new();
+    match tokio::time::timeout(within, meaning.analyzer.embed(&texts)).await {
+        Ok(Ok(embedded)) => {
+            for (row, vector) in missing.iter().zip(embedded) {
+                let vector = Arc::new(vector);
+                keep(&KNOWN, model, &digest(&row.content), vector.clone());
+                if let Err(error) = store(db, model, row, &vector).await {
+                    tracing::warn!(%error, "a memory's meaning could not be kept; it is worked out again next time");
+                }
+                vectors.insert(row.id.clone(), vector);
+            }
+        }
+        _ => tracing::debug!("memories not embedded this time; they are next time"),
+    }
+    vectors
+}
+
+/// Give `missing` vectors behind the reply, unless a batch is already on
+/// its way.
+fn fill_behind(missing: Vec<agent_memories::Model>) {
+    use std::sync::atomic::Ordering;
+    if missing.is_empty() || FILLING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    tokio::spawn(async move {
+        if let (Ok(db), Some(meaning)) = (
+            crate::services::process_db::database(),
+            Meaning::current().await,
+        ) {
+            embed_and_keep(&db, &meaning, &missing, FILL_BEHIND_WITHIN).await;
+        }
+        FILLING.store(false, Ordering::Release);
+    });
 }
 
 async fn closeness_within<C: ConnectionTrait>(
@@ -248,6 +314,7 @@ async fn closeness_within<C: ConnectionTrait>(
     query: &str,
     fill: usize,
     within: Duration,
+    how: Fill,
 ) -> HashMap<String, f64> {
     let query = query.trim();
     if query.is_empty() || rows.is_empty() {
@@ -278,13 +345,21 @@ async fn closeness_within<C: ConnectionTrait>(
         }
     }
     // Rows come newest first: the newest without a vector are embedded first.
-    let missing: Vec<&agent_memories::Model> = unknown
-        .iter()
+    let missing: Vec<agent_memories::Model> = unknown
+        .into_iter()
         .filter(|row| !vectors.contains_key(&row.id))
         .take(fill)
         .collect();
-    // What was asked, and the memories still without a vector, in two
-    // requests side by side: a slow batch must not cost the question.
+    // The memories still without a vector go behind the reply; a bench
+    // filling its store embeds them beside the question.
+    let missing = match how {
+        Fill::Behind => {
+            fill_behind(missing);
+            Vec::new()
+        }
+        #[cfg(test)]
+        Fill::Before => missing,
+    };
     let cached_ask = cached(&ASKED, model, query);
     let ask = async {
         match &cached_ask {
@@ -294,18 +369,15 @@ async fn closeness_within<C: ConnectionTrait>(
             ),
         }
     };
-    let texts: Vec<String> = missing
-        .iter()
-        .map(|row| row.content.trim().to_string())
-        .collect();
     let batch = async {
-        if texts.is_empty() {
-            None
+        if missing.is_empty() {
+            HashMap::new()
         } else {
-            Some(tokio::time::timeout(within, meaning.analyzer.embed(&texts)).await)
+            embed_and_keep(db, &meaning, &missing, within).await
         }
     };
     let (asking, batch) = futures::join!(ask, batch);
+    vectors.extend(batch);
     let mut asked = cached_ask;
     if let Some(answered) = asking {
         match answered {
@@ -319,20 +391,6 @@ async fn closeness_within<C: ConnectionTrait>(
                 tracing::warn!("embedding what was asked failed or timed out; recalling by words");
             }
         }
-    }
-    match batch {
-        Some(Ok(Ok(embedded))) => {
-            for (row, vector) in missing.iter().zip(embedded) {
-                let vector = Arc::new(vector);
-                keep(&KNOWN, model, &digest(&row.content), vector.clone());
-                if let Err(error) = store(db, model, row, &vector).await {
-                    tracing::warn!(%error, "a memory's meaning could not be kept; it is worked out again next time");
-                }
-                vectors.insert(row.id.clone(), vector);
-            }
-        }
-        Some(_) => tracing::debug!("memories not embedded this time; they are next time"),
-        None => {}
     }
     let Some(asked) = asked else {
         return HashMap::new();
@@ -362,7 +420,7 @@ pub async fn fill<C: ConnectionTrait>(db: &C, rows: &[agent_memories::Model]) {
         if found >= rows.len() {
             return;
         }
-        let _ = closeness_within(db, rows, "·", FILL_PER_ASK, FILL_WITHIN).await;
+        let _ = closeness_within(db, rows, "·", FILL_PER_ASK, FILL_WITHIN, Fill::Before).await;
     }
 }
 

@@ -194,7 +194,7 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
     let insert = update.fact.as_ref().filter(|_| duplicate.is_none());
     match insert {
         Some(fact) => {
-            unified::remember_in_place_of(
+            let replaced = unified::remember_in_place_of(
                 db,
                 unified::NewMemory {
                     user_id,
@@ -214,6 +214,9 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
                 },
             )
             .await?;
+            if let Some(id) = replaced.id {
+                unified::keep_cues(db, &id, &update.cues).await?;
+            }
         }
         None => {
             unified::retire_in_favor_of(db, user_id, &targets, "superseded", duplicate.as_deref())

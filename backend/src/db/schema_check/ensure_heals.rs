@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
     vector BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_memory_cues (
+    memory_id VARCHAR(64) PRIMARY KEY REFERENCES agent_memories(id) ON DELETE CASCADE,
+    cues TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
 "#;
 
 /// Syncing her with other platforms: the device table, her affect's changes
@@ -57,6 +62,14 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
 /// so the shapes cannot drift; every statement is `IF NOT EXISTS`.
 pub(crate) async fn ensure_persona_sync_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(include_str!("../../../migrations/persona_sync.sql"))
+        .await?;
+    Ok(())
+}
+
+/// When each memory would come to mind (`migrations/memory_cues.sql`), for
+/// databases that ran 004 before it was in it. Same file as 004.
+pub(crate) async fn ensure_memory_cues_table(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(include_str!("../../../migrations/memory_cues.sql"))
         .await?;
     Ok(())
 }

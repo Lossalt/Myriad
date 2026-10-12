@@ -37,7 +37,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `agent_persona_field_history`（随 004 与 `ensure_persona_sync_tables` 一起建）。
 /// 2026.10.12.1：她主动说的话记下在子机上的 `say` 和「没说完」：
 /// `agent_proactive_messages.say_id`、`metadata`（旧库走通用 ADD）。
-pub const SCHEMA_VERSION: &str = "2026.10.12.1";
+/// 2026.10.12.2：记忆的「会用到的场合」`agent_memory_cues`（随 004 与
+/// `ensure_memory_cues_table` 一起建）。
+pub const SCHEMA_VERSION: &str = "2026.10.12.2";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -292,6 +294,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     crate::services::media::retire_legacy_media(db).await?;
     ensure_agent_tasks_status_check(db).await?;
     ensure_persona_sync_tables(db).await?;
+    ensure_memory_cues_table(db).await?;
     unlink_note_docs_without_article(db).await?;
     ensure_user_lifecycle(db).await?;
     ensure_federation_foreign_keys(db).await?;

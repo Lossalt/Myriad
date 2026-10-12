@@ -47,6 +47,7 @@ fn test_folded_extension_tables_in_expected_schema() {
         // 004
         "heartbeat_claims",
         "agent_memory_embeddings",
+        "agent_memory_cues",
         "agent_sync_devices",
         "agent_affect_events",
         "agent_affect_anchor",

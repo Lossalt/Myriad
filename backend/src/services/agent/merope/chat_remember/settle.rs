@@ -132,6 +132,7 @@ pub(in crate::services::agent::merope) async fn settle(
             concepts: unified::clean_concepts(
                 serde_json::from_value(item.concepts).unwrap_or_default(),
             ),
+            cues: item.when_for,
         });
     }
     settled.sort();

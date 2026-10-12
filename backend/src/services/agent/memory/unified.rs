@@ -22,6 +22,7 @@ use serde_json::json;
 
 use crate::models::entities::agent_memories;
 
+mod cues;
 mod evidence;
 mod lookup;
 mod own;
@@ -29,6 +30,7 @@ mod recall;
 mod upkeep;
 mod venue;
 
+pub use cues::{keep_cues, without_cues};
 pub use evidence::*;
 pub use lookup::*;
 pub use own::*;

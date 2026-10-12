@@ -48,6 +48,7 @@ fn fact() -> Effect {
     Effect::Chat(
         crate::services::agent::merope::chat_remember::ChatMemoryUpdates {
             updates: vec![ChatMemoryUpdate {
+                cues: Vec::new(),
                 fact: Some("养了一只猫叫年糕".into()),
                 supersedes: vec![],
                 evidence: Some("我养了一只猫叫年糕".into()),
@@ -62,6 +63,7 @@ fn fact_of(fact: &str) -> Effect {
     Effect::Chat(
         crate::services::agent::merope::chat_remember::ChatMemoryUpdates {
             updates: vec![ChatMemoryUpdate {
+                cues: Vec::new(),
                 fact: Some(fact.into()),
                 supersedes: vec![],
                 evidence: Some(fact.into()),

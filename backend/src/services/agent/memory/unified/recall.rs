@@ -131,6 +131,8 @@ pub async fn recall_primed<C: ConnectionTrait>(
         return Ok((Vec::new(), Priming::default()));
     }
     let rows = rows_for(db, user_id, present, kinds).await?;
+    // Each read with when it would come to mind; given back as it was said.
+    let (rows, said) = super::cues::with_cues(db, rows).await;
     let by_meaning = match query {
         Some(query) => super::super::meaning::standing_out(
             &super::super::meaning::closeness(db, &rows, query, super::super::meaning::FILL).await,
@@ -165,7 +167,7 @@ pub async fn recall_primed<C: ConnectionTrait>(
             .into_iter()
             .map(|(row, brought_to_mind)| MemoryRecord {
                 brought_to_mind,
-                ..MemoryRecord::from(row)
+                ..MemoryRecord::from(super::cues::as_said(row, &said))
             })
             .collect(),
         next,
@@ -430,6 +432,7 @@ pub async fn named_among<C: ConnectionTrait>(
     if query.trim().is_empty() || rows.is_empty() || limit == 0 {
         return Vec::new();
     }
+    let (rows, said) = super::cues::with_cues(db, rows).await;
     let by_meaning = super::super::meaning::standing_out(
         &super::super::meaning::closeness(db, &rows, query, super::super::meaning::FILL).await,
     );
@@ -444,7 +447,7 @@ pub async fn named_among<C: ConnectionTrait>(
     chosen
         .into_iter()
         .filter(|(row, brought_to_mind)| !brought_to_mind && !filler.contains(&row.id))
-        .map(|(row, _)| row)
+        .map(|(row, _)| super::cues::as_said(row, &said))
         .collect()
 }
 

@@ -608,6 +608,12 @@ CREATE TABLE IF NOT EXISTS agent_memory_embeddings (
             .execute_unprepared(include_str!("persona_sync.sql"))
             .await?;
 
+        // 记忆的「会用到的场合」。schema_check::ensure_memory_cues_table 跑同一份文件。
+        manager
+            .get_connection()
+            .execute_unprepared(include_str!("memory_cues.sql"))
+            .await?;
+
         Ok(())
     }
 
@@ -621,6 +627,7 @@ DROP TABLE IF EXISTS agent_affect_anchor;
 DROP TABLE IF EXISTS agent_affect_events;
 DROP TABLE IF EXISTS agent_sync_devices;
 DROP TABLE IF EXISTS merope_stickers;
+DROP TABLE IF EXISTS agent_memory_cues;
 DROP TABLE IF EXISTS agent_memory_embeddings;
 DROP TABLE IF EXISTS agent_memories;
 DROP TABLE IF EXISTS agent_autonomy_grants;

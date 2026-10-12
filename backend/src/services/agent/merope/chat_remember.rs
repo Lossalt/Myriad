@@ -68,6 +68,9 @@ pub struct ChatMemoryUpdate {
     pub evidence: Option<String>,
     /// What `fact` is about, for recall to find it by other names.
     pub concepts: Vec<crate::services::agent::memory::unified::Concept>,
+    /// When it would be worth remembering (see `unified::keep_cues`).
+    #[serde(default)]
+    pub cues: Vec<String>,
 }
 
 /// Something she told them that she would remember having said.
@@ -94,6 +97,7 @@ impl ChatMemoryUpdates {
     /// fact, and everything it withdraws.
     pub fn combined(&self) -> ChatMemoryUpdate {
         ChatMemoryUpdate {
+            cues: Vec::new(),
             fact: self.updates.iter().find_map(|update| update.fact.clone()),
             supersedes: self
                 .updates
@@ -612,6 +616,7 @@ mod tests {
 
     fn new_fact(fact: &str, subject: &str) -> ChatMemoryUpdate {
         ChatMemoryUpdate {
+            cues: Vec::new(),
             fact: Some(fact.into()),
             supersedes: Vec::new(),
             evidence: Some(fact.into()),
@@ -950,6 +955,7 @@ mod tests {
     }
 }
 
+pub(super) mod cues;
 #[cfg(test)]
 mod replay;
 
