@@ -105,6 +105,9 @@ pub async fn accept_intention(
     Path(intent_id): Path<String>,
 ) -> Result<Json<Value>, HttpError> {
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
+    // Accepting starts her Work: nothing in her name while she is not here,
+    // and the proposal stays open for when she is.
+    crate::services::persona_sync::lease::refuse_while_away()?;
     let store = IntentStore::new(db.clone());
     store.expire_stale(user_id).await.map_err(intention_error)?;
     let current = store

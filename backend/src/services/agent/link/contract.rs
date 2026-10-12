@@ -123,6 +123,10 @@ pub(crate) enum Close {
     Revoked,
     OwnerChanged,
     Replaced,
+    /// She lives on another end now (her host lease names it).
+    HostMoved,
+    /// She is moving: while the move is under way no end has her.
+    HostFrozen,
     HostIsSite,
     BadFrame,
     UnsupportedProtocol,
@@ -132,10 +136,12 @@ pub(crate) enum Close {
 
 impl Close {
     #[cfg(test)]
-    pub(crate) const ALL: [Close; 8] = [
+    pub(crate) const ALL: [Close; 10] = [
         Close::Revoked,
         Close::OwnerChanged,
         Close::Replaced,
+        Close::HostMoved,
+        Close::HostFrozen,
         Close::HostIsSite,
         Close::BadFrame,
         Close::UnsupportedProtocol,
@@ -148,6 +154,8 @@ impl Close {
             Close::Revoked => "revoked",
             Close::OwnerChanged => "owner_changed",
             Close::Replaced => "replaced",
+            Close::HostMoved => "host_moved",
+            Close::HostFrozen => "host_frozen",
             Close::HostIsSite => "host_is_site",
             Close::BadFrame => "bad_frame",
             Close::UnsupportedProtocol => "unsupported_protocol",
@@ -218,7 +226,7 @@ pub(super) const CHILD_FRAMES: [&str; 17] = [
 /// Error codes of the link: what the host sends (run.rejected may also carry
 /// an AI quota code), and the act codes `act.result` and `act.cancel` carry.
 #[cfg(test)]
-pub(super) const HOST_ERROR_CODES: [&str; 22] = [
+pub(super) const HOST_ERROR_CODES: [&str; 24] = [
     "unknown_frame",
     "bad_frame",
     "not_ready",
@@ -229,6 +237,8 @@ pub(super) const HOST_ERROR_CODES: [&str; 22] = [
     "surface_unsupported",
     "turn_unknown",
     "agent_access_denied",
+    "host_frozen",
+    "host_moved",
     "internal_error",
     "not_this_device",
     "too_large",

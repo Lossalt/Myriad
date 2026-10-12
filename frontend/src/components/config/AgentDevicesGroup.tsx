@@ -1,4 +1,9 @@
-import type { SyncDevice, SyncDeviceList } from '../../services/agent/agentApi'
+import type {
+  HostLease,
+  HostMove,
+  SyncDevice,
+  SyncDeviceList,
+} from '../../services/agent/agentApi'
 import type { ManagedListItem, ManagedListStat } from '../settings/ManagedList'
 import { LuMonitor, LuPlus } from '@lib/icons'
 
@@ -88,6 +93,28 @@ export function AgentDevicesGroup() {
     [c.agentDevicesRemoveFailed, fail, load],
   )
 
+  // A move of her: confirmed (she freezes) or called off (she is back as
+  // she was). Only here, logged in; a device token cannot do either.
+  const moveAction = useCallback(
+    async (action: 'confirm' | 'cancel', move: HostMove) => {
+      setWorking(true)
+      try {
+        const { host } =
+          action === 'confirm'
+            ? await agentService.confirmHostMove(move.id)
+            : await agentService.cancelHostMove(move.id)
+        setList((current) => (current ? { ...current, host } : current))
+        await load()
+      } catch (error) {
+        fail(error, c.agentHostActionFailed)
+        await load()
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentHostActionFailed, fail, load],
+  )
+
   const when = useCallback(
     (at: string) => new Date(at).toLocaleString(locale || undefined),
     [locale],
@@ -96,8 +123,13 @@ export function AgentDevicesGroup() {
   const devices = useMemo(() => list?.devices ?? [], [list])
   const live = devices.filter((device) => !device.revokedAt)
 
-  // The site is her host until choosing a host arrives; there is no parent
-  // end to pick here.
+  const host: HostLease | null = list?.host ?? null
+  const move = host?.move ?? null
+  const deviceName = (id: string, name: string | null) =>
+    id === 'site' ? c.agentHostSite : (name ?? c.agentHostUnknownDevice)
+
+  // Choosing a host here comes later (H4); for now this says where she
+  // lives, and a move a device asked for is confirmed or turned down here.
   const stats: ManagedListStat[] = [
     {
       key: 'live',
@@ -116,6 +148,22 @@ export function AgentDevicesGroup() {
 
   const items: ManagedListItem[] = devices.map((device) => {
     const badges: ManagedListItem['badges'] = []
+    if (!device.revokedAt && host?.holder === device.id) {
+      badges.push({ label: c.agentDevicesHostBadge, tone: 'default' })
+    }
+    if (
+      !device.revokedAt &&
+      move &&
+      (move.from === device.id || move.to === device.id)
+    ) {
+      badges.push({
+        label:
+          move.phase === 'proposed'
+            ? c.agentDevicesMoveAsked
+            : c.agentDevicesMoving,
+        tone: 'warn',
+      })
+    }
     if (device.revokedAt) {
       badges.push({ label: removedWhy(device), tone: 'muted' })
     } else if (device.stale && !device.connected) {
@@ -181,6 +229,83 @@ export function AgentDevicesGroup() {
       icon={<LuMonitor />}
       description={c.agentDevicesDesc}
     >
+      {host ? (
+        <p className="setting-hint">
+          {host.state === 'vacant'
+            ? c.agentHostVacant
+            : format(c.agentHostLivesOn, {
+                where: deviceName(host.holder, host.holderName),
+                lineage: host.lineage.slice(0, 8),
+                epoch: host.epoch,
+              })}
+        </p>
+      ) : null}
+      {move && move.phase === 'proposed' ? (
+        <InfoActionCard
+          title={format(c.agentHostProposedTitle, {
+            name: deviceName(
+              move.kind === 'merge' ? move.from : move.to,
+              move.kind === 'merge' ? move.fromName : move.toName,
+            ),
+            what:
+              move.kind === 'merge'
+                ? c.agentHostKindMerge
+                : c.agentHostKindMove,
+          })}
+          tone="info"
+          actions={[
+            {
+              key: 'confirm',
+              label: c.agentHostConfirm,
+              onClick: () => void moveAction('confirm', move),
+              disabled: working,
+              variant: 'primary',
+              confirm: c.agentHostConfirmConfirm,
+            },
+            {
+              key: 'decline',
+              label: c.agentHostDecline,
+              onClick: () => void moveAction('cancel', move),
+              disabled: working,
+              variant: 'secondary',
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">{c.agentHostProposedBody}</p>
+        </InfoActionCard>
+      ) : null}
+      {move && move.phase !== 'proposed' ? (
+        <InfoActionCard
+          title={format(c.agentHostFrozenTitle, { step: move.step })}
+          tone="warn"
+          actions={[
+            {
+              key: 'cancel',
+              label: c.agentHostCancel,
+              onClick: () => void moveAction('cancel', move),
+              disabled:
+                working ||
+                move.phase === 'committed' ||
+                move.phase === 'retired',
+              variant: 'secondary',
+              confirm: c.agentHostCancelConfirm,
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">
+            {format(c.agentHostFrozenBody, {
+              what:
+                move.kind === 'merge'
+                  ? c.agentHostKindMerge
+                  : c.agentHostKindMove,
+              name: deviceName(
+                move.kind === 'merge' ? move.from : move.to,
+                move.kind === 'merge' ? move.fromName : move.toName,
+              ),
+            })}
+          </p>
+        </InfoActionCard>
+      ) : null}
       {issued ? (
         <InfoActionCard
           title={format(c.agentDevicesTokenTitle, { name: issued.name })}

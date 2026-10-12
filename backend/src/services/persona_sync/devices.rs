@@ -3,9 +3,8 @@
 //! The site owner adds a device and copies its token once; only the token's
 //! sha256 is kept. A token is good for syncing her and for her link, and
 //! nothing else: it is not a JWT, so every other route refuses it. A device stays until the
-//! owner removes it or it leaves; tokens do not expire. One live device, or
-//! else the site itself, is her parent end: the one where her own life
-//! happens.
+//! owner removes it or it leaves; tokens do not expire. Which end she lives
+//! on is not a device's to say: that is her host lease (`super::lease`).
 
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use rand::Rng;
@@ -38,33 +37,6 @@ const DEVICES_LOCK: i64 = 0x4D59_5359_4E43_4456; // "MYSYNCDV"
 
 const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// Which end her own life happens at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    /// Her diary, her nights, what she does on her own and reaching out
-    /// happen here.
-    Parent,
-    /// Only what happens face to face; what she lives syncs to the parent.
-    Child,
-}
-
-impl Role {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Role::Parent => "parent",
-            Role::Child => "child",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "parent" => Some(Role::Parent),
-            "child" => Some(Role::Child),
-            _ => None,
-        }
-    }
-}
-
 /// Why a device stopped being one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevokeReason {
@@ -90,7 +62,6 @@ pub struct Device {
     pub id: String,
     pub user_id: i32,
     pub name: String,
-    pub role: Role,
     pub token_hint: String,
     pub lineage: Option<String>,
     pub created_at: DateTime<FixedOffset>,
@@ -108,12 +79,10 @@ impl Device {
     }
 
     fn from_row(row: &QueryResult) -> Result<Self, DbErr> {
-        let role: String = row.try_get("", "role")?;
         Ok(Self {
             id: row.try_get("", "id")?,
             user_id: row.try_get("", "user_id")?,
             name: row.try_get("", "name")?,
-            role: Role::parse(&role).unwrap_or(Role::Child),
             token_hint: row.try_get("", "token_hint")?,
             lineage: row.try_get("", "lineage")?,
             created_at: row.try_get("", "created_at")?,
@@ -124,7 +93,7 @@ impl Device {
     }
 }
 
-const COLUMNS: &str = "id, user_id, name, role, token_hint, lineage, created_at, last_seen_at, \
+const COLUMNS: &str = "id, user_id, name, token_hint, lineage, created_at, last_seen_at, \
                        revoked_at, revoked_reason";
 
 /// 32 random bytes as a fixed-width base62 number.
@@ -210,8 +179,8 @@ pub async fn add(
         .query_one_raw(statement(
             &format!(
                 "INSERT INTO agent_sync_devices \
-                 (id, user_id, name, scope, role, token_hash, token_hint, created_at) \
-                 VALUES ($1, $2, $3, $4, 'child', $5, $6, NOW()) RETURNING {COLUMNS}"
+                 (id, user_id, name, scope, token_hash, token_hint, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING {COLUMNS}"
             ),
             vec![
                 id.into(),
@@ -367,71 +336,6 @@ pub async fn seen<C: ConnectionTrait>(db: &C, id: &str) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// Gives every device that was made her parent end back to being a child:
-/// the site is her host (D10), and a device cannot be one here. Idempotent;
-/// the persona worker runs it once as it starts. Host leases replace roles
-/// with a migration later. How many rows it changed.
-pub async fn heal_parent_rows<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
-    Ok(db
-        .execute_raw(statement(
-            "UPDATE agent_sync_devices SET role = 'child' WHERE role = 'parent'",
-            vec![],
-        ))
-        .await?
-        .rows_affected())
-}
-
-/// The live device that is her parent end, if one is; otherwise the site is.
-pub async fn parent<C: ConnectionTrait>(db: &C, user_id: i32) -> Result<Option<String>, DbErr> {
-    db.query_one_raw(statement(
-        "SELECT id FROM agent_sync_devices \
-         WHERE user_id = $1 AND role = 'parent' AND revoked_at IS NULL",
-        vec![user_id.into()],
-    ))
-    .await?
-    .map(|row| row.try_get::<String>("", "id"))
-    .transpose()
-}
-
-/// Makes the live device `id` her parent end (any other parent device
-/// becomes a child) or a child (the site is the parent again unless another
-/// device is). `None` when the device is not live.
-pub async fn set_role(
-    db: &DatabaseConnection,
-    user_id: i32,
-    id: &str,
-    role: Role,
-) -> Result<Option<Device>, DbErr> {
-    let txn = db.begin().await?;
-    txn.execute_raw(statement(
-        "SELECT pg_advisory_xact_lock($1)",
-        vec![DEVICES_LOCK.into()],
-    ))
-    .await?;
-    if role == Role::Parent {
-        txn.execute_raw(statement(
-            "UPDATE agent_sync_devices SET role = 'child' \
-             WHERE user_id = $1 AND role = 'parent' AND revoked_at IS NULL AND id <> $2",
-            vec![user_id.into(), id.into()],
-        ))
-        .await?;
-    }
-    let device = txn
-        .query_one_raw(statement(
-            &format!(
-                "UPDATE agent_sync_devices SET role = $3 \
-                 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING {COLUMNS}"
-            ),
-            vec![id.into(), user_id.into(), role.as_str().into()],
-        ))
-        .await?
-        .as_ref()
-        .map(Device::from_row)
-        .transpose()?;
-    txn.commit().await?;
-    Ok(device)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,7 +367,7 @@ mod tests {
         assert_eq!(token_hash(&token).len(), 64);
     }
 
-    /// Adding, the token, the limit, roles and removal, on a real database
+    /// Adding, the token, the limit and removal, on a real database
     /// (an isolated schema; skipped without a test database).
     #[tokio::test]
     async fn devices_on_a_database() {
@@ -481,7 +385,6 @@ mod tests {
         let (mac, token) = add(db, 41, "  MacBook  ").await.unwrap();
         assert_eq!(mac.name, "MacBook");
         assert!(mac.id.starts_with("dev_") && mac.id.len() == 36);
-        assert_eq!(mac.role, Role::Child);
         assert!(token.starts_with(&mac.token_hint));
         let stored: String = db
             .query_one_raw(statement(
@@ -507,44 +410,14 @@ mod tests {
         seen(db, &mac.id).await.unwrap();
         assert!(list(db, 41).await.unwrap()[0].last_seen_at.is_some());
 
-        // One parent at a time; none means the site.
-        assert_eq!(parent(db, 41).await.unwrap(), None);
+        // A removed device is not one any more.
         let (other, _) = add(db, 41, "iMac").await.unwrap();
-        set_role(db, 41, &mac.id, Role::Parent)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            parent(db, 41).await.unwrap().as_deref(),
-            Some(mac.id.as_str())
-        );
-        set_role(db, 41, &other.id, Role::Parent)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            parent(db, 41).await.unwrap().as_deref(),
-            Some(other.id.as_str())
-        );
-        let roles: Vec<Role> = list(db, 41).await.unwrap().iter().map(|d| d.role).collect();
-        assert_eq!(
-            roles.iter().filter(|role| **role == Role::Parent).count(),
-            1
-        );
-        // A removed parent leaves the site as the parent.
         revoke(db, 41, &other.id, RevokeReason::ByOwner)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(parent(db, 41).await.unwrap(), None);
         assert!(
             revoke(db, 41, &other.id, RevokeReason::ByOwner)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            set_role(db, 41, &other.id, Role::Parent)
                 .await
                 .unwrap()
                 .is_none()
@@ -580,19 +453,6 @@ mod tests {
             Err(Refused::Revoked)
         ));
 
-        // A device left as her parent end from before is a child again once
-        // the persona worker starts; the site is her host. Twice is once.
-        let (left, _) = add(db, 41, "left as parent").await.unwrap();
-        set_role(db, 41, &left.id, Role::Parent)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(parent(db, 41).await.unwrap(), Some(left.id.clone()));
-        // The Mac removed above while it was the parent end is healed too.
-        assert_eq!(heal_parent_rows(db).await.unwrap(), 2);
-        assert_eq!(parent(db, 41).await.unwrap(), None);
-        assert_eq!(heal_parent_rows(db).await.unwrap(), 0);
-
         fixture.close().await;
     }
 
@@ -604,7 +464,6 @@ mod tests {
             id: "dev_1".into(),
             user_id: 1,
             name: "Mac".into(),
-            role: Role::Child,
             token_hint: "mys_abcdefgh".into(),
             lineage: None,
             created_at: at(90).unwrap(),

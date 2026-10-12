@@ -12,7 +12,7 @@
 //! revision its next write would get). One more than five minutes ahead of
 //! the site's clock is refused, 409 `clock_ahead` with the site's time, so
 //! the device can say its clock is wrong and sync again once it is right
-//! (`myriad_persona_sync::hlc::check_ahead`). `hello` and `role` require it;
+//! (`myriad_persona_sync::hlc::check_ahead`). `hello` requires it;
 //! `leave` never refuses it, so a device with a wrong clock can still leave.
 //! The link does not read it at all: nothing on the link is ordered by a
 //! device's clock.

@@ -1,17 +1,16 @@
--- Syncing her with other platforms (crates/myriad-persona-sync).
+-- Syncing her with other platforms (crates/myriad-persona-sync), and where
+-- she lives.
 -- Created by migration 004 and, for databases already past it, by the
 -- startup heal `ensure_persona_sync_tables`; both run this same file.
 
 -- A device that syncs her with the site, one row each. The token is kept
 -- only as its sha256; `token_hint` is the `mys_` prefix and 8 characters.
--- `role`: the parent end is where her own life happens. At most one live
--- device is the parent; with none, the site is.
+-- Where she lives is not a device's: it is the host lease below.
 CREATE TABLE IF NOT EXISTS agent_sync_devices (
     id VARCHAR(40) PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name VARCHAR(80) NOT NULL,
     scope VARCHAR(32) NOT NULL DEFAULT 'persona-sync',
-    role VARCHAR(8) NOT NULL DEFAULT 'child' CHECK (role IN ('parent', 'child')),
     token_hash VARCHAR(64) NOT NULL UNIQUE,
     token_hint VARCHAR(12) NOT NULL,
     lineage VARCHAR(36),
@@ -22,8 +21,56 @@ CREATE TABLE IF NOT EXISTS agent_sync_devices (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_sync_devices_user_created
     ON agent_sync_devices (user_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sync_devices_one_parent
-    ON agent_sync_devices (user_id) WHERE role = 'parent' AND revoked_at IS NULL;
+-- The parent/child flag of the old design, retired: a database from before
+-- loses the column and its one-parent index here.
+DROP INDEX IF EXISTS idx_agent_sync_devices_one_parent;
+ALTER TABLE agent_sync_devices DROP COLUMN IF EXISTS role;
+
+-- Her host lease: the one end she lives on (services/persona_sync/lease.rs).
+-- One row, because the site has one her. `holder` is `site` or the id of the
+-- device she lives on; `lineage` is her birth (issued with the row, kept
+-- across every move); `epoch` goes up by one at each commit or reclaim and
+-- never down; `state` is live, frozen (a move under way: no end has her) or
+-- vacant (she is not here: the device she lived on was removed). `move` is
+-- the move in progress, if any. No key, token or grant is ever in it.
+CREATE TABLE IF NOT EXISTS agent_host_lease (
+    id VARCHAR(8) PRIMARY KEY CHECK (id = 'her'),
+    holder VARCHAR(40) NOT NULL,
+    lineage VARCHAR(36) NOT NULL,
+    epoch BIGINT NOT NULL CHECK (epoch >= 1),
+    state VARCHAR(8) NOT NULL CHECK (state IN ('live', 'frozen', 'vacant')),
+    move JSONB,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+-- The epoch only goes up and the lineage never changes in place: a new birth
+-- is a new row.
+CREATE OR REPLACE FUNCTION agent_host_lease_guard() RETURNS trigger AS $$
+BEGIN
+    IF NEW.epoch < OLD.epoch THEN
+        RAISE EXCEPTION 'agent_host_lease: epoch % may not go back to %', OLD.epoch, NEW.epoch;
+    END IF;
+    IF NEW.lineage <> OLD.lineage THEN
+        RAISE EXCEPTION 'agent_host_lease: the lineage does not change in place';
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS agent_host_lease_guard ON agent_host_lease;
+CREATE TRIGGER agent_host_lease_guard BEFORE UPDATE ON agent_host_lease
+    FOR EACH ROW EXECUTE FUNCTION agent_host_lease_guard();
+-- Every change is announced on `myriad_her_host` as it commits, so each
+-- process (and each of its links and drivers) reads the lease again.
+CREATE OR REPLACE FUNCTION agent_host_lease_changed() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('myriad_her_host', OLD.epoch::text);
+    ELSE
+        PERFORM pg_notify('myriad_her_host', NEW.epoch::text);
+    END IF;
+    RETURN NULL;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS agent_host_lease_changed ON agent_host_lease;
+CREATE TRIGGER agent_host_lease_changed AFTER INSERT OR UPDATE OR DELETE ON agent_host_lease
+    FOR EACH ROW EXECUTE FUNCTION agent_host_lease_changed();
 
 -- What moved her affect toward each person, one row per change, appended in
 -- the same transaction as the change itself (store/addressee.rs). `at` is

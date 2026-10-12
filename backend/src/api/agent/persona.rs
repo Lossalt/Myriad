@@ -413,6 +413,12 @@ pub async fn delete_persona(
 ) -> Result<Json<Value>, HttpError> {
     require_merope_enabled().await?;
     let _user_id = require_site_owner(&claims, &db).await?;
+    // Not while she is moving: the move is called off first.
+    if crate::services::persona_sync::lease::place()
+        == crate::services::persona_sync::lease::Where::Moving
+    {
+        crate::services::persona_sync::lease::refuse_while_away()?;
+    }
     let transaction = db
         .begin()
         .await

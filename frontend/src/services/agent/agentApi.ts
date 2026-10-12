@@ -53,8 +53,6 @@ export interface SyncDevice {
   name: string
   /** `mys_` and the first 8 characters, to tell tokens apart. */
   tokenHint: string
-  /** The parent end is where her own life happens. */
-  role: 'parent' | 'child'
   createdAt: string
   lastSeenAt: string | null
   revokedAt: string | null
@@ -65,10 +63,44 @@ export interface SyncDevice {
   connected?: boolean
 }
 
+/** A move of her between ends, in progress (her host lease). */
+export interface HostMove {
+  id: string
+  /** `move`: she goes to live on `to`; `merge`: the her on `from` joins the site's. */
+  kind: 'move' | 'merge'
+  /** `site` or a device id; the names are the devices' as the owner gave them. */
+  from: string
+  fromName: string | null
+  to: string
+  toName: string | null
+  phase:
+    'proposed' | 'frozen' | 'transferring' | 'applied' | 'committed' | 'retired'
+  /** 1–6, as both ends show it. */
+  step: number
+  /** Who asked: the owner here (confirmed already) or the device (waits for the owner). */
+  by: 'owner' | 'device'
+  startedAt: string
+  confirmedAt: string | null
+}
+
+/** Where she lives (`agent_host_lease`): one end, her lineage and how many times she moved. */
+export interface HostLease {
+  /** `site` or the id of the device she lives on. */
+  holder: string
+  holderName: string | null
+  lineage: string
+  /** Goes up by one each time she changes host; never down. */
+  epoch: number
+  /** `frozen`: a move is under way and no end has her. */
+  state: 'live' | 'frozen' | 'vacant'
+  move: HostMove | null
+  updatedAt: string
+}
+
 export interface SyncDeviceList {
   devices: SyncDevice[]
-  /** `site`, or the id of the live device that is the parent end. */
-  parent: string
+  /** Null while the site has no her. */
+  host: HostLease | null
   limit: number
 }
 
@@ -451,6 +483,20 @@ class AgentService {
   async removeSyncDevice(id: string): Promise<{ device: SyncDevice }> {
     return apiService.delete(
       `${this.baseUrl}/devices/${encodeURIComponent(id)}`,
+    )
+  }
+
+  /** Confirms, logged in, a move of her a device asked for: she is frozen until it is done or called off. */
+  async confirmHostMove(id: string): Promise<{ host: HostLease | null }> {
+    return apiService.post(
+      `${this.baseUrl}/host/moves/${encodeURIComponent(id)}/confirm`,
+    )
+  }
+
+  /** Calls a move off before its commit (or turns down one a device asked for): she is back as she was. */
+  async cancelHostMove(id: string): Promise<{ host: HostLease | null }> {
+    return apiService.post(
+      `${this.baseUrl}/host/moves/${encodeURIComponent(id)}/cancel`,
     )
   }
 

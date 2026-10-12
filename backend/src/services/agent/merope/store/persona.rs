@@ -318,6 +318,8 @@ where
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
         .exec(db)
         .await?;
+    // The next her is another birth, with another lineage.
+    crate::services::persona_sync::lease::forget_birth(db).await?;
     super::super::clock::note_zone(None);
     // How often she has talked with people outside the community.
     super::super::strangers::forget_counts(db).await?;

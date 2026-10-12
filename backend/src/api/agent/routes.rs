@@ -639,7 +639,7 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
-        // 同步她的设备：站长在站点上添加、列出、移除、指定母端（会话凭据，只限站长）
+        // 同步她的设备：站长在站点上添加、列出、移除（会话凭据，只限站长）
         .route(
             "/devices",
             get(super::devices::list_devices)
@@ -656,9 +656,32 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        // 她的主机租约：她住在哪、开始 / 确认 / 取消一次搬家（会话凭据，只限站长；
+        // 写站点的搬家只能在这里确认，设备令牌不行）
         .route(
-            "/devices/{device_id}/role",
-            put(super::devices::set_device_role).route_layer(from_fn_with_state(
+            "/host",
+            get(super::devices::get_host).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/moves",
+            post(super::devices::start_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/moves/{move_id}/confirm",
+            post(super::devices::confirm_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/moves/{move_id}/cancel",
+            post(super::devices::cancel_move).route_layer(from_fn_with_state(
                 app_state.clone(),
                 middleware::auth::auth_middleware,
             )),
@@ -693,8 +716,15 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
             )),
         )
         .route(
-            "/sync/role",
-            put(super::sync::sync_role).route_layer(from_fn_with_state(
+            "/sync/moves",
+            post(super::sync::sync_propose_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/cancel",
+            post(super::sync::sync_cancel_move).route_layer(from_fn_with_state(
                 app_state.clone(),
                 middleware::sync_device::sync_device_auth,
             )),

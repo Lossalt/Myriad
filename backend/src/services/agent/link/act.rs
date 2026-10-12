@@ -125,6 +125,13 @@ async fn ask(
     cap: Option<Vec<String>>,
     accept: bool,
 ) -> Result<String, &'static str> {
+    // While she is not here (moving, or living elsewhere) nothing is asked
+    // in her name.
+    match crate::services::persona_sync::lease::place() {
+        crate::services::persona_sync::lease::Where::Here => {}
+        crate::services::persona_sync::lease::Where::Moving => return Err("host_frozen"),
+        _ => return Err("host_moved"),
+    }
     let owner = proposal.user_id;
     let resting = RESTING.lock().map(|set| set.clone()).unwrap_or_default();
     let wanted = proposal.proposal.device_id.as_deref();

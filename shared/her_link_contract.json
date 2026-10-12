@@ -7,7 +7,7 @@
     "header": "Authorization",
     "scheme": "Bearer",
     "tokenPrefix": "mys_",
-    "description": "The device token the site owner made under Agent settings, devices. It is checked before the upgrade, without X-Sync-Clock. A refusal is a plain HTTP answer {error, code} and no upgrade."
+    "description": "The device token the site owner made under Agent settings, devices. It is checked before the upgrade, without X-Sync-Clock. A refusal is a plain HTTP answer {error, code} and no upgrade. While she is moving (her host lease is frozen) the upgrade is refused with host_frozen; while she lives on another end, with host_moved and host: {kind, name}, the end she lives on (kind app and the device's name), or null when the site does not know. A plain GET of the path answers the same refusal, for a child that cannot read a refused upgrade."
   },
   "refusals": {
     "device_token_required": 401,
@@ -15,6 +15,8 @@
     "device_revoked": 401,
     "owner_changed": 403,
     "site_owner_required": 403,
+    "host_frozen": 403,
+    "host_moved": 403,
     "internal_error": 500
   },
   "timing": {
@@ -103,14 +105,14 @@
       "delivery": "handshake",
       "required": ["protocol", "role", "surface"],
       "optional": ["capabilities", "app", "lineage", "hostEpoch"],
-      "description": "The child's first frame, within helloTimeoutMs of the upgrade. role is child in protocol 1: asking to be the host while the site is the host closes the link with host_is_site. surface is the kind of child (app). capabilities is what this end can do, from the list above; unknown ones are dropped. app is {name, version} for logs. lineage and hostEpoch are null until host leases exist."
+      "description": "The child's first frame, within helloTimeoutMs of the upgrade. role is child in protocol 1: asking to be the host while the site is the host closes the link with host_is_site. surface is the kind of child (app). capabilities is what this end can do, from the list above; unknown ones are dropped. app is {name, version} for logs. lineage and hostEpoch are what this child last heard in a welcome (null the first time); the host does not act on them yet."
     },
     "welcome": {
       "from": "host",
       "delivery": "handshake",
       "required": ["protocol", "role", "host", "deviceId", "heartbeatMs", "capabilities", "turns", "serverTime"],
       "optional": ["deviceName", "lineage", "hostEpoch"],
-      "description": "The host's answer to hello. host is where she lives (site). deviceId and deviceName are this device as the site knows it. capabilities is the child's list as accepted. turns is this device's recent turns the host still has: [{turnId, runId, sessionId?, lastSequence, completed}], newest first, so a child can tell what to resume. serverTime is milliseconds since the epoch. After welcome the host sends mood, when her persona is on."
+      "description": "The host's answer to hello. host is where she lives (site). lineage is her birth and hostEpoch her host lease's epoch, which only goes up: a child that later hears a higher epoch knows she moved in between. Both are null while the site has no her. deviceId and deviceName are this device as the site knows it. capabilities is the child's list as accepted. turns is this device's recent turns the host still has: [{turnId, runId, sessionId?, lastSequence, completed}], newest first, so a child can tell what to resume. serverTime is milliseconds since the epoch. After welcome the host sends mood, when her persona is on."
     },
     "input": {
       "from": "child",
@@ -365,6 +367,8 @@
     "surface_unsupported": "A surface this host does not take input from.",
     "turn_unknown": "run.resume for a turn the host does not have.",
     "agent_access_denied": "The site owner may not use the agent now.",
+    "host_frozen": "run.rejected: she is moving between her ends; nothing reaches her until the move is done or cancelled.",
+    "host_moved": "run.rejected: she does not live on this site now.",
     "internal_error": "Something failed on the host; trying again later may work.",
     "not_this_device": "A runId that is not one this device's turns started.",
     "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB; work.recall: query limits.maxTextChars characters).",
@@ -382,8 +386,8 @@
     "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },
     "owner_changed": { "code": 4002, "forgetCredentials": true, "reconnect": false, "description": "The site has another owner; this device was the old owner's." },
     "replaced": { "code": 4003, "forgetCredentials": false, "reconnect": false, "description": "Another connection of this same device took over." },
-    "host_moved": { "code": 4004, "forgetCredentials": false, "reconnect": true, "description": "Reserved for host leases: she lives somewhere else now." },
-    "host_frozen": { "code": 4005, "forgetCredentials": false, "reconnect": true, "description": "Reserved for host leases: she is moving." },
+    "host_moved": { "code": 4004, "forgetCredentials": false, "reconnect": true, "description": "Her host lease moved her to another end, or the end she lived on was removed. The upgrade is then refused with host_moved, naming where she lives; a child reconnects seldom." },
+    "host_frozen": { "code": 4005, "forgetCredentials": false, "reconnect": true, "description": "She is moving: her host lease is frozen and no end has her. The upgrade is refused with host_frozen until the move is done or cancelled; a child keeps reconnecting with backoff and says she is moving." },
     "host_is_site": { "code": 4009, "forgetCredentials": false, "reconnect": false, "description": "hello asked for the host role while the site is her host." },
     "bad_frame": { "code": 4400, "forgetCredentials": false, "reconnect": true, "description": "The hello could not be taken: not an envelope, a body without what it needs, or a role or surface this host does not know." },
     "unsupported_protocol": { "code": 4406, "forgetCredentials": false, "reconnect": false, "description": "hello.protocol is not one this host speaks." },

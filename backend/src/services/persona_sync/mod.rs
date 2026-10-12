@@ -1,5 +1,6 @@
 //! Syncing her with other platforms (see `myriad_persona_sync` for the
-//! format): the devices that do it, and what the site has of her.
+//! format): the devices that do it, what the site has of her, and where she
+//! lives ([`lease`]).
 //!
 //! Only what is hers or the site owner's crosses: her own memories, and the
 //! owner's private ones whose audience is the owner alone. Nobody else's
@@ -8,6 +9,7 @@
 pub mod assets;
 pub mod devices;
 pub mod fields;
+pub mod lease;
 mod outside;
 pub mod snapshot;
 
@@ -18,9 +20,6 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, Statement};
 pub const PULL_MAX_ENTITIES: usize = 2000;
 pub const PULL_DEFAULT_ENTITIES: usize = 500;
 pub const PULL_MAX_BYTES: usize = 4 * 1024 * 1024;
-/// What a push will take, once pushing exists.
-pub const PUSH_MAX_ENTITIES: usize = 500;
-pub const PUSH_MAX_BYTES: usize = 1024 * 1024;
 /// Largest asset served or taken.
 pub const ASSET_MAX_BYTES: u64 = 24 * 1024 * 1024;
 

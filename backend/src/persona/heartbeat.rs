@@ -55,6 +55,13 @@ async fn execute(
     task: agent::heartbeat::HeartbeatTask,
     minute_bucket: i64,
 ) {
+    // A scheduled task runs as her Work: while she is not on the site (moving,
+    // or living on another end) it is left unclaimed, as if not yet due.
+    if task.id != agent::heartbeat::SEO_REVIEW_TASK_ID
+        && crate::services::persona_sync::lease::paused("scheduled tasks")
+    {
+        return;
+    }
     // 多副本 CAS：未抢到（另一实例已执行或已完成）或认领查询失败都跳过本轮
     if agent::heartbeat::HeartbeatManager::try_claim_execution(&task_db, &task.id, minute_bucket)
         .await

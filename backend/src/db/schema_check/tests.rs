@@ -49,6 +49,7 @@ fn test_folded_extension_tables_in_expected_schema() {
         "agent_memory_embeddings",
         "agent_memory_cues",
         "agent_sync_devices",
+        "agent_host_lease",
         "agent_affect_events",
         "agent_affect_anchor",
         "agent_persona_field_history",
@@ -599,13 +600,21 @@ VALUES
     );
 
     // The generic path puts back a missing index, in its declared shape, and
-    // a database that ran 004 before the sync devices table gets it. A
-    // persona row from before her zone gets the column, empty (the site's).
+    // a database that ran 004 before the host lease gets it. Its devices still
+    // carry the retired parent/child flag and its one-parent index, which go.
+    // A persona row from before her zone gets the column, empty (the site's).
     db.execute_unprepared(
         r#"
 DROP INDEX idx_phantasi_items_source_recent;
 DROP INDEX idx_metadata_history_user_date;
-DROP TABLE agent_sync_devices;
+DROP TABLE agent_host_lease;
+DROP FUNCTION agent_host_lease_guard(), agent_host_lease_changed();
+ALTER TABLE agent_sync_devices ADD COLUMN role VARCHAR(8) NOT NULL DEFAULT 'child'
+    CHECK (role IN ('parent', 'child'));
+CREATE UNIQUE INDEX idx_agent_sync_devices_one_parent
+    ON agent_sync_devices (user_id) WHERE role = 'parent' AND revoked_at IS NULL;
+INSERT INTO agent_sync_devices (id, user_id, name, role, token_hash, token_hint, created_at)
+VALUES ('dev_schema_fixture', 2147483647, 'old Mac', 'parent', 'h', 'mys_fixture', NOW());
 DROP TABLE agent_affect_anchor;
 DROP TABLE agent_affect_events;
 DROP TABLE agent_persona_field_history;
@@ -616,6 +625,7 @@ VALUES ('own_schema_fixture', 'doing', '去河边走了一圈', 'own', 'own', NO
 ALTER TABLE agent_memories DROP COLUMN superseded_by, DROP COLUMN origin;
 INSERT INTO agent_proactive_messages (user_id, role, content, created_at)
 VALUES (2147483647, 'assistant', '在忙吗？', NOW());
+DROP TRIGGER trg_agent_proactive_messages_conversation_updated ON agent_proactive_messages;
 ALTER TABLE agent_proactive_messages DROP COLUMN say_id, DROP COLUMN metadata;
 "#,
     )
@@ -633,21 +643,60 @@ ALTER TABLE agent_proactive_messages DROP COLUMN say_id, DROP COLUMN metadata;
             .unwrap()
             .contains("published_at DESC NULLS LAST, id DESC")
     );
-    let devices_index = db
+    // The retired flag is gone, the device kept.
+    let retired = db
         .query_one_raw(Statement::from_string(
             DatabaseBackend::Postgres,
-            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() \
-             AND indexname = 'idx_agent_sync_devices_one_parent'",
+            "SELECT \
+             (SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() \
+              AND indexname = 'idx_agent_sync_devices_one_parent')::BIGINT AS indexes, \
+             (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() \
+              AND table_name = 'agent_sync_devices' AND column_name = 'role')::BIGINT AS columns, \
+             (SELECT COUNT(*) FROM agent_sync_devices WHERE id = 'dev_schema_fixture')::BIGINT AS kept",
         ))
         .await
         .unwrap()
-        .expect("the heal creates the sync devices table and its one-parent index");
-    assert!(
-        devices_index
-            .try_get::<String>("", "indexdef")
-            .unwrap()
-            .contains("WHERE")
+        .unwrap();
+    assert_eq!(
+        (
+            retired.try_get::<i64>("", "indexes").unwrap(),
+            retired.try_get::<i64>("", "columns").unwrap(),
+            retired.try_get::<i64>("", "kept").unwrap(),
+        ),
+        (0, 0, 1),
+        "the one-parent index and the role column go, the device stays"
     );
+    // The lease is back with its guard: the epoch never goes down.
+    db.execute_unprepared(
+        "INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, updated_at) \
+         VALUES ('her', 'site', 'lineage-fixture', 2, 'live', NOW())",
+    )
+    .await
+    .expect("the heal creates the host lease");
+    assert!(
+        db.execute_unprepared("UPDATE agent_host_lease SET epoch = 1")
+            .await
+            .is_err(),
+        "the epoch only goes up"
+    );
+    assert!(
+        db.execute_unprepared("UPDATE agent_host_lease SET lineage = 'another'")
+            .await
+            .is_err(),
+        "the lineage does not change in place"
+    );
+    assert!(
+        db.execute_unprepared(
+            "INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, updated_at) \
+             VALUES ('second', 'site', 'x', 1, 'live', NOW())"
+        )
+        .await
+        .is_err(),
+        "one lease"
+    );
+    db.execute_unprepared("DELETE FROM agent_host_lease; DELETE FROM agent_sync_devices WHERE id = 'dev_schema_fixture'")
+        .await
+        .expect("remove fixture lease and device");
     for table in [
         "agent_affect_events",
         "agent_affect_anchor",

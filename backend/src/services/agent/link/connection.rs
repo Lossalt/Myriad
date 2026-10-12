@@ -413,6 +413,22 @@ impl Link {
         if !CONTRACT.surfaces.contains(&hello.surface) {
             return Some(Close::BadFrame);
         }
+        // Where she lives, as it stands now: a child of a her who is moving
+        // or lives elsewhere is not welcomed (the upgrade is refused the same).
+        let lease = match crate::services::persona_sync::lease::read(&self.db).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                tracing::warn!(%error, device = %self.device.id, "[link] could not read her host lease");
+                return Some(Close::Unavailable);
+            }
+        };
+        match lease.as_ref().map(|lease| lease.place()) {
+            None | Some(crate::services::persona_sync::lease::Where::Here) => {}
+            Some(crate::services::persona_sync::lease::Where::Moving) => {
+                return Some(Close::HostFrozen);
+            }
+            Some(_) => return Some(Close::HostMoved),
+        }
         let mut capabilities: Vec<String> = Vec::new();
         for capability in hello.capabilities {
             if CONTRACT.capabilities.contains(&capability) && !capabilities.contains(&capability) {
@@ -443,8 +459,8 @@ impl Link {
             "host": "site",
             "deviceId": self.device.id,
             "deviceName": self.device.name,
-            "lineage": self.device.lineage,
-            "hostEpoch": Value::Null,
+            "lineage": lease.as_ref().map(|lease| lease.lineage.clone()),
+            "hostEpoch": lease.as_ref().map(|lease| lease.epoch),
             "heartbeatMs": self.timing.heartbeat.as_millis() as u64,
             "capabilities": &capabilities,
             "turns": told,

@@ -1,10 +1,13 @@
 //! The site owner's devices that sync her: add one (its token is shown this
-//! once), list them, remove one, and say which end is her parent. Session
-//! routes, owner only.
+//! once), list them, remove one; and her host lease: where she lives, and a
+//! move of her started, confirmed or called off. Session routes, owner only:
+//! a move that writes to the site's her is confirmed here, logged in, never
+//! by a device token alone.
 
 use super::*;
 use crate::error::HttpError;
 use crate::services::persona_sync::devices::{self, AddError, Device, RevokeReason};
+use crate::services::persona_sync::lease;
 use axum::response::IntoResponse;
 use myriad_error::AppError;
 
@@ -19,7 +22,6 @@ pub(crate) fn device_json(device: &Device, now: chrono::DateTime<Utc>) -> Value 
         "id": device.id,
         "name": device.name,
         "tokenHint": device.token_hint,
-        "role": device.role.as_str(),
         "createdAt": device.created_at.to_rfc3339(),
         "lastSeenAt": device.last_seen_at.map(|at| at.to_rfc3339()),
         "revokedAt": device.revoked_at.map(|at| at.to_rfc3339()),
@@ -31,14 +33,14 @@ pub(crate) fn device_json(device: &Device, now: chrono::DateTime<Utc>) -> Value 
     })
 }
 
-/// The owner's devices, which end is her parent, and the limit.
+/// The owner's devices, where she lives, and the limit.
 async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpError> {
     let list = devices::list(db, owner).await.map_err(store_failed)?;
-    let parent = devices::parent(db, owner).await.map_err(store_failed)?;
+    let host = lease::shown(db).await.map_err(store_failed)?;
     let now = Utc::now();
     Ok(json!({
         "devices": list.iter().map(|device| device_json(device, now)).collect::<Vec<_>>(),
-        "parent": parent.unwrap_or_else(|| "site".to_string()),
+        "host": host,
         "limit": devices::MAX_DEVICES,
     }))
 }
@@ -52,58 +54,93 @@ pub async fn list_devices(
     Ok(Json(device_list(&db, owner).await?))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeviceRoleRequest {
-    role: String,
-}
-
-/// PUT /api/agent/devices/{device_id}/role: the owner says which end is
-/// her parent from the site. Until host leases, the site is her host (her
-/// link always treats it so): `parent` changes nothing and answers the list
-/// with `code: host_is_site`; `child` on a device made parent before gives
-/// her back to the site. The device learns it at its next `hello`. Answers
-/// the list, as `GET /devices` does.
-pub async fn set_device_role(
+/// GET /api/agent/host: where she lives, as the devices page shows it.
+pub async fn get_host(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
-    Path(device_id): Path<String>,
-    Json(request): Json<DeviceRoleRequest>,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartMoveRequest {
+    kind: String,
+    device: String,
+}
+
+/// POST /api/agent/host/moves: the owner, logged in, starts a move of her
+/// with one of their live devices (`move`: she goes to live on it; `merge`:
+/// its her joins the site's). Asked here it is confirmed already: she is
+/// frozen at once. Answers the lease.
+pub async fn start_move(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Json(request): Json<StartMoveRequest>,
 ) -> Result<Json<Value>, HttpError> {
     let owner = super::persona::require_site_owner(&claims, &db).await?;
-    let Some(role) = devices::Role::parse(&request.role) else {
+    let Some(kind) = lease::Kind::parse(&request.kind) else {
         return Err(HttpError::from((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "role is parent or child", "code": "invalid_role" })),
+            Json(json!({ "error": "kind is move or merge", "code": "invalid_move_kind" })),
         )));
     };
-    if role == devices::Role::Parent {
-        let live = devices::list(&db, owner)
-            .await
-            .map_err(store_failed)?
-            .into_iter()
-            .any(|device| device.id == device_id && device.revoked_at.is_none());
-        if !live {
-            return Err(HttpError::from((
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "No such device", "code": "device_not_found" })),
-            )));
-        }
-        let mut list = device_list(&db, owner).await?;
-        list["code"] = json!("host_is_site");
-        return Ok(Json(list));
-    }
-    let updated = devices::set_role(&db, owner, &device_id, role)
+    let live = devices::list(&db, owner)
         .await
         .map_err(store_failed)?
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "No such device", "code": "device_not_found" })),
-            ))
-        })?;
-    tracing::info!(device = %updated.id, role = role.as_str(), "[sync] device role set by the owner");
-    Ok(Json(device_list(&db, owner).await?))
+        .into_iter()
+        .any(|device| device.id == request.device && device.revoked_at.is_none());
+    if !live {
+        return Err(HttpError::from((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "No such device", "code": "device_not_found" })),
+        )));
+    }
+    lease::start(&db, kind, &request.device, lease::Starter::Owner)
+        .await
+        .map_err(super::sync::move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
+    ))
+}
+
+/// POST /api/agent/host/moves/{move_id}/confirm: the owner, logged in,
+/// confirms a move a device asked for. She is frozen where she is.
+pub async fn confirm_move(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(move_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    lease::confirm(&db, &move_id)
+        .await
+        .map_err(super::sync::move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
+    ))
+}
+
+/// POST /api/agent/host/moves/{move_id}/cancel: the owner calls a move off
+/// before its commit, or turns down one a device asked for: she is where she
+/// was, as she was.
+pub async fn cancel_move(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(move_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    lease::cancel(&db, &move_id, None)
+        .await
+        .map_err(super::sync::move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,22 +222,9 @@ mod tests {
         }
     }
 
-    async fn role(
-        db: &DatabaseConnection,
-        user: i32,
-        device: &str,
-        role: &str,
-    ) -> Result<Value, (StatusCode, Value)> {
-        let request: DeviceRoleRequest = serde_json::from_value(json!({ "role": role })).unwrap();
-        match set_device_role(
-            State(db.clone()),
-            Extension(claims(user)),
-            Path(device.to_string()),
-            Json(request),
-        )
-        .await
-        {
-            Ok(Json(list)) => Ok(list),
+    async fn answer(result: Result<Json<Value>, HttpError>) -> Result<Value, (StatusCode, Value)> {
+        match result {
+            Ok(Json(value)) => Ok(value),
             Err(error) => {
                 let response = error.into_response();
                 let status = response.status();
@@ -215,12 +239,24 @@ mod tests {
         }
     }
 
-    /// The site stays her host (an isolated schema on a real database;
-    /// skipped without a test database): asking for a parent device changes
-    /// nothing and says why; a device made parent before is given back to
-    /// the site; nobody else can.
+    async fn start(
+        db: &DatabaseConnection,
+        user: i32,
+        kind: &str,
+        device: &str,
+    ) -> Result<Value, (StatusCode, Value)> {
+        let request: StartMoveRequest =
+            serde_json::from_value(json!({ "kind": kind, "device": device })).unwrap();
+        answer(start_move(State(db.clone()), Extension(claims(user)), Json(request)).await).await
+    }
+
+    /// Where she lives, and a move of her, from the owner's session (an
+    /// isolated schema on a real database; skipped without a test database):
+    /// the device list says where she lives; a move the owner starts freezes
+    /// her and can be called off; one a device asked for waits for the
+    /// owner's confirmation, which nobody else can give.
     #[tokio::test]
-    async fn the_owner_sets_her_parent_from_the_site() {
+    async fn the_owner_moves_her_from_the_site() {
         use sea_orm::ConnectionTrait;
         let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
             return;
@@ -228,58 +264,78 @@ mod tests {
         let db = fixture.db.clone();
         db.execute_unprepared(
             "INSERT INTO users (id, username, is_admin, is_owner) VALUES \
-             (41, 'owner41', true, true), (42, 'guest42', false, false)",
+             (41, 'owner41', true, true), (42, 'guest42', false, false); \
+             INSERT INTO agent_persona (id, name, updated_at) VALUES ('site', 'Merope', NOW())",
         )
         .await
         .unwrap();
         crate::services::principal::invalidate_site_owner_cache();
         let (mac, _) = devices::add(&db, 41, "Mac").await.unwrap();
-        let (imac, _) = devices::add(&db, 41, "iMac").await.unwrap();
 
-        let list = role(&db, 41, &mac.id, "parent").await.unwrap();
-        assert_eq!(list["code"], "host_is_site");
-        assert_eq!(list["parent"], "site");
-        assert!(
-            list["devices"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|device| device["role"] == "child")
-        );
-        assert_eq!(devices::parent(&db, 41).await.unwrap(), None);
-        // A device made parent before: made a child, she is the site's again.
-        db.execute_unprepared(&format!(
-            "UPDATE agent_sync_devices SET role = 'parent' WHERE id = '{}'",
-            imac.id
-        ))
-        .await
-        .unwrap();
-        let list = role(&db, 41, &imac.id, "child").await.unwrap();
-        assert_eq!(list["parent"], "site");
-        assert!(list.get("code").is_none());
+        let list = answer(list_devices(State(db.clone()), Extension(claims(41))).await)
+            .await
+            .unwrap();
+        assert_eq!(list["host"]["holder"], "site");
+        assert_eq!(list["host"]["epoch"], 1);
+        assert_eq!(list["host"]["state"], "live");
+        assert!(list.get("parent").is_none());
+        assert!(list["devices"][0].get("role").is_none());
 
-        let (status, body) = role(&db, 41, &mac.id, "boss").await.unwrap_err();
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (StatusCode::BAD_REQUEST, Some("invalid_role"))
-        );
-        let (status, body) = role(&db, 41, "dev_nope", "parent").await.unwrap_err();
+        let (status, body) = start(&db, 41, "move", "dev_nope").await.unwrap_err();
         assert_eq!(
             (status, body["code"].as_str()),
             (StatusCode::NOT_FOUND, Some("device_not_found"))
         );
-        devices::revoke(&db, 41, &mac.id, RevokeReason::ByOwner)
+        let (status, _) = start(&db, 42, "move", &mac.id).await.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let frozen = start(&db, 41, "move", &mac.id).await.unwrap();
+        assert_eq!(frozen["host"]["state"], "frozen");
+        assert_eq!(frozen["host"]["move"]["phase"], "frozen");
+        assert_eq!(frozen["host"]["move"]["toName"], "Mac");
+        let id = frozen["host"]["move"]["id"].as_str().unwrap().to_string();
+        let (status, body) = start(&db, 41, "merge", &mac.id).await.unwrap_err();
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("move_in_progress"))
+        );
+        let back = answer(cancel_move(State(db.clone()), Extension(claims(41)), Path(id)).await)
             .await
             .unwrap();
-        let (status, _) = role(&db, 41, &mac.id, "parent").await.unwrap_err();
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        let (status, _) = role(&db, 42, &imac.id, "parent").await.unwrap_err();
+        assert_eq!(back["host"]["state"], "live");
+        assert_eq!(back["host"]["move"], Value::Null);
+        assert_eq!(back["host"]["epoch"], 1);
+
+        // Asked by the device: only the owner confirms it.
+        let proposed = lease::start(&db, lease::Kind::Merge, &mac.id, lease::Starter::Device)
+            .await
+            .unwrap();
+        let id = proposed.moving.unwrap().id;
+        let (status, _) =
+            answer(confirm_move(State(db.clone()), Extension(claims(42)), Path(id.clone())).await)
+                .await
+                .unwrap_err();
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(
-            devices::parent(&db, 41).await.unwrap(),
-            None,
-            "nothing changed"
+            lease::read(&db).await.unwrap().unwrap().state,
+            lease::State::Live
         );
+        let confirmed =
+            answer(confirm_move(State(db.clone()), Extension(claims(41)), Path(id.clone())).await)
+                .await
+                .unwrap();
+        assert_eq!(confirmed["host"]["state"], "frozen");
+        assert_eq!(confirmed["host"]["move"]["by"], "device");
+        let (status, body) =
+            answer(confirm_move(State(db.clone()), Extension(claims(41)), Path(id.clone())).await)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("move_phase"))
+        );
+        answer(cancel_move(State(db.clone()), Extension(claims(41)), Path(id)).await)
+            .await
+            .unwrap();
 
         fixture.close().await;
     }

@@ -944,9 +944,6 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("scope", "character varying")
                     .not_null()
                     .default_value("'persona-sync'"),
-                ColumnDef::new("role", "character varying")
-                    .not_null()
-                    .default_value("'child'"),
                 ColumnDef::new("token_hash", "character varying").not_null(),
                 ColumnDef::new("token_hint", "character varying").not_null(),
                 ColumnDef::new("lineage", "character varying"),
@@ -954,6 +951,18 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("last_seen_at", "timestamp with time zone"),
                 ColumnDef::new("revoked_at", "timestamp with time zone"),
                 ColumnDef::new("revoked_reason", "character varying"),
+            ],
+        },
+        TableDef {
+            name: "agent_host_lease".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "character varying").not_null(),
+                ColumnDef::new("holder", "character varying").not_null(),
+                ColumnDef::new("lineage", "character varying").not_null(),
+                ColumnDef::new("epoch", "bigint").not_null(),
+                ColumnDef::new("state", "character varying").not_null(),
+                ColumnDef::new("move", "jsonb"),
+                ColumnDef::new("updated_at", "timestamp with time zone").not_null(),
             ],
         },
         TableDef {

@@ -40,15 +40,10 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
     agent::init_task_store(db.clone()).await;
     tracing::info!("✅ Agent task store initialized");
 
-    // The site is her host: no device stays her parent end (D10).
-    match services::persona_sync::devices::heal_parent_rows(&db).await {
-        Ok(0) => {}
-        Ok(healed) => tracing::info!(
-            healed,
-            "[sync] devices made her parent end are children again"
-        ),
-        Err(error) => tracing::warn!(%error, "[sync] could not heal devices made her parent end"),
-    }
+    // Where she lives: her own life below runs only while that is here, and
+    // pauses while she is moving or lives on another end.
+    services::persona_sync::lease::reload(&db).await;
+    services::persona_sync::lease::keep(db.clone());
 
     // Re-create run hubs + wait-loops for waiting_for_input tasks so
     // answer/subscribe work after process restart.
@@ -73,7 +68,12 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         "autonomy",
         Duration::from_secs(15),
         Duration::ZERO,
-        move || services::agent::run::tick_autonomy_work(work_db.clone()),
+        move || {
+            her_own(
+                "autonomy",
+                services::agent::run::tick_autonomy_work(work_db.clone()),
+            )
+        },
     );
     // Own recovery admission and shutdown alongside the other persona drivers.
     // Reattach questions only after the lease scan has committed recovery.
@@ -85,6 +85,10 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         move || {
             let db = recovery_db.clone();
             async move {
+                // Work is hers too: what was cut off waits until she is here.
+                if services::persona_sync::lease::paused("Work recovery") {
+                    return;
+                }
                 if let Err(error) = agent::work_loop::recover(&db).await {
                     tracing::warn!(%error, "Work recovery scan failed");
                 }
@@ -97,60 +101,100 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
         "memory jobs",
         Duration::from_secs(5),
         Duration::ZERO,
-        move || agent::merope::lifecycle::memory_jobs::tick(memory_db.clone()),
+        move || {
+            her_own(
+                "memory jobs",
+                agent::merope::lifecycle::memory_jobs::tick(memory_db.clone()),
+            )
+        },
     );
     let speak_db = db.clone();
     drivers.periodic(
         "speech intents",
         Duration::from_secs(15),
         Duration::ZERO,
-        move || agent::merope::tick_speak_intents(speak_db.clone()),
+        move || {
+            her_own(
+                "speech intents",
+                agent::merope::tick_speak_intents(speak_db.clone()),
+            )
+        },
     );
     let wander_db = db.clone();
     drivers.periodic(
         "mind wandering",
         Duration::from_secs(60),
         Duration::from_secs(60),
-        move || agent::merope::lifecycle::wander::tick(wander_db.clone()),
+        move || {
+            her_own(
+                "mind wandering",
+                agent::merope::lifecycle::wander::tick(wander_db.clone()),
+            )
+        },
     );
     let doing_db = db.clone();
     drivers.periodic(
         "her own time",
         Duration::from_secs(60),
         Duration::from_secs(90),
-        move || agent::merope::lifecycle::doing::tick(doing_db.clone()),
+        move || {
+            her_own(
+                "her own time",
+                agent::merope::lifecycle::doing::tick(doing_db.clone()),
+            )
+        },
     );
     let playing_db = db.clone();
     drivers.periodic(
         "what they play",
         Duration::from_secs(120),
         Duration::from_secs(60),
-        move || agent::merope::lifecycle::playing::tick(playing_db.clone()),
+        move || {
+            her_own(
+                "what they play",
+                agent::merope::lifecycle::playing::tick(playing_db.clone()),
+            )
+        },
     );
     let reach_db = db.clone();
     drivers.periodic(
         "writing first",
         Duration::from_secs(10 * 60),
         Duration::from_secs(5 * 60),
-        move || agent::merope::lifecycle::reach::tick(reach_db.clone()),
+        move || {
+            her_own(
+                "writing first",
+                agent::merope::lifecycle::reach::tick(reach_db.clone()),
+            )
+        },
     );
     let life_db = db.clone();
     drivers.periodic(
         "persona nights",
         Duration::from_secs(30 * 60),
         Duration::from_secs(5 * 60),
-        move || agent::merope::lifecycle::life::tick(life_db.clone()),
+        move || {
+            her_own(
+                "persona nights",
+                agent::merope::lifecycle::life::tick(life_db.clone()),
+            )
+        },
     );
-    // Upkeep of her records goes on whichever end is her parent, unlike
-    // her nights above.
+    // Upkeep of her records goes on where she lives, like her nights above.
     let upkeep_db = db.clone();
     drivers.periodic(
         "her upkeep",
         Duration::from_secs(60 * 60),
         Duration::from_secs(10 * 60),
-        move || agent::merope::lifecycle::upkeep::tick(upkeep_db.clone()),
+        move || {
+            her_own(
+                "her upkeep",
+                agent::merope::lifecycle::upkeep::tick(upkeep_db.clone()),
+            )
+        },
     );
-    // The owner's reminders kept on the site come due (H2-5).
+    // The owner's reminders kept on the site come due (H2-5), wherever she
+    // lives: they are the owner's, not hers.
     let reminders_db = db.clone();
     drivers.periodic(
         "reminders",
@@ -199,6 +243,21 @@ pub async fn start(db: DatabaseConnection) -> anyhow::Result<()> {
     STARTED.store(true, std::sync::atomic::Ordering::Release);
     tracing::info!("Persona background drivers started under supervision");
     Ok(())
+}
+
+/// One tick of her own life, skipped while she is not on the site (moving,
+/// or living on another end): put aside, not dropped, it runs on the first
+/// tick after she is back.
+fn her_own(
+    driver: &'static str,
+    tick: impl std::future::Future<Output = ()> + Send + 'static,
+) -> impl std::future::Future<Output = ()> + Send + 'static {
+    let skip = services::persona_sync::lease::paused(driver);
+    async move {
+        if !skip {
+            tick.await;
+        }
+    }
 }
 
 pub fn background_status() -> &'static str {

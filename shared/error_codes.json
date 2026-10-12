@@ -24,6 +24,8 @@
     "TAPP_STORAGE_UNAUTHENTICATED": "unauthorized"
   },
   "labels": {
+    "She is moving between her ends; nothing reaches her until the move is done or cancelled": "host_frozen",
+    "She does not live on this site now": "host_moved",
     "Database error": "database_error",
     "Failed to update devices": "devices_update_failed",
     "Sync failed": "sync_failed",
@@ -1703,6 +1705,13 @@
     "invalid_zone",
     "persona_field_required",
     "host_is_site",
-    "bad_frame"
+    "bad_frame",
+    "host_frozen",
+    "host_moved",
+    "move_no_her",
+    "move_in_progress",
+    "move_unknown",
+    "move_phase",
+    "invalid_move_kind"
   ]
 }

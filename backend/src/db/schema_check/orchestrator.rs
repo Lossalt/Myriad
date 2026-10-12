@@ -43,7 +43,10 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 随 004 与 `ensure_conversation_changes` 一起建）。
 /// 2026.10.13.2：她从群里收来的表情包记着收自哪个群 `merope_stickers.kept_from`
 /// （旧库走通用 ADD）。
-pub const SCHEMA_VERSION: &str = "2026.10.13.2";
+/// 2026.10.13.3：她的主机租约 `agent_host_lease`（随 004 与 `ensure_persona_sync_tables`
+/// 一起建，带只增的 epoch 与变化通知）；设备的旧母端标记 `agent_sync_devices.role` 和
+/// 「最多一个母端」索引退场（同一份文件删掉）。
+pub const SCHEMA_VERSION: &str = "2026.10.13.3";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

@@ -1,13 +1,14 @@
 //! What a device calls to sync her (`/api/agent/sync/*`), behind
-//! `sync_device_auth`: who it is and what the site has (`hello`), reading
-//! her (`pull`, `assets`), leaving, and which end her own life happens at.
-//! `hello` and `role` need the device's clock (`X-Sync-Clock`); `leave`
-//! does not, so a device with a wrong clock can still give its token back.
+//! `sync_device_auth`: who it is, what the site has and where she lives
+//! (`hello`), reading her (`pull`, `assets`), asking for a move of her that
+//! the owner then confirms on the site (`moves`), and leaving. `hello` needs
+//! the device's clock (`X-Sync-Clock`); `leave` does not, so a device with a
+//! wrong clock can still give its token back.
 
 use super::*;
 use crate::error::HttpError;
 use crate::middleware::sync_device::{SyncClock, SyncDevice};
-use crate::services::persona_sync::{self, devices};
+use crate::services::persona_sync::{self, devices, lease};
 use myriad_error::AppError;
 
 pub(crate) fn sync_failed(error: impl std::fmt::Display) -> HttpError {
@@ -49,21 +50,22 @@ pub async fn sync_hello(
     let embedding_model = persona_sync::embedding_model(&db)
         .await
         .map_err(sync_failed)?;
-    let parent = devices::parent(&db, owner).await.map_err(sync_failed)?;
+    let host = lease::shown(&db).await.map_err(sync_failed)?;
     Ok(Json(json!({
         "formatVersion": myriad_persona_sync::FORMAT_VERSION,
         "deviceId": device.0.id,
-        "lineage": device.0.lineage,
+        "lineage": host["lineage"],
         "empty": myriad_persona_sync::is_empty(&holdings),
         "persona": name.map(|name| json!({ "name": name })),
         "embeddingModel": embedding_model,
-        "role": device.0.role.as_str(),
-        "parent": parent.unwrap_or_else(|| "site".to_string()),
+        // Where she lives (her host lease), null while the site has no her.
+        "host": host,
+        // A Mac from before host leases reads this and needs it; it is all
+        // a device ever is now.
+        "role": "child",
         "limits": {
             "pullMaxEntities": persona_sync::PULL_MAX_ENTITIES,
             "pullMaxBytes": persona_sync::PULL_MAX_BYTES,
-            "pushMaxEntities": persona_sync::PUSH_MAX_ENTITIES,
-            "pushMaxBytes": persona_sync::PUSH_MAX_BYTES,
             "assetMaxBytes": persona_sync::ASSET_MAX_BYTES,
             "clockMaxAheadMs": myriad_persona_sync::hlc::MAX_AHEAD_MS,
         },
@@ -88,54 +90,61 @@ pub async fn sync_leave(
     Ok(Json(json!({ "left": true })))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoleRequest {
-    role: String,
+/// A move refused, with its code.
+pub(crate) fn move_refused(error: lease::MoveError) -> HttpError {
+    if let lease::MoveError::Db(error) = &error {
+        tracing::error!(%error, "[host] could not change her host lease");
+    }
+    let (status, code, message) = error.refusal();
+    let mut body = json!({ "error": message, "code": code });
+    // Where the move stands, for a refusal about its step.
+    if let lease::MoveError::Phase(phase) = &error {
+        body["phase"] = json!(phase);
+    }
+    HttpError::from((status, Json(body)))
 }
 
-/// PUT /api/agent/sync/role: chosen when the device connects. Until host
-/// leases, the site is her host (her link always treats it so): `parent`
-/// changes nothing and answers how things stand, with `code: host_is_site`;
-/// `child` leaves the site as the parent unless another device is.
-pub async fn sync_role(
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposeMoveRequest {
+    kind: String,
+}
+
+/// POST /api/agent/sync/moves: the device asks for a move with itself:
+/// `move` (she comes to live on it) or `merge` (its own her joins the
+/// site's). Nothing happens to her until the site owner confirms it on the
+/// site, logged in: a device token alone never moves her. Answers the lease.
+pub async fn sync_propose_move(
     State(db): State<DatabaseConnection>,
     Extension(device): Extension<SyncDevice>,
-    Extension(clock): Extension<SyncClock>,
-    Json(request): Json<RoleRequest>,
+    Json(request): Json<ProposeMoveRequest>,
 ) -> Result<Json<Value>, HttpError> {
-    require_clock(&clock)?;
-    let Some(role) = devices::Role::parse(&request.role) else {
-        return Err(HttpError::from((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "role is parent or child", "code": "invalid_role" })),
-        )));
+    let Some(kind) = lease::Kind::parse(&request.kind) else {
+        return Err(bad_request("kind is move or merge", "invalid_move_kind"));
     };
-    let owner = owner_of(&device);
-    if role == devices::Role::Parent {
-        let parent = devices::parent(&db, owner).await.map_err(sync_failed)?;
-        tracing::info!(device = %device.0.id, "[sync] asked to be the parent; the site stays her host");
-        return Ok(Json(json!({
-            "role": device.0.role.as_str(),
-            "parent": parent.unwrap_or_else(|| "site".to_string()),
-            "code": "host_is_site",
-        })));
-    }
-    let updated = devices::set_role(&db, owner, &device.0.id, role)
+    lease::start(&db, kind, &device.0.id, lease::Starter::Device)
         .await
-        .map_err(sync_failed)?
-        .ok_or_else(|| {
-            HttpError::from((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "This device was removed from the site", "code": "device_revoked" })),
-            ))
-        })?;
-    let parent = devices::parent(&db, owner).await.map_err(sync_failed)?;
-    tracing::info!(device = %updated.id, role = role.as_str(), "[sync] device role set");
-    Ok(Json(json!({
-        "role": updated.role.as_str(),
-        "parent": parent.unwrap_or_else(|| "site".to_string()),
-    })))
+        .map_err(move_refused)?;
+    tracing::info!(device = %device.0.id, "[host] a device asked for a move; the owner confirms it on the site");
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
+    ))
+}
+
+/// POST /api/agent/sync/moves/{move_id}/cancel: the device calls off a move
+/// with itself before its commit; she is where she was, as she was.
+pub async fn sync_cancel_move(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    lease::cancel(&db, &move_id, Some(&device.0.id))
+        .await
+        .map_err(move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,7 +216,7 @@ pub async fn sync_pull(
     .await
     .map_err(sync_failed)?;
     Ok(Json(json!({
-        "lineage": device.0.lineage,
+        "lineage": lease::read(&db).await.map_err(sync_failed)?.map(|lease| lease.lineage),
         "entities": page.entities,
         "embeddings": page.embeddings,
         "assets": page.assets,
@@ -398,6 +407,26 @@ mod tests {
             "{status} {body}"
         );
         assert!(!body.to_string().contains(&token));
+        // Nor does it confirm a move of her: that takes the owner, logged in.
+        for path in [
+            "/api/agent/host/moves/mv_x/confirm",
+            "/api/agent/host/moves",
+            "/api/agent/host/moves/mv_x/cancel",
+        ] {
+            let (status, _) = call_with(
+                &app,
+                "POST",
+                path,
+                Some(&token),
+                &[],
+                Some(serde_json::json!({ "kind": "move", "device": "dev_x" })),
+            )
+            .await;
+            assert!(
+                status == StatusCode::UNAUTHORIZED || status == StatusCode::INTERNAL_SERVER_ERROR,
+                "{path}: {status}"
+            );
+        }
 
         crate::services::principal::invalidate_site_owner_cache();
         // The device's clock: required on hello, refused when far ahead.
@@ -469,8 +498,11 @@ mod tests {
         assert_eq!(hello["formatVersion"], 1);
         assert_eq!(hello["empty"], true);
         assert_eq!(hello["persona"], Value::Null);
-        assert_eq!(hello["parent"], "site");
+        // No her yet: no lease. A Mac from before leases still reads its role.
+        assert_eq!(hello["host"], Value::Null);
         assert_eq!(hello["role"], "child");
+        assert!(hello.get("parent").is_none());
+        assert!(hello["limits"].get("pushMaxEntities").is_none());
         assert!(hello["deviceId"].as_str().unwrap().starts_with("dev_"));
 
         let (status, page) = call(&app, "GET", "/api/agent/sync/pull", Some(&token)).await;
@@ -500,39 +532,36 @@ mod tests {
             (StatusCode::NOT_FOUND, Some("asset_not_found"))
         );
 
-        // Role needs the clock too.
-        let role = Some(serde_json::json!({ "role": "parent" }));
-        let (status, body) = call_with(
-            &app,
-            "PUT",
-            "/api/agent/sync/role",
-            Some(&token),
-            &[],
-            role.clone(),
-        )
-        .await;
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (StatusCode::BAD_REQUEST, Some("sync_clock_required"))
-        );
-        let (status, body) = call_with(
+        // The parent/child role is gone.
+        let (status, _) = call_with(
             &app,
             "PUT",
             "/api/agent/sync/role",
             Some(&token),
             &clock_at(0),
-            role,
+            Some(serde_json::json!({ "role": "parent" })),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        // The site stays her host: nothing changes, and it says why.
-        assert_eq!(
-            (
-                body["role"].as_str(),
-                body["parent"].as_str(),
-                body["code"].as_str()
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
             ),
-            (Some("child"), Some("site"), Some("host_is_site"))
+            "{status}"
+        );
+        // A move asks for a her to move: there is none yet.
+        let (status, body) = call_with(
+            &app,
+            "POST",
+            "/api/agent/sync/moves",
+            Some(&token),
+            &[],
+            Some(serde_json::json!({ "kind": "merge" })),
+        )
+        .await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("move_no_her"))
         );
 
         // A wrong clock does not keep a device from leaving.

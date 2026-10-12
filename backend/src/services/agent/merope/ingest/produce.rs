@@ -149,6 +149,11 @@ pub async fn ingest(
         log_skip(user_id, event_key, "disabled");
         return Ok(());
     }
+    // She is not here to take it in: moving, or living on another end.
+    if crate::services::persona_sync::lease::paused("what she takes in") {
+        log_skip(user_id, event_key, "not_here");
+        return Ok(());
+    }
     let summary = compact_summary(summary);
     if summary.is_empty() {
         log_skip(user_id, event_key, "empty_summary");

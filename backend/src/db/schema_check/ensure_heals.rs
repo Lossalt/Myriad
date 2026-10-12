@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS agent_memory_cues (
 /// Syncing her with other platforms: the device table, her affect's changes
 /// and anchor, and her persona's field history, for databases that ran 004
 /// before they were in it. Same file as 004 (`migrations/persona_sync.sql`),
-/// so the shapes cannot drift; every statement is `IF NOT EXISTS`.
+/// so the shapes cannot drift; every statement is `IF NOT EXISTS` or
+/// otherwise idempotent. It also gives her host lease (`agent_host_lease`,
+/// its guard and change announcement) to a database from before it, and takes
+/// the retired parent/child flag off the devices of one.
 pub(crate) async fn ensure_persona_sync_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(include_str!("../../../migrations/persona_sync.sql"))
         .await?;

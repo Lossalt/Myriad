@@ -3,7 +3,8 @@
 //! and groups all start runs here; HTTP only turns a login into a user first.
 //!
 //! Every entry goes through the same gate: the person may use the agent at
-//! all (module visibility), before anything runs. What each step may do is
+//! all (module visibility), before anything runs; and every run is refused
+//! while she is not on the site (her host lease: moving, or living elsewhere). What each step may do is
 //! filtered later, per person, by their granted permissions.
 
 use std::sync::Arc;
@@ -187,6 +188,9 @@ pub(crate) async fn start(
 ) -> Result<Arc<AgentRun>, AppError> {
     let user_id = caller.user_id;
     validate_input(&req.input)?;
+    // She is on no end while she moves, and not here while she lives on
+    // another: every channel's turn is refused alike, Chat and Work.
+    crate::services::persona_sync::lease::refuse_while_away()?;
     let interaction_mode = req
         .context
         .as_ref()
@@ -880,6 +884,7 @@ pub(crate) async fn answer(
     session_id: Option<String>,
 ) -> Result<Arc<AgentRun>, AppError> {
     validate_input(&answer)?;
+    crate::services::persona_sync::lease::refuse_while_away()?;
     let task = crate::services::agent::executor::get_task_for_user(&task_id, user_id)
         .await
         .ok_or_else(|| AppError::not_found("Task not found"))?;
