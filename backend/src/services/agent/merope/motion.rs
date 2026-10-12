@@ -133,6 +133,7 @@ pub(in crate::services::agent) async fn director_analyzer(
 /// rather than writing a plan.
 pub(in crate::services::agent) async fn decisions_source() -> Option<crate::config::ResolvedAiConfig>
 {
+    crate::services::ai::learn_judge_model_kind().await;
     crate::GLOBAL_DYNAMIC_CONFIG
         .read()
         .await

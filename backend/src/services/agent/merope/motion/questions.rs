@@ -18,6 +18,10 @@ use super::prompt::{offered_body_controls, offered_score_moves};
 /// An answer less sure than this is left unacted; what she does not show
 /// cannot be wrong.
 const SURE: f64 = 0.3;
+/// Her feeling is taken as her own unless the model is this sure it is not:
+/// quoting someone else scored 0.004–0.08 across Jev, Microsoft-Decision and
+/// Luna, while her own laugh at them scored as low as 0.44 (10-12).
+const OWN: f64 = 0.25;
 /// A beat lands on a fragment of the reply at most this long (score anchors).
 const ANCHOR_CHARS: usize = 24;
 /// At most this many fragments are offered to land a beat on.
@@ -226,7 +230,7 @@ pub(super) fn plan_from_answers(
             .then(|| answer["choice"].as_str())
             .flatten()
     };
-    let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= 0.5;
+    let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
     let feeling = if own {
         sure("feeling").unwrap_or("calm")
     } else {
@@ -655,6 +659,23 @@ mod tests {
             "slight",
             "a sure 'no tilt' does not undo it"
         );
+    }
+
+    #[test]
+    fn a_laugh_the_model_is_unsure_is_her_own_is_still_acted() {
+        // Microsoft-Decision on 「哈哈哈哈！」: amused, but `own` only 0.44.
+        let answers = json!({
+            "feeling": {"type": "choice", "choice": "amused", "confidence": 0.96},
+            "own": {"type": "noul", "noul": 0.44},
+            "say0": {"type": "choice", "choice": "laugh", "confidence": 0.62},
+        });
+        let value = plan_from_answers(
+            &answers,
+            &context("哈哈哈哈！你是想把迟到也冻住吗？"),
+            Some(&bust()),
+        );
+        assert_eq!(value["baseline"]["expression"], "warm");
+        assert_eq!(value["phrases"][0]["intent"], "laugh");
     }
 
     #[test]

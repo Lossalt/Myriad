@@ -173,13 +173,36 @@ pub struct OmniVoice {
     pub voice: String,
 }
 
-/// Whether `model` answers typed decisions (TypeSafe Jev) rather than chat:
-/// it writes no text, so only judgments asked as questions can use it.
+/// Models whose source says whether they answer typed decisions rather than
+/// chat (OpenRouter lists such a model's output as `decisions`), by model id.
+static DECISIONS_MODELS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, bool>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Whether `model` answers typed decisions (TypeSafe Jev, Microsoft-Decision)
+/// rather than chat: it writes no text, so only judgments asked as questions
+/// can use it. What its source said, once asked; until then, by name.
 pub fn is_decisions_model(model: &str) -> bool {
-    model
-        .trim()
-        .trim_start_matches('~')
-        .starts_with("typesafe/jev")
+    let model = model.trim();
+    if let Some(known) = model_kind(model) {
+        return known;
+    }
+    model.trim_start_matches('~').starts_with("typesafe/jev")
+}
+
+/// What `model`'s source said about it, if it has been asked.
+pub fn model_kind(model: &str) -> Option<bool> {
+    DECISIONS_MODELS
+        .read()
+        .ok()
+        .and_then(|known| known.get(model.trim()).copied())
+}
+
+/// Records what `model`'s source said: whether it answers decisions.
+pub fn remember_model_kind(model: &str, decisions: bool) {
+    if let Ok(mut known) = DECISIONS_MODELS.write() {
+        known.insert(model.trim().to_owned(), decisions);
+    }
 }
 
 /// 解析后的 AI 配置（已根据 tier 确定具体的 provider/key/model）
@@ -1484,6 +1507,17 @@ impl DynamicConfig {
             .filter(|resolved| resolved.model == judge)
     }
 
+    /// The judgment model on the source it runs on, whatever kind it is;
+    /// `None` when none is set.
+    pub fn resolve_judge_model_source(&self) -> Option<ResolvedAiConfig> {
+        let judge = self.aux_judge_model.trim();
+        if judge.is_empty() {
+            return None;
+        }
+        self.place_judge(judge)
+            .filter(|resolved| resolved.model == judge)
+    }
+
     fn place_judge(&self, judge: &str) -> Option<ResolvedAiConfig> {
         match self.resolve_strict_lite_ai_config() {
             // Never chosen: on Lite's source, as before.
@@ -2033,6 +2067,16 @@ mod tests {
             Some("qwen/qwen3.8-omni-flash".to_string()),
             "judgments that write text stay on Lite's own model"
         );
+        // A decisions model is known by what its source says, not its name.
+        config.aux_judge_model = "acme/decide-test-1".to_string();
+        assert!(config.resolve_decisions_ai_config().is_none());
+        remember_model_kind("acme/decide-test-1", true);
+        assert_eq!(
+            config.resolve_decisions_ai_config().map(|r| r.model),
+            Some("acme/decide-test-1".to_string())
+        );
+        remember_model_kind("acme/chat-test-1", false);
+        assert!(!is_decisions_model(" acme/chat-test-1 "));
     }
 
     #[test]

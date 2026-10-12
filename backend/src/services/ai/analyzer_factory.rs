@@ -114,6 +114,8 @@ pub async fn create_strict_lite_ai_analyzer_with_timeout(
 pub async fn create_lite_judge_ai_analyzer_with_timeout(
     request_timeout: Option<std::time::Duration>,
 ) -> Option<AiAnalyzer> {
+    // A decisions model writes no text: judgments that do run on Lite's.
+    super::learn_judge_model_kind().await;
     let resolved = GLOBAL_DYNAMIC_CONFIG
         .read()
         .await
