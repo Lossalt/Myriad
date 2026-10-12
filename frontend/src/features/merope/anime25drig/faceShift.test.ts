@@ -72,24 +72,27 @@ test('a change of face goes through her in order: the eyes first, the head after
   assert.ok(started('snap', 'angleX') < started('slow', 'angleX'))
 })
 
-test('a change may pass through another look on the way: there first, held a moment, then on', () => {
+test('a change may pass through looks on the way, bending through them without stopping', () => {
   const random = Math.random
   Math.random = () => 0.5
   try {
     const pose = controller()
     pose.set(look('drowsy'), 0, 'drowsy', null)
     play(pose, 0, 1.5)
-    // Dozing to delight, waking up surprised on the way (surprised opens the eyes wide, excited less so).
-    pose.set(look('excited'), 1.5, 'excited', 'ease', 'surprised')
+    // Dozing to delight, waking up surprised on the way: the mouth falls open and the eyes go wider than delight's.
+    pose.set(look('excited'), 1.5, 'excited', 'ease', ['surprised'])
     const frames = play(pose, 1.5, 4)
     const wide = frames.map((frame) => frame.eyeWide)
+    const mouth = frames.map((frame) => frame.mouthOpen)
     const peak = Math.max(...wide)
-    assert.ok(peak > 0.9, `surprised on the way: ${peak}`)
+    assert.ok(peak > 0.75, `surprised on the way: ${peak}`)
+    assert.ok(Math.max(...mouth) > 0.2 && mouth.at(-1)! < 0.05, `the mouth opened on the way and closed: ${Math.max(...mouth)} ${mouth.at(-1)}`)
     assert.ok(Math.abs(wide.at(-1)! - 0.65) < 0.05, `then excited: ${wide.at(-1)}`)
-    const peakAt = wide.indexOf(peak) / FPS
-    assert.ok(peakAt > 0.3 && peakAt < 1.3, `held a moment before going on: ${peakAt}`)
-    // A newer change before it goes on is the one that holds.
-    pose.set(look('content'), 4, 'content', 'ease', 'plain')
+    // Not held there: it is near its peak only briefly.
+    const near = wide.filter((value) => value > peak - 0.03).length / FPS
+    assert.ok(near < 0.3, `passed, not held: ${near}s near the peak`)
+    // Two looks in turn, and a newer change on the way is the one that holds.
+    pose.set(look('content'), 4, 'content', 'ease', ['plain', 'surprised'])
     pose.set(look('shy'), 4.1, 'shy', 'ease')
     const after = play(pose, 4.1, 6.5)
     assert.ok(after.at(-1)!.eyeX > 0.3, 'shy, not content, at the end')

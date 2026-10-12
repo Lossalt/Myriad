@@ -40,14 +40,16 @@ pub struct ChatPerformanceBaseline {
     /// body settles naturally without.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shift: Option<String>,
-    /// A look passed through on the way (a `facePresets` name, or `plain`
-    /// for her ordinary face), held a moment before this one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub via: Option<String>,
+    /// Looks passed through on the way, in order and without stopping
+    /// (`facePresets` names, or `plain` for her ordinary face).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub via: Vec<String>,
 }
 
 /// Her ordinary face, as a look passed through on the way (`via`).
 pub const PLAIN_FACE: &str = "plain";
+/// A change passes through at most this many looks on the way.
+pub const MAX_FACES_PASSED: usize = 2;
 
 /// Normalized semantic goals, not renderer drivers or per-frame commands.
 /// Each restatement replaces the targets; an empty target map releases them.
@@ -222,7 +224,7 @@ struct RawBaseline {
     #[serde(default)]
     shift: Option<String>,
     #[serde(default)]
-    via: Option<String>,
+    via: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,12 +305,17 @@ fn sanitize_baseline(baseline: RawBaseline) -> Option<ChatPerformanceBaseline> {
                 .iter()
                 .any(|(name, _)| name == shift)
         }),
-        via: baseline.via.filter(|via| {
-            via == PLAIN_FACE
-                || PERFORMANCE_FACE_PRESETS
-                    .iter()
-                    .any(|(name, _, _)| name == via)
-        }),
+        via: baseline
+            .via
+            .into_iter()
+            .filter(|via| {
+                via == PLAIN_FACE
+                    || PERFORMANCE_FACE_PRESETS
+                        .iter()
+                        .any(|(name, _, _)| name == via)
+            })
+            .take(MAX_FACES_PASSED)
+            .collect(),
     })
 }
 

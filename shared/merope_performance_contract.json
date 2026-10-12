@@ -54,10 +54,10 @@
     "blush": {"min": 0, "max": 1, "capability": "blush", "description": "Drawn blush across her cheeks: shy, flustered, touched."}
   },
   "faceShifts": {
-    "ease": {"description": "settles into the new look naturally: eyes first, the head after", "durationMs": 520, "staggerMs": 60, "pauseMs": 0, "viaMs": 650, "damping": 0.72, "anticipation": 0.04, "arc": 0.18},
-    "snap": {"description": "snaps out of what she was in, at once, with a small start: woken up, caught off guard, suddenly delighted", "durationMs": 220, "staggerMs": 15, "pauseMs": 0, "viaMs": 350, "damping": 0.5, "anticipation": 0.14, "arc": 0.1, "move": {"kind": "startle", "amount": "slight", "tempo": "quick"}},
-    "slow": {"description": "drifts into it slowly, half reluctant; the head lags behind the eyes", "durationMs": 1300, "staggerMs": 160, "pauseMs": 0, "viaMs": 1100, "damping": 0.95, "anticipation": 0, "arc": 0.25},
-    "pause": {"description": "goes still for a beat, then changes: taken aback, it sinks in first", "durationMs": 600, "staggerMs": 60, "pauseMs": 380, "viaMs": 800, "damping": 0.7, "anticipation": 0.06, "arc": 0.18}
+    "ease": {"description": "settles into the new look naturally: eyes first, the head after", "durationMs": 520, "staggerMs": 60, "pauseMs": 0, "passMs": 360, "damping": 0.72, "anticipation": 0.04, "arc": 0.18},
+    "snap": {"description": "snaps out of what she was in, at once, with a small start: woken up, caught off guard, suddenly delighted", "durationMs": 220, "staggerMs": 15, "pauseMs": 0, "passMs": 180, "damping": 0.5, "anticipation": 0.14, "arc": 0.1, "move": {"kind": "startle", "amount": "slight", "tempo": "quick"}},
+    "slow": {"description": "drifts into it slowly, half reluctant; the head lags behind the eyes", "durationMs": 1300, "staggerMs": 160, "pauseMs": 0, "passMs": 750, "damping": 0.95, "anticipation": 0, "arc": 0.25},
+    "pause": {"description": "goes still for a beat, then changes: taken aback, it sinks in first", "durationMs": 600, "staggerMs": 60, "pauseMs": 380, "passMs": 420, "damping": 0.7, "anticipation": 0.06, "arc": 0.18}
   },
   "facePresets": {
     "content": {"description": "eyes closed in a smile (^ ^), content and happy", "targets": {"eyeOpenLeft": "-strong", "eyeOpenRight": "-strong", "eyeSmile": "strong", "mouthSmile": "clear", "browLift": "slight"}, "life": {"periodMs": 6000, "beats": [{"atMs": 0, "pose": {"targets": {"headTilt": "slight"}, "transitionMs": 1400, "holdMs": 1300}}, {"atMs": 3000, "pose": {"targets": {"headTilt": "-slight"}, "transitionMs": 1400, "holdMs": 1300}}]}},

@@ -24,6 +24,7 @@ mod control;
 mod offered;
 mod presence;
 mod questions;
+mod way;
 
 #[cfg(test)]
 pub(in crate::services::agent) use offered::semantic_valid;

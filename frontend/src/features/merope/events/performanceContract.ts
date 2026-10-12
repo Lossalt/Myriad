@@ -256,8 +256,8 @@ export interface FaceShift {
   anticipation: number
   /** How far a move bows off its straight line, as a share of its way. */
   arc: number
-  /** How long a look passed through on the way is held, once reached. */
-  viaMs: number
+  /** How long she heads for a look passed through on the way before turning to the next: never held. */
+  passMs: number
   move?: ScoreMove
 }
 
@@ -279,13 +279,15 @@ export function faceShift(name: string | null | undefined): FaceShift {
     damping: raw.damping,
     anticipation: raw.anticipation,
     arc: raw.arc,
-    viaMs: raw.viaMs,
+    passMs: raw.passMs,
     ...(move ? { move } : {}),
   }
 }
 
 /** Her ordinary face, as a look passed through on the way (baseline.via). */
 export const PLAIN_FACE = 'plain'
+/** A change passes through at most this many looks on the way. */
+export const MAX_FACES_PASSED = 2
 
 /** A look's held pose (its targets at their tiers); her ordinary face holds nothing. */
 export function facePose(face: string): BodyPose | null {

@@ -4,7 +4,7 @@ import type { MotionChannelPolicy } from '../motion/policy'
 import type { ResolvedScore } from '../motion/scoreTimeline'
 import type { Anime25DDriver } from './driver'
 import type { PerformanceExpressionOffset } from './performanceExpressionShared'
-import { BODY_CONTROLS, faceLife, facePose, faceShift, PLAIN_FACE, sanitizeBodyPose } from '../events/performanceContract'
+import { BODY_CONTROLS, faceLife, facePose, faceShift, sanitizeBodyPose } from '../events/performanceContract'
 import { ActingField, mappedControlValue } from './actingField'
 import { ARCS, carriesMomentum, shiftTiming } from './faceShift'
 
@@ -71,8 +71,8 @@ export class DirectedPoseController {
     this.acting = new ActingField(random)
   }
 
-  /** Where a change passing through another look goes on to, and when. */
-  private onward: { pose: BodyPose | null; face: string | null; shift: string | null; at: number } | null = null
+  /** A change passing through looks on the way: the ones still ahead, where it ends, and when to turn next. */
+  private route: { stops: string[]; pose: BodyPose | null; face: string | null; shift: string | null; at: number } | null = null
   /** A change of face to carry on from where she is, applied on the next step. */
   private shifting: PendingShift | null = null
   /** What the composition last gave each control, and how fast it was moving (driver units). */
@@ -110,21 +110,31 @@ export class DirectedPoseController {
    * the change starts from where every control is and how it is moving, not
    * from the old goals: nothing jumps, fades or plays out.
    */
-  set(pose: BodyPose | null | undefined, time: number, face?: string | null, shift?: string | null, via?: string | null): void {
-    this.onward = null
-    // Some changes pass through another look first: there, held a moment, then on the same way.
-    const passing = via && via !== face ? facePose(via) : null
-    if (passing) {
-      this.set(passing, time, via === PLAIN_FACE ? null : via, shift ?? null)
+  set(
+    pose: BodyPose | null | undefined,
+    time: number,
+    face?: string | null,
+    shift?: string | null,
+    via?: readonly string[] | null,
+    onTheWay = false,
+  ): void {
+    this.route = null
+    // Some changes pass through other looks on the way: she heads for each in
+    // turn and turns to the next before she gets there, so the way bends
+    // through them instead of stopping; a look passed through plays no life.
+    const stops = (via ?? []).filter((stop) => stop !== face && facePose(stop))
+    if (stops.length) {
+      const [first, ...rest] = stops
+      this.set(facePose(first), time, null, shift ?? null, null, onTheWay)
       const way = faceShift(shift)
-      this.onward = { pose: pose ?? null, face: face ?? null, shift: shift ?? null, at: time + (way.durationMs + way.viaMs) / 1000 }
+      this.route = { stops: rest, pose: pose ?? null, face: face ?? null, shift: shift ?? null, at: time + ((onTheWay ? 0 : way.pauseMs) + way.passMs) / 1000 }
       return
     }
     const dropped = face !== undefined ? this.acting.setFace(face, faceLife(face), time) : []
     const next = sanitizeBodyPose(pose)
     const same = Boolean(next && this.pose && time < this.expiresAt && poseKey(next) === poseKey(this.pose))
     if (shift !== undefined && (!same || dropped.length)) {
-      this.shiftFrom([...Object.keys(this.pose?.targets ?? {}), ...Object.keys(next?.targets ?? {}), ...dropped] as BodyControl[], shift)
+      this.shiftFrom([...Object.keys(this.pose?.targets ?? {}), ...Object.keys(next?.targets ?? {}), ...dropped] as BodyControl[], shift, onTheWay)
     } else if (shift === undefined && !same) {
       for (const axis of this.axes.values()) {
         delete axis.omega; delete axis.startAt; delete axis.zeta; delete axis.kick; delete axis.from; delete axis.to; delete axis.arc
@@ -136,10 +146,12 @@ export class DirectedPoseController {
     this.expiresAt = next && next.holdMs > 0 ? time + next.holdMs / 1000 : Infinity
   }
 
-  private shiftFrom(controls: readonly BodyControl[], shift: string | null): void {
-    const pending = this.shifting ?? { controls: new Set<BodyControl>(), shift: faceShift(shift) }
+  /** On the way through a look, she neither pauses again nor winds up again nor starts again. */
+  private shiftFrom(controls: readonly BodyControl[], shift: string | null, onTheWay = false): void {
+    const way = faceShift(shift)
+    const pending = this.shifting ?? { controls: new Set<BodyControl>(), shift: way }
     for (const control of controls) pending.controls.add(control)
-    pending.shift = faceShift(shift)
+    pending.shift = onTheWay ? { ...way, pauseMs: 0, anticipation: 0, move: undefined } : way
     this.shifting = pending
   }
 
@@ -185,9 +197,9 @@ export class DirectedPoseController {
   /** Advance once; expression previews and final composition read the same state. */
   step(dt: number, time: number, target: Readonly<Anime25DDriver>): void {
     if (!(dt > 0) || !Number.isFinite(dt)) return
-    if (this.onward && time >= this.onward.at) {
-      const { pose, face, shift } = this.onward
-      this.set(pose, time, face, shift)
+    if (this.route && time >= this.route.at) {
+      const { stops, pose, face, shift } = this.route
+      this.set(pose, time, face, shift, stops, true)
     }
     if (time >= this.expiresAt) this.pose = null
     this.acting.step(dt, time, (control) => this.capabilities.has(BODY_CONTROLS[control].capability))

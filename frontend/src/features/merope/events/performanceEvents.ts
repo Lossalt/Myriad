@@ -14,6 +14,7 @@ import {
 import {
   FACE_PRESETS,
   FACE_SHIFT_NAMES,
+  MAX_FACES_PASSED,
   PERFORMANCE_BASELINE_EXPRESSIONS,
   PERFORMANCE_CUE_INTENTS,
   PERFORMANCE_INTERRUPT_MODES,
@@ -251,6 +252,14 @@ export function sanitizePerformanceDirective(
   }
 }
 
+/** The looks a change passes through on the way, as many as the contract allows, each one known. */
+function passedThrough(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((face): face is string => typeof face === 'string' && (face === PLAIN_FACE || Object.hasOwn(FACE_PRESETS, face)))
+    .slice(0, MAX_FACES_PASSED)
+}
+
 function sanitizeMotionStyle(value: unknown): RigMotionStyle | null {
   return value === 'restrained' || value === 'even' || value === 'open'
     ? value
@@ -283,7 +292,7 @@ function sanitizeBaseline(value: unknown): PerformanceBaseline | null {
     ...(pose ? { pose } : {}),
     ...(typeof value.face === 'string' && Object.hasOwn(FACE_PRESETS, value.face) ? { face: value.face } : {}),
     ...(typeof value.shift === 'string' && FACE_SHIFT_NAMES.includes(value.shift) ? { shift: value.shift } : {}),
-    ...(typeof value.via === 'string' && (value.via === PLAIN_FACE || Object.hasOwn(FACE_PRESETS, value.via)) ? { via: value.via } : {}),
+    ...(passedThrough(value.via).length ? { via: passedThrough(value.via) } : {}),
   }
 }
 

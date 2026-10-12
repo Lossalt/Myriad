@@ -81,7 +81,6 @@ fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummar
         questions.insert("face".into(), question);
     }
     questions.insert("shift".into(), shift_question(state, when));
-    questions.insert("via".into(), via_question(state, when));
     questions.insert(
         "feeling".into(),
         json!({"type": "choice",
@@ -163,7 +162,7 @@ pub(super) fn control_questions(context: &MotionContext, state: Option<&RigState
 
 /// The looks drawn from her own controls (`facePresets` in the contract)
 /// that this face can show, offered as a whole face at once.
-fn offered_faces(state: Option<&RigStateSummary>) -> Vec<(&'static str, &'static str)> {
+pub(super) fn offered_faces(state: Option<&RigStateSummary>) -> Vec<(&'static str, &'static str)> {
     let controls = offered_body_controls(state);
     myriad_merope::PERFORMANCE_FACE_PRESETS
         .iter()
@@ -210,35 +209,19 @@ pub(super) fn shift_question(state: Option<&RigStateSummary>, when: &str) -> Val
         "criteria": criteria(myriad_merope::PERFORMANCE_FACE_SHIFTS)})
 }
 
-/// Whether a change of look passes through another one first, as people's
-/// do: the body goes there, holds it a moment, then goes on.
-pub(super) fn via_question(state: Option<&RigStateSummary>, when: &str) -> Value {
-    let mut ways = vec![
-        ("none", "straight to the new look, nothing in between"),
-        (
-            myriad_merope::PLAIN_FACE,
-            "her ordinary face for a moment first: calming down, collecting herself",
-        ),
-    ];
-    ways.extend(offered_faces(state));
-    json!({"type": "choice",
-        "instructions": format!(
-            "Her face now: {}. If her look changes {when}, does it pass through another look on the way \
-             first? Some changes do: tears to laughter through a wet smile, dozing to delight through \
-             waking up surprised, anger to shyness through calming down first. Most do not.",
-            face_now(state)
-        ),
-        "criteria": criteria(&ways)})
+fn face_now(state: Option<&RigStateSummary>) -> &'static str {
+    look_means(
+        state
+            .and_then(|state| state.face.as_deref())
+            .unwrap_or(myriad_merope::PLAIN_FACE),
+    )
 }
 
-fn face_now(state: Option<&RigStateSummary>) -> &'static str {
-    state
-        .and_then(|state| state.face.as_deref())
-        .and_then(|face| {
-            myriad_merope::PERFORMANCE_FACE_PRESETS
-                .iter()
-                .find(|(name, _, _)| *name == face)
-        })
+/// What a look is, in words: a preset's meaning, else her ordinary face.
+pub(super) fn look_means(face: &str) -> &'static str {
+    myriad_merope::PERFORMANCE_FACE_PRESETS
+        .iter()
+        .find(|(name, _, _)| *name == face)
         .map_or("her ordinary face", |(_, means, _)| *means)
 }
 
@@ -289,7 +272,7 @@ fn answered_targets(
 }
 
 /// An answer's choice when the model is sure enough of it.
-fn sure<'a>(answers: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn sure<'a>(answers: &'a Value, key: &str) -> Option<&'a str> {
     let answer = &answers[key];
     (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
         .then(|| answer["choice"].as_str())
@@ -351,7 +334,7 @@ pub(super) fn control_plan(
         "baseline": {"expression": expression, "posture": sure("posture").unwrap_or("neutral"),
             "motionEnergy": energy, "attention": "usual",
             "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face,
-            "shift": sure("shift"), "via": sure("via").filter(|via| *via != "none")},
+            "shift": sure("shift")},
         "cues": agreed_face(asked),
         "score": score,
         "askedFor": asked,
@@ -648,7 +631,7 @@ pub(super) fn standing_plan(
         "baseline": {"expression": sure("expression").unwrap_or("steady"),
             "posture": sure("posture").unwrap_or("neutral"), "motionEnergy": energy, "attention": "loose",
             "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}, "face": face,
-            "shift": sure("shift"), "via": sure("via").filter(|via| *via != "none")},
+            "shift": sure("shift")},
         "cues": [],
         "score": score,
         "loopMs": STANDING_LOOP_MS,
@@ -1013,40 +996,5 @@ mod tests {
         unknown["baseline"]["shift"] = json!("teleport");
         let plan = myriad_merope::parse_performance_plan(&unknown.to_string()).unwrap();
         assert_eq!(plan.baseline.unwrap().shift, None);
-    }
-
-    #[test]
-    fn a_change_of_look_may_pass_through_another_on_the_way() {
-        let drowsy = myriad_merope::sanitize_rig_state(&json!({"face": "drowsy", "capabilities":
-            ["head-body", "independent-eyes", "mouth-shapes"]}))
-        .unwrap();
-        let moment = context("中奖了！", "真的吗！太好了！");
-        let asked = control_questions(&moment, Some(&drowsy));
-        let via = &asked["via"]["criteria"];
-        assert!(
-            via["none"].is_string() && via["plain"].is_string() && via["surprised"].is_string()
-        );
-        assert!(
-            asked["via"]["instructions"]
-                .as_str()
-                .unwrap()
-                .contains("lids heavy")
-        );
-        let answers = |via: &str| {
-            json!({"face": {"choice": "excited", "confidence": 0.9},
-                "via": {"choice": via, "confidence": 0.8}})
-        };
-        let value = control_plan(&answers("surprised"), &moment, Some(&drowsy));
-        assert_eq!(value["baseline"]["via"], "surprised");
-        let plan = myriad_merope::parse_performance_plan(&value.to_string()).unwrap();
-        assert_eq!(plan.baseline.unwrap().via.as_deref(), Some("surprised"));
-        // Straight there is no via at all; a look that does not exist is dropped.
-        assert!(
-            control_plan(&answers("none"), &moment, Some(&drowsy))["baseline"]["via"].is_null()
-        );
-        let mut unknown = value.clone();
-        unknown["baseline"]["via"] = json!("somewhere");
-        let plan = myriad_merope::parse_performance_plan(&unknown.to_string()).unwrap();
-        assert_eq!(plan.baseline.unwrap().via, None);
     }
 }

@@ -170,8 +170,8 @@ export interface PerformanceBaseline {
   face?: string
   /** How she gets from the look before to this one (faceShifts); naturally without. */
   shift?: string
-  /** A look passed through on the way, held a moment first (a facePresets name, or 'plain'). */
-  via?: string
+  /** Looks passed through on the way, in order and without stopping (facePresets names, or 'plain'). */
+  via?: string[]
 }
 
 export interface PerformanceCue {

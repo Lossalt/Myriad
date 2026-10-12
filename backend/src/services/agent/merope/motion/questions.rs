@@ -165,10 +165,6 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
         "shift".into(),
         control::shift_question(state, "while she says it"),
     );
-    questions.insert(
-        "via".into(),
-        control::via_question(state, "while she says it"),
-    );
     Value::Object(questions)
 }
 
@@ -453,7 +449,7 @@ pub(super) fn plan_from_answers(
         "phrases": phrases,
         "baseline": {"expression": expression, "posture": posture, "motionEnergy": energy, "attention": 0.85,
             "pose": {"targets": targets, "transitionMs": 350, "holdMs": 0}, "face": face,
-            "shift": sure("shift"), "via": sure("via").filter(|via| *via != "none")},
+            "shift": sure("shift")},
         "cues": cues,
         "score": score,
         "askedFor": asked,
@@ -517,14 +513,45 @@ pub(super) async fn direct(
     source: &crate::config::ResolvedAiConfig,
     timeout: std::time::Duration,
 ) -> anyhow::Result<String> {
+    let started = std::time::Instant::now();
+    let (asked_state, asked) = asked(context, state, persona, true);
+    let answers = decide(source, asked_state, asked, timeout).await?;
+    let mut plan = plan(&answers, context, state, true);
+    // A new look: the way there, asked of this change once it is known.
+    if let Some((from, to)) = super::way::change(&answers, state) {
+        let left = timeout.saturating_sub(started.elapsed());
+        if left > std::time::Duration::from_millis(400) {
+            let (way_state, way) = super::way::questions(&from, &to, context, state);
+            match decide(source, way_state, way, left).await {
+                Ok(way) => {
+                    let passed = super::way::passed(&way);
+                    if !passed.is_empty() && plan["baseline"].is_object() {
+                        plan["baseline"]["via"] = json!(passed);
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "[Merope] the way between looks went unasked")
+                }
+            }
+        }
+    }
+    Ok(plan.to_string())
+}
+
+/// One round of questions to the decisions model; its answers.
+async fn decide(
+    source: &crate::config::ResolvedAiConfig,
+    state: Value,
+    questions: Value,
+    timeout: std::time::Duration,
+) -> anyhow::Result<Value> {
     let url =
         decisions_url(&source.base_url).ok_or_else(|| anyhow::anyhow!("no decisions endpoint"))?;
     let key = source
         .api_key
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("no key for the acting source"))?;
-    let (asked_state, asked) = asked(context, state, persona, true);
-    let body = json!({"model": source.model.trim(), "state": asked_state, "questions": asked});
+    let body = json!({"model": source.model.trim(), "state": state, "questions": questions});
     let response = reqwest::Client::builder()
         .timeout(timeout)
         .build()?
@@ -534,7 +561,7 @@ pub(super) async fn direct(
         .send()
         .await?;
     let status = response.status();
-    let value: Value = response.json().await?;
+    let mut value: Value = response.json().await?;
     let usage = &value["usage"];
     crate::services::ai_cost_ledger::record_ai_tokens_from_attribution(
         &source.provider,
@@ -550,7 +577,7 @@ pub(super) async fn direct(
     )
     .await;
     anyhow::ensure!(status.is_success(), "decisions call failed: {status}");
-    Ok(plan(&value["answers"], context, state, true).to_string())
+    Ok(value["answers"].take())
 }
 
 /// The same questions put to a chat model, which answers each in the shape a

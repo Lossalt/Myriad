@@ -77,8 +77,8 @@ pub use outfit_overlay::{
     worn_outfit_id,
 };
 pub use performance::{
-    BodyPose, ChatPerformanceBaseline, ChatPerformanceCue, ChatPerformancePlan, PLAIN_FACE,
-    extent_tiers, parse_performance_plan, tier_extent,
+    BodyPose, ChatPerformanceBaseline, ChatPerformanceCue, ChatPerformancePlan,
+    MAX_FACES_PASSED, PLAIN_FACE, extent_tiers, parse_performance_plan, tier_extent,
 };
 pub use persona::{fallback_persona_draft, persona_draft_is_complete, sanitize_persona_draft};
 pub use rig::{
