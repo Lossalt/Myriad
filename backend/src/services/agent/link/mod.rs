@@ -26,10 +26,15 @@
 //! Her senses on the app ([`senses`]): what a child reports seeing and
 //! hearing for her, as far as it said it senses it, is what she senses of
 //! the person while the app is where they are using her.
+//!
+//! Her experience on the app ([`experience`]): Work a child that takes
+//! `experience` runs starts from her Work memories, asked for over the
+//! link, and what it did comes back up to become part of her.
 
 mod body;
 mod connection;
 mod contract;
+mod experience;
 mod outfit;
 mod say;
 mod senses;
@@ -61,6 +66,8 @@ struct Open {
     says: Option<mpsc::Sender<connection::Outgoing>>,
     /// The child takes `perform` refinements of what it is saying.
     playback: bool,
+    /// Where `experience.taken` goes, once the child said it sends `experience`.
+    experience: Option<mpsc::Sender<connection::Outgoing>>,
 }
 
 /// The open link of each device, by device id.
@@ -78,6 +85,7 @@ fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
             close,
             says: None,
             playback: false,
+            experience: None,
         };
         if let Some(previous) = open.insert(device_id.to_string(), link) {
             let _ = previous.close.send(Close::Replaced);
@@ -95,6 +103,26 @@ fn takes_say(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing
             link.playback = playback;
         }
     }
+}
+
+/// The link `id` sends `experience`: what is written of it is answered
+/// through `sender`, whichever link carried it.
+fn takes_experience(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing>) {
+    if let Ok(mut open) = OPEN.lock() {
+        if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
+            link.experience = Some(sender);
+        }
+    }
+}
+
+/// Where the owner's device is told an experience was written, when its
+/// link is open and sends them.
+fn experience_sender(owner: i32, device_id: &str) -> Option<mpsc::Sender<connection::Outgoing>> {
+    OPEN.lock().ok().and_then(|open| {
+        open.get(device_id)
+            .filter(|link| link.owner == owner)
+            .and_then(|link| link.experience.clone())
+    })
 }
 
 /// Where the owner's device takes `say` frames, when its link is open and does.

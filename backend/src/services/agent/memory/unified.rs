@@ -413,6 +413,16 @@ pub async fn remember<C: ConnectionTrait>(
     db: &C,
     memory: NewMemory,
 ) -> Result<Option<String>, DbErr> {
+    remember_from(db, memory, ORIGIN_SITE).await
+}
+
+/// [`remember`], kept as coming from `origin`: the side it was learned on,
+/// `site` or the id of a device that told her host (`dev_…`).
+pub async fn remember_from<C: ConnectionTrait>(
+    db: &C,
+    memory: NewMemory,
+    origin: &str,
+) -> Result<Option<String>, DbErr> {
     let content = normalize_content(&memory.content);
     if memory.user_id <= 0 || content.is_empty() {
         return Ok(None);
@@ -424,7 +434,7 @@ pub async fn remember<C: ConnectionTrait>(
         return Ok(None);
     }
     let user_id = memory.user_id;
-    let id = insert_new(db, memory, content).await?;
+    let id = insert_new(db, memory, content, origin).await?;
     fade_excess(db, user_id).await?;
     Ok(Some(id))
 }
@@ -477,7 +487,7 @@ pub async fn remember_in_place_of<C: ConnectionTrait>(
         return Ok(Replaced { id: None, retired });
     }
     let user_id = memory.user_id;
-    let id = insert_new(db, memory, content).await?;
+    let id = insert_new(db, memory, content, ORIGIN_SITE).await?;
     let retired = retire_in_favor_of(db, old.user_id, old.ids, old.reason, Some(&id)).await?;
     fade_excess(db, user_id).await?;
     Ok(Replaced {
@@ -507,6 +517,7 @@ async fn insert_new<C: ConnectionTrait>(
     db: &C,
     memory: NewMemory,
     content: String,
+    origin: &str,
 ) -> Result<String, DbErr> {
     let now = Utc::now().fixed_offset();
     let id = format!("mem_{}", uuid::Uuid::new_v4().simple());
@@ -530,7 +541,7 @@ async fn insert_new<C: ConnectionTrait>(
         created_at: Set(now),
         updated_at: Set(now),
         superseded_by: Set(None),
-        origin: Set(ORIGIN_SITE.into()),
+        origin: Set(origin.into()),
     }
     .insert(db)
     .await?;

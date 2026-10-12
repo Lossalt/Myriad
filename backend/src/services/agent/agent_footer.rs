@@ -62,6 +62,7 @@ pub(crate) async fn record_execution_memory(params: MemoryRecordParams<'_>) {
             .map(|step| step.capability_id.clone())
             .collect(),
         success: params.success,
+        origin: None,
     };
     let db = params.db.clone();
     let attribution = crate::services::ai_cost_ledger::current_ai_attribution();

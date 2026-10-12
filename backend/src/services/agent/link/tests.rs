@@ -84,9 +84,15 @@ fn the_host_speaks_the_contract() {
     assert_eq!(CONTRACT.frames["say"].delivery, "reliable");
     assert!(CONTRACT.capabilities.iter().any(|c| c == "say"));
     // Her body on the app: what it says up is kept until taken.
-    for t in ["speech.delivered", "touch"] {
+    for t in ["speech.delivered", "touch", "experience"] {
         assert_eq!(CONTRACT.frames[t].delivery, "reliable", "{t}");
     }
+    assert!(CONTRACT.capabilities.iter().any(|c| c == "experience"));
+    assert_eq!(
+        super::experience::RECALLED,
+        4,
+        "as many as the site's own Work recalls"
+    );
     for capability in ["playback", "touch"] {
         assert!(CONTRACT.capabilities.iter().any(|c| c == capability));
     }
@@ -241,6 +247,19 @@ fn every_frame_has_a_fixture_that_fits_it() {
                     assert!(inbound.id.as_deref().is_some_and(valid_id));
                     let _: super::body::Touched = serde_json::from_value(inbound.body).unwrap();
                 }
+                "experience" => {
+                    assert!(inbound.id.as_deref().is_some_and(valid_id));
+                    let experience: super::experience::Experience =
+                        serde_json::from_value(inbound.body).unwrap();
+                    assert!(experience.readable());
+                    let run = experience.run(OWNER, "dev_1");
+                    assert!(run.success && run.origin.as_deref() == Some("dev_1"));
+                    assert_eq!(run.step_outputs.len(), 1);
+                    assert_eq!(run.capabilities, ["time.info"]);
+                }
+                "work.recall" => {
+                    assert!(inbound.body["requestId"].as_str().is_some_and(valid_id));
+                }
                 _ => {}
             }
         }
@@ -312,6 +331,16 @@ fn every_frame_has_a_fixture_that_fits_it() {
         Value::Null
     );
     let _: PerformanceDirective = serde_json::from_value(say["body"]["perform"].clone()).unwrap();
+    // What a child's experience is answered with.
+    let recalled = fixture("work.recalled");
+    let memories: Vec<String> =
+        serde_json::from_value(recalled["body"]["memories"].clone()).unwrap();
+    let sent = super::experience::recalled_frame("wr_01", &memories);
+    assert_eq!((sent.t, &sent.body), ("work.recalled", &recalled["body"]));
+    let taken = fixture("experience.taken");
+    let sent = super::experience::taken_frame(taken["body"]["id"].as_str().unwrap());
+    assert_eq!((sent.t, &sent.body), ("experience.taken", &taken["body"]));
+    assert_eq!(taken["body"]["id"], fixture("experience")["id"]);
     // A mood that comes with a run counts only as it happens.
     let event = AgentProgressEvent::MeropeStateChanged {
         mood,
@@ -1556,4 +1585,208 @@ fn remember_native_presence_for_test(device_id: &str, visible: bool) {
         device_id,
         &json!({ "presence": { "pageVisible": visible, "faceVisible": visible } }),
     );
+}
+
+/// Work on the app: it starts from her Work memories, asked for over the
+/// link, and what it did becomes her memory, kept as from that device, told
+/// back as taken only once it is written, and once.
+#[tokio::test]
+async fn what_the_app_did_becomes_part_of_her() {
+    use crate::services::agent::memory::unified::{self, Audience, MemoryKind, NewMemory, Speaker};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let Some(site) = site().await else {
+        return;
+    };
+    let (mac, token) = device(&site.db, "Mac").await;
+    let private = Audience::private(OWNER);
+    unified::remember(
+        &site.db,
+        NewMemory {
+            user_id: OWNER,
+            kind: MemoryKind::Pattern,
+            content: "周报要按项目分组，表格放在最前面".into(),
+            evidence: None,
+            speaker: Speaker::Agent,
+            source: "work",
+            audience: private.clone(),
+            importance: 0.8,
+            concepts: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+
+    // A child that did not say it sends experience is not asked.
+    let mut plain = Child::open(&site, &token).await;
+    plain.hello_with(&["rig"]).await;
+    let asked = plain
+        .send(
+            "work.recall",
+            None,
+            json!({ "requestId": "wr_0", "query": "周报" }),
+        )
+        .await;
+    assert_eq!(
+        plain.expect("error").await["body"],
+        json!({ "code": "bad_frame", "ref": asked })
+    );
+    drop(plain);
+
+    let mut child = Child::open(&site, &token).await;
+    let welcome = child.hello_with(&["rig", "experience"]).await;
+    assert_eq!(
+        welcome["body"]["capabilities"],
+        json!(["rig", "experience"])
+    );
+    child
+        .send(
+            "work.recall",
+            None,
+            json!({ "requestId": "wr_1", "query": "把这周的周报整理成表格" }),
+        )
+        .await;
+    let recalled = child.expect("work.recalled").await;
+    assert_eq!(recalled["body"]["requestId"], "wr_1");
+    let memories = recalled["body"]["memories"].as_array().unwrap();
+    assert!(memories.len() <= 4);
+    assert!(
+        memories
+            .iter()
+            .any(|memory| memory == "周报要按项目分组，表格放在最前面"),
+        "{recalled}"
+    );
+    let bad = child
+        .send(
+            "work.recall",
+            None,
+            json!({ "requestId": "has space", "query": "x" }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "bad_id", "ref": bad })
+    );
+
+    // A failed run they started, correcting her: a fact and a lesson, the
+    // step whose outcome is unknown no lesson.
+    let failed = json!({
+        "kind": "work", "started": "owner", "status": "failed",
+        "input": "不是，周报应该按日期排", "reply": "没能写进去。", "endedAt": 1_760_140_880_000_i64,
+        "conversation": [{ "role": "tools", "content": "pi's own tools: bash ×1 (1 failed)" }],
+        "outputs": [
+            { "id": "step_1", "value": { "action": "不是，周报应该按日期排", "capability": "data.transform", "success": false, "error": "表格列名不对" } },
+            { "id": "step_2", "value": { "action": "不是，周报应该按日期排", "capability": "resource.create", "success": false, "error": "调用被中止，结果未知", "execution_unknown": true }, "unknown": true }
+        ],
+        "capabilities": ["data.transform", "resource.create"]
+    });
+    child
+        .send("experience", Some("exp_1"), failed.clone())
+        .await;
+    let taken = child.expect("experience.taken").await;
+    assert_eq!(taken["body"], json!({ "id": "exp_1" }));
+    assert!(taken.get("id").is_none(), "an answer, not kept");
+    let rows = crate::models::entities::agent_memories::Entity::find()
+        .filter(crate::models::entities::agent_memories::Column::Origin.eq(mac.id.clone()))
+        .all(&site.db)
+        .await
+        .unwrap();
+    let mut kinds: Vec<&str> = rows.iter().map(|row| row.kind.as_str()).collect();
+    kinds.sort();
+    assert_eq!(kinds, ["fact", "lesson"], "{rows:?}");
+    for row in &rows {
+        assert_eq!(row.user_id, Some(OWNER));
+        assert_eq!(row.source, "work");
+        assert_eq!(row.audience, json!([OWNER]));
+        assert_eq!(row.venue, private.venue());
+    }
+    assert!(rows.iter().any(|row| row.content.contains("表格列名不对")));
+    assert!(!rows.iter().any(|row| row.content.contains("结果未知")));
+
+    // Sent again (its taken was lost): told again, written once.
+    child.send("experience", Some("exp_1"), failed).await;
+    assert_eq!(
+        child.expect("experience.taken").await["body"],
+        json!({ "id": "exp_1" })
+    );
+    let again = crate::models::entities::agent_memories::Entity::find()
+        .filter(crate::models::entities::agent_memories::Column::Origin.eq(mac.id.clone()))
+        .all(&site.db)
+        .await
+        .unwrap();
+    assert_eq!(again.len(), 2);
+
+    // Stopped part way, and scheduled: taken, nothing learned from the first.
+    for (id, started, status) in [
+        ("exp_2", "owner", "cancelled"),
+        ("exp_3", "schedule", "completed"),
+    ] {
+        child
+            .send(
+                "experience",
+                Some(id),
+                json!({ "kind": "work", "started": started, "status": status,
+                        "input": "整理下载文件夹", "endedAt": 1_760_140_890_000_i64, "title": "每晚整理" }),
+            )
+            .await;
+        assert_eq!(
+            child.expect("experience.taken").await["body"],
+            json!({ "id": id })
+        );
+    }
+    let after = crate::models::entities::agent_memories::Entity::find()
+        .filter(crate::models::entities::agent_memories::Column::Origin.eq(mac.id.clone()))
+        .all(&site.db)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 2);
+
+    // Not one: what it cannot read is said so, and nothing is taken.
+    for (id, body, code) in [
+        (
+            "has space",
+            json!({ "kind": "work", "started": "owner", "status": "completed", "input": "x", "endedAt": 1 }),
+            "bad_id",
+        ),
+        (
+            "exp_4",
+            json!({ "kind": "chat", "started": "owner", "status": "completed", "input": "x", "endedAt": 1 }),
+            "bad_frame",
+        ),
+        (
+            "exp_5",
+            json!({ "kind": "work", "started": "nobody", "status": "completed", "input": "x", "endedAt": 1 }),
+            "bad_frame",
+        ),
+        (
+            "exp_6",
+            json!({ "kind": "work", "started": "owner", "status": "completed", "input": "  ", "endedAt": 1 }),
+            "bad_frame",
+        ),
+    ] {
+        let seq = child.send("experience", Some(id), body).await;
+        assert_eq!(
+            child.expect("error").await["body"],
+            json!({ "code": code, "ref": seq })
+        );
+    }
+
+    // What the Mac learned is hers on every end: the site's own Work
+    // recalls it.
+    let found = unified::recall(
+        &site.db,
+        OWNER,
+        &private,
+        Some("周报应该按日期排"),
+        &MemoryKind::FOR_WORK,
+        4,
+    )
+    .await
+    .unwrap();
+    assert!(
+        found
+            .iter()
+            .any(|memory| memory.content.contains("周报应该按日期排"))
+    );
+    drop(child);
+    site.close().await;
 }

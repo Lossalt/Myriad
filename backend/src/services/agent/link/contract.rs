@@ -154,7 +154,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 13] = [
+pub(super) const HOST_FRAMES: [&str; 15] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -168,11 +168,13 @@ pub(super) const HOST_FRAMES: [&str; 13] = [
     "say",
     "touch.reaction",
     "outfit",
+    "work.recalled",
+    "experience.taken",
 ];
 
 /// Frame types the host takes from a child.
 #[cfg(test)]
-pub(super) const CHILD_FRAMES: [&str; 13] = [
+pub(super) const CHILD_FRAMES: [&str; 15] = [
     "hello",
     "input",
     "presence",
@@ -186,6 +188,8 @@ pub(super) const CHILD_FRAMES: [&str; 13] = [
     "touch.appraise",
     "touch",
     "outfit.wear",
+    "work.recall",
+    "experience",
 ];
 
 /// Error codes the host itself sends (run.rejected may also carry an AI quota code).

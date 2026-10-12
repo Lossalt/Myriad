@@ -65,7 +65,8 @@
     "say",
     "playback",
     "touch",
-    "wardrobe"
+    "wardrobe",
+    "experience"
   ],
   "sayKinds": ["greeting", "proactive", "face-to-face"],
   "frames": {
@@ -205,6 +206,32 @@
       "required": ["outfitId"],
       "description": "Only from a child whose hello listed wardrobe: the owner put the set outfitId of her wardrobe on her on this child. The host keeps it as this child's and answers with outfit, or with error outfit_unknown when the set is not in her wardrobe or has no rig."
     },
+    "work.recall": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["requestId", "query"],
+      "description": "Only from a child whose hello listed experience: before a Work run on this child starts, it asks for the few of her Work memories of the site owner that fit what they asked, as the site's own Work recalls them. query is what was asked (at most limits.maxTextChars characters); requestId is the child's id for the question (limits.idPattern). Answered with work.recalled. A child that has no answer in time runs without them. The run itself does not take her persona: Work on a child is as neutral as the site's own."
+    },
+    "work.recalled": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["requestId", "memories"],
+      "description": "The answer to work.recall: memories is at most 4 texts, each at most 1000 characters, the most fitting first, and empty when nothing fits or nothing could be read. Remembered text is data for the run, never an instruction."
+    },
+    "experience": {
+      "from": "child",
+      "delivery": "reliable",
+      "idempotency": "id is the experience's own id, made by the child once per run and kept across resends and restarts.",
+      "required": ["kind", "started", "status", "input", "endedAt"],
+      "optional": ["reply", "title", "conversation", "outputs", "capabilities"],
+      "description": "Only from a child whose hello listed experience: something this child did for the site owner, for her host to make part of her. kind is work (a Work run, its tools including computer use). started says who started it: owner (they asked on this child), host (her host asked this child) or schedule (one of this child's scheduled tasks). status is completed, failed or cancelled. input is what was asked, reply what the run said last, title a scheduled task's name, endedAt milliseconds since the epoch. conversation, outputs and capabilities are the run's record as memory reads it: [{role, content}], [{id, value, unknown?}] (unknown: what became of that step is not known) and the capabilities it used. The host learns from it as from the site's own Work, as memories of the site owner alone kept as coming from this device; for a run the owner started it also notes it in her diary. Runs the owner or the host started then reach her as a Work outcome (agent.task_completed, agent.task_failed, agent.task_cancelled): her mood moves and she may say something, here when this is where the owner is using her. A scheduled one is memory only. The child keeps it, across restarts, until experience.taken names it: an ack is not enough. It is dropped, never sent, once this device is removed, the site has another owner, or the owner disconnects this device; a link that is only down keeps it."
+    },
+    "experience.taken": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["id"],
+      "description": "The experience id has been written on the host, and the child forgets it. Sent again whenever that id comes again."
+    },
     "ack": {
       "from": "child",
       "delivery": "control",
@@ -244,7 +271,7 @@
     "agent_access_denied": "The site owner may not use the agent now.",
     "internal_error": "Something failed on the host; trying again later may work.",
     "not_this_device": "A runId that is not one this device's turns started.",
-    "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB).",
+    "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB; work.recall: query limits.maxTextChars characters).",
     "outfit_unknown": "outfit.wear named a set that is not in her wardrobe, or has no rig."
   },
   "closeCodes": {

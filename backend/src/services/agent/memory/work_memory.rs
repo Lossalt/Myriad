@@ -6,6 +6,9 @@
 //! - a Standard-tier extraction over the run. Tool output and page text in
 //!   that prompt are untrusted data, and the extractor's output is only ever
 //!   stored as data, never executed.
+//!
+//! A run a device did for the person (her link's `experience`) is learned
+//! from here too, kept as coming from that device.
 
 use myriad_agent_rules::{extract_json_object_from_ai_response, untrusted_block};
 use sea_orm::DatabaseConnection;
@@ -54,6 +57,8 @@ pub(crate) struct WorkRun {
     pub step_outputs: Vec<(String, Value)>,
     pub capabilities: Vec<String>,
     pub success: bool,
+    /// The device the run happened on (`dev_…`); `None` for the site's own.
+    pub origin: Option<String>,
 }
 
 fn private(user_id: i32) -> Audience {
@@ -79,9 +84,11 @@ pub(crate) async fn learn_from_run(db: &DatabaseConnection, run: WorkRun) {
         return;
     }
 
+    let origin = run.origin.as_deref().unwrap_or(unified::ORIGIN_SITE);
     if is_correction(&run.user_input) {
         store(
             db,
+            origin,
             NewMemory {
                 user_id: run.user_id,
                 kind: MemoryKind::Fact,
@@ -109,6 +116,7 @@ pub(crate) async fn learn_from_run(db: &DatabaseConnection, run: WorkRun) {
                 .unwrap_or_else(|| step_id.clone());
             store(
                 db,
+                origin,
                 NewMemory {
                     user_id: run.user_id,
                     kind: MemoryKind::Lesson,
@@ -132,6 +140,10 @@ pub(crate) async fn learn_from_run(db: &DatabaseConnection, run: WorkRun) {
 }
 
 fn step_error(output: &Value) -> Option<String> {
+    // What became of it is not known: nothing to learn from as a failure.
+    if output.get("execution_unknown") == Some(&Value::Bool(true)) {
+        return None;
+    }
     let text = output.get("error").and_then(Value::as_str).or_else(|| {
         (output.get("success") == Some(&Value::Bool(false)))
             .then(|| output.get("message").and_then(Value::as_str))
@@ -140,8 +152,8 @@ fn step_error(output: &Value) -> Option<String> {
     Some(text.chars().take(200).collect())
 }
 
-async fn store(db: &DatabaseConnection, memory: NewMemory) {
-    if let Err(error) = unified::remember(db, memory).await {
+async fn store(db: &DatabaseConnection, origin: &str, memory: NewMemory) {
+    if let Err(error) = unified::remember_from(db, memory, origin).await {
         tracing::warn!(%error, "[Memory] failed to store a Work memory");
     }
 }
@@ -276,6 +288,7 @@ async fn extract_with_model(db: &DatabaseConnection, run: &WorkRun) {
         };
         store(
             db,
+            run.origin.as_deref().unwrap_or(unified::ORIGIN_SITE),
             NewMemory {
                 user_id: run.user_id,
                 kind,
@@ -342,6 +355,7 @@ mod tests {
             )],
             capabilities: vec!["web.scrape".into()],
             success: true,
+            origin: None,
         }
     }
 

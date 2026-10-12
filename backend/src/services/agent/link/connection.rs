@@ -137,6 +137,7 @@ pub(super) async fn serve_with(
         unacked: Vec::new(),
         said: HashSet::new(),
         senses: Default::default(),
+        experience: false,
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -190,6 +191,8 @@ struct Link {
     said: HashSet<String>,
     /// What the child said it senses for her.
     senses: super::senses::Senses,
+    /// The child said it sends `experience` (and asks `work.recall`).
+    experience: bool,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -320,6 +323,8 @@ impl Link {
             "touch.appraise" if self.touch => self.appraise(inbound).await,
             "touch" if self.touch => self.touched(inbound).await,
             "outfit.wear" if self.worn.is_some() => self.wear(inbound).await,
+            "work.recall" if self.experience => self.recall(inbound),
+            "experience" if self.experience => self.experienced(inbound).await,
             "ping" => self.reply(frame("pong", json!({}))),
             "ack" | "pong" => {}
             t if CONTRACT.frames.contains_key(t) => self.error("bad_frame", Some(inbound.seq)),
@@ -387,6 +392,14 @@ impl Link {
             .any(|capability| capability == "playback");
         self.touch = capabilities.iter().any(|capability| capability == "touch");
         self.senses = super::senses::Senses::of(&capabilities);
+        // What it does for the owner comes up; what is written is told on its link.
+        if capabilities
+            .iter()
+            .any(|capability| capability == "experience")
+        {
+            self.experience = true;
+            super::takes_experience(&self.device.id, self.registered, self.tx.clone());
+        }
         // Her lines for the app: what is still waiting goes again, after welcome.
         if capabilities.iter().any(|capability| capability == "say") {
             self.takes_say = true;
@@ -717,6 +730,74 @@ impl Link {
             };
             let _ = tx.send(answer).await;
         });
+    }
+
+    /// `work.recall`: the Work memories a run on the app starts from, as the
+    /// site's own Work recalls them.
+    fn recall(&mut self, inbound: Inbound) {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Recall {
+            request_id: String,
+            query: String,
+        }
+        let Ok(recall) = serde_json::from_value::<Recall>(inbound.body) else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        if !valid_id(&recall.request_id) {
+            self.error("bad_id", Some(inbound.seq));
+            return;
+        }
+        if recall.query.chars().count() > CONTRACT.limits.max_text_chars {
+            self.error("too_large", Some(inbound.seq));
+            return;
+        }
+        let (db, owner, tx) = (self.db.clone(), self.owner, self.tx.clone());
+        tokio::spawn(async move {
+            let memories = super::experience::recall(&db, owner, &recall.query).await;
+            let _ = tx
+                .send(super::experience::recalled_frame(
+                    &recall.request_id,
+                    &memories,
+                ))
+                .await;
+        });
+    }
+
+    /// `experience`: something the app did for the owner, to become part of
+    /// her. Taken once it is written; a resend of one already written is
+    /// told so again.
+    async fn experienced(&mut self, inbound: Inbound) {
+        let seq = inbound.seq;
+        let Some(id) = inbound.id.filter(|id| valid_id(id)) else {
+            self.error("bad_id", Some(seq));
+            return;
+        };
+        let Ok(experience) = serde_json::from_value::<super::experience::Experience>(inbound.body)
+        else {
+            self.error("bad_frame", Some(seq));
+            return;
+        };
+        if !experience.readable() {
+            self.error("bad_frame", Some(seq));
+            return;
+        }
+        if super::experience::was_taken(&self.db, &self.device.id, &id).await {
+            self.reply(super::experience::taken_frame(&id));
+            return;
+        }
+        // Another copy is being written; it is told when that is done.
+        if !super::experience::begin(&self.device.id, &id) {
+            return;
+        }
+        tokio::spawn(super::experience::write(
+            self.db.clone(),
+            self.owner,
+            self.device.id.clone(),
+            id,
+            experience,
+        ));
     }
 
     /// `outfit.wear`: the owner put a set of her wardrobe on her on the app.
