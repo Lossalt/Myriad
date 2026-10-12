@@ -59,8 +59,9 @@ fn learned() -> sea_orm::Condition {
 }
 
 /// Sources of what she learns about someone or looks up: what they told
-/// her, what came up about them, what she searched for.
-const LEARNED_ABOUT_SOMEONE: [&str; 3] = ["chat", "event", "lookup"];
+/// her (as a short note as they talk, and kept for good once it is gone
+/// over), what came up about them, what she searched for.
+const LEARNED_ABOUT_SOMEONE: [&str; 4] = ["chat", "chat_note", "event", "lookup"];
 /// What she heard from others, or was put on to (see `merope::heard`).
 const LEARNED_HEARD: &str = "heard";
 

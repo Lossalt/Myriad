@@ -482,6 +482,111 @@ async fn durable_memory_resumes_in_a_fresh_process() {
     assert_eq!(facts(db).await, 0);
     schema.drop().await;
 }
+/// A line is kept as a short note; once the stretch is over it is gone over:
+/// what lasts is kept for good, the notes it put together are taken back in
+/// its favor. Each line puts it off until they go quiet, never past a while
+/// after the stretch began.
+#[tokio::test]
+#[ignore = "requires MYRIAD_MEROPE_TEST_DATABASE_URL; isolated migrated schema"]
+async fn durable_memory_settles_a_stretch_once_it_is_over() {
+    let schema = fixture().await;
+    let db = &schema.db;
+    chat(db, "line", Audience::private(7)).await;
+    let line = claim(db).await.unwrap().unwrap();
+    finish(db, &line, Ok(fact())).await.unwrap();
+    let note: (String, String) = {
+        let row = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT id, source FROM agent_memories WHERE invalid_at IS NULL".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            row.try_get("", "id").unwrap(),
+            row.try_get("", "source").unwrap(),
+        )
+    };
+    assert_eq!(note.1, "chat_note", "a line is a short note");
+
+    let began = chrono::Utc::now().fixed_offset() - chrono::Duration::minutes(19);
+    let stretch = |at| Payload::Settle {
+        present: Audience::private(7),
+        from: at,
+        last: at,
+    };
+    enqueue(db, "settle", 7, stretch(began), None)
+        .await
+        .unwrap();
+    let job = loaded(db, "settle").await;
+    assert!(
+        job.ready - job.last_arrival <= 60 + 5,
+        "began 19 minutes ago: due within the 20, not three minutes on"
+    );
+    enqueue(
+        db,
+        "settle",
+        7,
+        stretch(began + chrono::Duration::minutes(19)),
+        None,
+    )
+    .await
+    .unwrap();
+    let Some(Payload::Settle { from, last, .. }) = loaded(db, "settle").await.data else {
+        panic!("a stretch");
+    };
+    assert_eq!((from, last), (began, began + chrono::Duration::minutes(19)));
+    assert!(claim(db).await.unwrap().is_none(), "not yet over");
+
+    due(db, "settle").await;
+    let settle = claim(db).await.unwrap().unwrap();
+    let Effect::Chat(updates) = fact_of("家里有只橘猫叫年糕") else {
+        unreachable!()
+    };
+    finish(
+        db,
+        &settle,
+        Ok(Effect::Settle {
+            updates,
+            settled: vec![note.0.clone()],
+        }),
+    )
+    .await
+    .unwrap();
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT content, source, invalid_reason FROM agent_memories ORDER BY created_at"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let rows: Vec<(String, String, Option<String>)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.try_get("", "content").unwrap(),
+                row.try_get("", "source").unwrap(),
+                row.try_get("", "invalid_reason").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "养了一只猫叫年糕".to_string(),
+                "chat_note".to_string(),
+                Some("settled".to_string())
+            ),
+            ("家里有只橘猫叫年糕".to_string(), "chat".to_string(), None),
+        ]
+    );
+    assert!(loaded(db, "settle").await.data.is_none());
+    schema.drop().await;
+}
+
 #[tokio::test]
 #[ignore = "subprocess fixture; parent supplies isolated schema"]
 async fn memory_process_fixture() {

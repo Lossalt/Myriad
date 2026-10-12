@@ -45,6 +45,14 @@ pub(super) fn readiness(
     row: &agent_memories::Model,
     now: chrono::DateTime<chrono::FixedOffset>,
 ) -> f64 {
+    if row.source == super::SHORT_NOTE_SOURCE {
+        return super::super::strength::short_of_row(
+            row.created_at,
+            row.access_count,
+            row.last_accessed_at,
+            now,
+        );
+    }
     super::super::strength::of_row(row.created_at, row.access_count, row.last_accessed_at, now)
 }
 

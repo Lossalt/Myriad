@@ -21,6 +21,13 @@ pub(super) enum Payload {
         #[serde(default)]
         lines: Vec<chrono::DateTime<chrono::FixedOffset>>,
     },
+    /// One person's stretch of talk in one place, gone over once it is over
+    /// (see `chat_remember::settle`): from its first line to its latest.
+    Settle {
+        present: crate::services::agent::memory::unified::Audience,
+        from: chrono::DateTime<chrono::FixedOffset>,
+        last: chrono::DateTime<chrono::FixedOffset>,
+    },
     Stranger {
         venue: String,
         stranger: strangers::Stranger,
@@ -32,6 +39,19 @@ impl Payload {
     /// Fold a later arrival for the same person and place into this one.
     /// Their lines join in order; her reply, when there is one, is added.
     pub(super) fn fold(&mut self, later: Payload) {
+        if let (
+            Payload::Settle { from, last, .. },
+            Payload::Settle {
+                from: added_from,
+                last: added_last,
+                ..
+            },
+        ) = (&mut *self, &later)
+        {
+            *from = (*from).min(*added_from);
+            *last = (*last).max(*added_last);
+            return;
+        }
         let (
             Payload::Chat {
                 user_text,
@@ -97,6 +117,12 @@ impl Payload {
 
 pub(super) enum Effect {
     Chat(chat_remember::ChatMemoryUpdates),
+    /// What a stretch gives to keep for good, and the short notes it put
+    /// together (taken back in its favor).
+    Settle {
+        updates: chat_remember::ChatMemoryUpdates,
+        settled: Vec<String>,
+    },
     Stranger {
         previous: Option<String>,
         note: Option<String>,
@@ -209,6 +235,9 @@ async fn prepare(db: &DatabaseConnection, claim: &queue::Claim) -> Result<Effect
                 turn,
             )
             .await
+        }
+        Payload::Settle { present, from, .. } => {
+            chat_remember::settle(db, claim.job.owner, present, *from).await
         }
         Payload::Stranger {
             venue,

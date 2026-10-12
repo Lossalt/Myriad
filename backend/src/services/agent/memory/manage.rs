@@ -53,6 +53,7 @@ pub fn category(row: &agent_memories::Model) -> &'static str {
         },
         Whose::Person(_) => match source {
             "chat" => "chat",
+            "chat_note" => "note",
             "event" => "event",
             "lookup" => "lookup",
             "import" => "import",

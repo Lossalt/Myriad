@@ -30,7 +30,8 @@ pub(crate) async fn apply_chat_memory_update_in(
 ) -> Result<bool, anyhow::Error> {
     let transaction = db.begin().await?;
     let applied =
-        apply_chat_memory_update_on(&transaction, user_id, input_at, update, present).await?;
+        apply_chat_memory_update_on(&transaction, user_id, input_at, update, present, Keep::Note)
+            .await?;
     transaction.commit().await?;
     Ok(applied)
 }
@@ -39,16 +40,37 @@ pub(crate) async fn apply_chat_memory_update_in(
 /// as `apply_chat_memory_update_on`, then what she said worth keeping, all
 /// only while the message is still the person's latest. Whether anything
 /// was kept.
+/// Where what they said goes: a short note as they talk, or kept for good
+/// once the stretch of talk is over (see `chat_remember::settle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::services::agent::merope) enum Keep {
+    /// What they said lately: it can only take back other short notes, and
+    /// what she knows for good is changed only once the talk is gone over.
+    Note,
+    /// Kept for good: it changes only what she knows for good.
+    Lasting,
+}
+
+impl Keep {
+    fn source(self) -> &'static str {
+        match self {
+            Self::Note => crate::services::agent::memory::unified::SHORT_NOTE_SOURCE,
+            Self::Lasting => "chat",
+        }
+    }
+}
+
 pub(in crate::services::agent::merope) async fn apply_chat_memory_updates_on<C: ConnectionTrait>(
     db: &C,
     user_id: i32,
     input_at: chrono::DateTime<chrono::FixedOffset>,
     updates: &super::super::chat_remember::ChatMemoryUpdates,
     present: &crate::services::agent::memory::unified::Audience,
+    keep: Keep,
 ) -> Result<bool, anyhow::Error> {
     let mut kept = false;
     for update in &updates.updates {
-        kept |= apply_chat_memory_update_on(db, user_id, input_at, update, present).await?;
+        kept |= apply_chat_memory_update_on(db, user_id, input_at, update, present, keep).await?;
     }
     if (updates.said.is_empty() && updates.put_onto.is_empty())
         || !chat_memory_input_is_current(db, user_id, input_at, present).await?
@@ -110,6 +132,7 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
     input_at: chrono::DateTime<chrono::FixedOffset>,
     update: &super::super::chat_remember::ChatMemoryUpdate,
     present: &crate::services::agent::memory::unified::Audience,
+    keep: Keep,
 ) -> Result<bool, anyhow::Error> {
     if user_id <= 0 || (update.fact.is_none() && update.supersedes.is_empty()) {
         return Ok(false);
@@ -117,27 +140,53 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
     // Always acquire in this order. Event-memory writers only take the second.
     lock_addressee(db, user_id).await?;
     lock_persona_memory(db, user_id).await?;
-    if !chat_memory_input_is_current(db, user_id, input_at, present).await? {
+    // Lines are gone over one by one, so an older one must not undo a newer
+    // one. A stretch is gone over on its own, once, with all of it in view:
+    // it is not fenced by the lines, nor does it fence them.
+    if keep == Keep::Note && !chat_memory_input_is_current(db, user_id, input_at, present).await? {
         return Ok(false);
     }
     use crate::services::agent::memory::unified;
+    use unified::SHORT_NOTE_SOURCE;
+    let rows = unified::active_in(db, user_id, present, &unified::MemoryKind::ABOUT_PERSON).await?;
+    let own =
+        |row: &unified::MemoryRecord| (row.source == SHORT_NOTE_SOURCE) == (keep == Keep::Note);
+    // A short note takes back only short notes: what she knows for good
+    // changes once the stretch is gone over, with all of it in view.
+    let supersedes: Vec<String> = match keep {
+        Keep::Note => update
+            .supersedes
+            .iter()
+            .filter(|old| {
+                rows.iter().any(|row| {
+                    own(row) && &super::super::ingest::compact_summary(&row.content) == *old
+                })
+            })
+            .cloned()
+            .collect(),
+        Keep::Lasting => update.supersedes.clone(),
+    };
+    if update.fact.is_none() && supersedes.is_empty() {
+        return Ok(false);
+    }
     let mut targets = Vec::new();
     let mut found = std::collections::HashSet::new();
-    // The row that already says the new fact, when one does.
+    // The row that already says the new fact, when one does: a short note
+    // is not taken of what she already knows anywhere; what is kept for
+    // good is not kept twice there.
     let mut duplicate = None;
-    for note in unified::active_in(db, user_id, present, &unified::MemoryKind::ABOUT_PERSON).await?
-    {
+    for note in rows {
         let content = super::super::ingest::compact_summary(&note.content);
-        if update.supersedes.contains(&content) {
+        if own(&note) && supersedes.contains(&content) {
             targets.push(note.id);
             found.insert(content);
-        } else if update.fact.as_ref() == Some(&content) {
+        } else if update.fact.as_ref() == Some(&content) && (keep == Keep::Note || own(&note)) {
             duplicate = Some(note.id);
         }
     }
     // Another extraction already replaced a target: reject the whole edit,
     // rather than appending an ungrounded new fact after a partial correction.
-    if found.len() != update.supersedes.len() {
+    if found.len() != supersedes.len() {
         return Ok(false);
     }
     // The corrected rows point at what holds the fact now: the new row, or
@@ -153,7 +202,7 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
                     content: fact.clone(),
                     evidence: update.evidence.clone(),
                     speaker: unified::Speaker::User,
-                    source: "chat",
+                    source: keep.source(),
                     audience: present.clone(),
                     importance: 0.6,
                     concepts: update.concepts.clone(),
@@ -172,7 +221,7 @@ pub(in crate::services::agent::merope) async fn apply_chat_memory_update_on<C: C
         }
     }
     let applied = !targets.is_empty() || insert.is_some();
-    if applied {
+    if applied && keep == Keep::Note {
         mark_applied(db, user_id, input_at, present).await?;
     }
     Ok(applied)

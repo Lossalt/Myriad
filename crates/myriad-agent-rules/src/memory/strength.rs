@@ -56,6 +56,37 @@ pub fn of_row(
     readiness(base_level(uses, lifetime, since))
 }
 
+/// How readily a short note comes to mind (what they said lately, true for
+/// now; see `merope::chat_remember`), from the same base level: it fades
+/// much faster than what she keeps for good. Set so an untouched note is
+/// ready about a half after a day, a fifth after two, and under
+/// [`SHORT_FADED`] after about three; each time it is recalled it is laid
+/// down again, so what keeps coming up stays. A guess, not measured.
+pub fn short_readiness(base: f64) -> f64 {
+    const HALF_AT: f64 = -5.68;
+    const SPREAD: f64 = 0.25;
+    1.0 / (1.0 + ((HALF_AT - base) / SPREAD).exp())
+}
+
+/// Below this, a short note has faded: it no longer comes to mind.
+pub const SHORT_FADED: f64 = 0.1;
+
+/// [`of_row`] for a short note.
+pub fn short_of_row(
+    created_at: DateTime<FixedOffset>,
+    access_count: i32,
+    last_accessed_at: Option<DateTime<FixedOffset>>,
+    now: DateTime<FixedOffset>,
+) -> f64 {
+    let seconds = |at: DateTime<FixedOffset>| (now - at).num_seconds().max(0) as f64;
+    let lifetime = seconds(created_at);
+    let since = last_accessed_at.map(seconds).unwrap_or(lifetime);
+    let uses = u32::try_from(access_count.max(0))
+        .unwrap_or(0)
+        .saturating_add(1);
+    short_readiness(base_level(uses, lifetime, since))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +166,21 @@ mod tests {
         assert!(just > 0.99 && just <= 1.0);
         let odd = of_row(now + chrono::Duration::days(1), -4, Some(now), now);
         assert!((0.0..=1.0).contains(&odd));
+    }
+
+    #[test]
+    fn a_short_note_fades_within_days_unless_it_keeps_coming_up() {
+        let made = DateTime::parse_from_rfc3339("2026-10-01T12:00:00+08:00").unwrap();
+        let after = |hours: i64| made + chrono::Duration::hours(hours);
+        let untouched = |hours| short_of_row(made, 0, None, after(hours));
+        assert!(untouched(1) > 0.9, "{}", untouched(1));
+        assert!((0.35..0.65).contains(&untouched(24)), "{}", untouched(24));
+        assert!(untouched(48) < 0.35);
+        assert!(untouched(80) < SHORT_FADED, "{}", untouched(80));
+        // Recalled yesterday, it is still there on day four.
+        let recalled = short_of_row(made, 2, Some(after(72)), after(96));
+        assert!(recalled > SHORT_FADED, "{recalled}");
+        // What she keeps for good is far from faded by then.
+        assert!(of_row(made, 0, None, after(80)) > 0.5);
     }
 }

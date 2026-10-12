@@ -311,6 +311,21 @@ fn audience_of(model: &agent_memories::Model) -> Vec<i32> {
     }
 }
 
+/// Where a short note about someone is kept: what they said lately, true for
+/// now, taken line by line as they talk. It fades within days unless it
+/// keeps coming up (see `myriad_agent_rules::memory::strength::short_readiness`);
+/// once the stretch of talk is over, what lasts of it is kept for good under
+/// `chat` (see `merope::chat_remember`).
+pub const SHORT_NOTE_SOURCE: &str = "chat_note";
+
+/// Whether a row is a short note that has faded: it no longer comes to mind.
+pub(crate) fn faded_note(
+    row: &agent_memories::Model,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    row.source == SHORT_NOTE_SOURCE && recall::readiness(row, now) < super::strength::SHORT_FADED
+}
+
 /// The rows a conversation could draw on before the audience check: in a
 /// group, everything learned in that group, whoever it was about; in
 /// private, the person's own memories.
@@ -337,9 +352,11 @@ async fn rows_for<C: ConnectionTrait>(
     } else {
         active_rows(db, user_id, kinds).await?
     };
+    let now = Utc::now().fixed_offset();
     Ok(rows
         .into_iter()
         .filter(|row| admits(row, present))
+        .filter(|row| !faded_note(row, now))
         // What only the two of them share, and her notes on people from
         // outside, have their own place in her mind.
         .filter(|row| !KEPT_APART.contains(&row.source.as_str()))

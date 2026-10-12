@@ -1,5 +1,11 @@
 //! After a Chat reply, optionally distill one persona-memory fact.
 //!
+//! What a line gives is a short note: what they said lately, true for now,
+//! fading within days unless it keeps coming up. Once the stretch of talk is
+//! over (they have gone quiet, or it has run long), it is gone over whole
+//! (`settle`): what lasts of the notes, put together, is kept for good, and
+//! what it shows has changed replaces what she knew; the rest stays a note.
+//!
 //! Fail-open: missing Lite, timeout, empty JSON, or a duplicate fact never
 //! block the spoken reply. Delivery motion is spawned first so extract does
 //! not steal the first Lite slot.
@@ -319,7 +325,7 @@ async fn queue_chat_words(
         user_text,
         reply,
         input_at,
-        present,
+        present: present.clone(),
         turn,
         lines: vec![input_at],
     };
@@ -332,6 +338,23 @@ async fn queue_chat_words(
         Ok(Ok(()))
     ) {
         tracing::warn!(user_id, outcome = "enqueue_failed", "[Merope] chat memory");
+    }
+    // And the stretch it belongs to, gone over once it is over.
+    let id = super::memory_jobs::key(&["settle", &user_id.to_string(), &present.venue()]);
+    let data = super::memory_jobs::Payload::Settle {
+        present,
+        from: input_at,
+        last: input_at,
+    };
+    if !matches!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            super::store::memory_jobs::enqueue(db, &id, user_id, data, None)
+        )
+        .await,
+        Ok(Ok(()))
+    ) {
+        tracing::warn!(user_id, outcome = "enqueue_failed", "[Merope] chat settle");
     }
 }
 
@@ -385,9 +408,14 @@ pub(super) async fn extract(
     // What they told her last, first: "forget what I just said" names
     // nothing that recall by their words would find. In the same plain form
     // as recalled facts, since a correction quotes one to replace it.
-    let latest = crate::services::agent::memory::unified::latest_of(db, user_id, "chat", 3)
-        .await
-        .map_err(|_| Failure::Storage)?;
+    let latest = crate::services::agent::memory::unified::latest_of(
+        db,
+        user_id,
+        crate::services::agent::memory::unified::SHORT_NOTE_SOURCE,
+        3,
+    )
+    .await
+    .map_err(|_| Failure::Storage)?;
     let mut known: Vec<String> = latest
         .into_iter()
         .filter(|row| row.venue == present.venue())
@@ -924,3 +952,6 @@ mod tests {
 
 #[cfg(test)]
 mod replay;
+
+mod settle;
+pub(super) use settle::settle;

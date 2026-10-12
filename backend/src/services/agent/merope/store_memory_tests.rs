@@ -376,6 +376,7 @@ async fn explicit_corrections_retire_only_scoped_facts_and_recheck_the_input_und
             second_input + chrono::Duration::seconds(1),
             &newer,
             &crate::services::agent::memory::unified::Audience::private(user_id),
+            Keep::Note,
         )
         .await
         .unwrap()

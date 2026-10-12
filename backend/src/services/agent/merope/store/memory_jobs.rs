@@ -14,6 +14,10 @@ const LEASE: i64 = 60;
 /// How long words held as they land wait for her answer before they are gone
 /// over without it.
 const HELD_FOR: i64 = 120;
+/// Quiet this long, and a stretch of talk is over and gone over.
+const SETTLES_AFTER: i64 = 180;
+/// Talk that never goes quiet is still gone over this long after it began.
+const SETTLES_AT_MOST: i64 = 1200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::services::agent::merope) struct Job {
@@ -158,6 +162,30 @@ pub(in crate::services::agent::merope) async fn enqueue(
         next: None,
     });
     job.last_arrival = now;
+    if let Payload::Settle { from, .. } = &data {
+        // Each line puts it off until they go quiet, but never past a while
+        // after the stretch began.
+        let began = match &job.data {
+            Some(Payload::Settle { from, .. }) if !in_flight => from.timestamp(),
+            _ => from.timestamp(),
+        };
+        let slot = if in_flight { &mut job.next } else { &mut job.data };
+        match slot {
+            Some(earlier) => earlier.fold(data),
+            None => *slot = Some(data),
+        }
+        if !in_flight {
+            let due = (now + SETTLES_AFTER).min(began + SETTLES_AT_MOST).max(now);
+            job.ready = if job.attempts == 0 {
+                due
+            } else {
+                job.ready.max(due)
+            };
+        }
+        save(&tx, id, &job, now).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
     if let Payload::Chat { .. } = data {
         let held = data.awaits_reply();
         let slot = if in_flight { &mut job.next } else { &mut job.data };
@@ -337,6 +365,8 @@ fn promote_next(job: &mut Job, now: i64) {
         None => {
             job.ready = if next.awaits_reply() {
                 now + HELD_FOR
+            } else if matches!(next, Payload::Settle { .. }) {
+                now + SETTLES_AFTER
             } else {
                 now
             };
@@ -408,7 +438,12 @@ pub(in crate::services::agent::merope) async fn finish(
                         anyhow::bail!("wrong memory job kind");
                     };
                     if super::apply_chat_memory_updates_on(
-                        &tx, job.owner, *input_at, &update, present,
+                        &tx,
+                        job.owner,
+                        *input_at,
+                        &update,
+                        present,
+                        super::Keep::Note,
                     )
                     .await?
                     {
@@ -416,6 +451,27 @@ pub(in crate::services::agent::merope) async fn finish(
                     } else {
                         "stale_or_duplicate".into()
                     }
+                }
+                Ok(Effect::Settle { updates, settled }) => {
+                    let Some(Payload::Settle { present, last, .. }) = &job.data else {
+                        anyhow::bail!("wrong memory job kind");
+                    };
+                    let kept = super::apply_chat_memory_updates_on(
+                        &tx,
+                        job.owner,
+                        *last,
+                        &updates,
+                        present,
+                        super::Keep::Lasting,
+                    )
+                    .await?;
+                    // What was put together is kept for good now; the rest
+                    // stays a short note and fades.
+                    crate::services::agent::memory::unified::retire_in_favor_of(
+                        &tx, job.owner, &settled, "settled", None,
+                    )
+                    .await?;
+                    if kept { "applied" } else { "no_change" }.into()
                 }
                 Ok(Effect::Stranger { previous, note }) => {
                     let Some(Payload::Stranger {
