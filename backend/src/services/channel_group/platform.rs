@@ -221,6 +221,7 @@ pub(super) async fn deliver(
                     .await
                 {
                     info!(venue = %venue, "[Group] the talk moved on; she keeps it back");
+                    with_group(&venue, |group| group.held_back = true);
                     break;
                 }
             }

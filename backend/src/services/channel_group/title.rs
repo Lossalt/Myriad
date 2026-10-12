@@ -37,6 +37,7 @@ pub async fn title(venue: &str) -> Option<String> {
         }
     }
     let name = asked(venue).await.and_then(|name| clean(&name));
+    tracing::debug!(%venue, name = name.as_deref().unwrap_or(""), "[Group] asked what a group calls itself");
     if let Ok(mut known) = KNOWN.lock() {
         known.insert(venue.to_string(), (name.clone(), Instant::now()));
     }

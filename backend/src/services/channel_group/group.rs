@@ -122,6 +122,9 @@ pub(super) struct Group {
     /// Pieces of their messages and hers not yet written to it.
     pub(super) ledger_theirs: myriad_merope::contrast::Counts,
     pub(super) ledger_hers: myriad_merope::contrast::Counts,
+    /// She held back what she wrote because the talk moved on (see
+    /// `deliver`): the turn answers again, from where the talk is now.
+    pub(super) held_back: bool,
 }
 
 pub(super) enum Turn {

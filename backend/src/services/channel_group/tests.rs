@@ -860,3 +860,19 @@ fn what_the_group_said_while_she_wrote_is_what_came_after_she_began() {
         groups.remove(venue);
     }
 }
+
+/// Held back because the talk moved on, she answers again from the newest
+/// line someone else said: not her own, not the one she was answering.
+#[tokio::test]
+async fn held_back_she_answers_again_from_the_newest_line_of_theirs() {
+    let chat = -9_731;
+    let asked = line(chat, 1, "阿明", "@bot 周六几点");
+    record(&asked).await;
+    assert!(turns::newest_theirs(&asked).is_none());
+    record(&line(chat, 2, "小红", "刚问过了 十点")).await;
+    record_hers(&venue(chat), "九点吧").await;
+    let newest = turns::newest_theirs(&asked).unwrap();
+    assert_eq!(newest.message_id, "2");
+    assert_eq!(newest.text, "刚问过了 十点");
+    assert_eq!(newest.venue(), asked.venue());
+}

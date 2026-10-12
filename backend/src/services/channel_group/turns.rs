@@ -100,13 +100,50 @@ pub(super) async fn take_up(mut message: GroupLine, token: String) {
             }
         }
     }
+    // Holding back what she wrote is how she says it again differently: at
+    // once, from the newest line, with all of it in view; once per line.
+    let mut again = true;
     loop {
+        with_group(&venue, |group| group.held_back = false);
         let replied = answer(&message, &token, None).await;
+        let held =
+            with_group(&venue, |group| std::mem::take(&mut group.held_back)).unwrap_or(false);
+        if held
+            && again
+            && let Some(newest) = newest_theirs(&message)
+        {
+            info!(%venue, "[Group] she answers again, from where the talk is now");
+            again = false;
+            message = newest;
+            continue;
+        }
+        again = true;
         match finish_turn(&venue, replied).await {
             Some(next) => message = next,
             None => return,
         }
     }
+}
+
+/// The newest line someone else said in `like`'s group, as a line to answer.
+pub(super) fn newest_theirs(like: &GroupLine) -> Option<GroupLine> {
+    let line = with_group(&like.venue(), |group| {
+        group.lines.iter().rev().find(|line| !line.hers).cloned()
+    })
+    .flatten()?;
+    let message_id = line.message_id?;
+    (message_id != like.message_id).then(|| GroupLine {
+        platform: like.platform,
+        chat: like.chat.clone(),
+        message_id,
+        thread: like.thread,
+        from: line.from.unwrap_or_default(),
+        display_name: line.name,
+        text: line.text,
+        addressed: line.addressed,
+        reply_to: None,
+        images: line.images,
+    })
 }
 
 /// End the turn; if a line waited meanwhile, take the turn again for it
