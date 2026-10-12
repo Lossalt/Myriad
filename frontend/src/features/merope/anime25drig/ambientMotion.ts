@@ -20,14 +20,15 @@ export const AMBIENT_HEAD_GAZE_SHARE = { x: 0.62, y: 0.55 } as const
 export const LOOK_GLIDE_SHARE = { min: 0.1, max: 0.16 } as const
 
 /**
- * How her looks go while she talks, fitted to a person talking (a face-tracked
- * VTuber, head tracked frame by frame, at a quarter of its range as her daily
- * share): she changes pose about 50 times a minute, moves in about 0.27 s,
- * holds about 0.8 s, and her head tilts with each look (about 2°, at most
- * about 4°). A talker's head is never left waiting for the body to arrive.
- * The idle pace stays slow.
+ * How her looks go while she talks, fitted to people talking on camera (three
+ * interviews, 790 s, eye line measured frame by frame): about 44–59 visible
+ * head moves a minute, about 2–4° each, held about 0.4–0.6 s, the tilt
+ * wandering 12–16° within ten seconds. A talker's tilt walks on from where it
+ * is rather than starting over (`walk`); hers stays within about 9° of upright
+ * (`reach`), wandering about 10° within ten seconds. The next look does not
+ * wait for the tilt or the body to arrive. The idle pace stays slow.
  */
-export const SPEAKING_LOOK = { duration: 0.6, dwell: 0.2, roll: 1.3, turn: 0.4 } as const
+export const SPEAKING_LOOK = { duration: 0.5, dwell: 0.08, roll: 2.2, turn: 0.4, walk: 0.75, reach: 0.68 } as const
 
 /**
  * A speaker's gaze around her turn (Kendon 1967 on): she looks away as she
@@ -187,7 +188,12 @@ export class AmbientMotionController {
     let glideZ = Number.NaN
     let glideBody = Number.NaN
     if (!inspect || talk) {
-      const roll = this.range(-0.34, 0.34) * (talk ? SPEAKING_LOOK.roll : 1) - x * 0.09
+      const fresh = this.range(-0.34, 0.34) * (talk ? SPEAKING_LOOK.roll : 1)
+      const walk = talk ? SPEAKING_LOOK.walk : 0
+      // A talker's tilt walks, but stays within a person's reach.
+      const reach = talk ? SPEAKING_LOOK.reach : 1
+      const roll =
+        clamp((this.output.angleZ + x * 0.09) * walk + fresh * Math.sqrt(1 - walk * walk), -reach, reach) - x * 0.09
       glideZ = (roll - this.output.angleZ) * glideShare
       this.headZ.retarget(now, clamp(roll - glideZ, -1, 1), headDuration * (talk ? 1 : 1.35), latency + rollLag)
       // Small inspections stay eye/head-led; a broad look recruits the torso.
@@ -211,7 +217,7 @@ export class AmbientMotionController {
       now +
       Math.max(
         headDuration * 1.12 + latency + pitchLag,
-        inspect ? 0 : headDuration * 1.35 + latency + rollLag,
+        inspect || talk ? 0 : headDuration * 1.35 + latency + rollLag,
         talk ? 0 : bodyDuration + latency + rollLag + 0.06,
         eyeDuration,
       ) +

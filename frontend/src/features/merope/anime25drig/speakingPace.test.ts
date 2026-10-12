@@ -63,16 +63,17 @@ function posesPerMinute(roll: number[]): number {
   return (moves / (smooth.length / HZ)) * 60
 }
 
-// A person talking, at a quarter of a face-tracked VTuber's range (her daily
-// share): about 70 head poses a minute, a tilt range of about 6.6°. Hers was
-// fitted to about 50 a minute and 6.3° (ec853f944); before that she drifted
-// at 0 of them and 2.5°. The bounds keep her a talker, not a statue or a jitter.
-test('while she talks her head changes pose at a talking person\'s pace, at her daily share of its range', () => {
+// People talking on camera (three interviews, eye line tracked frame by frame)
+// tilt their heads over 12–16° within ten seconds, in visible moves of 2–4°
+// many times a minute. Hers was fitted to them (about 10° over two minutes);
+// before that she held 5–6°, and before ec853f944 she drifted over 2.5°. The
+// bounds keep her a talker, not a statue or a jitter.
+test('while she talks her head changes pose at a talking person\'s pace and range', () => {
   for (const seed of [3, 5]) {
     const roll = headRoll(true, seed)
     const tilt = range(roll)
     const perMinute = posesPerMinute(roll)
-    assert.ok(tilt > 4.5 && tilt < 9, `seed ${seed}: tilt range ${tilt.toFixed(1)}°`)
+    assert.ok(tilt > 7 && tilt < 16, `seed ${seed}: tilt range ${tilt.toFixed(1)}°`)
     assert.ok(perMinute > 35 && perMinute < 90, `seed ${seed}: ${perMinute.toFixed(0)} poses a minute`)
   }
 })
