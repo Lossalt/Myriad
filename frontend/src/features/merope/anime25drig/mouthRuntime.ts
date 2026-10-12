@@ -288,7 +288,7 @@ export function fadeOpacity(
   }
   if (layer.fade === 'eyeOpen' || layer.fade === 'eyeClose') {
     const open = layer.side === 'L' ? driver.eyeOpenL : driver.eyeOpenR
-    const faded = smoothstep((open - (0.1 + driver.eyeEase * 0.45)) / 0.15)
+    const faded = openEyeShare(open, driver.eyeEase)
     return (
       (layer.fade === 'eyeOpen' ? faded : 1 - faded) *
       (1 - dizzy) *
@@ -382,12 +382,8 @@ export function writeAnime25DOpacityFrame(
   const sillyMouth = silly * clamp(sillyMouthShare, 0, 1)
   const symbolBlocker =
     (1 - dizzy) * (1 - squeeze) * (1 - cry) * (1 - silly) * (1 - lovestruck)
-  const eyeOpenL = smoothstep(
-    (driver.eyeOpenL - (0.1 + driver.eyeEase * 0.45)) / 0.15,
-  )
-  const eyeOpenR = smoothstep(
-    (driver.eyeOpenR - (0.1 + driver.eyeEase * 0.45)) / 0.15,
-  )
+  const eyeOpenL = openEyeShare(driver.eyeOpenL, driver.eyeEase)
+  const eyeOpenR = openEyeShare(driver.eyeOpenR, driver.eyeEase)
   output.dizzy = dizzy
   output.cry = cry
   output.mouthCry = cry * (1 - dizzy)
@@ -560,6 +556,18 @@ function closedLinger(driver: Readonly<Anime25DDriver>): number {
 
 function partingReveal(driver: Readonly<Anime25DDriver>): number {
   return smoothstep(mouthOpenMix(driver) / PARTING_REVEAL_OPENING)
+}
+
+/**
+ * How much of the open eye shows at `open`, the drawn closed eye taking the
+ * rest. The lids close over the open drawing all the way down to a slit, and
+ * only then does the closed drawing take over, in a short band: a held squint
+ * (the director's clear tier is 0.35) is the open eye alone, never the two
+ * drawings half through each other. `ease` (how readily the eyes close) moves
+ * the band up.
+ */
+export function openEyeShare(open: number, ease: number): number {
+  return smoothstep((open - (0.05 + ease * 0.45)) / 0.07)
 }
 
 function smoothstep(value: number): number {
