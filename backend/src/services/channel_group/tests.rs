@@ -818,3 +818,45 @@ fn a_line_that_called_her_before_a_restart_is_found_in_what_was_kept() {
     assert!(super::turns::first_time(venue, ""));
     assert!(super::turns::first_time(venue, ""));
 }
+
+/// What the group said while she wrote her answer is what came after she
+/// began, never her own; the one she answers speaking again, or a line that
+/// calls her, is what stops her once she is under way.
+#[test]
+fn what_the_group_said_while_she_wrote_is_what_came_after_she_began() {
+    let venue = "telegram:-990011";
+    let since = chrono::Utc::now() - chrono::Duration::seconds(30);
+    let at = |seconds: i64| since + chrono::Duration::seconds(seconds);
+    let said = |seconds, from: &str, name: &str, text: &str, hers, addressed| Line {
+        at: at(seconds),
+        message_id: Some(format!("{seconds}")),
+        name: name.into(),
+        from: Some(from.into()),
+        text: text.into(),
+        hers,
+        addressed,
+        images: Vec::new(),
+        seen: Vec::new(),
+    };
+    with_group(venue, |group| {
+        push_line(group, said(-10, "1", "阿明", "周六几点集合", false, true));
+        push_line(group, said(5, "2", "阿红", "刚说了十点", false, false));
+        push_line(group, said(6, "0", "她", "（她的）", true, false));
+        push_line(group, said(8, "1", "阿明", "那就十点", false, false));
+        push_line(group, said(9, "3", "小周", "@她 你来吗", false, true));
+    });
+    let came = came_since(venue, since, "1");
+    assert_eq!(
+        came,
+        [
+            ("阿红".to_string(), "刚说了十点".to_string(), false),
+            ("阿明".to_string(), "那就十点".to_string(), true),
+            ("小周".to_string(), "@她 你来吗".to_string(), true),
+        ]
+    );
+    // Saying something first, no one is the one she answers.
+    assert!(!came_since(venue, since, "")[1].2);
+    if let Ok(mut groups) = GROUPS.lock() {
+        groups.remove(venue);
+    }
+}

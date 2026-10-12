@@ -51,6 +51,14 @@ pub(super) struct Unseen {
 
 pub(super) static UNSEEN: LazyLock<Mutex<HashMap<String, Unseen>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// What came lately in each chat, numbered in the order it came, whether or
+/// not a turn has taken it up yet: each turn knows up to which it saw, and
+/// what came after is what came while she answered (see `came_meanwhile`).
+static CAME: LazyLock<Mutex<HashMap<String, std::collections::VecDeque<(u64, String)>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Lines kept per chat for that.
+const CAME_KEPT: usize = 32;
 /// When she last answered each person in a private chat, by site user.
 static LAST_REPLY: LazyLock<Mutex<HashMap<i32, Instant>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -71,6 +79,16 @@ impl Drop for Seeing<'_> {
 /// Keep a message she has not seen: true when it is the first unseen one
 /// in the chat, and so the one to wait on; the rest she reads with it.
 fn take_in(session_key: &str, input: &str, images: &[ChannelImageRef]) -> bool {
+    if let Ok(mut came) = CAME.lock()
+        && (came.len() < CHATS_KEPT || came.contains_key(session_key))
+    {
+        let number = CAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let lines = came.entry(session_key.to_string()).or_default();
+        lines.push_back((number, input.to_string()));
+        while lines.len() > CAME_KEPT {
+            lines.pop_front();
+        }
+    }
     let Ok(mut unseen) = UNSEEN.lock() else {
         return false;
     };
@@ -146,6 +164,9 @@ pub(super) async fn start_chat_turn(
         else {
             return;
         };
+        // What they send after this came while she waits her turn in the
+        // chat and while she answers.
+        let saw = saw_upto(&session_key);
         drop(seeing);
         let input = seen
             .texts
@@ -164,6 +185,7 @@ pub(super) async fn start_chat_turn(
                 &seen.images,
                 sink,
                 &session_key,
+                saw,
             ),
         )
         .await;
@@ -182,6 +204,36 @@ pub(super) async fn start_chat_turn(
             last.insert(user_id, Instant::now());
         }
     });
+}
+
+/// The number of the latest line that came in this chat (0 for none): what
+/// she sees when she looks, what comes after came while she answered.
+fn saw_upto(session_key: &str) -> u64 {
+    CAME.lock()
+        .ok()
+        .and_then(|came| {
+            came.get(session_key)
+                .and_then(|lines| lines.back().map(|(number, _)| *number))
+        })
+        .unwrap_or(0)
+}
+
+/// What they sent in this chat after the line numbered `saw`, the last she
+/// saw before answering, oldest first: it is answered on its own turn after
+/// this one.
+fn came_meanwhile(session_key: &str, saw: u64) -> Vec<String> {
+    CAME.lock()
+        .ok()
+        .and_then(|came| {
+            came.get(session_key).map(|lines| {
+                lines
+                    .iter()
+                    .filter(|(number, _)| *number > saw)
+                    .map(|(_, text)| text.clone())
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
 }
 
 /// Whether this person wrote to her anywhere in the last few minutes.
@@ -207,6 +259,7 @@ async fn answer(
     images: &[ChannelImageRef],
     sink: ChannelSink,
     session_key: &str,
+    saw: u64,
 ) {
     sink.send_typing().await;
     let began = Instant::now();
@@ -279,6 +332,8 @@ async fn answer(
     let lines = myriad_agent_rules::channel::as_messages(message);
     let most = myriad_merope::talk_shape::messages_this_turn(lines.len(), rand::random::<f64>());
     let mut sent_any = false;
+    // What they sent while she wrote it, already weighed.
+    let mut looked = 0;
     for (index, line) in myriad_merope::talk_shape::goes_out_as(&lines, most, room.as_ref())
         .into_iter()
         .enumerate()
@@ -294,6 +349,29 @@ async fn answer(
         if !left.is_zero() {
             sink.send_typing().await;
             tokio::time::sleep(left).await;
+        }
+        // The talk may have moved on while she wrote: before anything has
+        // gone, she looks at what came and keeps it back if it no longer
+        // fits; once she is under way, their speaking stops her there.
+        let came = came_meanwhile(session_key, saw);
+        if came.len() > looked {
+            if sent_any {
+                mark_delivery(&db, &chat_session_id_for_mark, &run_id, CUT_OFF_PART_SENT).await;
+                return;
+            }
+            let came_now: Vec<(String, String)> = came[looked..]
+                .iter()
+                .map(|text| ("them".to_string(), text.clone()))
+                .collect();
+            if !crate::services::agent::merope::draft::still_fits(
+                user_id, input, message, &came_now,
+            )
+            .await
+            {
+                mark_delivery(&db, &chat_session_id_for_mark, &run_id, CUT_OFF_UNSENT).await;
+                return;
+            }
+            looked = came.len();
         }
         for chunk in split_channel_text(&line, sink.text_limit()) {
             if sink.send_text(&chunk).await.is_err() {
@@ -542,5 +620,21 @@ mod seeing_tests {
         // A turn that ends any way lets go of what it was to read.
         drop(Seeing(key));
         assert!(UNSEEN.lock().unwrap().get(key).is_none());
+    }
+
+    #[test]
+    fn what_came_while_she_answered_is_what_came_after_she_saw() {
+        let key = "test:came:1";
+        take_in(key, "在吗", &[]);
+        take_in(key, "问你个事", &[]);
+        let saw = saw_upto(key);
+        assert!(came_meanwhile(key, saw).is_empty());
+        take_in(key, "算了不用了", &[]);
+        assert_eq!(came_meanwhile(key, saw), ["算了不用了"]);
+        // A later turn seeing it does not take it from this one.
+        let later = saw_upto(key);
+        assert_eq!(came_meanwhile(key, saw), ["算了不用了"]);
+        assert!(came_meanwhile(key, later).is_empty());
+        UNSEEN.lock().unwrap().remove(key);
     }
 }

@@ -66,7 +66,7 @@ pub(super) async fn answer_stranger(
         return false;
     };
     let reply = without_reply_mark(&reply);
-    let sent = say_and_send(message, token, &reply, sticker, began).await;
+    let sent = say_and_send(message, token, &reply, sticker, began, owner).await;
     if sent {
         answered(message);
         crate::services::agent::merope::group::strangers::enqueue_after(

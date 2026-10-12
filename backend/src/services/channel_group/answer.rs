@@ -134,7 +134,7 @@ pub(super) async fn answer(message: &GroupLine, token: &str, chime: Option<Strin
         return false;
     }
     let reply = without_reply_mark(&reply);
-    let sent = say_and_send(message, token, &reply, sticker, began).await;
+    let sent = say_and_send(message, token, &reply, sticker, began, user_id).await;
     if sent {
         answered(message);
     }
@@ -149,17 +149,20 @@ pub(super) async fn say_and_send(
     reply: &str,
     sticker: Option<serde_json::Value>,
     began: Instant,
+    owner: i32,
 ) -> bool {
     let venue = message.venue();
     let mut sent = false;
     if !reply.trim().is_empty() {
-        let went_out = deliver(message, token, reply, began).await;
+        let went_out = deliver(message, token, reply, began, owner).await;
         sent = !went_out.is_empty();
         if sent {
             record_hers(&venue, &went_out).await;
         }
     }
-    if let Some(chosen) = sticker {
+    // Held back, the sticker she chose for it is too.
+    let held = !reply.trim().is_empty() && !sent;
+    if let Some(chosen) = sticker.filter(|_| !held) {
         let (message, token) = (message.clone(), token.to_string());
         tokio::spawn(async move {
             send_sticker(&message, &token, &chosen).await;

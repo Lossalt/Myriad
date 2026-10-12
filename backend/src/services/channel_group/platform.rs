@@ -134,9 +134,40 @@ pub(super) fn without_reply_mark(reply: &str) -> String {
     reply.to_string()
 }
 
+/// What the group said after `since`, not hers, oldest first: who, what,
+/// and whether it was the one she answers or called her.
+pub(super) fn came_since(
+    venue: &str,
+    since: chrono::DateTime<chrono::Utc>,
+    from: &str,
+) -> Vec<(String, String, bool)> {
+    with_group(venue, |group| {
+        group
+            .lines
+            .iter()
+            .filter(|said| !said.hers && said.at > since)
+            .map(|said| {
+                let theirs = !from.is_empty() && said.from.as_deref() == Some(from);
+                (said.name.clone(), said.said(), theirs || said.addressed)
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 /// Her reply, chunk by chunk; what of it reached the group (empty if
 /// nothing did): what she said there is what went out, not what she meant to.
-pub(super) async fn deliver(line: &GroupLine, token: &str, reply: &str, began: Instant) -> String {
+/// The group may have moved on while she wrote it: before anything has gone,
+/// she looks at what came and keeps it back if it no longer fits; once she is
+/// under way, the one she answers speaking again, or someone calling her,
+/// stops her there. `owner` is whom the look is billed to.
+pub(super) async fn deliver(
+    line: &GroupLine,
+    token: &str,
+    reply: &str,
+    began: Instant,
+    owner: i32,
+) -> String {
     use crate::services::agent::merope::group::timing::typing;
     use myriad_agent_rules::channel::{as_messages, split_channel_text};
     let venue = line.venue();
@@ -144,6 +175,15 @@ pub(super) async fn deliver(line: &GroupLine, token: &str, reply: &str, began: I
     let room = room(&venue);
     let mut sent = false;
     let mut went_out: Vec<String> = Vec::new();
+    let since = chrono::Utc::now()
+        - chrono::Duration::from_std(began.elapsed()).unwrap_or_else(|_| chrono::Duration::zero());
+    // What came meanwhile, already weighed.
+    let mut looked = 0;
+    let said = if line.text == myriad_merope::sharing::NOBODY_SAID {
+        String::new()
+    } else {
+        line.text.clone()
+    };
     // Most turns go as one message, and a few in a row when something grabs
     // her: typing each before it goes, typed the way people there type (or
     // chat apps usually do, until the group has said enough), and only the
@@ -164,6 +204,27 @@ pub(super) async fn deliver(line: &GroupLine, token: &str, reply: &str, began: I
         if !left.is_zero() {
             send_typing(line, token).await;
             tokio::time::sleep(left).await;
+        }
+        let came = came_since(&venue, since, &line.from);
+        if came.len() > looked {
+            let fresh = &came[looked..];
+            if sent {
+                if fresh.iter().any(|(_, _, stops)| *stops) {
+                    break;
+                }
+            } else {
+                let fresh: Vec<(String, String)> = fresh
+                    .iter()
+                    .map(|(who, what, _)| (who.clone(), what.clone()))
+                    .collect();
+                if !crate::services::agent::merope::draft::still_fits(owner, &said, reply, &fresh)
+                    .await
+                {
+                    info!(venue = %venue, "[Group] the talk moved on; she keeps it back");
+                    break;
+                }
+            }
+            looked = came.len();
         }
         for chunk in split_channel_text(&message, text_limit(line.platform)) {
             let pieces = myriad_agent_rules::mentions::split_mentions(&chunk, &people);

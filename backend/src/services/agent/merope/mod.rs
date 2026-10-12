@@ -10,6 +10,7 @@ pub mod clock;
 pub(in crate::services::agent) mod chat_remember;
 pub(in crate::services::agent) mod curiosity;
 pub(in crate::services::agent) mod doing;
+pub mod draft;
 pub(in crate::services::agent) mod explore;
 pub(in crate::services::agent) mod gates;
 pub mod group;

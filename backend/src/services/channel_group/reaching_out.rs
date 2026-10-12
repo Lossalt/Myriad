@@ -290,5 +290,5 @@ pub(super) async fn share_turn(db: &DatabaseConnection, venue: &str, reason: &st
         return false;
     };
     let reply = without_reply_mark(&reply);
-    say_and_send(&line, &token, &reply, sticker, began).await
+    say_and_send(&line, &token, &reply, sticker, began, owner).await
 }
