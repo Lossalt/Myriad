@@ -25,6 +25,8 @@ pub(super) struct Contract {
     pub capabilities: Vec<String>,
     pub say_kinds: Vec<String>,
     pub notice_kinds: Vec<String>,
+    pub work_places: Vec<String>,
+    pub act_statuses: Vec<String>,
     pub envelope: FieldSpec,
     pub frames: BTreeMap<String, FrameSpec>,
     pub error_codes: BTreeMap<String, String>,
@@ -38,6 +40,8 @@ pub(super) struct TimingSpec {
     pub say_ttl_ms: u64,
     #[cfg_attr(not(test), allow(dead_code))]
     pub touch_appraise_ms: u64,
+    pub act_pickup_ms: u64,
+    pub act_max_run_ms: u64,
     pub missed_heartbeats: u32,
     pub hello_timeout_ms: u64,
 }
@@ -155,7 +159,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 19] = [
+pub(super) const HOST_FRAMES: [&str; 21] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -175,11 +179,13 @@ pub(super) const HOST_FRAMES: [&str; 19] = [
     "notice",
     "proposals",
     "proposal.answered",
+    "act.request",
+    "act.cancel",
 ];
 
 /// Frame types the host takes from a child.
 #[cfg(test)]
-pub(super) const CHILD_FRAMES: [&str; 16] = [
+pub(super) const CHILD_FRAMES: [&str; 17] = [
     "hello",
     "input",
     "presence",
@@ -196,11 +202,13 @@ pub(super) const CHILD_FRAMES: [&str; 16] = [
     "work.recall",
     "experience",
     "proposal.answer",
+    "act.result",
 ];
 
-/// Error codes the host itself sends (run.rejected may also carry an AI quota code).
+/// Error codes of the link: what the host sends (run.rejected may also carry
+/// an AI quota code), and the act codes `act.result` and `act.cancel` carry.
 #[cfg(test)]
-pub(super) const HOST_ERROR_CODES: [&str; 15] = [
+pub(super) const HOST_ERROR_CODES: [&str; 22] = [
     "unknown_frame",
     "bad_frame",
     "not_ready",
@@ -216,6 +224,13 @@ pub(super) const HOST_ERROR_CODES: [&str; 15] = [
     "too_large",
     "outfit_unknown",
     "proposal_unknown",
+    "place_unknown",
+    "act_off",
+    "act_busy",
+    "act_unavailable",
+    "act_timeout",
+    "act_cancelled",
+    "act_revoked",
 ];
 
 /// `limits.idPattern`, without a regex engine: 1 to 64 of `A-Za-z0-9_.:-`.

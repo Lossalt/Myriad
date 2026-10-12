@@ -746,7 +746,10 @@
       "accept": "Kümmere dich drum",
       "continue": "Weiter",
       "dismiss": "Nicht jetzt",
-      "failed": "Das ist nicht durchgegangen. Bitte erneut versuchen."
+      "failed": "Das ist nicht durchgegangen. Bitte erneut versuchen.",
+      "onMac": "Auf deinem Mac",
+      "sentToMac": "An deinen Mac übergeben",
+      "macUnavailable": "Dein Mac ist nicht verbunden oder lässt keine Aufträge der Website zu."
     },
     "workOffer": {
       "kicker": "Hilfe",

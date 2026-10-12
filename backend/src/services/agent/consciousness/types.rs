@@ -139,6 +139,10 @@ pub struct SelfSnapshot {
     /// How she was after her last exchange with them, if a moment ago.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inner: Option<String>,
+    /// The owner's Macs linked now that let the site ask them to act: a
+    /// proposal may name `mac` to run there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macs_for_work: Vec<String>,
 }
 
 /// The persona's own day, as plain facts.
@@ -178,6 +182,42 @@ pub struct WorkProposal {
     pub instruction: String,
     pub expected_outcome: String,
     pub source_event_id: String,
+    /// Where accepting it runs the Work; none is the site. She is offered
+    /// `mac` only while a Mac of the owner's that takes requests is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<WorkPlace>,
+    /// The Mac a `mac` proposal is for, chosen by the host when it is made
+    /// (whatever the model wrote here is replaced).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+}
+
+impl WorkProposal {
+    /// A proposal to run on the owner's Mac.
+    pub fn on_mac(&self) -> bool {
+        self.place == Some(WorkPlace::Mac)
+    }
+}
+
+/// Where a proposal's Work runs once accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkPlace {
+    /// On the site, her host.
+    Site,
+    /// On the owner's Mac, a child of her host (contract `act`).
+    Mac,
+}
+
+impl WorkPlace {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Site => "site",
+            Self::Mac => "mac",
+        }
+    }
 }
 
 /// Structured output accepted from the strict Lite decision call.

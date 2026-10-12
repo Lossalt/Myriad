@@ -61,5 +61,9 @@ pub async fn capture_self_snapshot(
             user_id,
             &crate::services::agent::memory::unified::Audience::private(user_id),
         ),
+        macs_for_work: crate::services::agent::link::macs(user_id)
+            .into_iter()
+            .map(|mac| mac.name)
+            .collect(),
     })
 }

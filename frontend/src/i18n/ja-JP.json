@@ -746,7 +746,10 @@
       "accept": "任せる",
       "continue": "続ける",
       "dismiss": "今はしない",
-      "failed": "処理できませんでした。もう一度お試しください。"
+      "failed": "処理できませんでした。もう一度お試しください。",
+      "onMac": "あなたの Mac で",
+      "sentToMac": "あなたの Mac に任せました",
+      "macUnavailable": "Mac がつながっていないか、その Mac でサイトからの依頼を許可していません。"
     },
     "workOffer": {
       "kicker": "仕事",

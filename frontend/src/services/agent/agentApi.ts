@@ -77,6 +77,9 @@ export interface AgentWorkProposal {
   instruction: string
   expected_outcome: string
   source_event_id: string
+  /** Where accepting runs it: the site (absent), or the owner's Mac. */
+  place?: 'site' | 'mac'
+  device_name?: string
 }
 
 export interface AgentIntention {
@@ -381,9 +384,11 @@ class AgentService {
     return response.intentions
   }
 
+  /** A proposal for the owner's Mac is handed to that Mac (`act`), not run here. */
   async acceptIntention(intentionId: string): Promise<{
     intention: AgentIntention
-    work: { mode: 'work'; input: string }
+    work?: { mode: 'work'; input: string }
+    act?: { actId: string; deviceName?: string }
   }> {
     return apiService.post(
       `${this.baseUrl}/intentions/${encodeURIComponent(intentionId)}/accept`,

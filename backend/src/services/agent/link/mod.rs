@@ -36,7 +36,13 @@
 //! takes `notify` is told the site's notifications about her ([`notices`]);
 //! one that takes `proposals` shows her Work proposals as cards the owner
 //! can answer there ([`proposals`]).
+//!
+//! Her host asking the app to act ([`act`]): a child that takes `act` (the
+//! owner switched it on there) is asked to run one Work task of hers, a
+//! proposal for that Mac accepted on the site or by her; it runs there under
+//! the Mac's own grants, and comes back as its result and her experience.
 
+mod act;
 mod body;
 mod connection;
 mod contract;
@@ -57,6 +63,9 @@ use std::sync::{LazyLock, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 
+pub(crate) use act::{
+    cancel_for_proposal, mac_for_work, macs, request as act_request, sweep as sweep_acts,
+};
 pub(crate) use body::perform_say;
 pub(crate) use connection::serve;
 pub(crate) use contract::Close;
@@ -77,6 +86,9 @@ struct Open {
     playback: bool,
     /// Where `experience.taken` goes, once the child said it sends `experience`.
     experience: Option<mpsc::Sender<connection::Outgoing>>,
+    /// Where `act.request` goes, and the device's name, once the child said
+    /// it takes `act`.
+    acts: Option<(mpsc::Sender<connection::Outgoing>, String)>,
 }
 
 /// The open link of each device, by device id.
@@ -95,6 +107,7 @@ fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
             says: None,
             playback: false,
             experience: None,
+            acts: None,
         };
         if let Some(previous) = open.insert(device_id.to_string(), link) {
             let _ = previous.close.send(Close::Replaced);
@@ -122,6 +135,32 @@ fn takes_experience(device_id: &str, id: u64, sender: mpsc::Sender<connection::O
             link.experience = Some(sender);
         }
     }
+}
+
+/// The link `id` takes `act.request`, sent through `sender`; `name` is the
+/// device as the owner named it.
+fn takes_acts(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing>, name: String) {
+    if let Ok(mut open) = OPEN.lock() {
+        if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
+            link.acts = Some((sender, name));
+        }
+    }
+}
+
+/// The owner's devices whose links take `act` now: (device id, name, sender).
+fn act_links(owner: i32) -> Vec<(String, String, mpsc::Sender<connection::Outgoing>)> {
+    OPEN.lock()
+        .map(|open| {
+            open.iter()
+                .filter(|(_, link)| link.owner == owner)
+                .filter_map(|(device, link)| {
+                    link.acts
+                        .as_ref()
+                        .map(|(sender, name)| (device.clone(), name.clone(), sender.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Where the owner's device is told an experience was written, when its
@@ -175,6 +214,7 @@ fn forget(device_id: &str, id: u64) {
 pub(crate) fn disconnect(device_id: &str, why: Close) {
     if matches!(why, Close::Revoked | Close::OwnerChanged) {
         say::forget_device(device_id);
+        act::forget_device(device_id);
     }
     let open = OPEN.lock().ok().and_then(|mut open| open.remove(device_id));
     if let Some(open) = open {

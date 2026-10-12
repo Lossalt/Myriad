@@ -746,7 +746,10 @@
       "accept": "맡아 줘",
       "continue": "계속",
       "dismiss": "지금은 아니야",
-      "failed": "처리되지 않았습니다. 다시 시도하세요."
+      "failed": "처리되지 않았습니다. 다시 시도하세요.",
+      "onMac": "내 Mac에서",
+      "sentToMac": "내 Mac에 맡겼어요",
+      "macUnavailable": "Mac이 연결되어 있지 않거나, 그 Mac에서 사이트의 요청을 허용하지 않았어요."
     },
     "workOffer": {
       "kicker": "도움",

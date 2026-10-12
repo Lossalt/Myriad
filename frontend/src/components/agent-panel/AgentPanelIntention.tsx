@@ -18,6 +18,8 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
   const [intentions, setIntentions] = useState<AgentIntention[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const [macRefused, setMacRefused] = useState(false)
+  const [sentToMac, setSentToMac] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!enabled || !isAuthenticated) {
@@ -45,19 +47,39 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
   }, [enabled, isAuthenticated, refresh])
 
   const intention = intentions[0]
-  if (!intention) return null
+  if (!intention) {
+    return sentToMac ? (
+      <section className="agent-panel-intention glass" aria-live="polite">
+        <div className="agent-panel-intention-copy">
+          <small>{t.agentPanel.intention.sentToMac}</small>
+        </div>
+      </section>
+    ) : null
+  }
+  const onMac = intention.proposal.place === 'mac'
 
   const accept = async () => {
     setBusyId(intention.id)
     setFailed(false)
+    setMacRefused(false)
     try {
       const accepted = await agentService.acceptIntention(intention.id)
       setIntentions((current) =>
         current.filter((item) => item.id !== intention.id),
       )
-      onAccept(accepted.intention.id, accepted.work.input)
-    } catch {
-      setFailed(true)
+      // Her proposal for the Mac runs there; nothing starts here.
+      if (accepted.work) {
+        onAccept(accepted.intention.id, accepted.work.input)
+      } else if (accepted.act) {
+        setSentToMac(true)
+      }
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code
+      if (onMac && (code === 'act_unavailable' || code === 'act_busy')) {
+        setMacRefused(true)
+      } else {
+        setFailed(true)
+      }
     } finally {
       setBusyId(null)
     }
@@ -86,6 +108,17 @@ export const AgentPanelIntention: React.FC<AgentPanelIntentionProps> = ({
         <strong>{intention.proposal.title}</strong>
         <p>{intention.proposal.instruction}</p>
         <small>{intention.proposal.expected_outcome}</small>
+        {onMac ? (
+          <small>
+            {t.agentPanel.intention.onMac}
+            {intention.proposal.device_name
+              ? ` · ${intention.proposal.device_name}`
+              : ''}
+          </small>
+        ) : null}
+        {macRefused ? (
+          <small data-tone="danger">{t.agentPanel.intention.macUnavailable}</small>
+        ) : null}
         {failed ? (
           <small data-tone="danger">{t.agentPanel.intention.failed}</small>
         ) : null}

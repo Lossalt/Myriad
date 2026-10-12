@@ -139,9 +139,14 @@ pub(super) async fn serve_with(
         senses: Default::default(),
         experience: false,
         proposals: None,
+        acts: false,
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
+    // A device that is not one any more fails what it was asked to do.
+    if matches!(why, Some(Close::Revoked | Close::OwnerChanged)) {
+        super::act::forget_device(&link.device.id);
+    }
     // A newer link of the device keeps the presence it reports.
     link.finish(why != Some(Close::Replaced));
     super::forget(&link.device.id, registered);
@@ -197,6 +202,8 @@ struct Link {
     /// Her open proposals as the child was last told them, once it said it
     /// takes `proposals`.
     proposals: Option<Vec<(String, &'static str, i64)>>,
+    /// The child said it takes `act`: the owner lets the site ask it to act.
+    acts: bool,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -330,6 +337,9 @@ impl Link {
             "work.recall" if self.experience => self.recall(inbound),
             "experience" if self.experience => self.experienced(inbound).await,
             "proposal.answer" if self.proposals.is_some() => self.answer_proposal(inbound).await,
+            // Taken whatever this link said: a run's end may come after its
+            // owner turned the switch off (the request must be this device's).
+            "act.result" => self.act_result(inbound).await,
             "ping" => self.reply(frame("pong", json!({}))),
             "ack" | "pong" => {}
             t if CONTRACT.frames.contains_key(t) => self.error("bad_frame", Some(inbound.seq)),
@@ -448,6 +458,21 @@ impl Link {
                 Err(error) => {
                     tracing::warn!(%error, device = %self.device.id, "[link] could not read recent conversations")
                 }
+            }
+        }
+        // The owner lets the site ask it to act: what it was asked and has
+        // not acked goes again.
+        if capabilities.iter().any(|capability| capability == "act") {
+            self.acts = true;
+            super::act::linked(&self.device.id);
+            super::takes_acts(
+                &self.device.id,
+                self.registered,
+                self.tx.clone(),
+                self.device.name.clone(),
+            );
+            for (id, body) in super::act::pending(&self.device.id) {
+                self.reply(Outgoing::reliable("act.request", id, body));
             }
         }
         // Her proposals as cards there.
@@ -846,7 +871,7 @@ impl Link {
         };
         let digest = super::proposals::digest(&open);
         if always || told != digest {
-            self.reply(super::proposals::frame(&open));
+            self.reply(super::proposals::frame(&open, &self.device.id));
             self.proposals = Some(digest);
         }
     }
@@ -859,6 +884,8 @@ impl Link {
         struct Answer {
             proposal_id: String,
             accept: bool,
+            #[serde(default)]
+            place: Option<String>,
         }
         let Ok(answer) = serde_json::from_value::<Answer>(inbound.body) else {
             self.error("bad_frame", Some(inbound.seq));
@@ -869,17 +896,43 @@ impl Link {
             return;
         }
         let answered = if answer.accept {
-            super::proposals::accept(
-                &self.db,
-                self.owner,
-                &answer.proposal_id,
-                super::proposals::Place::Site,
-            )
-            .await
+            match super::proposals::Place::of(answer.place.as_deref()) {
+                Some(place) => {
+                    super::proposals::accept(
+                        &self.db,
+                        self.owner,
+                        &self.device.id,
+                        &answer.proposal_id,
+                        place,
+                    )
+                    .await
+                }
+                None => super::proposals::refused(&answer.proposal_id, "place_unknown"),
+            }
         } else {
             super::proposals::decline(&self.db, self.owner, &answer.proposal_id).await
         };
         self.reply(answered);
+        self.tell_proposals(false).await;
+    }
+
+    /// `act.result`: what became of a request to act.
+    async fn act_result(&mut self, inbound: Inbound) {
+        let seq = inbound.seq;
+        let Some(id) = inbound.id.filter(|id| valid_id(id)) else {
+            self.error("bad_id", Some(seq));
+            return;
+        };
+        let Ok(result) = serde_json::from_value::<super::act::ActResult>(inbound.body) else {
+            self.error("bad_frame", Some(seq));
+            return;
+        };
+        if !self.taken.insert(id) {
+            return;
+        }
+        if let Err(code) = super::act::result(&self.db, self.owner, &self.device.id, result).await {
+            self.error(code, Some(seq));
+        }
         self.tell_proposals(false).await;
     }
 
@@ -974,11 +1027,22 @@ impl Link {
         if self.takes_say {
             // Lines that could not be queued when said, and none that expired.
             let pending = super::say::pending(&self.device.id);
-            self.unacked
-                .retain(|(_, id)| pending.iter().any(|(waiting, _)| waiting == id));
+            let asked = super::act::pending(&self.device.id);
+            self.unacked.retain(|(_, id)| {
+                pending.iter().any(|(waiting, _)| waiting == id)
+                    || asked.iter().any(|(waiting, _)| waiting == id)
+            });
             for (id, body) in pending {
                 if !self.said.contains(&id) {
                     self.reply(Outgoing::reliable("say", id, body));
+                }
+            }
+        }
+        // Requests to act that could not be queued when asked.
+        if self.acts {
+            for (id, body) in super::act::pending(&self.device.id) {
+                if !self.said.contains(&id) {
+                    self.reply(Outgoing::reliable("act.request", id, body));
                 }
             }
         }
@@ -991,6 +1055,7 @@ impl Link {
         self.unacked.retain(|(seq, id)| {
             if *seq <= ack {
                 super::say::acked(device, id);
+                super::act::acked(device, id);
                 false
             } else {
                 true

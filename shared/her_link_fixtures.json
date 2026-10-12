@@ -265,7 +265,19 @@
             "status": "proposed",
             "createdAt": 1760140915000,
             "expiresAt": 1760227315000,
+            "place": "site",
             "places": ["site"]
+          },
+          {
+            "id": "int_1123456789abcdef0123456789abcdef",
+            "title": "把这台 Mac 的截图收进一个文件夹",
+            "instruction": "把桌面上的截图移到「截图」文件夹",
+            "expectedOutcome": "桌面上不再散着截图",
+            "status": "proposed",
+            "createdAt": 1760140916000,
+            "place": "mac",
+            "deviceName": "工作用的 Mac",
+            "places": ["mac"]
           }
         ]
       }
@@ -282,6 +294,30 @@
         "runId": "run_fedcba9876543210fedcba9876543210",
         "sessionId": "ses_fedcba9876543210fedcba9876543210"
       }
+    },
+    {
+      "t": "act.request", "seq": 20, "id": "act_0123456789abcdef0123456789abcdef", "ack": 16, "at": 1760140940000,
+      "body": {
+        "proposalId": "int_1123456789abcdef0123456789abcdef",
+        "title": "把这台 Mac 的截图收进一个文件夹",
+        "instruction": "把桌面上的截图移到「截图」文件夹",
+        "expectedOutcome": "桌面上不再散着截图",
+        "pickupBy": 1760141540000,
+        "maxRunMs": 1800000
+      }
+    },
+    {
+      "t": "act.result", "seq": 17, "id": "act_0123456789abcdef0123456789abcdef.finished", "ack": 20, "at": 1760140990000,
+      "body": {
+        "actId": "act_0123456789abcdef0123456789abcdef",
+        "phase": "finished",
+        "status": "completed",
+        "summary": "桌面上的 12 张截图都移到「截图」文件夹了。"
+      }
+    },
+    {
+      "t": "act.cancel", "seq": 21, "ack": 17, "at": 1760140995000,
+      "body": { "actId": "act_0123456789abcdef0123456789abcdef", "code": "act_cancelled" }
     },
     { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
     { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },

@@ -746,7 +746,10 @@
       "accept": "Occupez-vous-en",
       "continue": "Continuer",
       "dismiss": "Pas maintenant",
-      "failed": "Ça n'est pas passé. Réessayez."
+      "failed": "Ça n'est pas passé. Réessayez.",
+      "onMac": "Sur ton Mac",
+      "sentToMac": "Confié à ton Mac",
+      "macUnavailable": "Ton Mac n'est pas connecté, ou il n'accepte pas les demandes du site."
     },
     "workOffer": {
       "kicker": "Aide",

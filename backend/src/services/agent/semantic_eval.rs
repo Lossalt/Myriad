@@ -878,6 +878,7 @@ fn event_context(case: &Case) -> (event::ConsciousnessEvent, event::SelfSnapshot
         addressee_name: None,
         minutes_since_you_spoke_unasked: None,
         inner: None,
+        macs_for_work: vec![],
     };
     (event, snapshot)
 }

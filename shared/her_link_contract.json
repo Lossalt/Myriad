@@ -26,7 +26,9 @@
     "reconnectFactor": 2,
     "sayTtlMs": 90000,
     "touchAppraiseMs": 3000,
-    "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes. touchAppraiseMs is how long the host takes at most to answer touch.appraise."
+    "actPickupMs": 600000,
+    "actMaxRunMs": 1800000,
+    "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes. touchAppraiseMs is how long the host takes at most to answer touch.appraise. actPickupMs is how long an act.request waits for the child to start it or refuse it; actMaxRunMs is the longest one run it asks for may take on the child, which stops it then, and the host, a minute after that, counts it timed out."
   },
   "limits": {
     "maxFrameBytes": 262144,
@@ -68,10 +70,13 @@
     "wardrobe",
     "experience",
     "conversations",
-    "proposals"
+    "proposals",
+    "act"
   ],
   "sayKinds": ["greeting", "proactive", "face-to-face"],
   "noticeKinds": ["work", "waiting", "report"],
+  "workPlaces": ["site", "mac"],
+  "actStatuses": ["completed", "failed", "cancelled", "timeout"],
   "frames": {
     "hello": {
       "from": "child",
@@ -226,8 +231,8 @@
       "delivery": "reliable",
       "idempotency": "id is the experience's own id, made by the child once per run and kept across resends and restarts.",
       "required": ["kind", "started", "status", "input", "endedAt"],
-      "optional": ["reply", "title", "conversation", "outputs", "capabilities"],
-      "description": "Only from a child whose hello listed experience: something this child did for the site owner, for her host to make part of her. kind is work (a Work run, its tools including computer use). started says who started it: owner (they asked on this child), host (her host asked this child) or schedule (one of this child's scheduled tasks). status is completed, failed or cancelled. input is what was asked, reply what the run said last, title a scheduled task's name, endedAt milliseconds since the epoch. conversation, outputs and capabilities are the run's record as memory reads it: [{role, content}], [{id, value, unknown?}] (unknown: what became of that step is not known) and the capabilities it used. The host learns from it as from the site's own Work, as memories of the site owner alone kept as coming from this device; for a run the owner started it also notes it in her diary. Runs the owner or the host started then reach her as a Work outcome (agent.task_completed, agent.task_failed, agent.task_cancelled): her mood moves and she may say something, here when this is where the owner is using her. A scheduled one is memory only. The child keeps it, across restarts, until experience.taken names it: an ack is not enough. It is dropped, never sent, once this device is removed, the site has another owner, or the owner disconnects this device; a link that is only down keeps it."
+      "optional": ["reply", "title", "conversation", "outputs", "capabilities", "actId", "proposalId"],
+      "description": "Only from a child whose hello listed experience: something this child did for the site owner, for her host to make part of her. kind is work (a Work run, its tools including computer use). started says who started it: owner (they asked on this child), host (her host asked this child) or schedule (one of this child's scheduled tasks). status is completed, failed or cancelled. input is what was asked, reply what the run said last, title a scheduled task's name, endedAt milliseconds since the epoch. conversation, outputs and capabilities are the run's record as memory reads it: [{role, content}], [{id, value, unknown?}] (unknown: what became of that step is not known) and the capabilities it used. The host learns from it as from the site's own Work, as memories of the site owner alone kept as coming from this device; for a run the owner started it also notes it in her diary. Runs the owner or the host started then reach her as a Work outcome (agent.task_completed, agent.task_failed, agent.task_cancelled): her mood moves and she may say something, here when this is where the owner is using her. A scheduled one is memory only. actId is the act.request it ran, when the host asked; proposalId is the proposal it ran, when the owner accepted it on this child to run here (the host then marks that proposal done, failed or, cancelled, closed). The child keeps it, across restarts, until experience.taken names it: an ack is not enough. It is dropped, never sent, once this device is removed, the site has another owner, or the owner disconnects this device; a link that is only down keeps it."
     },
     "experience.taken": {
       "from": "host",
@@ -252,20 +257,44 @@
       "from": "host",
       "delivery": "latest",
       "required": ["proposals"],
-      "description": "Only to a child whose hello listed proposals: Work she proposes to the site owner and that is still open, newest first (at most 20), each {id, title, instruction, expectedOutcome, status (proposed, or accepted and not started yet), createdAt, expiresAt?, places}. places is where accepting it runs the Work: site. An empty list means none is open. Sent after welcome and whenever the list changes."
+      "description": "Only to a child whose hello listed proposals: Work she proposes to the site owner and that is still open, newest first (at most 20), each {id, title, instruction, expectedOutcome, status (proposed, or accepted and not started yet), createdAt, expiresAt?, place, deviceName?, places}. place is where she proposed it runs, one of workPlaces: site (on the site), or mac (on the owner's Mac deviceName, a child that takes act; she is offered mac only while one is linked). places is where accepting it on this child runs the Work: site for a site proposal, mac for one of hers for this Mac, none for one for another Mac. An empty list means none is open. Sent after welcome and whenever the list changes."
     },
     "proposal.answer": {
       "from": "child",
       "delivery": "request",
       "required": ["proposalId", "accept"],
-      "description": "Only from a child whose hello listed proposals: the site owner accepted (accept true) or declined one of her proposals on this child. Accepting is their own consent, as on the site: the Work starts on the site for them as their current role allows, under the permissions they granted, and runs there. Answered with proposal.answered, then proposals again."
+      "optional": ["place"],
+      "description": "Only from a child whose hello listed proposals: the site owner accepted (accept true) or declined one of her proposals on this child. Accepting is their own consent, as on the site. place is one of the card's places (site when absent). site: the Work starts on the site for them as their current role allows, under the permissions they granted, and runs there. mac: the host marks the proposal running and the child runs it itself, under its own grants and without the act switch, since the owner accepted it in person; its experience names the proposal. Answered with proposal.answered, then proposals again."
     },
     "proposal.answered": {
       "from": "host",
       "delivery": "answer",
       "required": ["proposalId", "accepted"],
-      "optional": ["runId", "sessionId", "code"],
-      "description": "The answer to proposal.answer. accepted true: the Work started on the site, runId and sessionId its run and Work session there (its outcome reaches the child as a notice). accepted false after a decline: the proposal is closed. accepted false with code: nothing changed, and code says why (proposal_unknown, agent_access_denied, internal_error, or the code the site's run gate refused with)."
+      "optional": ["runId", "sessionId", "code", "place"],
+      "description": "The answer to proposal.answer. accepted true with place site: the Work started on the site, runId and sessionId its run and Work session there (its outcome reaches the child as a notice). accepted true with place mac: the child runs it now. accepted false after a decline: the proposal is closed. accepted false with code: nothing changed, and code says why (proposal_unknown, place_unknown, agent_access_denied, internal_error, or the code the site's run gate refused with)."
+    },
+    "act.request": {
+      "from": "host",
+      "delivery": "reliable",
+      "idempotency": "id is the actId: made by the host once per request, the same on every resend.",
+      "required": ["proposalId", "title", "instruction", "pickupBy", "maxRunMs"],
+      "optional": ["expectedOutcome", "cap"],
+      "description": "Only to a child whose hello listed act, which it does only while the owner has switched on, on that child, letting the site ask it to act: her host asks it to run one Work task, the instruction of her proposal proposalId, which runs on the child (pi, and the computer use pi drives there); nothing else is ever asked, no single computer-use step and no scheduled task. It is sent when the owner accepts on the site, or she accepts on her own, a proposal of hers for this child (place mac); a proposal accepted on the child itself is not. pickupBy is milliseconds since the epoch: a child that has not started it by then refuses it (act_timeout). maxRunMs is the longest the run may take; the child stops it then. cap, when present, narrows the tools of the child's own that the run may use to these permission names; the child's own grants still decide, and a name it does not know grants nothing. The child answers with act.result: refused, or started and later finished. One request at a time per child."
+    },
+    "act.result": {
+      "from": "child",
+      "delivery": "reliable",
+      "idempotency": "id is the actId, a dot and the phase.",
+      "required": ["actId", "phase"],
+      "optional": ["status", "code", "summary"],
+      "description": "Only from a child whose hello listed act: what became of act.request actId. phase refused with code (act_off: its switch is off; act_busy: it is running another; act_unavailable: it cannot run Work now; act_timeout: pickupBy has passed): nothing ran, and the proposal is accepted again on the host, not sent to this child again until it links again (act_busy: tried again later). phase started: it runs, shown on the child as a Work conversation the owner can stop there. phase finished with status, one of actStatuses (cancelled: stopped on the child, its switch was turned off, or act.cancel; timeout: it ran past maxRunMs), and summary, at most 160 characters of what the run said last: the proposal is done, failed or closed. What the run did comes up as an experience with started host and actId, and reaches her as her own Work does."
+    },
+    "act.cancel": {
+      "from": "host",
+      "delivery": "request",
+      "required": ["actId"],
+      "optional": ["code"],
+      "description": "Only to a child whose hello listed act: stop act.request actId. code is why: act_cancelled (the owner dismissed the proposal on the site) or act_timeout (it ran past maxRunMs and a minute). The child stops the run and answers act.result finished cancelled, unless it was over already. Sent once, while the link is open; a child that misses it ends its run at maxRunMs."
     },
     "ack": {
       "from": "child",
@@ -308,7 +337,14 @@
     "not_this_device": "A runId that is not one this device's turns started.",
     "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB; work.recall: query limits.maxTextChars characters).",
     "outfit_unknown": "outfit.wear named a set that is not in her wardrobe, or has no rig.",
-    "proposal_unknown": "proposal.answer named a proposal that is not open: answered already, expired, or not hers to the site owner."
+    "proposal_unknown": "proposal.answer named a proposal that is not open: answered already, expired, or not hers to the site owner.",
+    "place_unknown": "proposal.answer asked to run a proposal where it cannot run: not one of the card's places.",
+    "act_off": "act.result: the child's switch for the site asking it to act is off.",
+    "act_busy": "act.result: the child is running another of the host's requests.",
+    "act_unavailable": "act.result: the child cannot run Work now (it is not set up, or none of its tools may be used). Also why the host cannot send a request: no child that takes act is linked.",
+    "act_timeout": "An act.request not started by pickupBy, or a run past maxRunMs.",
+    "act_cancelled": "act.cancel: the owner dismissed the proposal on the site.",
+    "act_revoked": "The child was removed from the site, or the site has another owner, while its request was open: the proposal failed."
   },
   "closeCodes": {
     "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },

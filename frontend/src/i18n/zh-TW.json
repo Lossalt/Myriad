@@ -746,7 +746,10 @@
       "accept": "交給你",
       "continue": "繼續處理",
       "dismiss": "不用",
-      "failed": "剛才沒有處理成功，請再試一次。"
+      "failed": "剛才沒有處理成功，請再試一次。",
+      "onMac": "在你的 Mac 上辦",
+      "sentToMac": "已交給你的 Mac 去辦",
+      "macUnavailable": "你的 Mac 沒連著，或沒在那台 Mac 上打開「允許站點讓這台 Mac 辦事」。"
     },
     "workOffer": {
       "kicker": "做事",

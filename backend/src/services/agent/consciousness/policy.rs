@@ -117,6 +117,7 @@ mod tests {
             addressee_name: None,
             minutes_since_you_spoke_unasked: None,
             inner: None,
+            macs_for_work: vec![],
         }
     }
 
@@ -177,6 +178,9 @@ mod tests {
             instruction: "Review the event and prepare a summary.".into(),
             expected_outcome: "A reviewable summary.".into(),
             source_event_id: "event-1".into(),
+            place: None,
+            device_id: None,
+            device_name: None,
         });
         assert_eq!(validate_decision(&value, &snapshot(false)), Ok(()));
         value.memory = Some("the user likes quiet hours".into());

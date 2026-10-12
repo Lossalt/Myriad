@@ -584,6 +584,9 @@ mod ledger_db_tests {
             instruction: "整理报告".into(),
             expected_outcome: "一份摘要".into(),
             source_event_id: source.into(),
+            place: None,
+            device_id: None,
+            device_name: None,
         }
     }
 

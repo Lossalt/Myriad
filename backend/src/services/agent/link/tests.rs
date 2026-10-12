@@ -1797,9 +1797,22 @@ fn proposal_record(
     id: &str,
     status: crate::services::agent::consciousness::IntentStatus,
 ) -> crate::services::agent::consciousness::IntentRecord {
-    use crate::services::agent::consciousness::{AcceptSource, IntentRecord, WorkProposal};
+    proposal_record_at(0, id, status)
+}
+
+/// The fixture's card `index` as her proposal: the first is for the site, the
+/// second for the Mac `dev_mac`.
+fn proposal_record_at(
+    index: usize,
+    id: &str,
+    status: crate::services::agent::consciousness::IntentStatus,
+) -> crate::services::agent::consciousness::IntentRecord {
+    use crate::services::agent::consciousness::{
+        AcceptSource, IntentRecord, WorkPlace, WorkProposal,
+    };
     use chrono::TimeZone;
-    let card = &fixture("proposals")["body"]["proposals"][0];
+    let card = &fixture("proposals")["body"]["proposals"][index];
+    let on_mac = card["place"] == "mac";
     let created = chrono::Utc
         .timestamp_millis_opt(card["createdAt"].as_i64().unwrap())
         .unwrap();
@@ -1815,17 +1828,22 @@ fn proposal_record(
             instruction: card["instruction"].as_str().unwrap().into(),
             expected_outcome: card["expectedOutcome"].as_str().unwrap().into(),
             source_event_id: format!("evt_{id}"),
+            place: Some(if on_mac {
+                WorkPlace::Mac
+            } else {
+                WorkPlace::Site
+            }),
+            device_id: on_mac.then(|| "dev_mac".to_string()),
+            device_name: card["deviceName"].as_str().map(str::to_string),
         },
         work_session_id: None,
         work_run_id: None,
         result_summary: None,
         created_at: created,
         updated_at: created,
-        expires_at: Some(
-            chrono::Utc
-                .timestamp_millis_opt(card["expiresAt"].as_i64().unwrap())
-                .unwrap(),
-        ),
+        expires_at: card["expiresAt"]
+            .as_i64()
+            .map(|at| chrono::Utc.timestamp_millis_opt(at).unwrap()),
         accept_source: AcceptSource::User,
     }
 }
@@ -1946,14 +1964,20 @@ fn her_life_on_the_app_has_the_fixtures_shape() {
         "a conversation keeps its newest lines"
     );
 
-    // Her proposals as cards; the app is told again only when they change.
-    let card = &fixture("proposals")["body"]["proposals"][0];
-    let record = proposal_record(card["id"].as_str().unwrap(), IntentStatus::Proposed);
-    let sent = super::proposals::frame(std::slice::from_ref(&record));
+    // Her proposals as cards; the app is told again only when they change. A
+    // proposal for a Mac runs only on that Mac; on another it has no place.
+    let cards = fixture("proposals")["body"]["proposals"].clone();
+    let record = proposal_record(cards[0]["id"].as_str().unwrap(), IntentStatus::Proposed);
+    let on_mac = proposal_record_at(1, cards[1]["id"].as_str().unwrap(), IntentStatus::Proposed);
+    let sent = super::proposals::frame(&[record.clone(), on_mac.clone()], "dev_mac");
     assert_eq!(
         (sent.t, &sent.body),
         ("proposals", &fixture("proposals")["body"])
     );
+    let elsewhere = super::proposals::frame(&[record.clone(), on_mac.clone()], "dev_other");
+    assert_eq!(elsewhere.body["proposals"][0]["places"], json!(["site"]));
+    assert_eq!(elsewhere.body["proposals"][1]["places"], json!([]));
+    assert_eq!(CONTRACT.work_places, ["site", "mac"]);
     let mut accepted = record.clone();
     accepted.status = IntentStatus::Accepted;
     assert_ne!(
@@ -2303,5 +2327,237 @@ async fn her_conversations_and_proposals_reach_the_app() {
             .all(|session| session["sessionId"] != answered["body"]["sessionId"])
     );
     drop(child);
+    site.close().await;
+}
+
+// --- Her host asking the app to act (H2e) ----------------------------------
+
+/// Frames until the first of type `t`, skipping the rest (cards, mood).
+async fn until(child: &mut Child, t: &str) -> Value {
+    loop {
+        let frame = child.next().await;
+        if frame["t"] == t {
+            return frame;
+        }
+    }
+}
+
+#[tokio::test]
+async fn her_host_asks_a_mac_that_lets_it_to_act() {
+    use crate::services::agent::consciousness::{AcceptSource, IntentStatus, IntentStore};
+    let Some(site) = site().await else {
+        return;
+    };
+    let (mac, token) = device(&site.db, "工作用的 Mac").await;
+    let store = IntentStore::new(site.db.clone());
+    let made = |id: &str| {
+        let mut record = proposal_record_at(1, id, IntentStatus::Proposed);
+        record.proposal.device_id = Some(mac.id.clone());
+        record.created_at = chrono::Utc::now();
+        record.updated_at = record.created_at;
+        record.expires_at = Some(record.created_at + chrono::Duration::hours(24));
+        record
+    };
+    for id in ["int_card", "int_web", "int_other", "int_refused"] {
+        store.create_proposed(made(id)).await.unwrap();
+    }
+    let accepted = |id: &'static str| {
+        let store = store.clone();
+        async move {
+            store
+                .mark_accepted(id, OWNER, AcceptSource::User)
+                .await
+                .unwrap()
+        }
+    };
+
+    // With the switch off the Mac does not say it takes requests: none is sent.
+    let mut off = Child::open(&site, &token).await;
+    off.hello_with(&["rig", "proposals"]).await;
+    assert!(super::macs(OWNER).is_empty());
+    let web = accepted("int_web").await;
+    assert_eq!(
+        super::act_request(&site.db, &web, None).await,
+        Err("act_unavailable")
+    );
+    assert_eq!(
+        store.find("int_web", OWNER).await.unwrap().status,
+        IntentStatus::Accepted,
+        "nothing moved"
+    );
+    // A result names a request of this device's, or is let go.
+    off.send(
+        "act.result",
+        Some("act_x.started"),
+        json!({ "actId": "act_x", "phase": "started" }),
+    )
+    .await;
+    let seq = off
+        .send(
+            "act.result",
+            Some("act_y.started"),
+            json!({ "actId": "act_y", "phase": "begun" }),
+        )
+        .await;
+    assert_eq!(
+        until(&mut off, "error").await["body"],
+        json!({ "code": "bad_frame", "ref": seq })
+    );
+    drop(off);
+
+    // Switched on: it is a Mac her proposals may run on, and its cards say where.
+    let mut child = Child::open(&site, &token).await;
+    let welcome = child
+        .hello_with(&["rig", "proposals", "experience", "act"])
+        .await;
+    assert_eq!(
+        welcome["body"]["capabilities"],
+        json!(["rig", "proposals", "experience", "act"])
+    );
+    let macs = super::macs(OWNER);
+    assert_eq!(macs.len(), 1);
+    assert_eq!(
+        (macs[0].device_id.as_str(), macs[0].name.as_str()),
+        (mac.id.as_str(), "工作用的 Mac")
+    );
+    let cards = until(&mut child, "proposals").await;
+    for card in cards["body"]["proposals"].as_array().unwrap() {
+        assert_eq!(card["place"], "mac", "{card}");
+        assert_eq!(card["places"], json!(["mac"]), "{card}");
+    }
+
+    // Accepted on the card to run here: the owner's own consent; it runs on
+    // the Mac, and the experience naming it ends it. Not at the site.
+    child
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "int_card", "accept": true, "place": "site" }),
+        )
+        .await;
+    assert_eq!(
+        until(&mut child, "proposal.answered").await["body"],
+        json!({ "proposalId": "int_card", "accepted": false, "code": "place_unknown" })
+    );
+    child
+        .send(
+            "proposal.answer",
+            None,
+            json!({ "proposalId": "int_card", "accept": true, "place": "mac" }),
+        )
+        .await;
+    assert_eq!(
+        until(&mut child, "proposal.answered").await["body"],
+        json!({ "proposalId": "int_card", "accepted": true, "place": "mac" })
+    );
+    assert_eq!(
+        store.find("int_card", OWNER).await.unwrap().status,
+        IntentStatus::Running
+    );
+    child
+        .send(
+            "experience",
+            Some("exp_card"),
+            json!({ "kind": "work", "started": "owner", "status": "cancelled",
+                    "input": "把桌面上的截图移到「截图」文件夹", "endedAt": 1_760_140_990_000_i64,
+                    "proposalId": "int_card" }),
+        )
+        .await;
+    until(&mut child, "experience.taken").await;
+    assert_eq!(
+        store.find("int_card", OWNER).await.unwrap().status,
+        IntentStatus::Abandoned
+    );
+
+    // Accepted on the site: the Mac is asked, the proposal runs, and the run's
+    // end is its end. One request at a time.
+    let act = super::act_request(&site.db, &web, None).await.unwrap();
+    let request = until(&mut child, "act.request").await;
+    assert_eq!(request["id"], act.as_str());
+    assert_eq!(request["body"]["proposalId"], "int_web");
+    assert_eq!(request["body"]["maxRunMs"], CONTRACT.timing.act_max_run_ms);
+    assert!(request["body"]["pickupBy"].as_i64().unwrap() > chrono::Utc::now().timestamp_millis());
+    assert!(request["body"].get("cap").is_none());
+    assert_eq!(
+        store.find("int_web", OWNER).await.unwrap().status,
+        IntentStatus::Running
+    );
+    let other = accepted("int_other").await;
+    assert_eq!(
+        super::act_request(&site.db, &other, None).await,
+        Err("act_busy")
+    );
+    child.send("ack", None, json!({})).await;
+    for (phase, body) in [
+        ("started", json!({ "actId": act, "phase": "started" })),
+        (
+            "finished",
+            json!({ "actId": act, "phase": "finished", "status": "completed", "summary": "都移好了。" }),
+        ),
+    ] {
+        child
+            .send("act.result", Some(&format!("{act}.{phase}")), body)
+            .await;
+    }
+    let mut done = None;
+    for _ in 0..50 {
+        let found = store.find("int_web", OWNER).await.unwrap();
+        if found.status == IntentStatus::Completed {
+            done = Some(found);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        done.expect("completed").result_summary.as_deref(),
+        Some("都移好了。")
+    );
+
+    // Refused there: accepted again, and that Mac is not asked again until it
+    // links again.
+    let refused = accepted("int_refused").await;
+    let act = super::act_request(&site.db, &refused, Some(vec!["calendar:read".into()]))
+        .await
+        .unwrap();
+    let request = until(&mut child, "act.request").await;
+    assert_eq!(request["body"]["cap"], json!(["calendar:read"]));
+    child
+        .send(
+            "act.result",
+            Some(&format!("{act}.refused")),
+            json!({ "actId": act, "phase": "refused", "code": "act_off" }),
+        )
+        .await;
+    for _ in 0..50 {
+        if store.find("int_refused", OWNER).await.unwrap().status == IntentStatus::Accepted {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let refused = store.find("int_refused", OWNER).await.unwrap();
+    assert_eq!(refused.status, IntentStatus::Accepted);
+    assert_eq!(
+        super::act_request(&site.db, &refused, None).await,
+        Err("act_unavailable")
+    );
+    drop(child);
+
+    // Linked again, it is asked again; removed meanwhile, the request fails.
+    let mut again = Child::open(&site, &token).await;
+    again.hello_with(&["rig", "act"]).await;
+    for _ in 0..50 {
+        if !super::macs(OWNER).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let act = super::act_request(&site.db, &refused, None).await.unwrap();
+    assert_eq!(until(&mut again, "act.request").await["id"], act.as_str());
+    super::act::forget_device(&mac.id);
+    super::sweep_acts(&site.db).await;
+    let failed = store.find("int_refused", OWNER).await.unwrap();
+    assert_eq!(failed.status, IntentStatus::Failed);
+    assert_eq!(failed.result_summary.as_deref(), Some("act_revoked"));
+    drop(again);
     site.close().await;
 }

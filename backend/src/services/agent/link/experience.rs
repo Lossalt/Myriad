@@ -64,6 +64,14 @@ pub(super) enum Status {
 }
 
 impl Status {
+    fn as_str(self) -> &'static str {
+        match self {
+            Status::Completed => "completed",
+            Status::Failed => "failed",
+            Status::Cancelled => "cancelled",
+        }
+    }
+
     /// The Work outcome she is told of, as for the site's own Work.
     fn event_key(self) -> &'static str {
         match self {
@@ -104,6 +112,13 @@ pub(super) struct Experience {
     pub(super) outputs: Vec<Output>,
     #[serde(default)]
     pub(super) capabilities: Vec<String>,
+    /// The request of her host's it ran (`started: host`).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(super) act_id: Option<String>,
+    /// Her proposal it ran, when the owner accepted it on the child to run there.
+    #[serde(default)]
+    pub(super) proposal_id: Option<String>,
 }
 
 impl Experience {
@@ -228,6 +243,20 @@ pub(super) async fn write(
                 status = ?experience.status,
                 "[link] experience taken"
             );
+            // Her proposal the owner had the app run ends as the run did.
+            if let Some(proposal) = experience
+                .proposal_id
+                .as_deref()
+                .filter(|_| experience.started == Started::Owner)
+            {
+                if let Some((status, summary)) =
+                    super::act::outcome(experience.status.as_str(), experience.reply.as_deref())
+                {
+                    let _ = crate::services::agent::consciousness::IntentStore::new(db.clone())
+                        .transition(proposal, owner, status, None, None, summary)
+                        .await;
+                }
+            }
             if let Some(tx) = super::experience_sender(owner, &device_id) {
                 let _ = tx.send(taken_frame(&id)).await;
             }

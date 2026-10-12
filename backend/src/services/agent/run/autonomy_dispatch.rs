@@ -16,6 +16,8 @@ use crate::services::agent::{
 use serde_json::{Value, json};
 
 pub async fn tick_autonomy_work(db: DatabaseConnection) {
+    // What the owner's Macs were asked to do and has run out of time.
+    crate::services::agent::link::sweep_acts(&db).await;
     let store = IntentStore::new(db.clone());
     if let Err(error) = store.expire_stale_global().await {
         tracing::warn!(%error, "[Autonomy] expire stale proposals failed");
@@ -71,6 +73,16 @@ async fn dispatch_one(db: &DatabaseConnection, intent: IntentRecord) -> Result<(
         defer_skipped_autonomy(db, &intent).await;
         return Ok(());
     };
+
+    // Her proposal for the owner's Mac runs there, asked over its link and
+    // narrowed to her cap; with no such Mac linked it waits, still accepted.
+    if intent.proposal.on_mac() {
+        if let Err(code) = crate::services::agent::link::act_request(db, &intent, Some(cap)).await {
+            tracing::debug!(intent_id = %intent.id, code, "[Autonomy] the Mac was not asked");
+            defer_skipped_autonomy(db, &intent).await;
+        }
+        return Ok(());
+    }
 
     let store = IntentStore::new(db.clone());
     // CAS Accepted → Running first so concurrent ticks do not create empty

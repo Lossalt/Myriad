@@ -746,7 +746,10 @@
       "accept": "Take care of it",
       "continue": "Continue",
       "dismiss": "Not now",
-      "failed": "That did not go through. Please try again."
+      "failed": "That did not go through. Please try again.",
+      "onMac": "On your Mac",
+      "sentToMac": "Sent to your Mac",
+      "macUnavailable": "Your Mac is not connected, or it does not let the site ask it to do things."
     },
     "workOffer": {
       "kicker": "Help",

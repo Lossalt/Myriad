@@ -746,7 +746,10 @@
       "accept": "交给你",
       "continue": "继续处理",
       "dismiss": "不用",
-      "failed": "刚才没有处理成功，请再试一次。"
+      "failed": "刚才没有处理成功，请再试一次。",
+      "onMac": "在你的 Mac 上办",
+      "sentToMac": "已交给你的 Mac 去办",
+      "macUnavailable": "你的 Mac 没连着，或没在那台 Mac 上打开「允许站点让这台 Mac 办事」。"
     },
     "workOffer": {
       "kicker": "做事",

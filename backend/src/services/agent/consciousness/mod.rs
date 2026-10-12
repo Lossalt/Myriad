@@ -55,7 +55,7 @@ pub use store::IntentStore;
 pub use types::{
     AcceptSource, ConsciousnessAction, ConsciousnessDecision, ConsciousnessEvent, EventUrgency,
     IntentRecord, IntentStatus, LiveSurface, RecentIntent, SelfFacts, SelfLivePresence,
-    SelfSnapshot, WorkProposal,
+    SelfSnapshot, WorkPlace, WorkProposal,
 };
 
 #[cfg(test)]

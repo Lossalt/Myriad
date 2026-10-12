@@ -93,14 +93,26 @@ pub async fn list_intentions(
 /// Acceptance still does not execute here. The returned Work input must be sent
 /// through `/process/stream` with `mode=work`, preserving Planner, current
 /// granted-permission filtering, and normal confirmations.
+///
+/// A proposal for the owner's Mac is not run here: the Mac is asked to run
+/// it (`act` on her link), which it does only while its owner lets the site
+/// ask it to; with no such Mac linked nothing changes and the answer is 409
+/// `act_unavailable`. The answer then carries `act` instead of `work`.
 pub async fn accept_intention(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Path(intent_id): Path<String>,
 ) -> Result<Json<Value>, HttpError> {
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
-    let store = IntentStore::new(db);
+    let store = IntentStore::new(db.clone());
     store.expire_stale(user_id).await.map_err(intention_error)?;
+    let current = store
+        .find(&intent_id, user_id)
+        .await
+        .map_err(intention_error)?;
+    if current.proposal.on_mac() {
+        return accept_on_mac(&db, &store, user_id, current).await;
+    }
     let accepted = store
         .mark_accepted(&intent_id, user_id, AcceptSource::User)
         .await
@@ -111,6 +123,52 @@ pub async fn accept_intention(
         "work": {
             "mode": "work",
             "input": work_input,
+        }
+    })))
+}
+
+/// Why the Mac was not asked, as a 409 carrying the link's code.
+fn act_refusal(code: &'static str) -> HttpError {
+    let mut body = AppError::public_json(match code {
+        "act_busy" => "That Mac is already doing something the site asked",
+        "proposal_unknown" => "Intention state changed; refresh and try again",
+        _ => "No Mac that lets the site ask it to act is connected",
+    });
+    body["code"] = code.into();
+    HttpError::from((StatusCode::CONFLICT, Json(body)))
+}
+
+/// Accepting her proposal for the owner's Mac on the site: the Mac is asked
+/// to run it, and it is running from then on.
+async fn accept_on_mac(
+    db: &DatabaseConnection,
+    store: &IntentStore,
+    user_id: i32,
+    current: crate::services::agent::consciousness::IntentRecord,
+) -> Result<Json<Value>, HttpError> {
+    let wanted = current.proposal.device_id.as_deref();
+    let linked = crate::services::agent::link::macs(user_id)
+        .into_iter()
+        .any(|mac| wanted.is_none_or(|wanted| wanted == mac.device_id));
+    if !linked {
+        return Err(act_refusal("act_unavailable"));
+    }
+    let accepted = store
+        .mark_accepted(&current.id, user_id, AcceptSource::User)
+        .await
+        .map_err(intention_error)?;
+    let act = crate::services::agent::link::act_request(db, &accepted, None)
+        .await
+        .map_err(act_refusal)?;
+    let intention = store
+        .find(&accepted.id, user_id)
+        .await
+        .map_err(intention_error)?;
+    Ok(Json(json!({
+        "intention": intention,
+        "act": {
+            "actId": act,
+            "deviceName": intention.proposal.device_name,
         }
     })))
 }
@@ -133,6 +191,10 @@ pub async fn dismiss_intention(
         )
         .await
         .map_err(intention_error)?;
+    // A Mac running it is told to stop.
+    if dismissed.proposal.on_mac() {
+        crate::services::agent::link::cancel_for_proposal(user_id, &dismissed.id);
+    }
     Ok(Json(json!({ "intention": dismissed })))
 }
 
