@@ -28,7 +28,7 @@ export function carriesMomentum(control: BodyControl): boolean {
 /**
  * A move along one control bows another off the straight line, at its
  * middle: a turning head dips, a nod tips the head aside a little, a look
- * across sinks slightly (driver keys, and how much of the way).
+ * across sinks slightly (the control bowed, and by what share of the move).
  */
 export const ARCS: Partial<Record<BodyControl, { onto: BodyControl; share: number; sided?: true }>> = {
   headTurn: { onto: 'headNod', share: -0.45 },

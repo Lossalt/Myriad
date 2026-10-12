@@ -10,6 +10,7 @@ import type {
 } from './driverComposition'
 import type { Anime25DIrisRebound } from './irisRebound'
 import type { Anime25DMotionEnvelopeProfile } from './motionEnvelope'
+import type { RandomActionFrame } from './randomAction'
 import type { StylizedExpressionMotion } from './stylizedExpressionMotion'
 import type { Anime25DPlayback } from './types'
 import { allowsPointerGaze } from '../motion/policy'
@@ -54,7 +55,7 @@ import {
 } from './randomAction'
 import { CoSpeechExpressionController } from './speechExpression'
 import { AutoSpeechController } from './speechMotion'
-import { STANDING_HEAD_ROLL, STANDING_IDLE_SHARE, standingWeightShift } from './standing'
+import { isStandingFigure, STANDING_HEAD_ROLL, STANDING_IDLE_SHARE, standingWeightShift } from './standing'
 import { StylizedExpressionMotionController } from './stylizedExpressionMotion'
 import { ThinkingMotionController } from './thinkingMotion'
 
@@ -74,19 +75,19 @@ export interface MotionComposerInput {
 }
 
 /**
- * Everything she does, composed into one driver. Speech, song, directed
- * performances, stylized faces, idle and random motion each propose an
- * offset; occupancy and the pose gate decide who owns which channel; the
- * envelope keeps the result drawable; and the response smoothing writes it
- * into `current`. Rendering reads `current` and the few outputs below.
- */
-/**
  * How often she blinks as a sentence ends and its pause begins. Blinks come
  * at speech pauses and turn ends more than within words (Nakano & Kitazawa
  * 2010); not every one, so it does not read as a tic.
  */
 const PAUSE_BLINK_CHANCE = 0.6
 
+/**
+ * Everything she does, composed into one driver. Speech, song, directed
+ * performances, stylized faces, idle and random motion each propose an
+ * offset; occupancy and the pose gate decide who owns which channel; the
+ * envelope keeps the result drawable; and the response smoothing writes it
+ * into `current`. Rendering reads `current` and the few outputs below.
+ */
 export class Anime25DMotionComposer {
   readonly directedPose = new DirectedPoseController()
   readonly performanceExpression = new PerformanceExpressionController()
@@ -147,6 +148,7 @@ export class Anime25DMotionComposer {
   private readonly ridingPose = zeroOccupancyOffset()
   private readonly breathPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0 }
   private readonly idleAmbient: AmbientPose = { angleX: 0, angleY: 0, angleZ: 0, body: 0, eyeX: 0, eyeY: 0 }
+  private readonly idleRandom = {} as RandomActionFrame
   private standing = false
   private headRidesBody = 0
   private readonly cryMouth = {
@@ -172,13 +174,20 @@ export class Anime25DMotionComposer {
     return this.idleAmbient
   }
 
+  /** ...and a standing figure's random actions: the lean they bring, too, is idle. */
+  private standingRandom(action: Readonly<RandomActionFrame>): Readonly<RandomActionFrame> {
+    Object.assign(this.idleRandom, action)
+    this.idleRandom.body = action.body * STANDING_IDLE_SHARE
+    return this.idleRandom
+  }
+
   /**
    * A standing figure also shifts its weight from leg to leg while idle; one
    * with a keyed body turn carries its head round with a directed torso turn
    * (headRidesBody).
    */
   setFigure(playback: Pick<Anime25DPlayback, 'anchors' | 'bodyTurnKeyforms' | 'turnKeyforms'>): void {
-    this.standing = playback.anchors.groundY !== undefined
+    this.standing = isStandingFigure(playback.anchors)
     this.headRidesBody = headRidesBody(Boolean(playback.bodyTurnKeyforms), Boolean(playback.turnKeyforms))
   }
 
@@ -323,7 +332,7 @@ export class Anime25DMotionComposer {
       gate,
       {
         ambient: this.standing ? this.standingAmbient(ambient) : ambient,
-        randomAction,
+        randomAction: this.standing ? this.standingRandom(randomAction) : randomAction,
         groove,
         thinking,
         breath,

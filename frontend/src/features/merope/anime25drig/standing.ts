@@ -78,6 +78,15 @@ function weightLean(index: number): number {
 export const STANDING_HEAD_ROLL = 0.7
 
 /**
+ * A full figure, standing on the ground it was imported with; a bust has
+ * none. Its arms hang and go as the body carries them (HANGING_ARM), so
+ * they are not offered to the director.
+ */
+export function isStandingFigure(anchors: Pick<Anime25DPlaybackAnchors, 'groundY'>): boolean {
+  return anchors.groundY !== undefined
+}
+
+/**
  * A figure's `body` = ±1 is its rig's full range, as a full-body Live2D model
  * shows it off: turned about 20 degrees, swayed about a tenth of its height.
  * Day to day it stands nearly still in that range: what idles it (its weight

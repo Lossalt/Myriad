@@ -441,6 +441,13 @@ test('score beats take over held controls on their moment, hold, and give back t
   assert.ok(at(2.9).eyeX > 0.7, 'a beat with no hold keeps going')
 })
 
+test('a hair sway beat stirs the hair as a held one does', () => {
+  const value = controller()
+  value.setScore({ id: 1, beats: [{ id: '1:0', atMs: 0, pose: pose({ hairSway: 1 }, 1000, 200) }] }, 0, 0)
+  const samples = sampleAt(value, 0, 0.6)
+  assert.ok(samples.at(-1)!.target.physAmp > 0.65, 'the physics amplitude rises above its rest with the beat')
+})
+
 test('a move goes and comes back over what is held; a new score drops what the old had not begun', () => {
   const value = controller()
   value.setScore({ id: 1, beats: [

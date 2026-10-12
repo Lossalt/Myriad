@@ -84,7 +84,7 @@ import {
   resolveAnime25DRenderSurface,
   shouldApplyAnime25DResize,
 } from './runtimePolicy'
-
+import { isStandingFigure } from './standing'
 import { ThinkingSticker } from './thinkingSticker'
 
 import { touchPointInView } from './touchHitTest'
@@ -253,7 +253,7 @@ export class Anime25DPlayer {
     const shell = resolved.shellProfile
     this.motionCapabilities = boundRigCapabilities(rigManifest, {
       torsoVolume: shell.enabled && shell.blend > 0 && shell.torso.enabled && shell.torso.blend > 0,
-      arms: this.motionEnvelopeProfile.rigidArm.limit > 0
+      arms: this.motionEnvelopeProfile.rigidArm.limit > 0 && !isStandingFigure(playback.anchors)
         ? this.layers.flatMap(layer => {
             const binding = layer.secondaryDeformation
             return binding.arm && binding.armMesh && (binding.handwearSide === 'L' || binding.handwearSide === 'R')

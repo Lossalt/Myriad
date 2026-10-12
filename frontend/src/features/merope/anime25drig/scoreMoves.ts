@@ -109,7 +109,7 @@ export function scoreMoveOffsets(move: Readonly<ScoreMove>, elapsed: number, out
       return Math.max(inhale, exhale)
     }
     case 'bounce':
-      // On a bust the chest lifting alone reads as a shrug: the head carries the hop.
+      // The chest lifting alone reads as a shrug: the head carries the hop.
       add('torsoRise', 0.2 * amount * shape)
       add('headNod', 0.3 * amount * shape)
       return 1

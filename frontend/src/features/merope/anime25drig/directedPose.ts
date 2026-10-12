@@ -330,6 +330,7 @@ export class DirectedPoseController {
       const driver = BODY_CONTROL_DRIVERS[key]
       const weight = sample.weight * (1 - this.interruption(key))
       target[driver] += (sample.value - target[driver] + (riding?.[driver] ?? 0)) * weight
+      if (key === 'hairSway') target.physAmp += (sample.value * 0.5 - target.physAmp) * weight
     }
     for (const [key, offset] of this.acting.offsets) {
       const driver = BODY_CONTROL_DRIVERS[key]

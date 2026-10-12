@@ -302,7 +302,6 @@ export class Anime25DBodyFrames {
     this.bindJelly(layers)
   }
 
-  /** How far the jaw has dropped, in pixels, and how open it is. */
   /** The pose corrections are weighed against this frame. */
   poseCorrectionDriver(): Readonly<Anime25DDriver> {
     return this.current
@@ -574,7 +573,6 @@ export class Anime25DBodyFrames {
     }
   }
 
-  /** The rigid head carry the shader gives a head-following layer. */
   /** The head's tilt in the picture: its roll on the body's lean and a figure's chest. */
   private headTilt(): number {
     const frame = this.secondaryDeformationFrame
