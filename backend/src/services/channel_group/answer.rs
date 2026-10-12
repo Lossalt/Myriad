@@ -31,7 +31,7 @@ pub(super) async fn make_sense(
             }
         })
         .collect();
-    let sense = making_sense::read(owner, &conversation).await;
+    let sense = making_sense::read(owner, &venue, &conversation).await;
     if let Some(told) = sense.as_ref().and_then(|sense| sense.about_you.as_deref()) {
         making_sense::remember_told(db, &stored, told, said).await;
     }

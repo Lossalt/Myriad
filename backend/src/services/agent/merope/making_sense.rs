@@ -30,9 +30,10 @@ fn unsure_in(raw: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// What she makes of a group's talk: `conversation` is its recent lines,
-/// hers as `you：…`, the one she answers last. Billed to `owner`.
-pub async fn read(owner: i32, conversation: &[String]) -> Option<Sense> {
+/// What she makes of a group's talk (`venue` as sessions keep it):
+/// `conversation` is its recent lines, hers as `you：…`, the one she answers
+/// last. Billed to `owner`.
+pub async fn read(owner: i32, venue: &str, conversation: &[String]) -> Option<Sense> {
     let soul = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_default();
@@ -42,7 +43,7 @@ pub async fn read(owner: i32, conversation: &[String]) -> Option<Sense> {
         .await
         .ok()?;
     // Words or memes in the talk she is not sure of: hers to look up.
-    super::memes::learn(owner, unsure_in(&raw), conversation);
+    super::memes::learn(owner, venue, unsure_in(&raw), conversation);
     parse(&raw)
 }
 

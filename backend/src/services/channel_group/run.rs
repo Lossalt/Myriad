@@ -48,6 +48,10 @@ pub(super) async fn answer_stranger(
         .collect::<Vec<_>>()
         .join("\n");
     sections.extend(crate::services::agent::merope::group::memes::section_for(db, &talk).await);
+    // And the groups' own words in it.
+    sections.extend(
+        crate::services::agent::merope::group::jargon::section_for(db, &venue, &talk).await,
+    );
     let Ok(Some((reply, sticker))) = tokio::time::timeout(
         TURN_DEADLINE,
         crate::services::agent::merope::group::strangers::reply(

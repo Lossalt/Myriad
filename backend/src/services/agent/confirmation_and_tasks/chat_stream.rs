@@ -642,6 +642,17 @@ impl Agent {
                 format!("{merope_block}\n\n{section}")
             };
         }
+        // In a group, the groups' own words in the talk.
+        if let Some(here) = venue.as_deref()
+            && let Some(section) =
+                crate::services::agent::merope::jargon::section_for(&self.db, here, &talk).await
+        {
+            merope_block = if merope_block.is_empty() {
+                section
+            } else {
+                format!("{merope_block}\n\n{section}")
+            };
+        }
         if venue.is_some() {
             // A turtle soup on in this group, with this line judged; or how
             // she would start one for the group.

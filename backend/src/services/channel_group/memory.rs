@@ -350,6 +350,8 @@ pub async fn record(message: &GroupLine) -> bool {
     if note_said(&venue, typed, None, Some(&message.text)) {
         keep_ledger(&venue).await;
     }
+    // Words she watches there as maybe the group's own count as they come up.
+    crate::services::agent::merope::group::jargon::heard(&venue, &message.text);
     take_in(&venue);
     with_group(&venue, |group| {
         if group.pictures.len() > PICTURES_KEPT {

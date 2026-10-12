@@ -92,6 +92,7 @@ fn input(conversation: &[String], here: &Here, material: &[Material]) -> String 
 pub async fn decide(
     db: &DatabaseConnection,
     owner: i32,
+    venue: &str,
     conversation: &[String],
     here: &Here<'_>,
 ) -> Option<(Why, String)> {
@@ -117,7 +118,7 @@ pub async fn decide(
         .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
         .map(|value| myriad_merope::memes::unsure_terms(&value))
         .unwrap_or_default();
-    super::memes::learn(owner, unsure, conversation);
+    super::memes::learn(owner, venue, unsure, conversation);
     let decision = parse(&raw, material.len()).flatten()?;
     // A reaction is only the emoji: nothing is said.
     if decision.why == Why::React {

@@ -300,6 +300,7 @@ pub(super) async fn judge(message: &GroupLine, token: &str) -> Option<(Why, Stri
     crate::services::agent::merope::group::joining::decide(
         &db,
         owner,
+        &venue,
         &conversation,
         &crate::services::agent::merope::group::joining::Here {
             last_spoke: last_spoke.as_deref(),

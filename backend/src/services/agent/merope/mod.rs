@@ -19,6 +19,7 @@ pub(in crate::services::agent) mod hearing;
 pub(in crate::services::agent) mod ingest;
 pub(in crate::services::agent) mod inner;
 pub(in crate::services::agent) mod joining;
+pub(in crate::services::agent) mod jargon;
 mod library;
 pub(in crate::services::agent) mod life;
 pub mod lifecycle;

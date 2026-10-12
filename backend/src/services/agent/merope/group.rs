@@ -18,6 +18,10 @@ pub mod heard {
     pub(crate) use crate::services::agent::merope::heard::take_in;
 }
 
+pub mod jargon {
+    pub(crate) use crate::services::agent::merope::jargon::{heard, section_for};
+}
+
 pub mod joining {
     pub(crate) use crate::services::agent::merope::joining::{Here, Why, decide};
 }

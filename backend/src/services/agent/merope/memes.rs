@@ -78,10 +78,13 @@ pub(super) async fn lines_for(db: &DatabaseConnection, text: &str) -> Vec<String
         .collect()
 }
 
-/// Look up the words a judgment of the talk (`conversation`) said she is
-/// not sure of, in the background: each she does not know yet and has not
-/// tried today, within the day's allowance, held to how it was used there.
-pub(super) fn learn(owner: i32, terms: Vec<String>, conversation: &[String]) {
+/// Look up the words a judgment of the talk (`conversation`, in the group
+/// `venue` as sessions keep it) said she is not sure of, in the background:
+/// each she does not know yet and has not tried today, within the day's
+/// allowance, held to how it was used there. One she could not look up, or
+/// whose meaning did not fit, she watches as maybe the group's own (see
+/// `jargon`).
+pub(super) fn learn(owner: i32, venue: &str, terms: Vec<String>, conversation: &[String]) {
     let terms: Vec<(String, Vec<String>)> = terms
         .into_iter()
         .map(|term| {
@@ -92,6 +95,7 @@ pub(super) fn learn(owner: i32, terms: Vec<String>, conversation: &[String]) {
     if terms.is_empty() {
         return;
     }
+    let venue = venue.to_string();
     super::background::spawn("words and memes", async move {
         let Ok(db) = crate::services::process_db::database() else {
             return;
@@ -111,14 +115,18 @@ pub(super) fn learn(owner: i32, terms: Vec<String>, conversation: &[String]) {
                 .unwrap_or(false)
             {
                 tracing::info!("[Merope] no lookups left today for words and memes");
-                return;
+                super::jargon::nominate(&db, &venue, &term, &used).await;
+                continue;
             }
-            learn_one(&db, owner, &term, &used).await;
+            if !learn_one(&db, owner, &term, &used).await {
+                super::jargon::nominate(&db, &venue, &term, &used).await;
+            }
         }
     });
 }
 
-async fn learn_one(db: &DatabaseConnection, owner: i32, term: &str, used: &[String]) {
+/// Whether she learned what it means.
+async fn learn_one(db: &DatabaseConnection, owner: i32, term: &str, used: &[String]) -> bool {
     // The dictionaries people keep for slang and memes first; else a search
     // for it as a word people use online.
     let found = match super::senses::define(term).await {
@@ -127,9 +135,9 @@ async fn learn_one(db: &DatabaseConnection, owner: i32, term: &str, used: &[Stri
     };
     let Some((found, url)) = found else {
         tracing::info!("[Merope] looked up a word and found nothing");
-        return;
+        return false;
     };
-    keep(db, owner, term, used, &found, &url).await;
+    keep(db, owner, term, used, &found, &url).await.is_some()
 }
 
 /// What was found about `term`, made into what it means and kept, if it
