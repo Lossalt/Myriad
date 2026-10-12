@@ -109,30 +109,25 @@ pub async fn run() -> anyhow::Result<()> {
         })
         .await
     });
-    let mut refresh = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            // Public domain changes persist in the shared read-only data mount.
-            // Reload both origin and DB settings independently of the web process.
-            crate::services::site_public_env::load_durable_site_public_env();
-            let core = AppConfig::from_env()?;
-            crate::middleware::cors_runtime::set_cors_origins(core.cors_origins.clone());
-            *crate::GLOBAL_CONFIG.write().await = core;
-            match ConfigService::new(db.clone()).load_config().await {
-                Ok(config) => {
-                    *crate::GLOBAL_DYNAMIC_CONFIG.write().await = config;
-                    configured.store(true, Ordering::Release);
-                }
-                Err(error) => {
-                    configured.store(false, Ordering::Release);
-                    // Stop claims instead of continuing indefinitely with stale policy.
-                    return Err::<(), anyhow::Error>(error);
-                }
+    let refresh_db = db.clone();
+    let mut refresh = tokio::spawn(keep_config_fresh(
+        configured.clone(),
+        Pace::LIVE,
+        move || {
+            let db = refresh_db.clone();
+            async move {
+                // Public domain changes persist in the shared read-only data mount.
+                // Reload both origin and DB settings independently of the web process.
+                crate::services::site_public_env::load_durable_site_public_env();
+                let core = AppConfig::from_env()?;
+                crate::middleware::cors_runtime::set_cors_origins(core.cors_origins.clone());
+                *crate::GLOBAL_CONFIG.write().await = core;
+                let config = ConfigService::new(db).load_config().await?;
+                *crate::GLOBAL_DYNAMIC_CONFIG.write().await = config;
+                Ok(())
             }
-        }
-    });
+        },
+    ));
     tracing::info!(%address, "Persona HTTP and background process ready");
     let result = tokio::select! {
         signal = termination_signal() => signal,
@@ -156,6 +151,66 @@ pub async fn run() -> anyhow::Result<()> {
     super::shutdown().await;
     crate::services::jobs::shutdown(crate::services::jobs::SHUTDOWN_DRAIN).await;
     result
+}
+
+/// How often the worker reads its settings again, and how soon after a
+/// failed read.
+#[derive(Clone, Copy)]
+struct Pace {
+    every: Duration,
+    /// The first wait after a failed read; it doubles up to `every`.
+    retry: Duration,
+}
+
+impl Pace {
+    const LIVE: Pace = Pace {
+        every: Duration::from_secs(15),
+        retry: Duration::from_secs(1),
+    };
+
+    fn wait(self, failures: u32) -> Duration {
+        if failures == 0 {
+            return self.every;
+        }
+        self.retry
+            .saturating_mul(1 << (failures - 1).min(4))
+            .min(self.every)
+    }
+}
+
+/// Keeps the worker's settings fresh for as long as it runs: `load` at the
+/// usual pace. A failed read (the database pool timing out under load, say)
+/// does not stop the worker: it reports not ready (`configured` false, so
+/// `/health` is 503) and tries again after a short backoff that doubles up to
+/// the usual interval, ready again on the first good read.
+async fn keep_config_fresh<F, Fut>(
+    configured: Arc<std::sync::atomic::AtomicBool>,
+    pace: Pace,
+    mut load: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    use std::sync::atomic::Ordering;
+    let mut failures: u32 = 0;
+    loop {
+        let wait = pace.wait(failures);
+        tokio::time::sleep(wait).await;
+        match load().await {
+            Ok(()) => {
+                if failures > 0 {
+                    tracing::info!(failures, "[persona] settings read again");
+                }
+                failures = 0;
+                configured.store(true, Ordering::Release);
+            }
+            Err(error) => {
+                failures = failures.saturating_add(1);
+                configured.store(false, Ordering::Release);
+                tracing::warn!(%error, failures, "[persona] could not read settings; trying again");
+            }
+        }
+    }
 }
 
 /// Admission is immediate and capacity stays held until the response stream is
@@ -336,6 +391,69 @@ mod tests {
         assert_eq!(budget.requests.available_permits(), 1);
         assert_eq!(budget.links.available_permits(), 1);
         server.abort();
+    }
+
+    /// A settings read that fails under load (the pool timing out) leaves the
+    /// worker running and not ready; it backs off, tries again, and is ready
+    /// on the first good read.
+    #[tokio::test]
+    async fn a_failed_settings_read_is_tried_again_not_fatal() {
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        // Every 15 s; after a failure 1 s, then 2 s, 4 s, 8 s, and 15 s at most.
+        let live: Vec<u64> = (0..7).map(|n| Pace::LIVE.wait(n).as_secs()).collect();
+        assert_eq!(live, [15, 1, 2, 4, 8, 15, 15]);
+
+        let configured = Arc::new(AtomicBool::new(true));
+        let reads = Arc::new(AtomicU32::new(0));
+        let (ok, failing) = (
+            Arc::new(tokio::sync::Notify::new()),
+            Arc::new(tokio::sync::Notify::new()),
+        );
+        let pace = Pace {
+            every: Duration::from_millis(400),
+            retry: Duration::from_millis(20),
+        };
+        let refresh = tokio::spawn(keep_config_fresh(configured.clone(), pace, {
+            let (reads, ok, failing) = (reads.clone(), ok.clone(), failing.clone());
+            move || {
+                let n = reads.fetch_add(1, Ordering::SeqCst) + 1;
+                let (ok, failing) = (ok.clone(), failing.clone());
+                async move {
+                    // The second to fourth reads time out, as under load.
+                    if (2..=4).contains(&n) {
+                        failing.notify_one();
+                        anyhow::bail!("pool timed out while waiting for an open connection")
+                    }
+                    ok.notify_one();
+                    Ok(())
+                }
+            }
+        }));
+        let within = |notify: Arc<tokio::sync::Notify>| async move {
+            tokio::time::timeout(Duration::from_secs(5), notify.notified())
+                .await
+                .expect("in time")
+        };
+        within(ok.clone()).await;
+        assert!(configured.load(Ordering::SeqCst));
+        within(failing.clone()).await;
+        tokio::task::yield_now().await;
+        let started = std::time::Instant::now();
+        // Three failed reads, then the backoff brings the next good one soon,
+        // well before the usual interval would.
+        within(ok.clone()).await;
+        assert!(started.elapsed() < Duration::from_millis(390));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(reads.load(Ordering::SeqCst), 5);
+        assert!(
+            configured.load(Ordering::SeqCst),
+            "ready again on a good read"
+        );
+        assert!(
+            !refresh.is_finished(),
+            "a failed read never stops the worker"
+        );
+        refresh.abort();
     }
 
     #[tokio::test]
