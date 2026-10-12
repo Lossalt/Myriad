@@ -77,7 +77,7 @@ test("a director's head tilt shows as its share of the full tilt, its slight one
 })
 
 test('a look plays its life again each period while it holds, through speech and reply beats, and stops when it changes', () => {
-  const field = new ActingField()
+  const field = new ActingField(() => 0.5)
   const life = { periodMs: 2000, beats: [{ atMs: 500, offsetMs: 0, pose: { targets: { headTilt: 0.5 }, transitionMs: 200, holdMs: 300 } }] }
   field.setFace('humming', life, 0)
   const tilted = (from: number, to: number) => {
@@ -97,4 +97,33 @@ test('a look plays its life again each period while it holds, through speech and
   assert.ok((value(field, 'gazeVertical')?.weight ?? 0) > 0.95)
   field.setFace(null, null, 6)
   assert.equal(tilted(7, 10), 0)
+})
+
+test('a look\'s life is never the same twice: each time round shifts, resizes and sometimes leaves a beat out', () => {
+  let seed = 7
+  const random = () => {
+    seed = (seed * 16807) % 2147483647
+    return seed / 2147483647
+  }
+  const field = new ActingField(random)
+  const life = { periodMs: 2000, beats: [{ atMs: 300, offsetMs: 0, move: { kind: 'nod' as const, amount: 0.6, count: 2, tempo: 1 } }] }
+  field.setFace('tender', life, 0)
+  const peaks: Array<{ at: number; size: number }> = []
+  let rising = false
+  let last = 0
+  run(field, 0, 40, (time) => {
+    const offset = Math.abs(field.offsets.get('headNod') ?? 0)
+    if (offset > last) { rising = true
+}
+    else if (rising && offset < last) {
+      peaks.push({ at: time % 2, size: last })
+      rising = false
+    }
+    last = offset
+  })
+  // Twenty rounds give fewer than forty nods: some come once, some not at all.
+  assert.ok(peaks.length > 10 && peaks.length < 40, `${peaks.length}`)
+  const sizes = new Set(peaks.map((peak) => peak.size.toFixed(3)))
+  assert.ok(sizes.size > peaks.length / 2, 'the nods are not all the same size')
+  for (const peak of peaks) assert.ok(peak.size <= 0.5 * 1 + 1e-9)
 })

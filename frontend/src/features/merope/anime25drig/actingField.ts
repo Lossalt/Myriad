@@ -1,6 +1,7 @@
 import type { BodyControl, ScoreMove } from '../../../services/agent/types'
 import type { FaceLife } from '../events/performanceContract'
 import type { ResolvedScore } from '../motion/scoreTimeline'
+import { BODY_CONTROLS } from '../events/performanceContract'
 import { angleZForHeadRoll, HEAD_TILT_RADIANS } from './poseScale'
 import { scoreMoveOffsets, scoreMoveSeconds } from './scoreMoves'
 
@@ -80,13 +81,16 @@ export function mappedControlValue(key: BodyControl, value: number): number {
 }
 
 export class ActingField {
+  /** `random` varies each time round of a look's life; tests pass their own. */
+  constructor(private readonly random: () => number = Math.random) {}
+
   private poses: PoseItem[] = []
   private moves: MoveItem[] = []
   private replyScoreId = 0
   private standingScoreId = 0
   private loop: Loop | null = null
-  /** The look her face holds, and its life playing again each period. */
-  private face: { name: string; loop: Loop } | null = null
+  /** The look her face holds, and its life playing again, a little differently, each time round. */
+  private face: { name: string; loop: Loop; length: number } | null = null
   private faceScoreId = 0
   private speaking = false
   private engaged = 0
@@ -140,8 +144,9 @@ export class ActingField {
     }
     this.faceScoreId -= 1
     const beats = life.beats.map((beat, index) => ({ id: `face:${name}:${index}`, atMs: beat.atMs, ...(beat.pose ? { pose: beat.pose } : {}), ...(beat.move ? { move: beat.move } : {}) }))
-    this.face = { name, loop: { scoreId: this.faceScoreId, beats, startNowMs: 0, periodSeconds: life.periodMs / 1000, cycleAt: time, cycle: 0 } }
-    this.lay(this.faceScoreId, false, beats, (atMs) => time + atMs / 1000, '', time, true)
+    const periodSeconds = life.periodMs / 1000
+    this.face = { name, loop: { scoreId: this.faceScoreId, beats, startNowMs: 0, periodSeconds, cycleAt: time, cycle: 0 }, length: periodSeconds }
+    this.lay(this.faceScoreId, false, varyLife(beats, periodSeconds, this.random, true), (atMs) => time + atMs / 1000, '', time, true)
   }
 
   /** Advances to `time`; `drivable` says which controls this body has. */
@@ -208,13 +213,15 @@ export class ActingField {
   }
 
   private continueFace(time: number): void {
-    const loop = this.face?.loop
-    if (!loop) return
-    while (time >= loop.cycleAt + loop.periodSeconds - 1) {
+    const face = this.face
+    if (!face) return
+    const loop = face.loop
+    while (time >= loop.cycleAt + face.length - 1) {
       loop.cycle += 1
-      loop.cycleAt += loop.periodSeconds
+      loop.cycleAt += face.length
+      face.length = loop.periodSeconds * (1 - LIFE_PERIOD_SPREAD + 2 * LIFE_PERIOD_SPREAD * this.random())
       const cycleAt = loop.cycleAt
-      this.lay(loop.scoreId, false, loop.beats, (atMs) => cycleAt + atMs / 1000, `#${loop.cycle}`, time, true)
+      this.lay(loop.scoreId, false, varyLife(loop.beats, loop.periodSeconds, this.random, false), (atMs) => cycleAt + atMs / 1000, `#${loop.cycle}`, time, true)
     }
   }
 
@@ -255,6 +262,46 @@ export class ActingField {
       }
     }
   }
+}
+
+/** Each time round a look's life comes a little early or late, longer or shorter... */
+const LIFE_PERIOD_SPREAD = 0.25
+const LIFE_SHIFT = 0.12
+const LIFE_SIZE_SPREAD = 0.3
+/** ...and now and then leaves a beat out, so it is never the same twice. */
+const LIFE_SKIP = 0.25
+
+/**
+ * One time round of a look's life: each beat shifted, its pose or move
+ * larger or smaller, quicker or slower, sometimes fewer repeats, sometimes
+ * left out. The first time round plays every beat.
+ */
+function varyLife(
+  beats: ResolvedScore['beats'],
+  periodSeconds: number,
+  random: () => number,
+  whole: boolean,
+): ResolvedScore['beats'] {
+  const around = (spread: number) => 1 - spread + 2 * spread * random()
+  return beats.flatMap((beat) => {
+    if (!whole && random() < LIFE_SKIP) return []
+    const atMs = Math.max(0, beat.atMs + (random() * 2 - 1) * LIFE_SHIFT * periodSeconds * 1000)
+    const pose = beat.pose && (() => {
+      const size = around(LIFE_SIZE_SPREAD)
+      const targets = Object.fromEntries(Object.entries(beat.pose.targets).map(([control, value]) => {
+        const rest = (BODY_CONTROLS[control as BodyControl] as { rest?: number }).rest ?? 0
+        return [control, rest + ((value as number) - rest) * size]
+      }))
+      return { ...beat.pose, targets, transitionMs: beat.pose.transitionMs * around(0.25), holdMs: beat.pose.holdMs * around(0.4) }
+    })()
+    const move = beat.move && {
+      ...beat.move,
+      amount: Math.max(0.1, Math.min(1, beat.move.amount * around(LIFE_SIZE_SPREAD))),
+      tempo: beat.move.tempo * around(0.15),
+      count: beat.move.count > 1 ? 1 + Math.floor(random() * beat.move.count) : 1,
+    }
+    return [{ ...beat, atMs, ...(pose ? { pose } : {}), ...(move ? { move } : {}) }]
+  })
 }
 
 function envelope(item: Readonly<PoseItem>, time: number): number {
