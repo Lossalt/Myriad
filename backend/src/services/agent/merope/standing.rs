@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use myriad_merope::RigStateSummary;
 use sea_orm::DatabaseConnection;
 
+use super::motion::standing_floor;
 use super::store::{affect_from_state, get_or_create_state};
 use super::{
     MoodTransition, MotionContext, MotionPhase, PerformanceDirective, doing, mood_band,
@@ -43,11 +44,12 @@ pub async fn standing_direction(
     let now = Utc::now();
     // Only what she is doing: why she picked it stays hers, and the minutes in
     // are left out so one direction holds for the whole of it.
-    let (started, ends, what) = if let Some(current) = doing::current() {
+    let (started, ends, what, way) = if let Some(current) = doing::current() {
         (
             current.started,
             current.ends,
             format!("{} {}", current.thing.verb(), current.thing.describe()),
+            way_of_thing(&current.thing),
         )
     } else {
         let lazing = doing::lazing()?;
@@ -55,6 +57,7 @@ pub async fn standing_direction(
             lazing.started,
             lazing.ends,
             super::pace::lazing_line(lazing.kind).to_string(),
+            way_of_lazing(lazing.kind),
         )
     };
     let state = get_or_create_state(db, user_id).await.ok()?;
@@ -87,7 +90,7 @@ pub async fn standing_direction(
     } else {
         what
     };
-    let direction = refine_motion(MotionContext {
+    let context = MotionContext {
         user_id,
         phase: MotionPhase::Presence,
         mood,
@@ -98,9 +101,14 @@ pub async fn standing_direction(
         task_success: None,
         rig_state,
         motion_style,
-    })
-    .await
-    .filter(|direction| !direction.score.is_empty() || direction.plan.baseline.is_some());
+    };
+    let directed = refine_motion(context.clone())
+        .await
+        .filter(|direction| !direction.score.is_empty() || direction.plan.baseline.is_some());
+    // When the director cannot be reached (offline), what she is doing still
+    // shows, by its kind; the director is asked again soon.
+    let directed_here = directed.is_some();
+    let direction = directed.or_else(|| standing_floor(&context, way));
     if let Ok(mut kept) = KEPT_DIRECTIONS.lock() {
         kept.retain(|_, item| item.ends > now);
         while kept.len() >= KEPT {
@@ -113,8 +121,9 @@ pub async fn standing_direction(
             };
             kept.remove(&oldest);
         }
-        // A director with nothing to say is asked again soon, not for the whole of it.
-        let ends = if direction.is_some() {
+        // Without the director's answer it is asked again soon, not for the
+        // whole of it.
+        let ends = if directed_here {
             ends
         } else {
             ends.min(now + RETRY)
@@ -128,6 +137,24 @@ pub async fn standing_direction(
         );
     }
     direction
+}
+
+/// How what she is doing shows on her, by its kind (`presence::WAYS`).
+fn way_of_thing(thing: &doing::Thing) -> &'static str {
+    match thing {
+        doing::Thing::Song { .. } => "listening",
+        doing::Thing::Note { .. } | doing::Thing::Chapter { .. } => "reading",
+        doing::Thing::Inquiry { .. } => "looking-about",
+    }
+}
+
+/// How lazing of `kind` shows on her (`presence::WAYS`).
+fn way_of_lazing(kind: &str) -> &'static str {
+    match kind {
+        "wander_the_site" => "looking-about",
+        "reread_old_chats" => "reading",
+        _ => "daydreaming",
+    }
 }
 
 fn kept(key: &str, now: DateTime<Utc>) -> Option<Option<PerformanceDirective>> {

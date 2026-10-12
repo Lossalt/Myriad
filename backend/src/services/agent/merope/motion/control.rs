@@ -74,34 +74,31 @@ fn is_bearing(control: &str) -> bool {
         || control.contains("Arm")
 }
 
-/// What a decisions model is asked about this moment, from what this face can do.
-pub(super) fn control_questions(context: &MotionContext, state: Option<&RigStateSummary>) -> Value {
-    let mut questions = Map::new();
+/// Her feeling, face, bearing and every control this face has, `when` she
+/// is at it (saying it, or what she is doing on her own).
+fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummary>, when: &str) {
     questions.insert(
         "feeling".into(),
         json!({"type": "choice",
-        "instructions": "What she herself feels as she says this (not what she reports of others).",
+        "instructions": format!("What she herself feels {when} (not what she reports of others)."),
         "criteria": criteria(FEELINGS)}),
     );
-    questions.insert("own".into(), json!({"type": "noul",
-        "instructions": "Is she showing her own feeling, rather than quoting or describing someone else's?",
-        "criteria": {"true": "her own feeling, in her own words", "false": "quoting or describing someone else, or a story"}}));
     questions.insert(
         "expression".into(),
         json!({"type": "choice",
-        "instructions": "Her face's standing expression while she says it.",
+        "instructions": format!("Her face's standing expression {when}."),
         "criteria": criteria(EXPRESSIONS)}),
     );
     questions.insert(
         "posture".into(),
         json!({"type": "choice",
-        "instructions": "How she holds herself through it.",
+        "instructions": format!("How she holds herself {when}."),
         "criteria": criteria(POSTURES)}),
     );
     questions.insert(
         "energy".into(),
         json!({"type": "choice",
-        "instructions": "How much she moves while she says it.",
+        "instructions": format!("How much she moves {when}."),
         "criteria": criteria(ENERGY)}),
     );
     for control in offered_body_controls(state) {
@@ -111,14 +108,23 @@ pub(super) fn control_questions(context: &MotionContext, state: Option<&RigState
             .map(|c| c.4)
             .unwrap_or_default();
         let hands = if control.contains("Arm") {
-            " People talking use their hands: arms open a little when explaining or welcoming, draw in when shy or hurt, lift when excited."
+            " People use their hands: arms open a little when explaining or welcoming, draw in when shy or hurt, lift when excited."
         } else {
             ""
         };
         questions.insert(format!("body.{control}"), json!({"type": "choice",
-            "instructions": format!("Her {control} while she says it ({means}) Image-left/right are as the viewer sees her.{hands} Leave it at rest unless this moment calls for it."),
+            "instructions": format!("Her {control} {when} ({means}) Image-left/right are as the viewer sees her.{hands} Leave it at rest unless this moment calls for it."),
             "criteria": tier_options(control)}));
     }
+}
+
+/// What a decisions model is asked about this moment, from what this face can do.
+pub(super) fn control_questions(context: &MotionContext, state: Option<&RigStateSummary>) -> Value {
+    let mut questions = Map::new();
+    questions.insert("own".into(), json!({"type": "noul",
+        "instructions": "Is she showing her own feeling, rather than quoting or describing someone else's?",
+        "criteria": {"true": "her own feeling, in her own words", "false": "quoting or describing someone else, or a story"}}));
+    ask_bearing(&mut questions, state, "while she says it");
     let offered = offered_score_moves(state);
     let moves: Vec<(&str, &str)> = myriad_merope::PERFORMANCE_SCORE_MOVES
         .iter()
@@ -146,6 +152,36 @@ pub(super) fn control_questions(context: &MotionContext, state: Option<&RigState
     Value::Object(questions)
 }
 
+/// The standing targets the answers give, control by control; with `own`
+/// false only her bearing stays.
+fn answered_targets(
+    answers: &Value,
+    state: Option<&RigStateSummary>,
+    own: bool,
+) -> Map<String, Value> {
+    let mut targets = Map::new();
+    for control in offered_body_controls(state) {
+        // Someone else's feeling is not hers to wear: only where she looks
+        // and how she holds herself stay hers.
+        if !own && !is_bearing(control) {
+            continue;
+        }
+        if let Some(tier) = sure(answers, &format!("body.{control}")).filter(|tier| *tier != "rest")
+        {
+            targets.insert(control.to_owned(), json!(tier));
+        }
+    }
+    targets
+}
+
+/// An answer's choice when the model is sure enough of it.
+fn sure<'a>(answers: &'a Value, key: &str) -> Option<&'a str> {
+    let answer = &answers[key];
+    (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
+        .then(|| answer["choice"].as_str())
+        .flatten()
+}
+
 /// The answers as the plan, control by control.
 pub(super) fn control_plan(
     answers: &Value,
@@ -159,17 +195,7 @@ pub(super) fn control_plan(
             .flatten()
     };
     let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
-    let mut targets = Map::new();
-    for control in offered_body_controls(state) {
-        // Someone else's feeling is not hers to wear: only where she looks
-        // and how she holds herself stay hers.
-        if !own && !is_bearing(control) {
-            continue;
-        }
-        if let Some(tier) = sure(&format!("body.{control}")).filter(|tier| *tier != "rest") {
-            targets.insert(control.to_owned(), json!(tier));
-        }
-    }
+    let targets = answered_targets(answers, state, own);
     let energy = sure("energy").unwrap_or("usual");
     let amount = match energy {
         "low" => "slight",
@@ -213,6 +239,258 @@ pub(super) fn control_plan(
         "cues": agreed_face(asked),
         "score": score,
         "askedFor": asked,
+    })
+}
+
+/// Her standing acting plays again each this many milliseconds.
+pub(super) const STANDING_LOOP_MS: u64 = 20_000;
+/// Moments in each loop she is asked about: where her eyes go, what she does.
+const STANDING_MOMENTS: u64 = 6;
+
+/// When in the loop each moment falls: uneven, so the repeat does not show,
+/// and the same for the same activity, so everyone watching sees one.
+pub(super) fn standing_moments(activity: &str) -> Vec<u64> {
+    let mut seed = activity.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ b as u32).wrapping_mul(0x0100_0193)
+    });
+    let step = STANDING_LOOP_MS / STANDING_MOMENTS;
+    (0..STANDING_MOMENTS)
+        .map(|index| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            index * step + u64::from(seed) % (step * 2 / 3)
+        })
+        .collect()
+}
+
+/// What a decisions model is asked about her standing acting: her bearing
+/// and every control while she is at it, and at each moment of the loop
+/// where her eyes go and which there-and-back move she makes.
+pub(super) fn standing_questions(
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+) -> Value {
+    let mut questions = Map::new();
+    ask_bearing(&mut questions, state, "while she is at it");
+    let controls = offered_body_controls(state);
+    let offered = offered_score_moves(state);
+    let moves: Vec<(&str, &str)> = myriad_merope::PERFORMANCE_SCORE_MOVES
+        .iter()
+        .filter(|(name, _, _)| offered.contains(name))
+        .map(|(name, _, means)| (*name, *means))
+        .chain([("none", "nothing of its own at this moment")])
+        .collect();
+    let seconds = STANDING_LOOP_MS / 1000;
+    for (index, at) in standing_moments(&context.activity).into_iter().enumerate() {
+        let when = format!(
+            "about {:.1} s into each {seconds} s stretch of it",
+            at as f64 / 1000.0
+        );
+        for control in ["gazeHorizontal", "gazeVertical"] {
+            if controls.contains(&control) {
+                // Her eyes are always somewhere: no option leaves the look undirected.
+                let mut options = tier_options(control);
+                if let Some(options) = options.as_object_mut() {
+                    options.remove("rest");
+                    options.insert("ahead".into(), json!("straight ahead, at the screen"));
+                }
+                questions.insert(format!("{control}{index}"), json!({"type": "choice",
+                    "instructions": format!("Her {control} {when}: where her eyes go as what she is doing calls for it (reading moves them along lines, a song softens and drops them, a daydream drifts them, looking about turns them)."),
+                    "criteria": options}));
+            }
+        }
+        questions.insert(format!("move{index}"), json!({"type": "choice",
+            "instructions": format!("Which movement that goes and comes back by itself she makes {when}, if any. Someone busy on their own still moves now and then: a nod with a song, a sigh, a glance up from a page, a blink."),
+            "criteria": criteria(&moves)}));
+    }
+    Value::Object(questions)
+}
+
+/// Her standing acting asked as a combination (for a decisions model, which
+/// answers each question on its own and so cannot lay out a sequence moment
+/// by moment): her bearing, and three choices about the whole stretch —
+/// where her eyes mostly are, how they move, and her movements of her own —
+/// that together become the sequence.
+pub(super) fn standing_combined_questions(state: Option<&RigStateSummary>) -> Value {
+    let mut questions = Map::new();
+    ask_bearing(&mut questions, state, "while she is at it");
+    let controls = offered_body_controls(state);
+    if controls.contains(&"gazeHorizontal") && controls.contains(&"gazeVertical") {
+        questions.insert("lookLevel".into(), json!({"type": "choice",
+            "instructions": "Where her eyes mostly are over the whole stretch of what she is doing.",
+            "criteria": {"low": "lowered, on something in front of her", "ahead": "straight ahead, at the screen",
+                "high": "raised, up and away", "aside": "off to one side"}}));
+        questions.insert("lookPattern".into(), json!({"type": "choice",
+            "instructions": "How her eyes move over the whole stretch.",
+            "criteria": {"sweep": "back and forth along a line, again and again, as when reading lines",
+                "drift": "slowly wandering off and settling, unhurried",
+                "roam": "looking about in different directions",
+                "hold": "staying put, hardly moving"}}));
+    }
+    let offered = offered_score_moves(state);
+    let mut rhythm: Vec<(&str, &str)> = [
+        (
+            "nods",
+            "a small nod every few seconds, as with a song",
+            "nod",
+        ),
+        ("blinks", "a slow blink now and then", "blink"),
+        ("glances", "a glance away and back now and then", "glance"),
+        ("sigh", "a sigh once in a while", "sigh"),
+    ]
+    .into_iter()
+    .filter(|(_, _, kind)| offered.contains(kind))
+    .map(|(name, means, _)| (name, means))
+    .collect();
+    rhythm.push(("none", "no movements of her own"));
+    questions.insert("rhythm".into(), json!({"type": "choice",
+        "instructions": "Her movements of her own over the whole stretch. Someone busy on their own still moves now and then.",
+        "criteria": criteria(&rhythm)}));
+    Value::Object(questions)
+}
+
+/// The sequence a combination of answers makes: at each moment, where her
+/// eyes are and the move she makes.
+fn combined_moments(answers: &Value, activity: &str) -> Vec<(Map<String, Value>, Option<Value>)> {
+    let pick = |key: &str| answers[key]["choice"].as_str().unwrap_or_default();
+    let side: f64 = if activity.len() % 2 == 0 { 1.0 } else { -1.0 };
+    let level = match pick("lookLevel") {
+        "low" => -0.35,
+        "high" => 0.35,
+        _ => 0.0,
+    };
+    let aside = if pick("lookLevel") == "aside" {
+        0.65 * side
+    } else {
+        0.0
+    };
+    let pattern = pick("lookPattern");
+    let looking = !pattern.is_empty() || !pick("lookLevel").is_empty();
+    let roam = [
+        (-0.35, 0.0),
+        (0.35, 0.35),
+        (0.0, -0.35),
+        (0.35, 0.0),
+        (-0.35, 0.35),
+        (0.0, 0.0),
+    ];
+    let drift = [0.35, 0.35, 0.0, -0.35, -0.35, 0.0];
+    let rhythm = pick("rhythm");
+    (0..STANDING_MOMENTS as usize)
+        .map(|index| {
+            let (h, v): (f64, f64) = match pattern {
+                "sweep" => (if index % 2 == 0 { -0.35 } else { 0.35 } * side, level),
+                "drift" => (drift[index] * side, level),
+                "roam" => (roam[index].0 * side, level + roam[index].1),
+                _ => (if index == 3 { 0.2 * side } else { 0.0 }, level),
+            };
+            let mut look = Map::new();
+            if looking {
+                look.insert("gazeHorizontal".into(), json!((h + aside).clamp(-1.0, 1.0)));
+                look.insert("gazeVertical".into(), json!(v.clamp(-1.0, 1.0)));
+            }
+            let directions = ["left", "up", "right"];
+            let mv = match rhythm {
+                "nods" if index % 2 == 0 => Some(json!({"kind": "nod"})),
+                "blinks" if index == 1 || index == 4 => Some(json!({"kind": "blink"})),
+                "glances" if index == 2 || index == 5 => {
+                    Some(json!({"kind": "glance", "direction": directions[index % 3]}))
+                }
+                "sigh" if index == 3 => Some(json!({"kind": "sigh"})),
+                _ => None,
+            };
+            (look, mv)
+        })
+        .collect()
+}
+
+/// The moment the standing questions are about.
+pub(super) fn standing_state(context: &MotionContext, persona: Option<&str>) -> Value {
+    json!({
+        "she": persona.unwrap_or("a lively, warm companion"),
+        "nobody is talking with her; she is": context.activity,
+        "her mood": context.mood.band_after,
+    })
+}
+
+/// The answers as her standing acting: a standing pose and, at each moment
+/// of the loop, where her eyes go and the move she makes.
+pub(super) fn standing_plan(
+    answers: &Value,
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+) -> Value {
+    let sure = |key: &str| -> Option<&str> {
+        let answer = &answers[key];
+        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
+            .then(|| answer["choice"].as_str())
+            .flatten()
+    };
+    let targets = answered_targets(answers, state, true);
+    let energy = sure("energy").unwrap_or("usual");
+    let amount = if energy == "high" { "clear" } else { "slight" };
+    let moments = standing_moments(&context.activity);
+    let mut score = Vec::new();
+    if answers.get("rhythm").is_some() {
+        let transition = match answers["lookPattern"]["choice"].as_str() {
+            Some("drift") => 1500,
+            Some("sweep") => 900,
+            _ => 600,
+        };
+        for (index, (look, mv)) in combined_moments(answers, &context.activity)
+            .into_iter()
+            .enumerate()
+        {
+            let at = moments[index];
+            let next = moments.get(index + 1).copied().unwrap_or(STANDING_LOOP_MS);
+            if !look.is_empty() {
+                score.push(
+                    json!({"atMs": at, "pose": {"targets": look, "transitionMs": transition,
+                    "holdMs": next.saturating_sub(at).saturating_sub(400).max(300)}}),
+                );
+            }
+            if let Some(mut mv) = mv {
+                mv["amount"] = json!(amount);
+                mv["tempo"] = json!("slow");
+                score.push(json!({"atMs": at + 200, "move": mv}));
+            }
+        }
+    }
+    for (index, at) in moments.iter().enumerate() {
+        if answers.get("rhythm").is_some() {
+            break;
+        }
+        let next = moments.get(index + 1).copied().unwrap_or(STANDING_LOOP_MS);
+        // Any look is a fine look: the choice stands however sure it is.
+        let look: Map<String, Value> = ["gazeHorizontal", "gazeVertical"]
+            .into_iter()
+            .filter_map(|control| {
+                answers[format!("{control}{index}")]["choice"]
+                    .as_str()
+                    .map(|tier| match tier {
+                        "ahead" => (control.to_owned(), json!(0.0)),
+                        tier => (control.to_owned(), json!(tier)),
+                    })
+            })
+            .collect();
+        if !look.is_empty() {
+            score.push(
+                json!({"atMs": at, "pose": {"targets": look, "transitionMs": 600,
+                "holdMs": next.saturating_sub(*at).saturating_sub(400).max(300)}}),
+            );
+        }
+        if let Some(kind) = sure(&format!("move{index}")).filter(|kind| *kind != "none") {
+            score.push(json!({"atMs": at + 200, "move": {"kind": kind, "amount": amount, "tempo": "slow"}}));
+        }
+    }
+    json!({
+        "baseline": {"expression": sure("expression").unwrap_or("steady"),
+            "posture": sure("posture").unwrap_or("neutral"), "motionEnergy": energy, "attention": "loose",
+            "pose": {"targets": targets, "transitionMs": 800, "holdMs": 0}},
+        "cues": [],
+        "score": score,
+        "loopMs": STANDING_LOOP_MS,
     })
 }
 
@@ -334,6 +612,100 @@ mod tests {
         assert_eq!(targets["leftArmRaise"], "slight");
         assert_eq!(value["phrases"][0]["intent"], "none");
         assert_eq!(value["score"], json!([]));
+    }
+
+    #[test]
+    fn her_standing_acting_is_her_body_and_a_look_and_move_at_each_moment() {
+        let mut moment = context("", "");
+        moment.phase = MotionPhase::Presence;
+        moment.response_text = None;
+        moment.activity = "reading 小王子".into();
+        let state = bust();
+        let asked = standing_questions(&moment, Some(&state));
+        assert!(asked["body.headNod"].is_object() && asked["own"].is_null());
+        let at = standing_moments(&moment.activity);
+        assert_eq!(at.len(), STANDING_MOMENTS as usize);
+        assert!(at.windows(2).all(|w| w[0] < w[1]) && at[5] < STANDING_LOOP_MS);
+        assert_eq!(
+            at,
+            standing_moments(&moment.activity),
+            "one for everyone watching"
+        );
+        assert!(asked["gazeHorizontal0"].is_object() && asked["move5"].is_object());
+        let answers = json!({
+            "expression": {"choice": "steady", "confidence": 0.8},
+            "body.gazeVertical": {"choice": "-clear", "confidence": 0.8},
+            "gazeHorizontal0": {"choice": "-slight", "confidence": 0.7},
+            "gazeHorizontal1": {"choice": "slight", "confidence": 0.7},
+            "gazeVertical1": {"choice": "ahead", "confidence": 0.2},
+            "move3": {"choice": "nod", "confidence": 0.6},
+        });
+        let value = standing_plan(&answers, &moment, Some(&state));
+        assert_eq!(value["loopMs"], STANDING_LOOP_MS);
+        assert_eq!(
+            value["baseline"]["pose"]["targets"]["gazeVertical"],
+            "-clear"
+        );
+        let beats = value["score"].as_array().unwrap();
+        assert_eq!(beats.len(), 3);
+        assert_eq!(
+            beats[1]["pose"]["targets"],
+            json!({"gazeHorizontal": "slight", "gazeVertical": 0.0}),
+            "a look stands however unsure; ahead is straight ahead"
+        );
+        assert!(asked["gazeVertical0"]["criteria"]["rest"].is_null());
+        assert_eq!(beats[2]["move"]["kind"], "nod");
+        assert!(matches!(
+            parse_motion_decision(&value.to_string()),
+            Some(MotionDecision::Perform(_))
+        ));
+    }
+
+    #[test]
+    fn a_combination_of_choices_becomes_the_whole_sequence() {
+        let mut moment = context("", "");
+        moment.phase = MotionPhase::Presence;
+        moment.response_text = None;
+        moment.activity = "reading 小王子".into();
+        let state = bust();
+        let asked = standing_combined_questions(Some(&state));
+        assert!(asked["lookPattern"]["criteria"]["sweep"].is_string());
+        assert!(
+            asked["gazeHorizontal0"].is_null(),
+            "no moment is asked on its own"
+        );
+        let answers = json!({
+            "lookLevel": {"choice": "low", "confidence": 0.6},
+            "lookPattern": {"choice": "sweep", "confidence": 0.5},
+            "rhythm": {"choice": "nods", "confidence": 0.4},
+        });
+        let value = standing_plan(&answers, &moment, Some(&state));
+        let beats = value["score"].as_array().unwrap();
+        let looks: Vec<f64> = beats
+            .iter()
+            .filter(|beat| beat["pose"].is_object())
+            .map(|beat| beat["pose"]["targets"]["gazeHorizontal"].as_f64().unwrap())
+            .collect();
+        assert_eq!(looks.len(), STANDING_MOMENTS as usize);
+        assert!(
+            looks.windows(2).all(|w| w[0] == -w[1]),
+            "back and forth: {looks:?}"
+        );
+        assert!(
+            beats
+                .iter()
+                .filter(|beat| beat["pose"].is_object())
+                .all(|beat| beat["pose"]["targets"]["gazeVertical"] == -0.35)
+        );
+        let nods = beats
+            .iter()
+            .filter(|beat| beat["move"]["kind"] == "nod")
+            .count();
+        assert_eq!(nods, 3);
+        assert!(matches!(
+            parse_motion_decision(&value.to_string()),
+            Some(MotionDecision::Perform(_))
+        ));
     }
 
     #[test]

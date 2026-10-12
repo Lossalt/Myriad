@@ -1,74 +1,48 @@
-//! Her standing acting, asked of the director: how she feels about what she
-//! is doing on her own and how it shows; the answers become a score of beats
-//! on time that plays again each loop.
+//! Her standing acting when the director cannot be reached (offline): what
+//! she is doing on her own, by its kind, shown by fixed rules as a score of
+//! beats on time that plays again each loop. The director's own standing
+//! acting is `control::standing_questions`.
 
 use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
 
 use super::MotionContext;
+use super::control::STANDING_LOOP_MS;
 use super::offered::{offered_body_controls, offered_score_moves};
-use super::questions::{FEELINGS, SURE, feeling_pose, tilt_tier};
+use super::questions::{SURE, feeling_pose, tilt_tier};
 
 /// How what she is doing on her own shows on her (standing acting).
-const WAYS: &[(&str, &str)] = &[
+pub(super) const WAYS: &[(&str, &str)] = &[
     ("reading", "eyes down, moving along lines"),
     ("listening", "eyes soft, small nods with the music"),
     ("daydreaming", "gaze drifting off, lost in thought"),
     ("looking-about", "looking about, browsing around"),
     ("resting", "still and drowsy, eyes heavy"),
 ];
-/// Her standing acting plays again each this many milliseconds.
-const STANDING_LOOP_MS: u64 = 20_000;
-/// What is asked about her standing acting: how she feels and how what she
-/// is doing on her own shows, from what this face can do.
-pub(super) fn presence_questions(state: Option<&RigStateSummary>) -> Value {
-    let criteria = |pairs: &[(&str, &str)]| -> Value {
-        pairs
-            .iter()
-            .map(|(name, means)| ((*name).to_owned(), json!(means)))
-            .collect::<Map<_, _>>()
-            .into()
+/// Her standing acting for what she is doing, shown the `way` its kind shows
+/// (`WAYS`), with her mood as it stands; no model is asked.
+pub(in crate::services::agent) fn standing_floor(
+    way: &str,
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+) -> Value {
+    let feeling = match context.mood.band_after.as_str() {
+        "floor" | "sad" | "low" => "low",
+        "excited" | "high" => "warm",
+        _ => "calm",
     };
-    let mut questions = Map::new();
-    questions.insert(
-        "feeling".into(),
-        json!({"type": "choice",
-        "instructions": "What she feels while she is at it.",
-        "criteria": criteria(FEELINGS)}),
-    );
-    questions.insert(
-        "way".into(),
-        json!({"type": "choice",
-        "instructions": "How what she is doing shows on her, to someone watching her face.",
-        "criteria": criteria(WAYS)}),
-    );
-    questions.insert("posture".into(), json!({"type": "choice",
-        "instructions": "How she holds herself while at it.",
-        "criteria": {"closed": "drawn in, guarded", "neutral": "at ease", "open": "open, relaxed", "leaning-in": "leaning in, absorbed"}}));
-    questions.insert("liveliness".into(), json!({"type": "choice",
-        "instructions": "How much she moves while at it.",
-        "criteria": {"still": "hardly moves", "gentle": "small, unhurried movements", "lively": "plenty of movement, into it"}}));
-    if offered_body_controls(state).contains(&"headTilt") {
-        questions.insert("tilt".into(), json!({"type": "score",
-            "instructions": "How far her head tilts to one side while she is at it.",
-            "criteria": ["no tilt", "slight tilt, small yet plainly seen", "clear tilt", "strong tilt, as far as it goes"]}));
-    }
-    Value::Object(questions)
-}
-
-/// What she is doing on her own, as the questions read it.
-pub(super) fn presence_state(context: &MotionContext, persona: Option<&str>) -> Value {
-    json!({
-        "she": persona.unwrap_or("a lively, warm companion"),
-        "nobody is talking with her; she is": context.activity,
-        "her mood": context.mood.band_after,
-    })
+    let answers = json!({
+        "feeling": {"choice": feeling, "confidence": 1.0},
+        "way": {"choice": way, "confidence": 1.0},
+        "liveliness": {"choice": "gentle", "confidence": 1.0},
+    });
+    plan_from_answers(&answers, context, state)
 }
 
 /// The answers as her standing acting: a baseline and a score of beats on
 /// time that plays again each loop, uneven within it so the repeat does not
 /// show.
-pub(super) fn presence_plan_from_answers(
+fn plan_from_answers(
     answers: &Value,
     context: &MotionContext,
     state: Option<&RigStateSummary>,
@@ -332,15 +306,17 @@ mod tests {
     fn her_standing_acting_is_a_looped_score_for_each_way_it_shows() {
         let context = context("listening to 夜に駆ける");
         let state = bust();
-        let asked = presence_questions(Some(&state));
-        assert!(asked["way"]["criteria"]["reading"].is_string());
+        assert_eq!(
+            standing_floor("listening", &context, Some(&state))["loopMs"],
+            STANDING_LOOP_MS
+        );
         for (way, _) in WAYS {
             let answers = json!({
                 "feeling": {"type": "choice", "choice": "warm", "confidence": 0.8},
                 "way": {"type": "choice", "choice": way, "confidence": 0.9},
                 "liveliness": {"type": "choice", "choice": "gentle", "confidence": 0.7},
             });
-            let value = presence_plan_from_answers(&answers, &context, Some(&state));
+            let value = plan_from_answers(&answers, &context, Some(&state));
             let raw = value.to_string();
             assert!(
                 matches!(
@@ -363,7 +339,7 @@ mod tests {
                 "{way}: within the loop"
             );
             assert_eq!(
-                presence_plan_from_answers(&answers, &context, Some(&state)),
+                plan_from_answers(&answers, &context, Some(&state)),
                 value,
                 "{way}: the same for everyone watching"
             );
@@ -377,7 +353,7 @@ mod tests {
             "feeling": {"type": "choice", "choice": "calm", "confidence": 0.8},
             "way": {"type": "choice", "choice": "reading", "confidence": 0.9},
         });
-        let value = presence_plan_from_answers(&answers, &context, Some(&bust()));
+        let value = plan_from_answers(&answers, &context, Some(&bust()));
         assert_eq!(
             value["baseline"]["pose"]["targets"]["gazeVertical"],
             "-clear"
@@ -401,7 +377,7 @@ mod tests {
         let answers = json!({
             "way": {"type": "choice", "choice": "looking-about", "confidence": 0.9},
         });
-        let value = presence_plan_from_answers(&answers, &context, Some(&mouth_only));
+        let value = plan_from_answers(&answers, &context, Some(&mouth_only));
         assert_eq!(value["score"], json!([]));
     }
 }

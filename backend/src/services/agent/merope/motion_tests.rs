@@ -342,3 +342,32 @@ fn a_face_she_agreed_to_make_plays_even_while_she_speaks() {
     );
     assert!(dropped.cues.is_empty(), "not a face this body can make");
 }
+
+#[test]
+fn offline_her_standing_acting_still_shows_what_she_is_doing() {
+    for way in [
+        "reading",
+        "listening",
+        "daydreaming",
+        "looking-about",
+        "resting",
+    ] {
+        let context = MotionContext {
+            user_id: 1,
+            phase: MotionPhase::Presence,
+            mood: serde_json::from_value(serde_json::json!({"before": 60.0, "after": 60.0,
+                "bandBefore": "calm", "bandAfter": "calm", "delta": 0.0, "cause": "standing", "revision": 1}))
+            .unwrap(),
+            activity: format!("{way} on her own"),
+            user_text: String::new(),
+            response_text: None,
+            previous_phrases: Vec::new(),
+            task_success: None,
+            rig_state: Some(rig(&["head-body", "independent-eyes", "mouth-shapes"], false)),
+            motion_style: "even".into(),
+        };
+        let floor = standing_floor(&context, way).expect(way);
+        assert_eq!(floor.loop_ms, Some(STANDING_LOOP_MS), "{way}");
+        assert!(!floor.score.is_empty(), "{way} has beats");
+    }
+}

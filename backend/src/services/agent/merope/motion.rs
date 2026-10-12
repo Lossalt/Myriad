@@ -36,6 +36,10 @@ pub(in crate::services::agent) use questions::semantic_contract;
 /// Streaming publishes `local_directive` first; the director refines it.
 const MOTION_TIMEOUT: Duration = Duration::from_secs(9);
 const MOTION_TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Standing acting waits for no reply and is kept for the whole activity, so
+/// a chat model may take its time over every control (5–12 s measured).
+const STANDING_TIMEOUT: Duration = Duration::from_secs(28);
+const STANDING_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// A standing score's period: long enough not to read as a loop, short enough to come round.
 pub(super) const STANDING_LOOP_MS: u32 = 20_000;
 pub(super) const STANDING_MIN_LOOP_MS: u32 = 6_000;
@@ -150,8 +154,13 @@ pub(in crate::services::agent) async fn answered_plan(
     analyzer: &crate::services::analyzer::AiAnalyzer,
 ) -> anyhow::Result<String> {
     let state = context.rig_state.as_ref();
+    let budget = if context.phase == MotionPhase::Presence {
+        STANDING_TIMEOUT
+    } else {
+        MOTION_TIMEOUT
+    };
     match source {
-        Some(source) => questions::direct(context, state, persona, source, MOTION_TIMEOUT).await,
+        Some(source) => questions::direct(context, state, persona, source, budget).await,
         None => questions::direct_by_chat(context, state, persona, analyzer).await,
     }
 }
@@ -191,24 +200,22 @@ async fn direct_motion_inner(
         .as_ref()
         .map(|row| row.personality.trim().to_owned());
     let persona = persona.as_deref().filter(|p| !p.is_empty());
+    let (budget, total) = if context.phase == MotionPhase::Presence {
+        (STANDING_TIMEOUT, STANDING_TOTAL_TIMEOUT)
+    } else {
+        (MOTION_TIMEOUT, MOTION_TOTAL_TIMEOUT)
+    };
     let call = async {
         if let Some(source) = decisions_source().await {
-            questions::direct(
-                &context,
-                rig_state.as_ref(),
-                persona,
-                &source,
-                MOTION_TIMEOUT,
-            )
-            .await
-        } else if let Some(analyzer) = director_analyzer(MOTION_TIMEOUT).await {
+            questions::direct(&context, rig_state.as_ref(), persona, &source, budget).await
+        } else if let Some(analyzer) = director_analyzer(budget).await {
             questions::direct_by_chat(&context, rig_state.as_ref(), persona, &analyzer).await
         } else {
             Err(anyhow::anyhow!("no judgment model"))
         }
     };
     let result = tokio::time::timeout(
-        MOTION_TOTAL_TIMEOUT,
+        total,
         crate::services::ai_cost_ledger::with_site_ai_ledger(
             context.user_id,
             "merope",
@@ -325,6 +332,39 @@ fn keep_agreed_face(
         plan.cues.truncate(3);
     }
     plan
+}
+
+/// Her standing acting when the director cannot be reached (offline): shown
+/// the `way` what she is doing shows by its kind (`presence::WAYS`), with no
+/// network call.
+pub fn standing_floor(context: &MotionContext, way: &str) -> Option<PerformanceDirective> {
+    let rig_state = apply_round_motion_style(context.rig_state.clone(), &context.motion_style);
+    if face_is_hidden(rig_state.as_ref()) {
+        return None;
+    }
+    let value = presence::standing_floor(way, context, rig_state.as_ref());
+    let Some(MotionDecision::Perform(mut plan)) = parse_motion_decision(&value.to_string()) else {
+        return None;
+    };
+    if let Some(state) = rig_state.as_ref() {
+        plan = refine_performance_plan(plan, state);
+    }
+    let score = grounded_score(
+        &value["score"],
+        None,
+        rig_state
+            .as_ref()
+            .map(|state| state.capabilities.as_slice()),
+    );
+    Some(PerformanceDirective {
+        phase: MotionPhase::Presence,
+        mood_revision: context.mood.revision,
+        motion_style: context.motion_style.clone(),
+        plan,
+        phrases: Vec::new(),
+        score,
+        loop_ms: Some(STANDING_LOOP_MS),
+    })
 }
 
 /// The deterministic floor as a directive, with no network call and no await.

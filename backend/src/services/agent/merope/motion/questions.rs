@@ -13,7 +13,7 @@ use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
 
 use super::offered::{offered_body_controls, offered_score_moves};
-use super::{MotionContext, control, presence};
+use super::{MotionContext, control};
 
 /// An answer less sure than this is left unacted; what she does not show
 /// cannot be wrong.
@@ -447,8 +447,9 @@ pub(super) fn plan_from_answers(
     })
 }
 
-/// The moment and the questions about it: her standing acting when nobody is
-/// talking with her; otherwise her body itself for a decisions model
+/// The moment and the questions about it: her body itself for her standing
+/// acting when nobody is talking with her; otherwise her body itself for a
+/// decisions model
 /// (`direct`), and how she says her reply for a chat model, which would take
 /// too long over every control.
 fn asked(
@@ -458,9 +459,16 @@ fn asked(
     direct: bool,
 ) -> (Value, Value) {
     if context.phase == super::MotionPhase::Presence {
+        // Standing acting waits for no reply: any judgment model has the
+        // time to answer for every control; a decisions model chooses the
+        // sequence as a combination.
         (
-            presence::presence_state(context, persona),
-            presence::presence_questions(state),
+            control::standing_state(context, persona),
+            if direct {
+                control::standing_combined_questions(state)
+            } else {
+                control::standing_questions(context, state)
+            },
         )
     } else if direct {
         (
@@ -479,7 +487,7 @@ fn plan(
     direct: bool,
 ) -> Value {
     if context.phase == super::MotionPhase::Presence {
-        presence::presence_plan_from_answers(answers, context, state)
+        control::standing_plan(answers, context, state)
     } else if direct {
         control::control_plan(answers, context, state)
     } else {
