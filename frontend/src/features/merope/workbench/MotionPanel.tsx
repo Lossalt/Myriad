@@ -16,6 +16,8 @@ import { ANIME25D_MOTION_ENVELOPE_PROBES } from '../anime25drig/motionEnvelope'
 import {
   DRIVER_SLIDERS,
   envelopeProbeLabel,
+  FACE_PRESET_BUTTONS,
+  facePresetLabel,
   inspectFields,
   presetLabel,
   PRESETS,
@@ -118,6 +120,22 @@ export function MotionPanel({
             </SettingsButton>
           </div>
         </div>
+        <div className="merope-motion-home__chips">
+          <strong>{labels.facePresetsTitle}</strong>
+          <div>
+            {FACE_PRESET_BUTTONS.map((preset) => (
+              <SettingsButton
+                key={preset.id}
+                type="button"
+                size="sm"
+                disabled={!motionEnabled}
+                onClick={() => applyPreset(preset.driver)}
+              >
+                {facePresetLabel(labels, preset.id)}
+              </SettingsButton>
+            ))}
+          </div>
+        </div>
         <SwitchItem
           itemKey="anime25d-idle"
           label={labels.anime25dIdle}
@@ -204,6 +222,13 @@ export function MotionPanel({
           'mouthEase',
           'mouthCAng',
           'mouthScale',
+        ])}
+        {sliderCluster(labels.clusterAccents, [
+          'accentNotes',
+          'accentQuestion',
+          'accentSleep',
+          'accentSparkle',
+          'accentBlush',
         ])}
       </SettingGroup>
       <SettingGroup

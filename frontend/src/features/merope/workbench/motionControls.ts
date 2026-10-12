@@ -1,8 +1,11 @@
 import type { TranslationKeys } from '../../../i18n'
+import type { BodyControl } from '../../../services/agent/types'
 import type { Anime25DDriver } from '../anime25drig/driver'
 import type { Anime25DMotionEnvelopeProbeId } from '../anime25drig/motionEnvelope'
 import type { Anime25DDebugSnapshot } from '../anime25drig/player'
 import { formatMessage, getDefaultLocale } from '../../../i18n'
+import { mappedControlValue } from '../anime25drig/actingField'
+import { BODY_CONTROL_DRIVERS } from '../anime25drig/directedPose'
 import {
   ANGRY_EXPRESSION_PRESET,
   CRY_EXPRESSION_PRESET,
@@ -14,6 +17,7 @@ import {
   SQUEEZE_EXPRESSION_PRESET,
   THINKING_EXPRESSION_PRESET,
 } from '../anime25drig/expressionPresets'
+import { FACE_PRESETS, tierExtent } from '../events/performanceContract'
 
 type Labels = TranslationKeys['merope']
 type StringLabel = {
@@ -132,6 +136,47 @@ export function presetLabel(labels: Labels, id: string): string {
   return id
 }
 
+const FACE_PRESET_LABELS: Record<string, StringLabel> = {
+  content: 'anime25dFaceContent',
+  tender: 'anime25dFaceTender',
+  smug: 'anime25dFaceSmug',
+  teasing: 'anime25dFaceTeasing',
+  shy: 'anime25dFaceShy',
+  surprised: 'anime25dFaceSurprised',
+  dreamy: 'anime25dFaceDreamy',
+  downcast: 'anime25dFaceDowncast',
+  focused: 'anime25dFaceFocused',
+  drowsy: 'anime25dFaceDrowsy',
+  worried: 'anime25dFaceWorried',
+  pout: 'anime25dFacePout',
+  humming: 'anime25dFaceHumming',
+  puzzled: 'anime25dFacePuzzled',
+  sleepy: 'anime25dFaceSleepy',
+  excited: 'anime25dFaceExcited',
+  blushing: 'anime25dFaceBlushing',
+}
+
+/** The director's whole looks, played on the drivers exactly as a directive would. */
+export function facePresetDriver(name: string): Partial<Anime25DDriver> {
+  const driver: Partial<Record<keyof Anime25DDriver, number>> = {}
+  for (const [control, tier] of Object.entries(FACE_PRESETS[name]?.targets ?? {})) {
+    const key = control as BodyControl
+    const value = tierExtent(key, tier)
+    if (value !== null) driver[BODY_CONTROL_DRIVERS[key]] = mappedControlValue(key, value)
+  }
+  return driver as Partial<Anime25DDriver>
+}
+
+export const FACE_PRESET_BUTTONS = Object.keys(FACE_PRESETS).map((id) => ({
+  id,
+  driver: facePresetDriver(id),
+}))
+
+export function facePresetLabel(labels: Labels, id: string): string {
+  const key = FACE_PRESET_LABELS[id]
+  return key ? labels[key] : id
+}
+
 export function envelopeProbeLabel(
   labels: Labels,
   id: Anime25DMotionEnvelopeProbeId,
@@ -175,6 +220,11 @@ export const DRIVER_SLIDERS: readonly DriverSlider[] = [
   { key: 'mouthEase', label: 'anime25dMouthEase', min: 0, max: 1 },
   { key: 'mouthCAng', label: 'anime25dMouthCAng', min: -1, max: 1 },
   { key: 'mouthScale', label: 'anime25dMouthScale', min: 0.5, max: 1.5 },
+  { key: 'accentNotes', label: 'anime25dAccentNotes', min: 0, max: 1 },
+  { key: 'accentQuestion', label: 'anime25dAccentQuestion', min: 0, max: 1 },
+  { key: 'accentSleep', label: 'anime25dAccentSleep', min: 0, max: 1 },
+  { key: 'accentSparkle', label: 'anime25dAccentSparkle', min: 0, max: 1 },
+  { key: 'accentBlush', label: 'anime25dAccentBlush', min: 0, max: 1 },
   { key: 'fhAmp', label: 'anime25dFhAmp', min: 0, max: 3 },
   { key: 'fhSoft', label: 'anime25dFhSoft', min: 0, max: 2 },
   { key: 'bangL', label: 'anime25dBangL', min: -1, max: 1 },

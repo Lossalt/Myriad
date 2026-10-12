@@ -21,6 +21,32 @@ export const PERFORMANCE_INTERRUPT_MODES =
 export const BODY_CONTROLS = contract.bodyControls
 export const BODY_POSE_TIMING = contract.bodyPoseTiming
 
+/** Whole looks of her face: each control at one of its named tiers. */
+export const FACE_PRESETS = contract.facePresets as Record<
+  string,
+  { description: string; targets: Record<string, string> }
+>
+
+interface ControlRange {
+  min: number
+  max: number
+  rest?: number
+  tiers?: Record<string, number>
+}
+
+/** A named tier ("clear", "-slight") as a control value, the way the director's are read. */
+export function tierExtent(control: BodyControl, tier: string): number | null {
+  const range = BODY_CONTROLS[control] as ControlRange
+  const towardMin = tier.startsWith('-')
+  const share = (range.tiers ?? (contract.extentTiers as Record<string, number>))[
+    towardMin ? tier.slice(1) : tier
+  ]
+  if (share === undefined) return null
+  const rest = range.rest ?? 0
+  const end = towardMin ? range.min : range.max
+  return end === rest ? null : rest + share * (end - rest)
+}
+
 /** Full target restatement, including {} as an explicit release. */
 export function sanitizeBodyPose(value: unknown): BodyPose | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
