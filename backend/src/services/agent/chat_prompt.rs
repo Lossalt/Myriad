@@ -55,6 +55,12 @@ pub fn cut_off_kind(voice: bool) -> &'static str {
     if voice { CUT_OFF_SPOKEN } else { CUT_OFF_SEEN }
 }
 
+/// How a line of hers reads when it was cut off, as a reply would: her
+/// unprompted lines carry the same metadata.
+pub(crate) fn line_cut_off_marker(metadata: Option<&Value>) -> Option<&'static str> {
+    cut_off_marker("assistant", metadata)
+}
+
 /// How a cut-off reply of hers reads in the conversation.
 fn cut_off_marker(role: &str, metadata: Option<&Value>) -> Option<&'static str> {
     if role != "assistant" {

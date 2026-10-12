@@ -505,7 +505,9 @@ CREATE TABLE IF NOT EXISTS agent_proactive_messages (
     content TEXT NOT NULL,
     event_key VARCHAR(64),
     notified BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    say_id VARCHAR(64),
+    metadata JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_agent_proactive_user_created
     ON agent_proactive_messages (user_id, created_at DESC);

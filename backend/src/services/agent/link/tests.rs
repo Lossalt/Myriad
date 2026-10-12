@@ -811,11 +811,13 @@ async fn an_input_starts_a_run_for_the_owner_and_streams_it() {
         }
     }
     assert_eq!(sequences, [1, 2, 3]);
-    crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
+    let run = crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
         .await
-        .expect("the owner's run")
-        .abort_execution()
-        .await;
+        .expect("the owner's run");
+    // Answered on the app: nothing of it reached the site's notifications,
+    // its start included (D26).
+    assert!(run.site_notices().is_empty(), "{:?}", run.site_notices());
+    run.abort_execution().await;
     // The run is the site owner's, and their message is kept.
     assert!(
         crate::services::agent::run_hub::get_live_run_for_user(&run_id, OWNER)
@@ -1410,6 +1412,77 @@ async fn the_app_is_directed_while_it_says_her_reply() {
         crate::services::agent::chat_prompt::cut_off_kind(true)
     );
     assert_eq!(metadata["heardChars"], 4);
+
+    // A line of hers cut off on the app is marked the same way, once it is
+    // kept (here a moment after the child said so).
+    child
+        .send(
+            "speech.delivered",
+            Some("sd_say_body1"),
+            json!({ "sayId": "say_body1", "spokenChars": 3, "totalChars": 6,
+                    "interrupted": true, "by": "barge-in" }),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    crate::services::agent::merope::store::insert_proactive(
+        &site.db,
+        OWNER,
+        "嗨，在忙吗？",
+        Some("merope.reach"),
+        true,
+        Some("say_body1"),
+    )
+    .await
+    .unwrap();
+    let line_metadata = |db: DatabaseConnection| async move {
+        db.query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            format!(
+                "SELECT metadata::text AS m FROM agent_proactive_messages \
+                 WHERE user_id = {OWNER} AND say_id = 'say_body1'"
+            ),
+        ))
+        .await
+        .unwrap()
+        .and_then(|row| row.try_get::<Option<String>>("", "m").ok().flatten())
+        .map(|m| serde_json::from_str::<Value>(&m).unwrap())
+    };
+    let by = tokio::time::Instant::now() + WAIT;
+    let marked = loop {
+        if let Some(marked) = line_metadata(site.db.clone()).await {
+            break marked;
+        }
+        assert!(tokio::time::Instant::now() < by, "the line is marked");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(
+        marked,
+        json!({ crate::services::agent::chat_prompt::CUT_OFF_KEY:
+                crate::services::agent::chat_prompt::cut_off_kind(true), "heardChars": 3 })
+    );
+    // Said to the end, a line is left as it was.
+    child
+        .send(
+            "speech.delivered",
+            Some("sd_say_body2"),
+            json!({ "sayId": "say_body1", "spokenChars": 6, "totalChars": 6, "interrupted": false }),
+        )
+        .await;
+    let unnamed = child
+        .send(
+            "speech.delivered",
+            Some("sd_say_body3"),
+            json!({ "sayId": "say body", "spokenChars": 1, "totalChars": 6, "interrupted": true }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "bad_id", "ref": unnamed })
+    );
+    assert_eq!(
+        line_metadata(site.db.clone()).await.unwrap()["heardChars"],
+        3
+    );
 
     // Her line on the app, refined: sent for that line to a child that takes it.
     assert!(super::perform_say(

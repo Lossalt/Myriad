@@ -2,12 +2,15 @@
 
 use super::*;
 
+/// Keeps a line she said unprompted; `say_id` is the `say` it went out as
+/// on a native child, so how far it was said aloud can be told later.
 pub async fn insert_proactive(
     db: &DatabaseConnection,
     user_id: i32,
     content: &str,
     event_key: Option<&str>,
     notified: bool,
+    say_id: Option<&str>,
 ) -> Result<agent_proactive_messages::Model, anyhow::Error> {
     let active = agent_proactive_messages::ActiveModel {
         user_id: Set(user_id),
@@ -16,9 +19,49 @@ pub async fn insert_proactive(
         event_key: Set(event_key.map(str::to_string)),
         notified: Set(notified),
         created_at: Set(Utc::now().into()),
+        say_id: Set(say_id.map(str::to_string)),
         ..Default::default()
     };
     Ok(active.insert(db).await?)
+}
+
+/// Her line `say_id` to `user_id` was cut off while a native child said it
+/// aloud: marked as her replies are (`cutOff`, and `heardChars` when the
+/// child knows), so her next turn knows they may not have heard it to the
+/// end. False while the line is not kept yet.
+pub async fn mark_line_cut_off(
+    db: &DatabaseConnection,
+    user_id: i32,
+    say_id: &str,
+    heard_chars: Option<u64>,
+) -> Result<bool, sea_orm::DbErr> {
+    let Some(line) = agent_proactive_messages::Entity::find()
+        .filter(agent_proactive_messages::Column::UserId.eq(user_id))
+        .filter(agent_proactive_messages::Column::SayId.eq(say_id))
+        .order_by_desc(agent_proactive_messages::Column::CreatedAt)
+        .one(db)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let mut metadata = line
+        .metadata
+        .clone()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert(
+            crate::services::agent::chat_prompt::CUT_OFF_KEY.into(),
+            crate::services::agent::chat_prompt::cut_off_kind(true).into(),
+        );
+        if let Some(heard) = heard_chars {
+            object.insert("heardChars".into(), heard.into());
+        }
+    }
+    let mut active: agent_proactive_messages::ActiveModel = line.into();
+    active.metadata = Set(Some(metadata));
+    active.update(db).await?;
+    Ok(true)
 }
 
 pub async fn recent_proactive(

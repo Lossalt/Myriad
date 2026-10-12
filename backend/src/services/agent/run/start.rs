@@ -211,13 +211,13 @@ pub(crate) async fn start(
             "A channel chat turn must be a Chat turn",
         ));
     }
-    // Started from a chat app or a group, and answered there.
+    // Started from a chat app, a group or a device, and answered there.
     let answered_elsewhere = group.is_some()
         || channel_chat.is_some()
         || req
             .context
             .as_ref()
-            .is_some_and(|context| context.from_channel);
+            .is_some_and(|context| context.from_channel || context.on_device.is_some());
     let source_intent_id = req
         .context
         .as_ref()
@@ -449,16 +449,15 @@ pub(crate) async fn start(
         Some(run_id_for_meta.clone()),
     )
     .await?;
+    // Answered in a chat app, a group or on a device: the site stays quiet
+    // about it, from the run's first event.
     let run = crate::services::agent::run_hub::create_run_with_id(
         run_id_for_meta.clone(),
         user_id,
         has_session.then_some(session_id.clone()),
+        answered_elsewhere,
     )
     .await;
-    // Answered in a chat app or a group: the site stays quiet about it.
-    if answered_elsewhere {
-        run.answered_elsewhere();
-    }
     // 注入 run_id，供确认手持（confirmation）复用同一 run hub / 通知身份
     if let Some(ref mut ctx) = user_request.context {
         ctx.run_id = Some(run_id_for_meta.clone());

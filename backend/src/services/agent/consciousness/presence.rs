@@ -7,8 +7,10 @@
 //! page. A page is here while it is visible; the app is here while its link
 //! is up and its lease fresh, its window on screen or not (D16): it holds
 //! what she says until they look. Visibility stays as reported. Her body on
-//! the site (the face, its rig, touch, perception) reads only pages:
-//! [`last_live_presence`].
+//! the site (the face, its rig, touch) reads only pages:
+//! [`last_live_presence`]. Her senses (what she sees and hears there:
+//! perception, music) are those of the surface they are using her on:
+//! [`senses_presence`].
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -257,6 +259,33 @@ pub fn last_live_presence(user_id: i32) -> SelfLivePresence {
     LIVE.read()
         .map(|store| store.last(user_id, Utc::now()))
         .unwrap_or_default()
+}
+
+/// What she senses of them now: the surface they are using her on (the one
+/// they came to or used last), so her senses follow them to the app; with
+/// them on no surface, the pages' as before.
+pub fn senses_presence(user_id: i32) -> SelfLivePresence {
+    front_presence(user_id)
+        .map(|front| front.live)
+        .unwrap_or_else(|| last_live_presence(user_id))
+}
+
+/// What a turn said on the app is answered with: that device's perception
+/// and music, in the shape a page's request carries them. None when it
+/// reports nothing of either.
+pub fn native_senses(user_id: i32, device_id: &str) -> Option<Value> {
+    let live = native_presence(user_id, device_id)?;
+    if live.perception_payload.is_empty() && live.music_status.is_none() {
+        return None;
+    }
+    let mut senses = serde_json::Map::new();
+    if !live.perception_payload.is_empty() {
+        senses.insert("perception".into(), Value::Array(live.perception_payload));
+    }
+    if let Some(music) = live.music_status {
+        senses.insert("musicStatus".into(), music);
+    }
+    Some(Value::Object(senses))
 }
 
 /// The lease key of a native child: a colon never passes the page whitelist,
@@ -535,6 +564,20 @@ fn sanitize_music_status(value: &Value) -> Option<Value> {
         "playlistLength": obj.get("playlistLength").and_then(Value::as_u64).unwrap_or(0).min(10_000),
         "currentLyric": obj.get("currentLyric").and_then(Value::as_str).unwrap_or("").chars().take(120).collect::<String>(),
     }))
+}
+
+/// What a turn says about where it was said. A page's request is that page
+/// now; a turn said on a native child is not a page at all (its link
+/// reports that device's presence, and saying it was using it there).
+pub fn remember_turn_presence(request: &UserRequest) {
+    if request
+        .context
+        .as_ref()
+        .is_some_and(|context| context.on_device.is_some())
+    {
+        return;
+    }
+    remember_live_presence(request.user_id, live_presence_from_request(request));
 }
 
 pub fn live_presence_from_request(request: &UserRequest) -> SelfLivePresence {
@@ -886,6 +929,71 @@ mod tests {
             })),
         );
         assert!(last_live_presence(906).rig_state.is_none());
+    }
+
+    /// What she sees and hears of them is where they are using her: the app's
+    /// when that is where they are, the pages' otherwise; a turn said on the
+    /// app is answered with the app's.
+    #[test]
+    fn her_senses_follow_them_to_the_app() {
+        let user = 9_120_301;
+        let now = Utc::now();
+        // Only a hidden page: the pages' senses, as before.
+        remember_live_presence(user, page("tab", false, false, now));
+        assert_eq!(senses_presence(user).perception, vec!["tab"]);
+        assert!(native_senses(user, "dev_senses").is_none());
+        remember_native_presence(
+            user,
+            "dev_senses",
+            &serde_json::json!({
+                "presence": { "pageVisible": true, "faceVisible": true },
+                "perception": [{ "sourceId": "music_track", "kind": "music",
+                    "privacy": "consented", "summary": "晴天 — 周杰伦", "ttlMs": 60000 }],
+                "musicStatus": { "isPlaying": true, "isEnabled": true,
+                    "currentSong": { "name": "晴天", "artist": "周杰伦" } }
+            }),
+        );
+        let senses = senses_presence(user);
+        assert_eq!(senses.perception, vec!["晴天 — 周杰伦"]);
+        assert_eq!(senses.music_status.unwrap()["currentSong"]["name"], "晴天");
+        let turn = native_senses(user, "dev_senses").expect("the app's senses");
+        assert_eq!(turn["perception"][0]["sourceId"], "music_track");
+        assert_eq!(turn["musicStatus"]["isPlaying"], true);
+        let scene = crate::services::agent::chat_prompt::format_chat_scene(
+            turn.get("perception"),
+            None,
+            "在听什么",
+        );
+        assert!(scene.contains("晴天"), "{scene}");
+        // They come back to a page: its senses again.
+        let later = now + Duration::seconds(2);
+        LIVE.write()
+            .unwrap()
+            .remember(user, page("tab", true, true, later), later);
+        assert_eq!(senses_presence(user).perception, vec!["tab"]);
+        forget_native_presence(user, "dev_senses");
+        assert!(native_senses(user, "dev_senses").is_none());
+    }
+
+    /// A turn said on the app is not a page: it leaves the pages' lease alone.
+    #[test]
+    fn a_turn_said_on_the_app_is_not_a_page() {
+        let user = 9_120_302;
+        let mut request = UserRequest {
+            raw_input: "hi".into(),
+            timestamp: chrono::Utc::now(),
+            user_id: user,
+            context: Some(RequestContext {
+                interaction_mode: AgentInteractionMode::Chat,
+                on_device: Some("dev_turn".into()),
+                ..Default::default()
+            }),
+        };
+        remember_turn_presence(&request);
+        assert!(last_live_presence(user).captured_at.is_none());
+        request.context.as_mut().unwrap().on_device = None;
+        remember_turn_presence(&request);
+        assert!(last_live_presence(user).captured_at.is_some());
     }
 
     #[test]

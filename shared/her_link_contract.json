@@ -96,7 +96,7 @@
       "delivery": "latest",
       "required": ["presence"],
       "optional": ["perception", "musicStatus"],
-      "description": "Whether the person is with her on this child, in the shape the site's POST /api/agent/presence takes: presence is {pageVisible (the app's window is on screen), panelVisible, faceVisible, speaking, speechInterruptible, visibleMode?, motionIntent?, speechIntent?, rigState?}; perception and musicStatus are the same whitelisted observations. It holds for the presence lease (90 s) unless sent again; the link closing ends it."
+      "description": "Whether the person is with her on this child, in the shape the site's POST /api/agent/presence takes: presence is {pageVisible (the app's window is on screen), panelVisible, faceVisible, speaking, speechInterruptible, visibleMode?, motionIntent?, speechIntent?, rigState?}; perception and musicStatus are the same whitelisted observations. It holds for the presence lease (90 s) unless sent again; the link closing ends it. The host keeps only the observations this child said in hello that it senses: perception rows of kind page or surface need perception.window, pointer needs perception.pointer, music (and musicStatus) perception.music, screen perception.screen, voice voice.in; presence rows always. While this child is where the person is using her, what it keeps is what she senses of them, and a turn said here (input) is answered with it."
     },
     "run.resume": {
       "from": "child",
@@ -170,7 +170,7 @@
       "idempotency": "id is sd_ and the child's id of the message it said: the same on every resend.",
       "required": ["spokenChars", "totalChars", "interrupted"],
       "optional": ["turnId", "runId", "sayId", "by"],
-      "description": "How much of her reply (with runId and turnId) or of her line (with sayId) this child said aloud, once that is over: spokenChars of totalChars characters, and whether it was cut off. by is why it was cut off: barge-in (they spoke over her), stop (they stopped her), new-turn (they said something new) or hidden (the window went away). A cut-off reply is marked in her history as possibly not heard to the end, so her next turn knows where she stopped. The host deduplicates by id; the same runId rule as playback.observe."
+      "description": "How much of her reply (with runId and turnId) or of her line (with sayId) this child said aloud, once that is over: spokenChars of totalChars characters, and whether it was cut off. by is why it was cut off: barge-in (they spoke over her), stop (they stopped her), new-turn (they said something new) or hidden (the window went away). A cut-off reply, or line (sayId), is marked in her history as possibly not heard to the end, with how much of it was heard, so her next turn knows where she stopped. The host deduplicates by id; the same runId rule as playback.observe."
     },
     "touch.appraise": {
       "from": "child",

@@ -136,6 +136,7 @@ pub(super) async fn serve_with(
         taken: HashSet::new(),
         unacked: Vec::new(),
         said: HashSet::new(),
+        senses: Default::default(),
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -187,6 +188,8 @@ struct Link {
     unacked: Vec<(u64, String)>,
     /// Reliable ids sent on this connection.
     said: HashSet<String>,
+    /// What the child said it senses for her.
+    senses: super::senses::Senses,
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -383,6 +386,7 @@ impl Link {
             .iter()
             .any(|capability| capability == "playback");
         self.touch = capabilities.iter().any(|capability| capability == "touch");
+        self.senses = super::senses::Senses::of(&capabilities);
         // Her lines for the app: what is still waiting goes again, after welcome.
         if capabilities.iter().any(|capability| capability == "say") {
             self.takes_say = true;
@@ -461,6 +465,12 @@ impl Link {
                 mode: Some(AgentInteractionMode::Chat),
                 session_id: input.session_id,
                 rig_state: input.rig_state,
+                // Answered with what she senses there: the app's own.
+                custom_data: crate::services::agent::consciousness::native_senses(
+                    self.owner,
+                    &self.device.id,
+                ),
+                on_device: Some(self.device.id.clone()),
                 ..Default::default()
             }),
         };
@@ -477,8 +487,8 @@ impl Link {
                 return;
             }
         };
-        // Answered on the device: the site does not notify about it.
-        run.answered_elsewhere();
+        // Answered on the device: the site does not notify about it (the
+        // run is so from its start, `on_device`).
         let turn = Turn {
             turn_id,
             run_id: run.run_id().to_string(),
@@ -496,10 +506,11 @@ impl Link {
         }
         // As on the site: with her persona off nothing is remembered.
         if merope::is_enabled().await {
+            // Only what the child said it senses.
             let arrived = crate::services::agent::consciousness::remember_native_presence(
                 self.owner,
                 &self.device.id,
-                &inbound.body,
+                &self.senses.admit(&inbound.body),
             );
             // Arriving on the app is arriving: the same greeting as a page.
             if arrived {
@@ -603,8 +614,9 @@ impl Link {
         }
     }
 
-    /// `speech.delivered`: how much of her reply was said aloud. A reply cut
-    /// off is marked in her history, so her next turn knows where she stopped.
+    /// `speech.delivered`: how much of her reply or line was said aloud. One
+    /// cut off is marked in her history, so her next turn knows where she
+    /// stopped.
     async fn delivered(&mut self, inbound: Inbound) {
         let seq = inbound.seq;
         let Some(id) = inbound.id.filter(|id| valid_id(id)) else {
@@ -635,52 +647,40 @@ impl Link {
                 };
                 if let Some(session) = session {
                     let heard = delivered.spoken_chars.min(delivered.total_chars);
-                    let (db, device, run_id) =
-                        (self.db.clone(), self.device.id.clone(), run_id.clone());
-                    let marked = crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
-                        &db,
-                        &session,
-                        &run_id,
-                        Some(heard),
-                    )
+                    let (db, run_id) = (self.db.clone(), run_id.clone());
+                    mark_cut_off(self.device.id.clone(), by, "reply", move || {
+                        let (db, session, run_id) = (db.clone(), session.clone(), run_id.clone());
+                        async move {
+                            crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
+                                &db,
+                                &session,
+                                &run_id,
+                                Some(heard),
+                            )
+                            .await
+                        }
+                    })
                     .await;
-                    match marked {
-                        Ok(true) => {
-                            tracing::info!(device = %device, by, "[link] her reply was cut off on the app")
-                        }
-                        // Her reply is saved whole when its run ends; it can be
-                        // stopped aloud before that. Marked once it is there.
-                        Ok(false) => {
-                            let by = by.to_string();
-                            tokio::spawn(async move {
-                                for _ in 0..120 {
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                    match crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
-                                        &db,
-                                        &session,
-                                        &run_id,
-                                        Some(heard),
-                                    )
-                                    .await
-                                    {
-                                        Ok(false) => continue,
-                                        Ok(true) => tracing::info!(device = %device, by, "[link] her reply was cut off on the app"),
-                                        Err(error) => tracing::warn!(%error, device = %device, "[link] could not mark a cut-off reply"),
-                                    }
-                                    return;
-                                }
-                            });
-                        }
-                        Err(error) => tracing::warn!(
-                            %error, device = %device,
-                            "[link] could not mark a cut-off reply"
-                        ),
-                    }
                 }
             }
-        } else if delivered.say_id.is_some() && delivered.interrupted {
-            // Her lines are kept without a place for this yet: it is told, not kept.
-            tracing::info!(device = %self.device.id, by, "[link] her line was cut off on the app");
+        } else if let Some(say_id) = delivered.say_id.clone() {
+            if !valid_id(&say_id) {
+                self.error("bad_id", Some(seq));
+                return;
+            }
+            // A line of hers cut off reads as her replies do: maybe not
+            // heard to the end, and how much was.
+            if delivered.interrupted {
+                let heard = delivered.spoken_chars.min(delivered.total_chars);
+                let (db, owner) = (self.db.clone(), self.owner);
+                mark_cut_off(self.device.id.clone(), by, "line", move || {
+                    let (db, say_id) = (db.clone(), say_id.clone());
+                    async move {
+                        merope::store::mark_line_cut_off(&db, owner, &say_id, Some(heard)).await
+                    }
+                })
+                .await;
+            }
         }
     }
 
@@ -846,6 +846,41 @@ impl Link {
                 self.owner,
                 &self.device.id,
             );
+        }
+    }
+}
+
+/// Marks what the app cut off in her history once it is kept there: a reply
+/// is saved whole when its run ends and a line of hers once it was
+/// delivered, and either can be stopped aloud before that. Tries now, then
+/// every half second for a minute.
+async fn mark_cut_off<F, Fut>(device: String, by: &str, what: &'static str, mark: F)
+where
+    F: Fn() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<bool, sea_orm::DbErr>> + Send,
+{
+    match mark().await {
+        Ok(true) => tracing::info!(device = %device, by, what, "[link] cut off on the app"),
+        Ok(false) => {
+            let by = by.to_string();
+            tokio::spawn(async move {
+                for _ in 0..120 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    match mark().await {
+                        Ok(false) => continue,
+                        Ok(true) => {
+                            tracing::info!(device = %device, by, what, "[link] cut off on the app")
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, device = %device, what, "[link] could not mark a cut-off")
+                        }
+                    }
+                    return;
+                }
+            });
+        }
+        Err(error) => {
+            tracing::warn!(%error, device = %device, what, "[link] could not mark a cut-off")
         }
     }
 }

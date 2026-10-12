@@ -224,6 +224,8 @@ async fn redeem_speak_intent(
     // Merope toasts only what it owns. Task / phantasi / sync already have a
     // producer; sending ours as well would be two notices for one event.
     let mut delivered = false;
+    // The `say` it went out as on the app, if it did.
+    let mut said_on_app = None;
     let target = if decision.live && shown {
         in_person(intent.user_id, touch)
     } else {
@@ -243,6 +245,7 @@ async fn redeem_speak_intent(
         .await;
         if delivered {
             claim.delivered(&intent, repeat_minutes);
+            said_on_app = Some(intent.id.clone());
         }
         // Her director refines how she acts it while the app says it.
         if let Some(context) = pending_motion.take().filter(|_| delivered) {
@@ -312,7 +315,15 @@ async fn redeem_speak_intent(
     // Suppression or an unavailable transport must not consume either.
     if delivered || notified {
         claim.delivered(&intent, repeat_minutes);
-        insert_proactive(db, intent.user_id, &spoken, Some(&intent.topic), notified).await?;
+        insert_proactive(
+            db,
+            intent.user_id,
+            &spoken,
+            Some(&intent.topic),
+            notified,
+            said_on_app.as_deref(),
+        )
+        .await?;
         let _ = touch_proactive(db, intent.user_id).await;
     }
     Ok(())
@@ -424,13 +435,15 @@ async fn say_line(
 
 /// Her first words, on the app `device` they are using her on: acted at once
 /// with her local base motion, then as her director refines it.
+/// Her first words said on the app `device`: the `say` id they went out as,
+/// or None when that link does not take them.
 pub(crate) async fn say_first_on_app(
     db: &DatabaseConnection,
     user_id: i32,
     device: String,
     event_key: &str,
     line: &str,
-) -> bool {
+) -> Option<String> {
     let id = format!("say_{}", uuid::Uuid::new_v4().simple());
     let context = line_context(db, user_id, event_key, line, line).await;
     let floor = context.as_ref().and_then(local_directive);
@@ -445,11 +458,14 @@ pub(crate) async fn say_first_on_app(
         floor.as_ref(),
     )
     .await;
-    if let Some(mut context) = context.filter(|_| said) {
-        context.phase = MotionPhase::Delivery;
-        spawn_say_refinement(db.clone(), None, device, id, context);
+    if !said {
+        return None;
     }
-    said
+    if let Some(mut context) = context {
+        context.phase = MotionPhase::Delivery;
+        spawn_say_refinement(db.clone(), None, device, id.clone(), context);
+    }
+    Some(id)
 }
 
 /// How she acts a line she says on her own, as her mood stands: the context

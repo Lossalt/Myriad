@@ -46,7 +46,8 @@ pub async fn capture_self_snapshot(
         recent_intents: IntentStore::new(db.clone()).recent(user_id, 8).await?,
         remembered,
         captured_at: Utc::now(),
-        live: super::presence::last_live_presence(user_id),
+        // Her senses follow them: the app's when that is where they are.
+        live: super::presence::senses_presence(user_id),
         attention: super::attention::last_attention(user_id),
         myself: Some(merope::self_state::current(db).await.facts_view()),
         minutes_since_you_spoke_unasked: state.last_proactive_at.map(|at| {

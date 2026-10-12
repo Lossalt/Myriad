@@ -613,6 +613,9 @@ ALTER TABLE agent_persona DROP COLUMN zone, DROP COLUMN field_revs;
 INSERT INTO agent_memories (id, kind, content, source, venue, valid_from, created_at, updated_at)
 VALUES ('own_schema_fixture', 'doing', '去河边走了一圈', 'own', 'own', NOW(), NOW(), NOW());
 ALTER TABLE agent_memories DROP COLUMN superseded_by, DROP COLUMN origin;
+INSERT INTO agent_proactive_messages (user_id, role, content, created_at)
+VALUES (2147483647, 'assistant', '在忙吗？', NOW());
+ALTER TABLE agent_proactive_messages DROP COLUMN say_id, DROP COLUMN metadata;
 "#,
     )
     .await
@@ -689,9 +692,27 @@ ALTER TABLE agent_memories DROP COLUMN superseded_by, DROP COLUMN origin;
             .unwrap(),
         None
     );
+    // A line she said before lines kept their `say`: the columns come back, empty.
+    let line = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT say_id, metadata FROM agent_proactive_messages WHERE user_id = 2147483647",
+        ))
+        .await
+        .unwrap()
+        .expect("the line is kept");
+    assert_eq!(line.try_get::<Option<String>>("", "say_id").unwrap(), None);
+    assert_eq!(
+        line.try_get::<Option<serde_json::Value>>("", "metadata")
+            .unwrap(),
+        None
+    );
     ensure_schema(&db)
         .await
         .expect("a second startup changes nothing");
+    db.execute_unprepared("DELETE FROM agent_proactive_messages WHERE user_id = 2147483647")
+        .await
+        .expect("remove fixture line");
     db.execute_unprepared("DELETE FROM agent_memories WHERE id = 'own_schema_fixture'")
         .await
         .expect("remove fixture memory");

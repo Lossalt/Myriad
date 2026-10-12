@@ -114,6 +114,10 @@ pub struct RequestContext {
     /// no one said, so nothing is noted as theirs. Server-set only.
     #[serde(skip)]
     pub nobody_said: bool,
+    /// Said on a native child: the device whose link it came in on. That
+    /// link reports the device's presence itself. Server-set only.
+    #[serde(skip)]
+    pub on_device: Option<String>,
 }
 
 /// A private IM chat turn: she talks as herself and may hand work off.

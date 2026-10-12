@@ -667,6 +667,10 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     default_value: None,
                     not_null: false,
                 },
+                // The `say` it went out as on a native child.
+                ColumnDef::new("say_id", "character varying"),
+                // `cutOff` / `heardChars` when it was cut off aloud.
+                ColumnDef::new("metadata", "jsonb"),
             ],
         },
         TableDef {

@@ -348,7 +348,7 @@ pub use speaking_context::{
     speaking_prompt_with_query, their_typing, with_said_unprompted,
 };
 #[cfg(test)]
-pub use speaking_context::{format_addressee_label, merge_said_unprompted};
+pub use speaking_context::{format_addressee_label, merge_said_unprompted, said_as_heard};
 
 pub fn has_custom_persona(persona: &agent_persona::Model) -> bool {
     format_persona(persona).is_some()
@@ -640,6 +640,21 @@ mod tests {
         }];
         let merged = super::merge_said_unprompted(&untimed, &said[..1]);
         assert_eq!(merged.last().unwrap().content, "周报理好了，放资料库了");
+    }
+
+    /// A line of hers cut off on the app reads as a cut-off reply does.
+    #[test]
+    fn a_line_she_was_cut_off_saying_reads_as_maybe_not_heard() {
+        let cut = serde_json::json!({ "cutOff": "unheard_end", "heardChars": 3 });
+        assert_eq!(
+            super::said_as_heard("嗨，在忙吗？".into(), Some(&cut)),
+            "嗨，在忙吗？ [cut off while saying this: they spoke over you and may not have heard the end]"
+        );
+        assert_eq!(super::said_as_heard("嗨".into(), None), "嗨");
+        assert_eq!(
+            super::said_as_heard("嗨".into(), Some(&serde_json::json!({}))),
+            "嗨"
+        );
     }
 
     #[test]

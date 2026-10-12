@@ -201,11 +201,12 @@ async fn reach_out(db: &DatabaseConnection, user_id: i32, here: Route) -> bool {
     let Some((reason, _, line)) = first_words(db, user_id).await else {
         return false;
     };
-    let Some(went) = deliver_first_words(db, user_id, here, &line).await else {
+    let Some((went, said)) = deliver_first_words_as(db, user_id, here, &line).await else {
         return false;
     };
     if let Err(error) =
-        super::store::insert_proactive(db, user_id, &line, Some(EVENT_KEY), true).await
+        super::store::insert_proactive(db, user_id, &line, Some(EVENT_KEY), true, said.as_deref())
+            .await
     {
         tracing::warn!(%error, user_id, "[Merope] wrote to someone first but could not keep the line");
     }
@@ -215,38 +216,54 @@ async fn reach_out(db: &DatabaseConnection, user_id: i32, here: Route) -> bool {
     true
 }
 
-/// Where her first words went, if anywhere. Here but not looking at her
-/// panel: said on the app when that is where they are using her (see
-/// [`super::in_person`]), and the site's notification as always.
+/// Where her first words went, if anywhere (see [`deliver_first_words_as`]).
+#[cfg(test)]
 pub(crate) async fn deliver_first_words(
     db: &DatabaseConnection,
     user_id: i32,
     here: Route,
     line: &str,
 ) -> Option<&'static str> {
+    deliver_first_words_as(db, user_id, here, line)
+        .await
+        .map(|(went, _)| went)
+}
+
+/// Where her first words went, if anywhere, and the `say` they went out as
+/// on the app. Here but not looking at her panel: said on the app when that
+/// is where they are using her (see [`super::in_person`]), and the site's
+/// notification as always.
+async fn deliver_first_words_as(
+    db: &DatabaseConnection,
+    user_id: i32,
+    here: Route,
+    line: &str,
+) -> Option<(&'static str, Option<String>)> {
     match here {
         Route::Stay => None,
         Route::Site => {
             let said = say_first_on_app(db, user_id, line).await;
             let notified = notify_on_site(db, user_id, line).await;
             match (said, notified) {
-                (true, _) => Some("app"),
-                (false, true) => Some("site"),
-                (false, false) => None,
+                (Some(said), _) => Some(("app", Some(said))),
+                (None, true) => Some(("site", None)),
+                (None, false) => None,
             }
         }
         Route::Away => match crate::services::channel_work::say_first(db, user_id, line).await {
-            Some(platform) => Some(platform.slug()),
-            None => notify_on_site(db, user_id, line).await.then_some("site"),
+            Some(platform) => Some((platform.slug(), None)),
+            None => notify_on_site(db, user_id, line)
+                .await
+                .then_some(("site", None)),
         },
     }
 }
 
 /// Her first words on the app they are using her on, when it is that, acted
-/// as any line of hers said there.
-async fn say_first_on_app(db: &DatabaseConnection, user_id: i32, line: &str) -> bool {
+/// as any line of hers said there: the `say` they went out as.
+async fn say_first_on_app(db: &DatabaseConnection, user_id: i32, line: &str) -> Option<String> {
     let super::InPerson::App(device) = super::in_person(user_id, false) else {
-        return false;
+        return None;
     };
     super::ingest::say_first_on_app(db, user_id, device, EVENT_KEY, line).await
 }

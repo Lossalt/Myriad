@@ -75,6 +75,9 @@ pub struct AgentRun {
     /// Started from a chat app or a group and answered there: the site does
     /// not notify about it, and she does not tell it again on the site.
     elsewhere: std::sync::atomic::AtomicBool,
+    /// What reached the site's notifications, by status: for tests.
+    #[cfg(test)]
+    site_notices: std::sync::Mutex<Vec<String>>,
     created_at: chrono::DateTime<Utc>,
     state: Mutex<AgentRunState>,
     publish_order: Mutex<()>,
@@ -101,6 +104,8 @@ impl AgentRun {
             user_id,
             session_id,
             elsewhere: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            site_notices: Default::default(),
             created_at: Utc::now(),
             state: Mutex::new(AgentRunState {
                 next_sequence: 1,
@@ -156,6 +161,8 @@ impl AgentRun {
             user_id: persisted.user_id,
             session_id: persisted.session_id,
             elsewhere: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            site_notices: Default::default(),
             created_at: persisted.created_at,
             state: Mutex::new(AgentRunState {
                 next_sequence: persisted.next_sequence,
@@ -658,6 +665,10 @@ WHERE namespace = $1 AND runtime_id = $2
         drop(_order);
 
         if self.notifies_site(notify) {
+            #[cfg(test)]
+            if let Ok(mut notices) = self.site_notices.lock() {
+                notices.push(status.clone());
+            }
             if let Some(manager) = get_notification_manager() {
                 let title = match status.as_str() {
                     "completed" => "The task finished",
@@ -685,7 +696,8 @@ WHERE namespace = $1 AND runtime_id = $2
 }
 
 impl AgentRun {
-    /// This run was started from a chat app or a group and is answered there.
+    /// This run was started from a chat app, a group or a device and is
+    /// answered there.
     pub(crate) fn answered_elsewhere(&self) {
         self.elsewhere
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -695,6 +707,15 @@ impl AgentRun {
     /// run answered in a chat app or a group.
     fn notifies_site(&self, notify: bool) -> bool {
         notify && !self.elsewhere.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The statuses that reached the site's notifications.
+    #[cfg(test)]
+    pub(crate) fn site_notices(&self) -> Vec<String> {
+        self.site_notices
+            .lock()
+            .map(|notices| notices.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -738,6 +759,7 @@ pub async fn create_run(user_id: i32, session_id: Option<String>) -> Arc<AgentRu
         format!("run_{}", uuid::Uuid::new_v4().simple()),
         user_id,
         session_id,
+        false,
     )
     .await
 }
@@ -770,13 +792,19 @@ pub(crate) async fn create_live_run_for_test(user_id: i32) -> Arc<AgentRun> {
 
 /// The server may reserve an ID while committing input references, before
 /// publishing RunStarted or admitting execution. Never accepts a client ID.
+/// A run `answered_elsewhere` (a chat app, a group, a device) is so from its
+/// first event: the site never shows it starting.
 pub(crate) async fn create_run_with_id(
     run_id: String,
     user_id: i32,
     session_id: Option<String>,
+    answered_elsewhere: bool,
 ) -> Arc<AgentRun> {
     cleanup_retained_runs().await;
     let run = AgentRun::new(run_id.clone(), user_id, session_id.clone());
+    if answered_elsewhere {
+        run.answered_elsewhere();
+    }
     AGENT_RUNS.write().await.insert(run_id.clone(), run.clone());
     run.publish(AgentProgressEvent::RunStarted { run_id, session_id })
         .await;
@@ -857,6 +885,27 @@ pub(crate) async fn get_live_run_for_user(run_id: &str, user_id: i32) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Answered on a device, in a chat app or a group: the site never shows
+    /// the run starting either (its first event used to slip out).
+    #[tokio::test]
+    async fn a_run_answered_elsewhere_is_quiet_from_its_first_event() {
+        let quiet = create_run_with_id("run_quiet_from_start".into(), 7, None, true).await;
+        assert!(quiet.site_notices().is_empty());
+        quiet
+            .publish(AgentProgressEvent::Progress {
+                progress: 0,
+                completed_steps: 0,
+                total_steps: 0,
+                message: "Queued (about 1 ahead)…".into(),
+            })
+            .await;
+        assert!(quiet.site_notices().is_empty());
+        let shown = create_run_with_id("run_shown_from_start".into(), 7, None, false).await;
+        assert_eq!(shown.site_notices(), ["running"]);
+        AGENT_RUNS.write().await.remove("run_quiet_from_start");
+        AGENT_RUNS.write().await.remove("run_shown_from_start");
+    }
 
     #[tokio::test]
     async fn a_run_answered_in_a_chat_app_stays_quiet_on_the_site() {

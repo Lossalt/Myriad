@@ -22,12 +22,17 @@
 //! how far saying it got; one that takes `touch` sends contact with her
 //! figure up, and she answers it there. One that takes `wardrobe` wears its
 //! own set of her wardrobe ([`outfit`]).
+//!
+//! Her senses on the app ([`senses`]): what a child reports seeing and
+//! hearing for her, as far as it said it senses it, is what she senses of
+//! the person while the app is where they are using her.
 
 mod body;
 mod connection;
 mod contract;
 mod outfit;
 mod say;
+mod senses;
 mod turns;
 
 #[cfg(test)]

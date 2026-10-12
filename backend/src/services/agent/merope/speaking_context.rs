@@ -463,11 +463,28 @@ pub async fn with_said_unprompted(
                 (
                     line.created_at.with_timezone(&chrono::Utc),
                     ingest::compact_summary(&line.content),
+                    line.metadata,
                 )
             })
-            .filter(|(at, line)| *at >= since && !line.is_empty())
+            .filter(|(at, line, _)| *at >= since && !line.is_empty())
+            // Already in the history as it is: not added twice.
+            .filter(|(_, line, _)| {
+                !history
+                    .iter()
+                    .any(|message| message.content.trim() == line.trim())
+            })
+            .map(|(at, line, metadata)| (at, said_as_heard(line, metadata.as_ref())))
             .collect();
     merge_said_unprompted(history, &said)
+}
+
+/// One of her unprompted lines as it reads in the conversation: like a
+/// reply of hers, marked when it was cut off while being said aloud.
+pub fn said_as_heard(line: String, metadata: Option<&serde_json::Value>) -> String {
+    match crate::services::agent::chat_prompt::line_cut_off_marker(metadata) {
+        Some(marker) => format!("{line}{marker}"),
+        None => line,
+    }
 }
 
 /// How the one she is talking with types to her, from their lines in the

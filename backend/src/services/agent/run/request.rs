@@ -54,6 +54,7 @@ pub(crate) fn build_request_context(mut ctx: ProcessContext) -> RequestContext {
         differs: None,
         making_sense: None,
         nobody_said: false,
+        on_device: ctx.on_device,
     }
 }
 

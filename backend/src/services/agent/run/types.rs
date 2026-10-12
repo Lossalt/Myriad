@@ -54,6 +54,10 @@ pub struct ProcessContext {
     /// Work started from a chat app, answered there. Set only by the server.
     #[serde(skip)]
     pub from_channel: bool,
+    /// Said on a native child, the device whose link it came in on: answered
+    /// there, and its senses are that device's. Set only by the server.
+    #[serde(skip)]
+    pub on_device: Option<String>,
 }
 
 /// Where a channel group turn happens and what the group said lately.
