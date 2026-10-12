@@ -13,7 +13,7 @@ use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
 
 use super::offered::{offered_body_controls, offered_score_moves};
-use super::{MotionContext, presence};
+use super::{MotionContext, control, presence};
 
 /// An answer less sure than this is left unacted; what she does not show
 /// cannot be wrong.
@@ -21,7 +21,7 @@ pub(super) const SURE: f64 = 0.3;
 /// Her feeling is taken as her own unless the model is this sure it is not:
 /// quoting someone else scored 0.004–0.08 across Jev, Microsoft-Decision and
 /// Luna, while her own laugh at them scored as low as 0.44 (10-12).
-const OWN: f64 = 0.25;
+pub(super) const OWN: f64 = 0.25;
 /// A beat lands on a fragment of the reply at most this long (score anchors).
 const ANCHOR_CHARS: usize = 24;
 /// At most this many fragments are offered to land a beat on.
@@ -40,7 +40,7 @@ pub(super) const FEELINGS: &[(&str, &str)] = &[
 ];
 
 /// How a sentence is said: the speech phrase intents, as asked.
-const SAYING: &[(&str, &str)] = &[
+pub(super) const SAYING: &[(&str, &str)] = &[
     ("ask", "a real question or a guess put to them"),
     ("hesitate", "hesitating or puzzling it out, unsure"),
     (
@@ -155,9 +155,19 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
             );
         }
     }
-    // A face asked for by name is hers to make or not: her reply says which.
-    // What the face can make, speaking or not: a face she agrees to make
-    // is made, even over her words.
+    if let Some(question) = asked_for_question(context, state) {
+        questions.insert("askedFor".into(), question);
+    }
+    Value::Object(questions)
+}
+
+/// A face asked for by name is hers to make or not: her reply says which.
+/// Offered by what the face can make, speaking or not: a face she agrees to
+/// make is made, even over her words.
+pub(super) fn asked_for_question(
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+) -> Option<Value> {
     let mut askable: Vec<(&str, &str)> = ASKABLE
         .iter()
         .copied()
@@ -165,19 +175,34 @@ pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>
             state.is_none_or(|state| myriad_merope::cue_is_playable(&state.capabilities, intent))
         })
         .collect();
-    if !askable.is_empty()
-        && !context.user_text.trim().is_empty()
-        && context.response_text.is_some()
+    if askable.is_empty() || context.user_text.trim().is_empty() || context.response_text.is_none()
     {
-        askable.push((
-            "none",
-            "they asked for none of these, or her reply does not go along",
-        ));
-        questions.insert("askedFor".into(), json!({"type": "choice",
-            "instructions": "Did they ask her to make one of these faces, and does her reply go along with making it?",
-            "criteria": criteria(&askable)}));
+        return None;
     }
-    Value::Object(questions)
+    askable.push((
+        "none",
+        "they asked for none of these, or her reply does not go along",
+    ));
+    let criteria: Map<String, Value> = askable
+        .iter()
+        .map(|(name, means)| ((*name).to_owned(), json!(means)))
+        .collect();
+    Some(json!({"type": "choice",
+        "instructions": "Did they ask her to make one of these faces, and does her reply go along with making it?",
+        "criteria": criteria}))
+}
+
+/// The face she agreed to make, played at once over a face that leaves it room.
+pub(super) fn agreed_face(asked: Option<&str>) -> Vec<Value> {
+    asked
+        .map(|intent| {
+            let sticker = matches!(intent, "maniac" | "silly" | "cry" | "dizzy" | "lovestruck" | "angry");
+            json!({"intent": intent, "atMs": 0, "intensity": "strong", "tempo": "usual",
+                "fadeInMs": if sticker { 180 } else { 100 }, "fadeOutMs": if sticker { 420 } else { 220 },
+                "interrupt": "replace"})
+        })
+        .into_iter()
+        .collect()
 }
 
 /// The moment the questions are about.
@@ -405,18 +430,8 @@ pub(super) fn plan_from_answers(
             Some(json!({"text": text, "intent": intent}))
         })
         .collect();
-    // A face she agreed to make plays at once, over a steady face that
-    // leaves it room; directed body targets stay.
     let asked = sure("askedFor").filter(|intent| *intent != "none");
-    let cues: Vec<Value> = asked
-        .map(|intent| {
-            let sticker = matches!(intent, "maniac" | "silly" | "cry" | "dizzy" | "lovestruck" | "angry");
-            json!({"intent": intent, "atMs": 0, "intensity": "strong", "tempo": "usual",
-                "fadeInMs": if sticker { 180 } else { 100 }, "fadeOutMs": if sticker { 420 } else { 220 },
-                "interrupt": "replace"})
-        })
-        .into_iter()
-        .collect();
+    let cues = agreed_face(asked);
     let expression = if asked.is_some() {
         "steady"
     } else {
@@ -433,25 +448,40 @@ pub(super) fn plan_from_answers(
 }
 
 /// The moment and the questions about it: her standing acting when nobody is
-/// talking with her, otherwise how she says her reply.
+/// talking with her; otherwise her body itself for a decisions model
+/// (`direct`), and how she says her reply for a chat model, which would take
+/// too long over every control.
 fn asked(
     context: &MotionContext,
     state: Option<&RigStateSummary>,
     persona: Option<&str>,
+    direct: bool,
 ) -> (Value, Value) {
     if context.phase == super::MotionPhase::Presence {
         (
             presence::presence_state(context, persona),
             presence::presence_questions(state),
         )
+    } else if direct {
+        (
+            self::state(context, persona),
+            control::control_questions(context, state),
+        )
     } else {
         (self::state(context, persona), questions(context, state))
     }
 }
 
-fn plan(answers: &Value, context: &MotionContext, state: Option<&RigStateSummary>) -> Value {
+fn plan(
+    answers: &Value,
+    context: &MotionContext,
+    state: Option<&RigStateSummary>,
+    direct: bool,
+) -> Value {
     if context.phase == super::MotionPhase::Presence {
         presence::presence_plan_from_answers(answers, context, state)
+    } else if direct {
+        control::control_plan(answers, context, state)
     } else {
         plan_from_answers(answers, context, state)
     }
@@ -472,7 +502,7 @@ pub(super) async fn direct(
         .api_key
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("no key for the acting source"))?;
-    let (asked_state, asked) = asked(context, state, persona);
+    let (asked_state, asked) = asked(context, state, persona, true);
     let body = json!({"model": source.model.trim(), "state": asked_state, "questions": asked});
     let response = reqwest::Client::builder()
         .timeout(timeout)
@@ -499,7 +529,7 @@ pub(super) async fn direct(
     )
     .await;
     anyhow::ensure!(status.is_success(), "decisions call failed: {status}");
-    Ok(plan(&value["answers"], context, state).to_string())
+    Ok(plan(&value["answers"], context, state, true).to_string())
 }
 
 /// The same questions put to a chat model, which answers each in the shape a
@@ -575,7 +605,7 @@ pub(super) fn chat_schema(questions: &Value) -> Value {
 /// What the director is asked about a moment, as the semantic eval records it.
 #[cfg(test)]
 pub(in crate::services::agent) fn semantic_contract(context: &MotionContext) -> Value {
-    let (asked_state, questions) = asked(context, context.rig_state.as_ref(), None);
+    let (asked_state, questions) = asked(context, context.rig_state.as_ref(), None, false);
     // The body and the reply decide which questions are asked; kept beside them.
     let input = json!({"moment": asked_state, "responseText": context.response_text,
         "rig": context.rig_state, "questions": questions});
@@ -591,7 +621,7 @@ pub(super) async fn direct_by_chat(
     persona: Option<&str>,
     analyzer: &crate::services::analyzer::AiAnalyzer,
 ) -> anyhow::Result<String> {
-    let (asked_state, questions) = asked(context, state, persona);
+    let (asked_state, questions) = asked(context, state, persona, false);
     let raw = analyzer
         .analyze_json(
             &chat_system_prompt(&questions),
@@ -602,7 +632,7 @@ pub(super) async fn direct_by_chat(
         .await?;
     let answers: Value = serde_json::from_str(super::strip_motion_json(&raw))?;
     anyhow::ensure!(answers.is_object(), "answers must be an object");
-    Ok(plan(&answers, context, state).to_string())
+    Ok(plan(&answers, context, state, false).to_string())
 }
 
 #[cfg(test)]

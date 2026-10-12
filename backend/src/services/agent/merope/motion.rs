@@ -20,6 +20,7 @@ use super::MoodTransition;
 use super::motion_local::local_performance_plan;
 use super::store::get_persona;
 
+mod control;
 mod offered;
 mod presence;
 mod questions;
