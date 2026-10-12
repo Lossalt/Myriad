@@ -35,6 +35,8 @@ pub(super) struct Contract {
 pub(super) struct TimingSpec {
     pub heartbeat_ms: u64,
     pub say_ttl_ms: u64,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub touch_appraise_ms: u64,
     pub missed_heartbeats: u32,
     pub hello_timeout_ms: u64,
 }
@@ -152,7 +154,7 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 11] = [
+pub(super) const HOST_FRAMES: [&str; 13] = [
     "welcome",
     "run.accepted",
     "run.rejected",
@@ -164,11 +166,13 @@ pub(super) const HOST_FRAMES: [&str; 11] = [
     "pong",
     "error",
     "say",
+    "touch.reaction",
+    "outfit",
 ];
 
 /// Frame types the host takes from a child.
 #[cfg(test)]
-pub(super) const CHILD_FRAMES: [&str; 7] = [
+pub(super) const CHILD_FRAMES: [&str; 13] = [
     "hello",
     "input",
     "presence",
@@ -176,11 +180,17 @@ pub(super) const CHILD_FRAMES: [&str; 7] = [
     "ack",
     "ping",
     "pong",
+    "playback.observe",
+    "playback.end",
+    "speech.delivered",
+    "touch.appraise",
+    "touch",
+    "outfit.wear",
 ];
 
 /// Error codes the host itself sends (run.rejected may also carry an AI quota code).
 #[cfg(test)]
-pub(super) const HOST_ERROR_CODES: [&str; 11] = [
+pub(super) const HOST_ERROR_CODES: [&str; 14] = [
     "unknown_frame",
     "bad_frame",
     "not_ready",
@@ -192,6 +202,9 @@ pub(super) const HOST_ERROR_CODES: [&str; 11] = [
     "turn_unknown",
     "agent_access_denied",
     "internal_error",
+    "not_this_device",
+    "too_large",
+    "outfit_unknown",
 ];
 
 /// `limits.idPattern`, without a regex engine: 1 to 64 of `A-Za-z0-9_.:-`.

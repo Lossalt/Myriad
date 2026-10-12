@@ -251,8 +251,26 @@ pub(super) fn sanitize_visual_profile(value: &Value) -> Result<Value, HttpError>
 
 /// The worn bust must be a bust in the wardrobe, and the worn full body a
 /// full-body set there: the two are worn apart, and a full-body set is never
-/// worn on the panel.
+/// worn on the panel. What each app on her link wears (`activeOutfitByEnd`)
+/// must be a set there with a rig.
 pub(super) fn drop_stale_active_outfit(profile: &mut Map<String, Value>) {
+    let wearable: Vec<String> = profile
+        .get("wardrobe")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("rigAssetId").and_then(Value::as_str).is_some())
+                .filter_map(|item| item.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(Value::Object(ends)) = profile.get_mut("activeOutfitByEnd") {
+        ends.retain(|_, id| {
+            id.as_str()
+                .is_some_and(|id| wearable.iter().any(|w| w == id))
+        });
+    }
     for (key, full_body) in [("activeOutfitId", false), ("activeFullBodyOutfitId", true)] {
         let Some(id) = profile.get(key).and_then(Value::as_str) else {
             continue;
@@ -301,13 +319,14 @@ pub(super) fn merge_visual_profile(incoming: Value, previous: Option<&Value>) ->
         "wardrobe",
         "activeOutfitId",
         "activeFullBodyOutfitId",
+        "activeOutfitByEnd",
     ] {
         if key == "visualIdentity" && identity_context_changed {
             continue;
         }
         if matches!(
             key,
-            "wardrobe" | "activeOutfitId" | "activeFullBodyOutfitId"
+            "wardrobe" | "activeOutfitId" | "activeFullBodyOutfitId" | "activeOutfitByEnd"
         ) && identity_cleared
         {
             continue;

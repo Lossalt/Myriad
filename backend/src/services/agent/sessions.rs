@@ -305,6 +305,17 @@ pub(crate) async fn mark_spoken_reply_cut_off(
     session_id: &str,
     run_id: &str,
 ) -> Result<bool, sea_orm::DbErr> {
+    mark_spoken_reply_cut_off_at(db, session_id, run_id, None).await
+}
+
+/// As [`mark_spoken_reply_cut_off`], keeping how many of its characters were
+/// said aloud (`heardChars`) when the end that said it knows.
+pub(crate) async fn mark_spoken_reply_cut_off_at(
+    db: &DatabaseConnection,
+    session_id: &str,
+    run_id: &str,
+    heard_chars: Option<u64>,
+) -> Result<bool, sea_orm::DbErr> {
     let recent = agent_messages::Entity::find()
         .filter(agent_messages::Column::SessionId.eq(session_id))
         .filter(agent_messages::Column::Role.eq("assistant"))
@@ -328,6 +339,9 @@ pub(crate) async fn mark_spoken_reply_cut_off(
             crate::services::agent::chat_prompt::CUT_OFF_KEY.into(),
             json!(crate::services::agent::chat_prompt::cut_off_kind(true)),
         );
+        if let Some(heard) = heard_chars {
+            object.insert("heardChars".into(), json!(heard));
+        }
     }
     let mut active: agent_messages::ActiveModel = reply.into();
     active.metadata = Set(Some(metadata));

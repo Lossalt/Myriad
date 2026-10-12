@@ -305,6 +305,21 @@ pub fn remember_native_presence(user_id: i32, device_id: &str, data: &Value) -> 
     remember_live_presence(user_id, live)
 }
 
+/// The native child's own lease, while it is fresh: the face her link
+/// reports for that device (its window, its rig, whether it is speaking).
+pub fn native_presence(user_id: i32, device_id: &str) -> Option<SelfLivePresence> {
+    let now = Utc::now();
+    let store = LIVE.read().ok()?;
+    let mut live = store
+        .users
+        .get(&user_id)?
+        .get(&native_instance(device_id))
+        .filter(|live| presence_is_fresh_at(live, now))?
+        .clone();
+    age_perception(&mut live, now);
+    Some(live)
+}
+
 /// The child's link closed: it is not there any more.
 pub fn forget_native_presence(user_id: i32, device_id: &str) {
     if let Ok(mut store) = LIVE.write() {

@@ -57,6 +57,6 @@ pub mod sync {
 
 pub mod touch {
     pub(crate) use crate::services::agent::merope::touch::{
-        TouchSummary, appraise, completion_summary,
+        Invalid, TouchSummary, appraise_ongoing, ended,
     };
 }

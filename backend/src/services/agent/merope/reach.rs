@@ -242,29 +242,13 @@ pub(crate) async fn deliver_first_words(
     }
 }
 
-/// Her first words on the app they are using her on, when it is that.
+/// Her first words on the app they are using her on, when it is that, acted
+/// as any line of hers said there.
 async fn say_first_on_app(db: &DatabaseConnection, user_id: i32, line: &str) -> bool {
-    use crate::services::agent::link::{Say, SayKind, say};
     let super::InPerson::App(device) = super::in_person(user_id, false) else {
         return false;
     };
-    let session_id = super::store::latest_open_session(db, user_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|(id, _)| id);
-    say(
-        user_id,
-        &device,
-        Say {
-            id: format!("say_{}", uuid::Uuid::new_v4().simple()),
-            kind: SayKind::Proactive,
-            text: line.to_string(),
-            session_id,
-            perform: None,
-            event_key: Some(EVENT_KEY.to_string()),
-        },
-    )
+    super::ingest::say_first_on_app(db, user_id, device, EVENT_KEY, line).await
 }
 
 /// Her line as a notification on the site: shown now if they are there,

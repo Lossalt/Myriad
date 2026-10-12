@@ -99,6 +99,17 @@ pub(crate) async fn remember<C: ConnectionTrait>(db: &C, device_id: &str, owner:
     }
 }
 
+/// The device's turn that started `run_id`, among those this process has.
+pub(crate) fn by_run(device_id: &str, run_id: &str) -> Option<Turn> {
+    TURNS.lock().ok().and_then(|turns| {
+        turns
+            .get(device_id)?
+            .iter()
+            .find(|turn| turn.run_id == run_id)
+            .cloned()
+    })
+}
+
 /// The device's latest turns in this process, newest first.
 pub(crate) fn recent(device_id: &str, limit: usize) -> Vec<Turn> {
     TURNS

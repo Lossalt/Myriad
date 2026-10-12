@@ -83,6 +83,17 @@ fn the_host_speaks_the_contract() {
     assert_eq!(CONTRACT.frames["input"].delivery, "reliable");
     assert_eq!(CONTRACT.frames["say"].delivery, "reliable");
     assert!(CONTRACT.capabilities.iter().any(|c| c == "say"));
+    // Her body on the app: what it says up is kept until taken.
+    for t in ["speech.delivered", "touch"] {
+        assert_eq!(CONTRACT.frames[t].delivery, "reliable", "{t}");
+    }
+    for capability in ["playback", "touch"] {
+        assert!(CONTRACT.capabilities.iter().any(|c| c == capability));
+    }
+    assert_eq!(
+        CONTRACT.timing.touch_appraise_ms, 3000,
+        "as the site's own touch"
+    );
     let kinds: Vec<&str> = [SayKind::Greeting, SayKind::Proactive, SayKind::FaceToFace]
         .iter()
         .map(|kind| kind.as_str())
@@ -205,6 +216,31 @@ fn every_frame_has_a_fixture_that_fits_it() {
                     assert_eq!(live.perception_payload.len(), 1);
                     assert!(live.music_status.is_some());
                 }
+                "playback.observe" => {
+                    let observed: super::body::Observe =
+                        serde_json::from_value(inbound.body).unwrap();
+                    assert!(observed.upcoming_text.len() <= super::body::UPCOMING_BYTES);
+                    assert!(myriad_merope::sanitize_rig_state(&observed.rig).is_some());
+                }
+                "playback.end" => {
+                    let _: super::body::End = serde_json::from_value(inbound.body).unwrap();
+                }
+                "speech.delivered" => {
+                    assert!(inbound.id.as_deref().is_some_and(valid_id));
+                    let delivered: super::body::Delivered =
+                        serde_json::from_value(inbound.body).unwrap();
+                    assert!(delivered.interrupted && delivered.by() == Some("stop"));
+                    assert!(delivered.spoken_chars <= delivered.total_chars);
+                }
+                "touch.appraise" => {
+                    let appraise: super::body::Appraise =
+                        serde_json::from_value(inbound.body).unwrap();
+                    assert!(valid_id(&appraise.touch_id));
+                }
+                "touch" => {
+                    assert!(inbound.id.as_deref().is_some_and(valid_id));
+                    let _: super::body::Touched = serde_json::from_value(inbound.body).unwrap();
+                }
                 _ => {}
             }
         }
@@ -255,6 +291,26 @@ fn every_frame_has_a_fixture_that_fits_it() {
         say["body"]["saidAt"].as_i64().unwrap(),
     );
     assert_eq!(built, say["body"]);
+    // Her director's refinement while the app says the reply.
+    let live = fixtures()
+        .into_iter()
+        .find(|frame| frame["t"] == "perform" && frame["body"].get("live").is_some())
+        .expect("a live perform fixture");
+    let sent = super::body::live_perform(
+        &turn,
+        live["body"]["live"].as_u64().unwrap(),
+        live["body"]["directive"].clone(),
+    );
+    assert_eq!(sent.t, "perform");
+    assert_eq!(sent.body, live["body"]);
+    let _: PerformanceDirective =
+        serde_json::from_value(live["body"]["directive"].clone()).unwrap();
+    let sent = super::body::reaction("touch_01", Some(json!({ "reaction": "accept" })));
+    assert_eq!(sent.body, fixture("touch.reaction")["body"]);
+    assert_eq!(
+        super::body::reaction("touch_01", None).body["reaction"],
+        Value::Null
+    );
     let _: PerformanceDirective = serde_json::from_value(say["body"]["perform"].clone()).unwrap();
     // A mood that comes with a run counts only as it happens.
     let event = AgentProgressEvent::MeropeStateChanged {
@@ -1018,6 +1074,13 @@ async fn her_lines_go_to_the_app_they_are_using_her_on() {
     assert_eq!(first["body"]["kind"], "proactive");
     assert_eq!(first["body"]["text"], "在忙吗？");
     assert!(first["body"]["saidAt"].as_i64().unwrap() > 0);
+    // Acted at once with her local base motion, as any line of hers said there.
+    let acted: PerformanceDirective = serde_json::from_value(first["body"]["perform"].clone())
+        .expect("her first words come with how she acts them");
+    assert_eq!(
+        serde_json::to_value(acted.phase).unwrap(),
+        json!("proactive")
+    );
     // Her greeting: on the app, as she acts it; nothing on the site's face.
     let directive = fixture("say")["body"]["perform"].clone();
     let performance: PerformanceDirective = serde_json::from_value(directive.clone()).unwrap();
@@ -1184,4 +1247,240 @@ async fn her_lines_go_to_the_app_they_are_using_her_on() {
     forget_native_presence(OWNER, &mac.id);
     drop(child);
     site.close().await;
+}
+
+/// Her body on the app: her director's refinements of the reply while the
+/// app says it, also after the run's end; where saying it got to; a reply
+/// cut off marked in her history; her lines' refinements; touch answered.
+#[tokio::test]
+async fn the_app_is_directed_while_it_says_her_reply() {
+    use crate::services::agent::AgentInteractionMode;
+    let Some(site) = site().await else {
+        return;
+    };
+    let (mac, token) = device(&site.db, "Mac").await;
+    let session = crate::services::agent::sessions::ensure_session(
+        &site.db,
+        None,
+        OWNER,
+        AgentInteractionMode::Chat,
+    )
+    .await
+    .unwrap();
+    let run = crate::services::agent::run_hub::create_live_run_for_test(OWNER).await;
+    let run_id = run.run_id().to_string();
+    turns::remember(
+        &site.db,
+        &mac.id,
+        OWNER,
+        Turn {
+            turn_id: "t_body".into(),
+            run_id: run_id.clone(),
+            session_id: Some(session.clone()),
+        },
+    )
+    .await;
+    let directive: PerformanceDirective =
+        serde_json::from_value(fixture("perform")["body"]["directive"].clone()).unwrap();
+
+    let mut child = Child::open(&site, &token).await;
+    let welcome = child.hello_with(&["rig", "say", "playback", "touch"]).await;
+    assert_eq!(
+        welcome["body"]["capabilities"],
+        json!(["rig", "say", "playback", "touch"])
+    );
+    child
+        .send(
+            "run.resume",
+            None,
+            json!({ "turnId": "t_body", "afterSeq": 0 }),
+        )
+        .await;
+    assert_eq!(child.expect("run.event").await["body"]["sequence"], 1);
+
+    // The director's refinement goes down as it is published, numbered by
+    // the direction's own version.
+    assert!(run.playback_direction.publish(directive.clone()));
+    let refined = child.expect("perform").await;
+    assert_eq!(refined["body"]["live"], 1);
+    assert_eq!(refined["body"]["turnId"], "t_body");
+    assert_eq!(refined["body"]["runId"], run_id.as_str());
+    assert_eq!(
+        refined["body"]["directive"],
+        serde_json::to_value(&directive).unwrap()
+    );
+    assert!(refined["body"].get("sequence").is_none());
+
+    // Where saying it got to reaches the director's slot.
+    let observe = json!({ "runId": run_id, "upcomingText": "下午去散了步。",
+        "rig": { "expression": "warm", "pageVisible": true, "faceVisible": true } });
+    child.send("playback.observe", None, observe).await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    assert_eq!(
+        run.playback_direction
+            .observation()
+            .map(|observation| observation.upcoming_text),
+        Some("下午去散了步。".to_string())
+    );
+    let big = child
+        .send(
+            "playback.observe",
+            None,
+            json!({ "runId": run_id, "upcomingText": "字".repeat(3000), "rig": {} }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "too_large", "ref": big })
+    );
+    let theirs = child
+        .send(
+            "playback.observe",
+            None,
+            json!({ "runId": "run_someone_elses", "upcomingText": "x", "rig": {} }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "not_this_device", "ref": theirs })
+    );
+
+    // The run ends; the reply is still being said, and directed.
+    run.publish(AgentProgressEvent::TaskCompleted {
+        task_id: "task".into(),
+        success: true,
+        response: Box::new(json!({ "success": true, "message": "还不错，下午去散了步。" })),
+    })
+    .await;
+    assert_eq!(
+        child.expect("run.event").await["body"]["event"]["type"],
+        "task_completed"
+    );
+    child.expect("run.end").await;
+    assert!(run.playback_direction.publish(directive.clone()));
+    assert_eq!(child.expect("perform").await["body"]["live"], 2);
+    // Said to the end: the direction closes, nothing more comes for it.
+    child
+        .send("playback.end", None, json!({ "runId": run_id }))
+        .await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    assert!(run.playback_direction.read_after(2).await.closed);
+    assert!(!run.playback_direction.publish(directive.clone()));
+
+    // Cut off while saying it: marked in her history, with how much was heard.
+    crate::services::agent::sessions::persist_assistant_message(
+        &site.db,
+        &session,
+        None,
+        "还不错，下午去散了步。",
+        Some(json!({ "runId": run_id })),
+    )
+    .await
+    .unwrap();
+    let delivered = json!({ "turnId": "t_body", "runId": run_id, "spokenChars": 4,
+        "totalChars": 11, "interrupted": true, "by": "stop" });
+    child
+        .send("speech.delivered", Some("sd_body1"), delivered.clone())
+        .await;
+    // Sent again before the ack: taken once.
+    child
+        .send("speech.delivered", Some("sd_body1"), delivered)
+        .await;
+    child.send("ping", None, json!({})).await;
+    child.expect("pong").await;
+    let metadata = site
+        .db
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            format!(
+                "SELECT metadata::text AS m FROM agent_messages WHERE session_id = '{session}' \
+                 AND role = 'assistant'"
+            ),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<String>("", "m")
+        .unwrap();
+    let metadata: Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(
+        metadata[crate::services::agent::chat_prompt::CUT_OFF_KEY],
+        crate::services::agent::chat_prompt::cut_off_kind(true)
+    );
+    assert_eq!(metadata["heardChars"], 4);
+
+    // Her line on the app, refined: sent for that line to a child that takes it.
+    assert!(super::perform_say(
+        OWNER,
+        &mac.id,
+        "spk_body1",
+        serde_json::to_value(&directive).unwrap()
+    ));
+    let line = child.expect("perform").await;
+    assert_eq!(line["body"]["sayId"], "spk_body1");
+    assert!(line["body"].get("turnId").is_none());
+
+    // Touch going on: answered for that contact (her persona is off here: no reaction).
+    remember_native_presence_for_test(&mac.id, true);
+    child
+        .send(
+            "touch.appraise",
+            None,
+            fixture("touch.appraise")["body"].clone(),
+        )
+        .await;
+    assert_eq!(
+        child.expect("touch.reaction").await["body"],
+        json!({ "touchId": "touch_01", "reaction": null })
+    );
+    let unnamed = child
+        .send(
+            "touch.appraise",
+            None,
+            json!({ "touchId": "no way", "touch": fixture("touch.appraise")["body"]["touch"] }),
+        )
+        .await;
+    assert_eq!(
+        child.expect("error").await["body"],
+        json!({ "code": "bad_id", "ref": unnamed })
+    );
+    // An ended touch is answered on the app it came from.
+    crate::services::agent::merope::touch::touched_on(OWNER, Some(&mac.id));
+    assert_eq!(
+        crate::services::agent::merope::ingest::in_person(OWNER, true),
+        crate::services::agent::merope::ingest::InPerson::App(mac.id.clone())
+    );
+    crate::services::agent::merope::touch::touched_on(OWNER, None);
+    drop(child);
+
+    // A child that did not say it takes them gets none of this, and may not send it.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut old = Child::open(&site, &token).await;
+    old.hello_with(&["rig", "say"]).await;
+    assert!(!super::perform_say(
+        OWNER,
+        &mac.id,
+        "spk_body2",
+        serde_json::to_value(&directive).unwrap()
+    ));
+    let refused = old
+        .send("touch", Some("touch_02"), fixture("touch")["body"].clone())
+        .await;
+    assert_eq!(
+        old.expect("error").await["body"],
+        json!({ "code": "bad_frame", "ref": refused })
+    );
+    drop(old);
+    crate::services::agent::consciousness::forget_native_presence(OWNER, &mac.id);
+    site.close().await;
+}
+
+fn remember_native_presence_for_test(device_id: &str, visible: bool) {
+    crate::services::agent::consciousness::remember_native_presence(
+        OWNER,
+        device_id,
+        &json!({ "presence": { "pageVisible": visible, "faceVisible": visible } }),
+    );
 }

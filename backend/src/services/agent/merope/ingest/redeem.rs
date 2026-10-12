@@ -244,6 +244,16 @@ async fn redeem_speak_intent(
         if delivered {
             claim.delivered(&intent, repeat_minutes);
         }
+        // Her director refines how she acts it while the app says it.
+        if let Some(context) = pending_motion.take().filter(|_| delivered) {
+            spawn_say_refinement(
+                db.clone(),
+                Some((intent.clone(), input_at)),
+                device.clone(),
+                intent.id.clone(),
+                context,
+            );
+        }
     }
     if target == InPerson::Face {
         delivered = emit_live_speech(
@@ -325,7 +335,15 @@ pub(crate) enum InPerson {
 /// the face it came from.
 pub(crate) fn in_person(user_id: i32, touch: bool) -> InPerson {
     use crate::services::agent::consciousness::{Front, LiveSurface, front_presence};
-    if !touch {
+    if touch {
+        if let Some(device) = super::super::touch::touched_app(user_id) {
+            return if crate::services::agent::link::can_say(user_id, &device) {
+                InPerson::App(device)
+            } else {
+                InPerson::Nowhere
+            };
+        }
+    } else {
         if let Some(Front {
             surface: LiveSurface::Native,
             device_id: Some(device),
@@ -354,7 +372,37 @@ pub(crate) async fn say_on_app(
     spoken: &str,
     performance: Option<&PerformanceDirective>,
 ) -> bool {
-    use crate::services::agent::link::{Say, SayKind, say};
+    use crate::services::agent::link::SayKind;
+    let kind = if event_key == GREETING_EVENT {
+        SayKind::Greeting
+    } else {
+        SayKind::FaceToFace
+    };
+    say_line(
+        db,
+        user_id,
+        device,
+        id,
+        kind,
+        event_key,
+        spoken,
+        performance,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn say_line(
+    db: &DatabaseConnection,
+    user_id: i32,
+    device: &str,
+    id: &str,
+    kind: crate::services::agent::link::SayKind,
+    event_key: &str,
+    spoken: &str,
+    performance: Option<&PerformanceDirective>,
+) -> bool {
+    use crate::services::agent::link::{Say, say};
     let session_id = latest_open_session(db, user_id)
         .await
         .ok()
@@ -365,17 +413,112 @@ pub(crate) async fn say_on_app(
         device,
         Say {
             id: id.to_string(),
-            kind: if event_key == GREETING_EVENT {
-                SayKind::Greeting
-            } else {
-                SayKind::FaceToFace
-            },
+            kind,
             text: spoken.to_string(),
             session_id,
             perform: performance.and_then(|value| serde_json::to_value(value).ok()),
             event_key: Some(event_key.to_string()),
         },
     )
+}
+
+/// Her first words, on the app `device` they are using her on: acted at once
+/// with her local base motion, then as her director refines it.
+pub(crate) async fn say_first_on_app(
+    db: &DatabaseConnection,
+    user_id: i32,
+    device: String,
+    event_key: &str,
+    line: &str,
+) -> bool {
+    let id = format!("say_{}", uuid::Uuid::new_v4().simple());
+    let context = line_context(db, user_id, event_key, line, line).await;
+    let floor = context.as_ref().and_then(local_directive);
+    let said = say_line(
+        db,
+        user_id,
+        &device,
+        &id,
+        crate::services::agent::link::SayKind::Proactive,
+        event_key,
+        line,
+        floor.as_ref(),
+    )
+    .await;
+    if let Some(mut context) = context.filter(|_| said) {
+        context.phase = MotionPhase::Delivery;
+        spawn_say_refinement(db.clone(), None, device, id, context);
+    }
+    said
+}
+
+/// How she acts a line she says on her own, as her mood stands: the context
+/// her base motion and her director take, in the proactive phase.
+async fn line_context(
+    db: &DatabaseConnection,
+    user_id: i32,
+    event_key: &str,
+    about: &str,
+    spoken: &str,
+) -> Option<MotionContext> {
+    let current = get_or_create_state(db, user_id).await.ok()?;
+    let affect = affect_from_state(&current);
+    let mood = MoodTransition::from_affect(
+        &affect,
+        &affect,
+        event_key,
+        current.updated_at.with_timezone(&Utc).timestamp_millis(),
+    );
+    let motion_style = resolve_round_motion_style(
+        None,
+        current.mood.round() as i32,
+        current.arousal.round() as i32,
+    )
+    .await;
+    Some(MotionContext {
+        user_id,
+        phase: MotionPhase::Proactive,
+        mood,
+        activity: "talking".to_string(),
+        user_text: about.to_string(),
+        response_text: Some(spoken.to_string()),
+        previous_phrases: Vec::new(),
+        task_success: None,
+        rig_state: crate::services::agent::consciousness::acting_rig_state(user_id),
+        motion_style,
+    })
+}
+
+/// Her director's refinement of a line said on the app, sent there as a
+/// `perform` for that line (`sayId`); the app plays it only while the line
+/// is still being said. With `intent`, only while the line would still be
+/// said now.
+fn spawn_say_refinement(
+    db: DatabaseConnection,
+    intent: Option<(SpeakIntent, Option<DateTime<FixedOffset>>)>,
+    device: String,
+    say_id: String,
+    context: MotionContext,
+) {
+    let user_id = context.user_id;
+    crate::services::agent::merope::background::spawn("app speech motion", async move {
+        let Some(performance) = refine_motion(context).await else {
+            return;
+        };
+        if let Some((intent, input_at)) = &intent {
+            let touch = intent.topic == "agent.merope.touch";
+            if in_person(user_id, touch) != InPerson::App(device.clone())
+                || !current_delivery(&db, intent, *input_at, true)
+                    .await
+                    .is_some_and(|decision| decision.live)
+            {
+                return;
+            }
+        }
+        if let Ok(value) = serde_json::to_value(performance) {
+            crate::services::agent::link::perform_say(user_id, &device, &say_id, value);
+        }
+    });
 }
 
 const GREETING_EVENT: &str = "agent.merope.greeting";
@@ -396,10 +539,17 @@ async fn current_delivery(
         is_enabled().await,
         Utc::now(),
     )?;
-    let live = last_live_presence(intent.user_id);
-    if (intent.topic == "agent.merope.touch"
-        && (!live.page_visible || !live.face_visible || (!refinement && live.speaking)))
-        || (refinement && !live.face_visible)
+    // The face it is said on: the touched one for a touch; the app shows a
+    // refinement only while it still says the line (it checks that itself).
+    let touch = intent.topic == "agent.merope.touch";
+    let on_app = matches!(in_person(intent.user_id, touch), InPerson::App(_));
+    let live = if touch {
+        super::super::touch::touched_face(intent.user_id)
+    } else {
+        last_live_presence(intent.user_id)
+    };
+    if (touch && (!live.page_visible || !live.face_visible || (!refinement && live.speaking)))
+        || (refinement && !on_app && !live.face_visible)
     {
         return None;
     }

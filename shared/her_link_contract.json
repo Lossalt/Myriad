@@ -25,7 +25,8 @@
     "reconnectMaxMs": 30000,
     "reconnectFactor": 2,
     "sayTtlMs": 90000,
-    "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes."
+    "touchAppraiseMs": 3000,
+    "description": "Each end pings every heartbeatMs and answers a ping with a pong. Nothing heard from the other end for missedHeartbeats heartbeats means the link is gone. A child reconnects with exponential backoff from reconnectInitialMs to reconnectMaxMs, and at once when the network comes back or the machine wakes. touchAppraiseMs is how long the host takes at most to answer touch.appraise."
   },
   "limits": {
     "maxFrameBytes": 262144,
@@ -61,7 +62,10 @@
     "perception.pointer",
     "perception.music",
     "perception.screen",
-    "say"
+    "say",
+    "playback",
+    "touch",
+    "wardrobe"
   ],
   "sayKinds": ["greeting", "proactive", "face-to-face"],
   "frames": {
@@ -130,8 +134,8 @@
       "from": "host",
       "delivery": "latest",
       "required": ["directive"],
-      "optional": ["turnId", "runId", "sequence"],
-      "description": "How she acts now: a PerformanceDirective in the shared merope_performance_contract vocabulary, with its phase (reaction, delivery, outcome, proactive, mood, presence). A newer one replaces an older one; within a turn, the higher sequence is newer. Sent while a turn is live, including the turn's newest directive when it is resumed before its end."
+      "optional": ["turnId", "runId", "sequence", "live", "sayId"],
+      "description": "How she acts now: a PerformanceDirective in the shared merope_performance_contract vocabulary, with its phase (reaction, delivery, outcome, proactive, mood, presence). A newer one replaces an older one; within a turn, the higher sequence is newer. Sent while a turn is live, including the turn's newest directive when it is resumed before its end. To a child whose hello listed playback, two more kinds come: with live, her director's refinement of the turn's reply as it is being said (the run's playback direction, version live, counting from 1): within a run the higher live is newer, it comes after the run's own performs and replaces them, and it may come after run.end, while the reply is still being said, until the child sends playback.end; with sayId, the refinement of that say line, played only while that line is still being said. A frame with neither is the run's own, as before."
     },
     "mood": {
       "from": "host",
@@ -146,6 +150,60 @@
       "required": ["text", "kind", "saidAt"],
       "optional": ["sessionId", "perform", "eventKey"],
       "description": "Something she says to the person unprompted, on this child because it is where they are using her now. Sent only to a child whose hello listed the say capability; a child without it never gets one, and her lines go where they went before. kind is one of sayKinds: greeting (they have just come to her), proactive (she writes to them first), face-to-face (something she says to them in person). text is what she says, for display and for the child's own voice. saidAt is milliseconds since the epoch when she said it, the same on every resend. sessionId is her chat session it belongs to. perform is how she acts it, a PerformanceDirective like perform's. eventKey is the event behind it, for the child's notification policy. The host keeps it until the child's ack covers its seq and sends it again (same id) after a reconnect; one not acked within timing.sayTtlMs is dropped. The child deduplicates by id and acks with any frame (an ack frame when it has nothing else)."
+    },
+    "playback.observe": {
+      "from": "child",
+      "delivery": "latest",
+      "required": ["runId", "upcomingText", "rig"],
+      "description": "Only from a child whose hello listed playback: where saying the run's reply has got to, in the shape the site's PUT /api/agent/runs/{runId}/performance takes. upcomingText is what is still to be said (at most 7200 bytes), rig is the rig as it stands (at most 16 KiB of JSON). Her director refines what comes next from it. runId is a run one of this device's turns started; another is answered with error not_this_device, and one too large with too_large."
+    },
+    "playback.end": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["runId"],
+      "optional": ["sayId"],
+      "description": "Only from a child whose hello listed playback: the run's reply has been said to the end, or stopped being said. The host closes the run's playback direction: no perform with live comes for it after this. The same runId rule as playback.observe."
+    },
+    "speech.delivered": {
+      "from": "child",
+      "delivery": "reliable",
+      "idempotency": "id is sd_ and the child's id of the message it said: the same on every resend.",
+      "required": ["spokenChars", "totalChars", "interrupted"],
+      "optional": ["turnId", "runId", "sayId", "by"],
+      "description": "How much of her reply (with runId and turnId) or of her line (with sayId) this child said aloud, once that is over: spokenChars of totalChars characters, and whether it was cut off. by is why it was cut off: barge-in (they spoke over her), stop (they stopped her), new-turn (they said something new) or hidden (the window went away). A cut-off reply is marked in her history as possibly not heard to the end, so her next turn knows where she stopped. The host deduplicates by id; the same runId rule as playback.observe."
+    },
+    "touch.appraise": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["touchId", "touch"],
+      "optional": ["rigState"],
+      "description": "Only from a child whose hello listed touch: contact with her figure on this child is going on. touch is the site's touch summary {region (hair, face, body, accessory), gesture (hold, stroke), durationMs (120 to 600000), repeatCount (1 to 8), displayedReaction (notice, accept, hesitate, withdraw or null: what the child's rig is showing now)}; nothing else, no pointer coordinates. touchId is the child's id for this contact (limits.idPattern). The host answers touch.reaction within timing.touchAppraiseMs, under the same limits as the site's own touch: one appraisal a person every 5 s, and few at once."
+    },
+    "touch.reaction": {
+      "from": "host",
+      "delivery": "answer",
+      "required": ["touchId", "reaction"],
+      "description": "Her nonverbal reaction to the contact touch.appraise described: notice, accept, hesitate or withdraw, or null when she has none now (her persona is off, the model is slow, the limit was reached). The child's rig refines its own already-running reaction with it; it is never speech."
+    },
+    "touch": {
+      "from": "child",
+      "delivery": "reliable",
+      "idempotency": "id is the touchId of the contact.",
+      "required": ["touch"],
+      "description": "Only from a child whose hello listed touch: a contact with her figure on this child has ended. touch is the summary as in touch.appraise, with durationMs from 1200 to 600000. She is told of it as she is told of a touch on the site's face, while this child shows her face and is not speaking; whatever she says about it is said here, as a say with kind face-to-face. The host deduplicates by id."
+    },
+    "outfit": {
+      "from": "host",
+      "delivery": "latest",
+      "required": ["outfitId", "rigAssetId"],
+      "optional": ["portraitAssetId"],
+      "description": "Only to a child whose hello listed wardrobe: the set of her wardrobe she wears on this child. Each child has its own, kept on the host apart from what the site wears (its bust and full-body sets): changing one never changes another. A child that has none yet starts with the set the site wears full-body (else its bust, else the first set with a rig) and keeps it. rigAssetId is the content id of the set's rig package (manifest.json and atlas.png), and portraitAssetId of its picture; the child fetches them with its device token from /api/agent/sync/assets/{id} and checks them against the id. Sent after welcome, after outfit.wear, and when the set's rig changes. Only sets with a rig are worn here; with none, nothing is sent and the child shows no figure of hers."
+    },
+    "outfit.wear": {
+      "from": "child",
+      "delivery": "request",
+      "required": ["outfitId"],
+      "description": "Only from a child whose hello listed wardrobe: the owner put the set outfitId of her wardrobe on her on this child. The host keeps it as this child's and answers with outfit, or with error outfit_unknown when the set is not in her wardrobe or has no rig."
     },
     "ack": {
       "from": "child",
@@ -184,7 +242,10 @@
     "surface_unsupported": "A surface this host does not take input from.",
     "turn_unknown": "run.resume for a turn the host does not have.",
     "agent_access_denied": "The site owner may not use the agent now.",
-    "internal_error": "Something failed on the host; trying again later may work."
+    "internal_error": "Something failed on the host; trying again later may work.",
+    "not_this_device": "A runId that is not one this device's turns started.",
+    "too_large": "A field longer than its limit (playback.observe: upcomingText 7200 bytes, rig 16 KiB).",
+    "outfit_unknown": "outfit.wear named a set that is not in her wardrobe, or has no rig."
   },
   "closeCodes": {
     "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },

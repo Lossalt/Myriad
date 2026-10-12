@@ -15,8 +15,13 @@ import FieldHistory from './FieldHistory'
 
 /** Her visual profile's keys cross as persona fields under this prefix. */
 const PREFIX = 'visual.'
-/** Keys that are not fields: the wardrobe crosses as outfits, and what she wears is each side's own. */
-const NOT_FIELDS = ['wardrobe', 'activeOutfitId', 'activeFullBodyOutfitId']
+/** Keys that are not fields: the wardrobe crosses as outfits, and what she wears is each side's own (each app on her link too). */
+const NOT_FIELDS = [
+  'wardrobe',
+  'activeOutfitId',
+  'activeFullBodyOutfitId',
+  'activeOutfitByEnd',
+]
 /** Keys the site writes, listed even when her profile has none of them now. */
 const KNOWN = [
   'visualIdentity',

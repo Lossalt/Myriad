@@ -173,7 +173,8 @@ pub async fn ingest(
         }
     }
     if touch {
-        let live = crate::services::agent::consciousness::last_live_presence(user_id);
+        // The face it came from: a page's, or the app's.
+        let live = super::super::touch::touched_face(user_id);
         if !live.face_visible || live.speaking || !decision.allow_model {
             return Ok(());
         }

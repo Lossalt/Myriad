@@ -20,8 +20,14 @@ type PersonaRow = crate::models::entities::agent_persona::Model;
 
 /// Keys of her visual profile that are not persona fields: the wardrobe
 /// crosses as outfits, and which outfit she wears, bust or full body, is
-/// each side's own (Q12, R6).
-pub const VISUAL_NOT_FIELDS: [&str; 3] = ["wardrobe", "activeOutfitId", "activeFullBodyOutfitId"];
+/// each side's own (Q12, R6), as is the set each app on her link wears
+/// (`activeOutfitByEnd`, D7).
+pub const VISUAL_NOT_FIELDS: [&str; 4] = [
+    "wardrobe",
+    "activeOutfitId",
+    "activeFullBodyOutfitId",
+    "activeOutfitByEnd",
+];
 
 /// The longest history a field keeps.
 pub const HISTORY_KEPT: usize = 50;

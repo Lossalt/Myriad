@@ -46,8 +46,8 @@ pub use policy::validate_decision;
 pub use presence::{
     Front, acting_rig_state, can_speak_to, face_presence, forget_native_presence, front_presence,
     last_live_presence, live_presence_from_custom_data, live_presence_from_request,
-    live_presence_panel_open, native_used, owner_here, present_users, remember_live_presence,
-    remember_native_presence,
+    live_presence_panel_open, native_presence, native_used, owner_here, present_users,
+    remember_live_presence, remember_native_presence,
 };
 pub use snapshot::capture_self_snapshot;
 pub use speak_intent::{SpeakIntent, drain_speak_intents, enqueue_speak_intent, new_speak_intent};

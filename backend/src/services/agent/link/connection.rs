@@ -42,6 +42,11 @@ fn frame(t: &'static str, body: Value) -> Outgoing {
 }
 
 impl Outgoing {
+    /// A frame that is not kept: an answer, or a latest value.
+    pub(super) fn latest(t: &'static str, body: Value) -> Self {
+        frame(t, body)
+    }
+
     /// A reliable frame: kept until acked, by its id.
     pub(super) fn reliable(t: &'static str, id: String, body: Value) -> Self {
         Self {
@@ -124,6 +129,11 @@ pub(super) async fn serve_with(
         moods: None,
         registered,
         takes_say: false,
+        playback: false,
+        touch: false,
+        worn: None,
+        directions: HashMap::new(),
+        taken: HashSet::new(),
         unacked: Vec::new(),
         said: HashSet::new(),
     };
@@ -160,6 +170,19 @@ struct Link {
     registered: u64,
     /// The child said it takes `say`.
     takes_say: bool,
+    /// The child said it takes `playback`: her director's refinements of
+    /// what it is saying, and reports of how far it got.
+    playback: bool,
+    /// The child said it sends `touch`.
+    touch: bool,
+    /// The set this app wears, as last told, once the child said it takes
+    /// `wardrobe` (`Some(None)`: none it can wear).
+    worn: Option<Option<super::outfit::Worn>>,
+    /// The playback direction each followed run is being sent from.
+    directions: HashMap<String, tokio::task::AbortHandle>,
+    /// Ids of the child's reliable body frames already taken on this
+    /// connection (`speech.delivered`, `touch`).
+    taken: HashSet<String>,
     /// Reliable frames sent on this connection and not yet acked: (seq, id).
     unacked: Vec<(u64, String)>,
     /// Reliable ids sent on this connection.
@@ -288,6 +311,12 @@ impl Link {
             "input" => self.input(inbound).await,
             "presence" => self.presence(inbound).await,
             "run.resume" => self.resume(inbound).await,
+            "playback.observe" if self.playback => self.observe(inbound).await,
+            "playback.end" if self.playback => self.playback_end(inbound).await,
+            "speech.delivered" if self.playback => self.delivered(inbound).await,
+            "touch.appraise" if self.touch => self.appraise(inbound).await,
+            "touch" if self.touch => self.touched(inbound).await,
+            "outfit.wear" if self.worn.is_some() => self.wear(inbound).await,
             "ping" => self.reply(frame("pong", json!({}))),
             "ack" | "pong" => {}
             t if CONTRACT.frames.contains_key(t) => self.error("bad_frame", Some(inbound.seq)),
@@ -350,16 +379,39 @@ impl Link {
             "serverTime": chrono::Utc::now().timestamp_millis(),
         });
         self.reply(frame("welcome", welcome));
+        self.playback = capabilities
+            .iter()
+            .any(|capability| capability == "playback");
+        self.touch = capabilities.iter().any(|capability| capability == "touch");
         // Her lines for the app: what is still waiting goes again, after welcome.
         if capabilities.iter().any(|capability| capability == "say") {
             self.takes_say = true;
-            super::takes_say(&self.device.id, self.registered, self.tx.clone());
+            super::takes_say(
+                &self.device.id,
+                self.registered,
+                self.tx.clone(),
+                self.playback,
+            );
             for (id, body) in super::say::pending(&self.device.id) {
                 self.reply(Outgoing::reliable("say", id, body));
             }
         }
         if let Some(mood) = current_mood(&self.db, self.owner).await {
             self.reply(mood);
+        }
+        // The set it wears: its own, or, the first time, the one it starts with.
+        if capabilities
+            .iter()
+            .any(|capability| capability == "wardrobe")
+        {
+            let worn = super::outfit::put(&self.db, self.owner, &self.device.id, None)
+                .await
+                .ok()
+                .flatten();
+            if let Some(worn) = &worn {
+                self.reply(super::outfit::frame(worn));
+            }
+            self.worn = Some(worn);
         }
         if let Some(manager) = get_notification_manager() {
             let events = manager.subscribe();
@@ -491,8 +543,232 @@ impl Link {
             previous.abort();
         }
         self.follows.retain(|_, task| !task.is_finished());
+        self.directions.retain(|_, task| !task.is_finished());
+        // Her director's refinements of the reply, once per run, while it is said.
+        if self.playback && !self.directions.contains_key(&turn.run_id) {
+            let task = tokio::spawn(super::body::follow_direction(
+                self.tx.clone(),
+                turn.clone(),
+                run.clone(),
+            ));
+            self.directions
+                .insert(turn.run_id.clone(), task.abort_handle());
+        }
         let task = tokio::spawn(follow_run(self.tx.clone(), turn, run, after_seq));
         self.follows.insert(key, task.abort_handle());
+    }
+
+    /// The live run one of this device's turns started, for a body frame
+    /// that names it; `None` (and the error sent) when it names another.
+    async fn own_run(&mut self, run_id: &str, frame_seq: u64) -> Option<(Turn, Arc<AgentRun>)> {
+        let Some(turn) = turns::by_run(&self.device.id, run_id) else {
+            self.error("not_this_device", Some(frame_seq));
+            return None;
+        };
+        // A run already gone has nothing left to direct.
+        let run = get_live_run_for_user(run_id, self.owner).await?;
+        Some((turn, run))
+    }
+
+    /// `playback.observe`: where saying the reply has got to, for her director.
+    async fn observe(&mut self, inbound: Inbound) {
+        let Ok(observed) = serde_json::from_value::<super::body::Observe>(inbound.body) else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        if observed.upcoming_text.len() > super::body::UPCOMING_BYTES
+            || observed.rig.to_string().len() > super::body::RIG_BYTES
+        {
+            self.error("too_large", Some(inbound.seq));
+            return;
+        }
+        if let Some((_, run)) = self.own_run(&observed.run_id, inbound.seq).await {
+            run.playback_direction.observe(
+                crate::services::agent::playback_direction::PlaybackObservation {
+                    upcoming_text: observed.upcoming_text,
+                    rig: observed.rig,
+                },
+            );
+        }
+    }
+
+    /// `playback.end`: the reply is said, or stopped being said.
+    async fn playback_end(&mut self, inbound: Inbound) {
+        let Ok(ended) = serde_json::from_value::<super::body::End>(inbound.body) else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        if let Some((_, run)) = self.own_run(&ended.run_id, inbound.seq).await {
+            run.playback_direction.close();
+        }
+    }
+
+    /// `speech.delivered`: how much of her reply was said aloud. A reply cut
+    /// off is marked in her history, so her next turn knows where she stopped.
+    async fn delivered(&mut self, inbound: Inbound) {
+        let seq = inbound.seq;
+        let Some(id) = inbound.id.filter(|id| valid_id(id)) else {
+            self.error("bad_id", Some(seq));
+            return;
+        };
+        let Ok(delivered) = serde_json::from_value::<super::body::Delivered>(inbound.body) else {
+            self.error("bad_frame", Some(seq));
+            return;
+        };
+        if !self.taken.insert(id) {
+            return;
+        }
+        let by = delivered.by().unwrap_or("unknown");
+        if let Some(run_id) = &delivered.run_id {
+            let Some(turn) = turns::by_run(&self.device.id, run_id) else {
+                self.error("not_this_device", Some(seq));
+                return;
+            };
+            if delivered.interrupted {
+                let session = match turn.session_id.clone() {
+                    Some(session) => Some(session),
+                    None => get_run_for_user(run_id, self.owner)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|run| run.session_id().map(str::to_string)),
+                };
+                if let Some(session) = session {
+                    let heard = delivered.spoken_chars.min(delivered.total_chars);
+                    let (db, device, run_id) =
+                        (self.db.clone(), self.device.id.clone(), run_id.clone());
+                    let marked = crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
+                        &db,
+                        &session,
+                        &run_id,
+                        Some(heard),
+                    )
+                    .await;
+                    match marked {
+                        Ok(true) => {
+                            tracing::info!(device = %device, by, "[link] her reply was cut off on the app")
+                        }
+                        // Her reply is saved whole when its run ends; it can be
+                        // stopped aloud before that. Marked once it is there.
+                        Ok(false) => {
+                            let by = by.to_string();
+                            tokio::spawn(async move {
+                                for _ in 0..120 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    match crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
+                                        &db,
+                                        &session,
+                                        &run_id,
+                                        Some(heard),
+                                    )
+                                    .await
+                                    {
+                                        Ok(false) => continue,
+                                        Ok(true) => tracing::info!(device = %device, by, "[link] her reply was cut off on the app"),
+                                        Err(error) => tracing::warn!(%error, device = %device, "[link] could not mark a cut-off reply"),
+                                    }
+                                    return;
+                                }
+                            });
+                        }
+                        Err(error) => tracing::warn!(
+                            %error, device = %device,
+                            "[link] could not mark a cut-off reply"
+                        ),
+                    }
+                }
+            }
+        } else if delivered.say_id.is_some() && delivered.interrupted {
+            // Her lines are kept without a place for this yet: it is told, not kept.
+            tracing::info!(device = %self.device.id, by, "[link] her line was cut off on the app");
+        }
+    }
+
+    /// `touch.appraise`: contact going on with her figure on the app; she
+    /// answers with how she takes it, within the touch time.
+    async fn appraise(&mut self, inbound: Inbound) {
+        let Ok(appraise) = serde_json::from_value::<super::body::Appraise>(inbound.body) else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        if !valid_id(&appraise.touch_id) {
+            self.error("bad_id", Some(inbound.seq));
+            return;
+        }
+        // Only a window on screen can be touched.
+        let shown =
+            crate::services::agent::consciousness::native_presence(self.owner, &self.device.id)
+                .is_some_and(|live| live.page_visible);
+        if !shown {
+            self.reply(super::body::reaction(&appraise.touch_id, None));
+            return;
+        }
+        let (db, owner, tx, seq) = (self.db.clone(), self.owner, self.tx.clone(), inbound.seq);
+        tokio::spawn(async move {
+            let answer = match crate::services::agent::merope::api::touch::appraise_ongoing(
+                &db,
+                owner,
+                &appraise.touch,
+            )
+            .await
+            {
+                Ok(reaction) => super::body::reaction(&appraise.touch_id, reaction),
+                Err(_) => frame("error", json!({ "code": "bad_frame", "ref": seq })),
+            };
+            let _ = tx.send(answer).await;
+        });
+    }
+
+    /// `outfit.wear`: the owner put a set of her wardrobe on her on the app.
+    async fn wear(&mut self, inbound: Inbound) {
+        let Some(outfit_id) = inbound
+            .body
+            .get("outfitId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            self.error("bad_frame", Some(inbound.seq));
+            return;
+        };
+        match super::outfit::put(&self.db, self.owner, &self.device.id, Some(outfit_id)).await {
+            Ok(Some(worn)) => {
+                self.reply(super::outfit::frame(&worn));
+                self.worn = Some(Some(worn));
+            }
+            Ok(None) => self.error("internal_error", Some(inbound.seq)),
+            Err(_) => self.error("outfit_unknown", Some(inbound.seq)),
+        }
+    }
+
+    /// `touch`: contact with her figure on the app has ended; she is told
+    /// of it, and answers on the app.
+    async fn touched(&mut self, inbound: Inbound) {
+        let seq = inbound.seq;
+        let Some(id) = inbound.id.filter(|id| valid_id(id)) else {
+            self.error("bad_id", Some(seq));
+            return;
+        };
+        let Ok(touched) = serde_json::from_value::<super::body::Touched>(inbound.body) else {
+            self.error("bad_frame", Some(seq));
+            return;
+        };
+        if !self.taken.insert(id) {
+            return;
+        }
+        let live =
+            crate::services::agent::consciousness::native_presence(self.owner, &self.device.id)
+                .unwrap_or_default();
+        if crate::services::agent::merope::api::touch::ended(
+            self.owner,
+            &touched.touch,
+            &live,
+            Some(&self.device.id),
+        )
+        .await
+        .is_err()
+        {
+            self.error("bad_frame", Some(seq));
+        }
     }
 
     /// Every heartbeat: the child is still there, and the device still one.
@@ -517,6 +793,17 @@ impl Link {
         }
         if self.hello {
             self.reply(frame("ping", json!({})));
+        }
+        // What it wears changed on the host (its set's rig was made again,
+        // or the set left her wardrobe).
+        if let Some(told) = self.worn.clone() {
+            let now = super::outfit::current(&self.db, &self.device.id).await;
+            if now != told {
+                if let Some(worn) = &now {
+                    self.reply(super::outfit::frame(worn));
+                }
+                self.worn = Some(now);
+            }
         }
         if self.takes_say {
             // Lines that could not be queued when said, and none that expired.
@@ -548,7 +835,7 @@ impl Link {
     /// The link is closed: stop sending, and the person is not there now
     /// (unless `gone` is false: another link of the device took over).
     fn finish(&mut self, gone: bool) {
-        for (_, task) in self.follows.drain() {
+        for (_, task) in self.follows.drain().chain(self.directions.drain()) {
             task.abort();
         }
         if let Some(task) = self.moods.take() {

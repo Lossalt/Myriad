@@ -16,9 +16,17 @@
 //!
 //! What she says unprompted goes to the app when that is where the person
 //! is using her ([`say`]); see `merope::ingest` and `merope::reach`.
+//!
+//! Her body on the app ([`body`]): a child that says it takes `playback`
+//! gets her director's refinements as the reply is being said, and reports
+//! how far saying it got; one that takes `touch` sends contact with her
+//! figure up, and she answers it there. One that takes `wardrobe` wears its
+//! own set of her wardrobe ([`outfit`]).
 
+mod body;
 mod connection;
 mod contract;
+mod outfit;
 mod say;
 mod turns;
 
@@ -30,6 +38,7 @@ use std::sync::{LazyLock, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 
+pub(crate) use body::perform_say;
 pub(crate) use connection::serve;
 pub(crate) use contract::Close;
 pub(crate) use say::{Say, SayKind, can_say, say};
@@ -45,6 +54,8 @@ struct Open {
     close: oneshot::Sender<Close>,
     /// Where her `say` frames go, once the child said it takes them.
     says: Option<mpsc::Sender<connection::Outgoing>>,
+    /// The child takes `perform` refinements of what it is saying.
+    playback: bool,
 }
 
 /// The open link of each device, by device id.
@@ -61,6 +72,7 @@ fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
             owner,
             close,
             says: None,
+            playback: false,
         };
         if let Some(previous) = open.insert(device_id.to_string(), link) {
             let _ = previous.close.send(Close::Replaced);
@@ -69,11 +81,13 @@ fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
     (id, closed)
 }
 
-/// The link `id` takes `say` frames, sent through `sender`.
-fn takes_say(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing>) {
+/// The link `id` takes `say` frames, sent through `sender`, and with
+/// `playback` the refinements of how she acts them.
+fn takes_say(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoing>, playback: bool) {
     if let Ok(mut open) = OPEN.lock() {
         if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
             link.says = Some(sender);
+            link.playback = playback;
         }
     }
 }
@@ -83,6 +97,16 @@ fn say_sender(owner: i32, device_id: &str) -> Option<mpsc::Sender<connection::Ou
     OPEN.lock().ok().and_then(|open| {
         open.get(device_id)
             .filter(|link| link.owner == owner)
+            .and_then(|link| link.says.clone())
+    })
+}
+
+/// Where the owner's device takes refinements of her `say` lines, when its
+/// link is open and does.
+fn playback_sender(owner: i32, device_id: &str) -> Option<mpsc::Sender<connection::Outgoing>> {
+    OPEN.lock().ok().and_then(|open| {
+        open.get(device_id)
+            .filter(|link| link.owner == owner && link.playback)
             .and_then(|link| link.says.clone())
     })
 }
