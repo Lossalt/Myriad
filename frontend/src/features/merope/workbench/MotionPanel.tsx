@@ -16,11 +16,9 @@ import { ANIME25D_MOTION_ENVELOPE_PROBES } from '../anime25drig/motionEnvelope'
 import {
   DRIVER_SLIDERS,
   envelopeProbeLabel,
-  FACE_PRESET_BUTTONS,
-  facePresetLabel,
+  EXPRESSION_GROUPS,
+  expressionLabel,
   inspectFields,
-  presetLabel,
-  PRESETS,
 } from './motionControls'
 import { MovingPartsPanel } from './MovingPartsPanel'
 import { PoseCorrectionEditor } from './PoseCorrectionEditor'
@@ -89,22 +87,30 @@ export function MotionPanel({
         }
         id="merope-motion-expression"
       >
+        {EXPRESSION_GROUPS.map((group) => (
+          <div key={group.title} className="merope-motion-home__chips">
+            <strong>{labels[group.title]}</strong>
+            <div>
+              {group.buttons.map((button) => (
+                <SettingsButton
+                  key={button.id}
+                  type="button"
+                  size="sm"
+                  disabled={!motionEnabled}
+                  onClick={() => {
+                    applyPreset(button.driver)
+                    characterRef.current?.playFaceLife(button.kind === 'face' ? button.id : null)
+                  }}
+                >
+                  {expressionLabel(labels, button)}
+                </SettingsButton>
+              ))}
+            </div>
+          </div>
+        ))}
         <div className="merope-motion-home__chips">
+          <strong>{labels.expressionsActions}</strong>
           <div>
-            {PRESETS.map((preset) => (
-              <SettingsButton
-                key={preset.id}
-                type="button"
-                size="sm"
-                disabled={!motionEnabled}
-                onClick={() => {
-                  characterRef.current?.playFaceLife(null)
-                  applyPreset(preset.driver)
-                }}
-              >
-                {presetLabel(labels, preset.id)}
-              </SettingsButton>
-            ))}
             <SettingsButton
               type="button"
               size="sm"
@@ -124,25 +130,6 @@ export function MotionPanel({
             >
               {labels.anime25dResetPose}
             </SettingsButton>
-          </div>
-        </div>
-        <div className="merope-motion-home__chips">
-          <strong>{labels.facePresetsTitle}</strong>
-          <div>
-            {FACE_PRESET_BUTTONS.map((preset) => (
-              <SettingsButton
-                key={preset.id}
-                type="button"
-                size="sm"
-                disabled={!motionEnabled}
-                onClick={() => {
-                  applyPreset(preset.driver)
-                  characterRef.current?.playFaceLife(preset.id)
-                }}
-              >
-                {facePresetLabel(labels, preset.id)}
-              </SettingsButton>
-            ))}
           </div>
         </div>
         <SwitchItem

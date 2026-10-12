@@ -172,6 +172,35 @@ export const FACE_PRESET_BUTTONS = Object.keys(FACE_PRESETS).map((id) => ({
   driver: facePresetDriver(id),
 }))
 
+interface ExpressionButton { kind: 'drawn' | 'face'; id: string; driver: Partial<Anime25DDriver> }
+
+function drawn(ids: readonly string[]): ExpressionButton[] {
+  return ids.map((id) => ({ kind: 'drawn', id, driver: PRESETS.find((preset) => preset.id === id)!.driver }))
+}
+
+/**
+ * The workbench's expressions by whether they move: a look with a life of
+ * its own, or a drawn expression that animates by itself, plays on; the
+ * rest hold still until changed.
+ */
+export const EXPRESSION_GROUPS: ReadonlyArray<{ title: StringLabel; buttons: readonly ExpressionButton[] }> = [
+  {
+    title: 'expressionsMoving',
+    buttons: [
+      ...FACE_PRESET_BUTTONS.map((preset): ExpressionButton => ({ kind: 'face', ...preset })),
+      ...drawn(['thinking', 'angry', 'speechless', 'maniac', 'silly', 'lovestruck']),
+    ],
+  },
+  {
+    title: 'expressionsStill',
+    buttons: drawn(['neutral', 'smile', 'usume', 'surprise', 'jito', 'dizzy', 'squeeze', 'cry', 'winkL', 'winkR']),
+  },
+]
+
+export function expressionLabel(labels: Labels, button: Pick<ExpressionButton, 'kind' | 'id'>): string {
+  return button.kind === 'face' ? facePresetLabel(labels, button.id) : presetLabel(labels, button.id)
+}
+
 export function facePresetLabel(labels: Labels, id: string): string {
   const key = FACE_PRESET_LABELS[id]
   return key ? labels[key] : id
