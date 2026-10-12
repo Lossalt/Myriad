@@ -781,11 +781,6 @@ mod tests {
             "config refresh deliberately fails the worker: stale policy must stop claims",
         ),
         (
-            "src/persona/worker.rs",
-            1,
-            "config refresh deliberately fails the worker: stale policy must stop ticks",
-        ),
-        (
             "src/api/agent/notifications.rs",
             1,
             "per-SSE-connection forwarder; ends when the client disconnects",
