@@ -67,9 +67,18 @@ const CAPABILITY_MAP = [
   ['silly-mouth-variant', 'silly-mouth'],
   ['mouth-shapes', 'mouth-shapes'],
 ] as const
+/** Drawn accents beside her face: present when the package carries the layer. */
+const ACCENT_CAPABILITIES = [
+  ['accent-music-notes', 'music-notes'],
+  ['accent-question', 'question-mark'],
+  ['accent-sleep', 'sleep-z'],
+  ['accent-sparkle', 'sparkles'],
+  ['accent-blush', 'blush'],
+] as const
 const BODY_CAPABILITIES = ['head-body', 'torso-volume', 'left-arm', 'right-arm'] as const
 export const RIG_STATE_CAPABILITY_LIMIT = new Set<string>([
   ...BODY_CAPABILITIES, ...CAPABILITY_MAP.map(([, semantic]) => semantic),
+  ...ACCENT_CAPABILITIES.map(([, semantic]) => semantic),
 ]).size
 
 export function playbackBodyCapabilities(playback: Pick<Anime25DPlayback, 'layers' | 'shellProfile'>): string[] {
@@ -143,6 +152,9 @@ export function semanticRigCapabilities(
   for (const [internal, semantic] of CAPABILITY_MAP) {
     if (hasAnime25DCapability(layers, internal)) capabilities.add(semantic)
   }
+  for (const [role, semantic] of ACCENT_CAPABILITIES) {
+    if (layers.some((layer) => 'role' in layer && layer.role === role)) capabilities.add(semantic)
+  }
   return Iterator.from(capabilities).toArray()
 }
 
@@ -209,7 +221,9 @@ export function sanitizeRigStateSummary(
     ? value.capabilities
         .filter((item): item is string => typeof item === 'string')
         .filter((item) =>
-          BODY_CAPABILITIES.includes(item as typeof BODY_CAPABILITIES[number]) || CAPABILITY_MAP.some(([, semantic]) => semantic === item),
+          BODY_CAPABILITIES.includes(item as typeof BODY_CAPABILITIES[number])
+          || CAPABILITY_MAP.some(([, semantic]) => semantic === item)
+          || ACCENT_CAPABILITIES.some(([, semantic]) => semantic === item),
         )
         .slice(0, RIG_STATE_CAPABILITY_LIMIT)
     : []

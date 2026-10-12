@@ -171,7 +171,8 @@ function handlesForLayer(
     layer.role === 'anger-mark' ||
     layer.role === 'speechless-sweat' ||
     layer.role === 'lovestruck-face-effect' ||
-    layer.role === 'lovestruck-drool'
+    layer.role === 'lovestruck-drool' ||
+    layer.role.startsWith('accent-')
   ) {
     return [fullLayerHandle(layer, 'face')]
   }

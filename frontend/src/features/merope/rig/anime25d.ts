@@ -21,6 +21,7 @@ export const ANIME25D_LAYER_DESCRIPTORS = {
   face: { depth: 1, fade: null },
   facedetail: { depth: 1.02, fade: null },
   'lovestruck-face-effect': { depth: 1.04, fade: 'lovestruckFace' },
+  'accent-blush': { depth: 1.035, fade: 'accentBlush' },
   'maniac-eye-shadow': { depth: 1.04, fade: 'maniacEyeShadow' },
   'maniac-mouth-shadow': { depth: 1.07, fade: 'maniacMouthShadow' },
   headwear: { depth: 1.2, fade: null },
@@ -49,6 +50,10 @@ export const ANIME25D_LAYER_DESCRIPTORS = {
   'front-hair': { depth: 1.28, fade: null },
   'anger-mark': { depth: 1.3, fade: 'angerMark' },
   'speechless-sweat': { depth: 1.3, fade: 'speechlessSweat' },
+  'accent-music-notes': { depth: 1.3, fade: 'accentNotes' },
+  'accent-question': { depth: 1.3, fade: 'accentQuestion' },
+  'accent-sleep': { depth: 1.3, fade: 'accentSleep' },
+  'accent-sparkle': { depth: 1.3, fade: 'accentSparkle' },
 } as const satisfies Record<
   string,
   { depth: number; fade: Anime25DFade | null }

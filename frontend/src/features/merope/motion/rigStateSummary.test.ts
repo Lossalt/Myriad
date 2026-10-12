@@ -288,3 +288,15 @@ test('a long utterance of accents cannot crowd the director out of the list', ()
   assert.ok(summary.activeBehaviors.length <= 8)
   release()
 })
+
+test('a drawn accent is offered only when the package carries its layer', () => {
+  const manifest = { parts: [], anime25dPlayback: { layers: [
+    { name: 'a25d-accent-sleep', role: 'accent-sleep', side: null },
+    { name: 'a25d-accent-blush', role: 'accent-blush', side: null },
+  ] } } as unknown as MeropeRigManifest
+  const capabilities = semanticRigCapabilities(manifest)
+  assert.ok(capabilities.includes('sleep-z') && capabilities.includes('blush'))
+  assert.ok(!capabilities.includes('music-notes'), 'an older package has no notes to show')
+  const sanitized = sanitizeRigStateSummary({ capabilities: ['head-body', 'sleep-z', 'blush'] })!
+  assert.deepEqual(sanitized.capabilities, ['head-body', 'sleep-z', 'blush'])
+})

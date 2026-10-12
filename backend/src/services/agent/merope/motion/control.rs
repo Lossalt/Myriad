@@ -170,7 +170,14 @@ fn offered_faces(state: Option<&RigStateSummary>) -> Vec<(&'static str, &'static
                 .iter()
                 .filter(|(control, _)| controls.contains(control))
                 .count();
-            shown * 2 >= targets.len()
+            // A look named for its drawn accent is not that look without it.
+            let drawn = targets.iter().all(|(control, _)| {
+                controls.contains(control)
+                    || !myriad_merope::PERFORMANCE_BODY_CONTROLS.iter().any(|c| {
+                        c.0 == *control && myriad_merope::RIG_STATE_DRAWN_ACCENTS.contains(&c.3)
+                    })
+            });
+            shown * 2 >= targets.len() && drawn
         })
         .map(|(name, means, _)| (*name, *means))
         .collect()
@@ -879,6 +886,23 @@ mod tests {
         let mouth_only =
             myriad_merope::sanitize_rig_state(&json!({"capabilities": ["mouth-shapes"]})).unwrap();
         assert!(offered_faces(Some(&mouth_only)).len() < offered_faces(Some(&bust())).len());
+    }
+
+    #[test]
+    fn a_look_with_a_drawn_accent_needs_the_accent() {
+        let names = |state: &RigStateSummary| -> Vec<&str> {
+            offered_faces(Some(state))
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        };
+        let older = names(&bust());
+        assert!(older.contains(&"content") && !older.contains(&"humming"));
+        let accented = myriad_merope::sanitize_rig_state(&json!({"capabilities":
+            ["head-body", "independent-eyes", "mouth-shapes", "music-notes"]}))
+        .unwrap();
+        let newer = names(&accented);
+        assert!(newer.contains(&"humming") && !newer.contains(&"sleepy"));
     }
 
     #[test]

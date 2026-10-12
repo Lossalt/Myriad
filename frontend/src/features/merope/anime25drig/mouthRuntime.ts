@@ -43,6 +43,11 @@ export interface Anime25DOpacityFrame {
   squeeze: number
   anger: number
   speechless: number
+  accentNotes: number
+  accentQuestion: number
+  accentSleep: number
+  accentSparkle: number
+  accentBlush: number
   maniac: number
   silly: number
   lovestruck: number
@@ -271,6 +276,11 @@ export function fadeOpacity(
   if (layer.fade === 'speechlessSweat') {
     return speechless * (1 - anger) * (1 - maniac) * symbolBlocker
   }
+  if (layer.fade === 'accentNotes') return smoothstep(driver.accentNotes)
+  if (layer.fade === 'accentQuestion') return smoothstep(driver.accentQuestion)
+  if (layer.fade === 'accentSleep') return smoothstep(driver.accentSleep)
+  if (layer.fade === 'accentSparkle') return smoothstep(driver.accentSparkle)
+  if (layer.fade === 'accentBlush') return smoothstep(driver.accentBlush)
   if (layer.fade === 'mouthCry') return arriving(mouthCry)
   if (layer.fade === 'mouthSilly') return arriving(sillyMouth) * (1 - mouthCry)
   if (layer.fade === 'eyeSqueeze') {
@@ -318,6 +328,11 @@ export function createAnime25DOpacityFrame(): Anime25DOpacityFrame {
     squeeze: 0,
     anger: 0,
     speechless: 0,
+    accentNotes: 0,
+    accentQuestion: 0,
+    accentSleep: 0,
+    accentSparkle: 0,
+    accentBlush: 0,
     maniac: 0,
     silly: 0,
     lovestruck: 0,
@@ -379,6 +394,11 @@ export function writeAnime25DOpacityFrame(
   output.squeeze = squeeze
   output.anger = anger
   output.speechless = speechless
+  output.accentNotes = smoothstep(driver.accentNotes)
+  output.accentQuestion = smoothstep(driver.accentQuestion)
+  output.accentSleep = smoothstep(driver.accentSleep)
+  output.accentSparkle = smoothstep(driver.accentSparkle)
+  output.accentBlush = smoothstep(driver.accentBlush)
   output.maniac = maniac
   output.silly = silly
   output.lovestruck = lovestruck
@@ -430,6 +450,11 @@ export function fadeOpacityFromFrame(
       frame.symbolBlocker
     )
   }
+  if (fade === 'accentNotes') return frame.accentNotes
+  if (fade === 'accentQuestion') return frame.accentQuestion
+  if (fade === 'accentSleep') return frame.accentSleep
+  if (fade === 'accentSparkle') return frame.accentSparkle
+  if (fade === 'accentBlush') return frame.accentBlush
   if (fade === 'mouthCry') return arriving(frame.mouthCry)
   if (fade === 'mouthSilly') {
     return arriving(frame.sillyMouth) * (1 - frame.mouthCry)

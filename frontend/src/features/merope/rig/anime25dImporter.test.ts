@@ -214,6 +214,11 @@ test('see-through PSD builds blink, mouth, strand, chest, and rigid side-arm fra
       'a25d-lovestruck-heart-right',
       'a25d-lovestruck-face-effect',
       'a25d-lovestruck-drool',
+      'a25d-accent-music-notes',
+      'a25d-accent-blush',
+      'a25d-accent-question',
+      'a25d-accent-sleep',
+      'a25d-accent-sparkle',
     ]
     const neutralLayerCount = layers.filter(
       (layer) =>
@@ -226,6 +231,12 @@ test('see-through PSD builds blink, mouth, strand, chest, and rigid side-arm fra
     ).length
     assert.equal(canvases[0]?.context.drawCount, layers.length)
     assert.equal(canvases[1]?.context.drawCount, neutralLayerCount)
+    for (const role of ['accent-music-notes', 'accent-blush', 'accent-question', 'accent-sleep', 'accent-sparkle']) {
+      assert.ok(
+        layers.some((layer) => layer.id === `a25d-${role}`),
+        `${role} is drawn while the part budget allows`,
+      )
+    }
     assert.equal(
       boneIds.some((id) => /upper-arm|forearm|wrist|thigh/.test(id)),
       false,

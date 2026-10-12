@@ -18,6 +18,8 @@ export const BODY_CONTROL_DRIVERS = {
   mouthNarrow: 'mouthNarrow', mouthSeal: 'mouthSeal',
   angry: 'anger', speechless: 'speechless', maniac: 'maniac', silly: 'silly', lovestruck: 'lovestruck',
   cry: 'eyeCry', dizzy: 'eyeDizzy', hairSway: 'fhAmp', chestSway: 'bust',
+  musicNotes: 'accentNotes', questionMark: 'accentQuestion', sleepZ: 'accentSleep',
+  sparkles: 'accentSparkle', blush: 'accentBlush',
 } as const satisfies Record<BodyControl, keyof Anime25DDriver>
 
 /** These drivers are directed contributions to geometry's automatic posture. */

@@ -330,7 +330,8 @@ export function visibleInAnalysisReference(layer: RasterLayer): boolean {
     layer.role === 'lovestruck-face-effect' ||
     layer.role === 'lovestruck-drool' ||
     layer.role === 'anger-mark' ||
-    layer.role === 'speechless-sweat'
+    layer.role === 'speechless-sweat' ||
+    layer.role.startsWith('accent-')
   ) {
     return false
   }

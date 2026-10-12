@@ -9,6 +9,12 @@ export interface Anime25DDriver {
   eyeCry: number
   anger: number
   speechless: number
+  /** Drawn accents beside her face: music notes, ?, Z z z, sparkles, blush. */
+  accentNotes: number
+  accentQuestion: number
+  accentSleep: number
+  accentSparkle: number
+  accentBlush: number
   maniac: number
   silly: number
   lovestruck: number
@@ -85,6 +91,11 @@ export const IDENTITY_DRIVER: Anime25DDriver = {
   eyeCry: 0,
   anger: 0,
   speechless: 0,
+  accentNotes: 0,
+  accentQuestion: 0,
+  accentSleep: 0,
+  accentSparkle: 0,
+  accentBlush: 0,
   maniac: 0,
   silly: 0,
   lovestruck: 0,
@@ -165,6 +176,11 @@ const DRIVER_LIMITS: Partial<
   eyeCry: [0, 1],
   anger: [0, 1],
   speechless: [0, 1],
+  accentNotes: [0, 1],
+  accentQuestion: [0, 1],
+  accentSleep: [0, 1],
+  accentSparkle: [0, 1],
+  accentBlush: [0, 1],
   maniac: [0, 1],
   silly: [0, 1],
   lovestruck: [0, 1],

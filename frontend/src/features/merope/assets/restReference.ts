@@ -4,6 +4,7 @@ import type { Anime25DPlayback } from '../anime25drig/types'
 const EFFECT_ROLES = new Set([
   'maniac-eye-shadow', 'maniac-mouth-shadow', 'iris-silly', 'lovestruck-heart',
   'lovestruck-face-effect', 'lovestruck-drool', 'anger-mark', 'speechless-sweat',
+  'accent-music-notes', 'accent-question', 'accent-sleep', 'accent-sparkle', 'accent-blush',
 ])
 
 /**

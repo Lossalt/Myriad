@@ -63,6 +63,20 @@ pub const RIG_STATE_CAPABILITIES: &[&str] = &[
     "torso-volume",
     "left-arm",
     "right-arm",
+    "music-notes",
+    "question-mark",
+    "sleep-z",
+    "sparkles",
+    "blush",
+];
+/// Capabilities that are a drawn layer beside her face: a package imported
+/// before they existed lacks them, so a look that needs one is not offered.
+pub const RIG_STATE_DRAWN_ACCENTS: &[&str] = &[
+    "music-notes",
+    "question-mark",
+    "sleep-z",
+    "sparkles",
+    "blush",
 ];
 pub const RIG_STATE_MUSIC_ENERGIES: &[&str] = &["quiet", "soft", "present", "strong"];
 pub const RIG_STATE_BEAT_PHASES: &[&str] = &["rest", "downbeat", "pulse", "hold"];
