@@ -158,6 +158,9 @@ pub async fn reply(
     {
         sections.push(block);
     }
+    if let Some(block) = super::other_groups::theirs_section(db, venue, words).await {
+        sections.push(block);
+    }
     if let Some(block) = super::format_views_section(&super::views::touched(db, words, 2).await) {
         sections.push(block);
     }

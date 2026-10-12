@@ -387,6 +387,12 @@ pub(super) async fn between_them(
             sections.push(block);
         }
     }
+    // What the talk brings back of her other groups' own bits and days.
+    if let (Some(venue), Some(words)) = (present.group_id(), words)
+        && let Some(block) = other_groups::theirs_section(db, venue, words).await
+    {
+        sections.push(block);
+    }
     // How she comes across: with them, or in this group, each heard only
     // where it was found.
     let lands = match present.group_id() {

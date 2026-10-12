@@ -64,6 +64,39 @@ pub fn noted_elsewhere(notes: &[FromGroup]) -> Option<String> {
     })
 }
 
+/// Something of another group's own that the talk brings back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Theirs {
+    /// One of that group's bits: its handle, and how it goes.
+    Bit { handle: String, how: String },
+    /// What a day there was like.
+    Day { date: String, what: String },
+}
+
+/// What the talk brings back of her other groups' own: their bits and their
+/// days, each by the group's name (`None` when she does not have it).
+pub fn theirs_section(brought: &[(Option<String>, Theirs)]) -> Option<String> {
+    if brought.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = brought
+        .iter()
+        .map(|(group, theirs)| {
+            let place = in_group(group.as_deref());
+            match theirs {
+                Theirs::Bit { handle, how } => {
+                    format!("- {place}, a bit of theirs — {handle}: {how}")
+                }
+                Theirs::Day { date, what } => format!("- {place}, {date}: {what}"),
+            }
+        })
+        .collect();
+    Some(format!(
+        "## From your other groups\nWhat this talk brings back from your other groups: their own bits, and what days there were like. They grew there; the people here may not know them.\n{}",
+        untrusted_block("other_groups", &lines.join("\n"))
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +124,34 @@ mod tests {
             .unwrap()
             .contains("- in a group: 叫阿木，喜欢猫")
         );
+    }
+
+    #[test]
+    fn another_groups_bits_and_days_say_where_they_grew() {
+        assert_eq!(theirs_section(&[]), None);
+        let block = theirs_section(&[
+            (
+                Some("摸鱼小队".into()),
+                Theirs::Bit {
+                    handle: "三缺一".into(),
+                    how: "打麻将总差一个人".into(),
+                },
+            ),
+            (
+                None,
+                Theirs::Day {
+                    date: "2026-10-09".into(),
+                    what: "一起熬夜看发布会".into(),
+                },
+            ),
+        ])
+        .unwrap();
+        assert!(
+            block.contains(
+                "- in the group 「摸鱼小队」, a bit of theirs — 三缺一: 打麻将总差一个人"
+            )
+        );
+        assert!(block.contains("- in a group, 2026-10-09: 一起熬夜看发布会"));
+        assert!(block.contains("may not know them"));
     }
 }
