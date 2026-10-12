@@ -107,13 +107,17 @@ fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummar
             .find(|c| c.0 == control)
             .map(|c| c.4)
             .unwrap_or_default();
-        let hands = if control.contains("Arm") {
-            " People use their hands: arms open a little when explaining or welcoming, draw in when shy or hurt, lift when excited."
+        let hint = if control.contains("Arm") {
+            " People use their hands: arms open when explaining or welcoming, draw in when shy or hurt, lift when excited."
+        } else if control.starts_with("eye") {
+            " The eyes carry most of a face: lids half down when content, drowsy or reading, wide when struck, smiling when amused."
+        } else if control == "headNod" {
+            " The head goes down over a page or when low, up when daydreaming or proud."
         } else {
             ""
         };
         questions.insert(format!("body.{control}"), json!({"type": "choice",
-            "instructions": format!("Her {control} {when} ({means}) Image-left/right are as the viewer sees her.{hands} Leave it at rest unless this moment calls for it."),
+            "instructions": format!("Her {control} {when} ({means}) Image-left/right are as the viewer sees her.{hint} When the moment calls for it, show it plainly: on a small screen slight barely shows, clear reads."),
             "criteria": tier_options(control)}));
     }
 }
@@ -328,6 +332,12 @@ pub(super) fn standing_combined_questions(state: Option<&RigStateSummary>) -> Va
                 "roam": "looking about in different directions",
                 "hold": "staying put, hardly moving"}}));
     }
+    if controls.contains(&"headNod") {
+        questions.insert("headPose".into(), json!({"type": "choice",
+            "instructions": "How she holds her head over the whole stretch.",
+            "criteria": {"down": "bowed over what she is doing", "level": "level", "up": "raised, chin up",
+                "tilted": "resting tilted to one side"}}));
+    }
     let offered = offered_score_moves(state);
     let mut rhythm: Vec<(&str, &str)> = [
         (
@@ -371,24 +381,30 @@ fn combined_moments(
     } else {
         0.0
     };
+    // How far her eyes travel grows with how much she moves.
+    let reach = match pick("energy") {
+        "low" => 0.35,
+        "high" => 0.8,
+        _ => 0.55,
+    };
     let pattern = pick("lookPattern");
     let looking = !pattern.is_empty() || !pick("lookLevel").is_empty();
     let roam = [
-        (-0.35, 0.0),
-        (0.35, 0.35),
-        (0.0, -0.35),
-        (0.35, 0.0),
-        (-0.35, 0.35),
+        (-1.0, 0.0),
+        (1.0, 0.6),
+        (0.0, -0.6),
+        (1.0, 0.0),
+        (-1.0, 0.6),
         (0.0, 0.0),
     ];
-    let drift = [0.35, 0.35, 0.0, -0.35, -0.35, 0.0];
+    let drift = [1.0, 1.0, 0.0, -1.0, -1.0, 0.0];
     let rhythm = pick("rhythm");
     (0..STANDING_MOMENTS as usize)
         .map(|index| {
             let (h, v): (f64, f64) = match pattern {
-                "sweep" => (if index % 2 == 0 { -0.35 } else { 0.35 } * side, level),
-                "drift" => (drift[index] * side, level),
-                "roam" => (roam[index].0 * side, level + roam[index].1),
+                "sweep" => (if index % 2 == 0 { -reach } else { reach } * side, level),
+                "drift" => (drift[index] * reach * side, level),
+                "roam" => (roam[index].0 * reach * side, level + roam[index].1 * reach),
                 _ => (if index == 3 { 0.2 * side } else { 0.0 }, level),
             };
             let mut look = Map::new();
@@ -433,7 +449,27 @@ pub(super) fn standing_plan(
             .then(|| answer["choice"].as_str())
             .flatten()
     };
-    let targets = answered_targets(answers, state, true);
+    let mut targets = answered_targets(answers, state, true);
+    // How she holds her head over the stretch, unless a control said already.
+    let controls = offered_body_controls(state);
+    let head = match answers["headPose"]["choice"].as_str() {
+        Some("down") => Some(("headNod", "-clear")),
+        Some("up") => Some(("headNod", "clear")),
+        Some("tilted") => Some((
+            "headTilt",
+            if context.activity.len() % 2 == 0 {
+                "clear"
+            } else {
+                "-clear"
+            },
+        )),
+        _ => None,
+    };
+    if let Some((control, tier)) = head.filter(|(control, _)| controls.contains(control)) {
+        targets
+            .entry(control.to_owned())
+            .or_insert_with(|| json!(tier));
+    }
     let energy = sure("energy").unwrap_or("usual");
     let amount = if energy == "high" { "clear" } else { "slight" };
     let moments = standing_moments(&context.activity);
@@ -689,8 +725,14 @@ mod tests {
             "lookLevel": {"choice": "low", "confidence": 0.6},
             "lookPattern": {"choice": "sweep", "confidence": 0.5},
             "rhythm": {"choice": "nods", "confidence": 0.4},
+            "headPose": {"choice": "down", "confidence": 0.3},
+            "energy": {"choice": "high", "confidence": 0.6},
         });
         let value = standing_plan(&answers, &moment, Some(&state));
+        assert_eq!(
+            value["baseline"]["pose"]["targets"]["headNod"], "-clear",
+            "bowed over the page"
+        );
         let beats = value["score"].as_array().unwrap();
         let looks: Vec<f64> = beats
             .iter()
@@ -699,7 +741,7 @@ mod tests {
             .collect();
         assert_eq!(looks.len(), STANDING_MOMENTS as usize);
         assert!(
-            looks.windows(2).all(|w| w[0] == -w[1]),
+            looks.windows(2).all(|w| w[0] == -w[1]) && looks[0].abs() == 0.8,
             "back and forth: {looks:?}"
         );
         assert!(
