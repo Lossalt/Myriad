@@ -226,8 +226,9 @@ impl Agent {
         // The abort barrier above makes this choice race-free: a local landing
         // cannot overwrite a semantic baseline published concurrently. No cues
         // are replayed, and none of this stands in front of text completion.
+        // Not on her face (a venue or a channel), nothing here acts it.
         if !refined {
-            if let Some(mood) = mood_transition {
+            if let Some(mood) = mood_transition.filter(|_| seen) {
                 let delivery_context = motion_context(
                     &request,
                     user_id,

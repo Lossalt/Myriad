@@ -180,11 +180,12 @@ async fn redeem_speak_intent(
                     user_id: intent.user_id,
                     phase: MotionPhase::Proactive,
                     mood: mood.clone(),
-                    activity: "talking".to_string(),
-                    user_text: intent
-                        .observation
-                        .clone()
-                        .unwrap_or_else(|| intent.gist.clone()),
+                    // Nobody said anything to her: she speaks up, about what she noticed.
+                    activity: intent.observation.as_deref().map_or_else(
+                        || "talking".to_owned(),
+                        |noticed| format!("speaking up about what she noticed: {noticed}"),
+                    ),
+                    user_text: String::new(),
                     response_text: Some(spoken.clone()),
                     previous_phrases: Vec::new(),
                     task_success: None,
@@ -445,7 +446,7 @@ pub(crate) async fn say_first_on_app(
     line: &str,
 ) -> Option<String> {
     let id = format!("say_{}", uuid::Uuid::new_v4().simple());
-    let context = line_context(db, user_id, event_key, line, line).await;
+    let context = line_context(db, user_id, event_key, line).await;
     let floor = context.as_ref().and_then(local_directive);
     let said = say_line(
         db,
@@ -474,7 +475,6 @@ async fn line_context(
     db: &DatabaseConnection,
     user_id: i32,
     event_key: &str,
-    about: &str,
     spoken: &str,
 ) -> Option<MotionContext> {
     let current = get_or_create_state(db, user_id).await.ok()?;
@@ -496,7 +496,8 @@ async fn line_context(
         phase: MotionPhase::Proactive,
         mood,
         activity: "talking".to_string(),
-        user_text: about.to_string(),
+        // Nobody said anything to her: she speaks up.
+        user_text: String::new(),
         response_text: Some(spoken.to_string()),
         previous_phrases: Vec::new(),
         task_success: None,

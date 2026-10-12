@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use super::MotionContext;
 use super::offered::{offered_body_controls, offered_score_moves};
-use super::questions::{FEELINGS, OWN, SAYING, SURE, agreed_face, asked_for_question, sentences};
+use super::questions::{OWN, SAYING, SURE, agreed_face, asked_for_question, sentences};
 
 const EXPRESSIONS: &[(&str, &str)] = &[
     ("withdrawn", "drawn in, avoiding, not opening up"),
@@ -74,19 +74,14 @@ fn is_bearing(control: &str) -> bool {
         || control.contains("Arm")
 }
 
-/// Her feeling, face, bearing and every control this face has, `when` she
-/// is at it (saying it, or what she is doing on her own).
+/// Her face, bearing and every control this face has, `when` she is at it
+/// (saying it, or what she is doing on her own). How a new face comes over
+/// hers is asked only where there are faces to choose.
 fn ask_bearing(questions: &mut Map<String, Value>, state: Option<&RigStateSummary>, when: &str) {
     if let Some(question) = face_question(state, when) {
         questions.insert("face".into(), question);
+        questions.insert("shift".into(), shift_question(state, when));
     }
-    questions.insert("shift".into(), shift_question(state, when));
-    questions.insert(
-        "feeling".into(),
-        json!({"type": "choice",
-        "instructions": format!("What she herself feels {when} (not what she reports of others)."),
-        "criteria": criteria(FEELINGS)}),
-    );
     questions.insert(
         "expression".into(),
         json!({"type": "choice",
@@ -991,6 +986,15 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("her ordinary face")
+        );
+        // Without faces to choose there is no change of face to ask about.
+        let bare =
+            myriad_merope::sanitize_rig_state(&json!({"capabilities": ["head-body"]})).unwrap();
+        let plain = control_questions(&moment, Some(&bare));
+        assert_eq!(plain.get("face").is_some(), plain.get("shift").is_some());
+        assert!(
+            asked.get("feeling").is_none(),
+            "an answer no plan reads is not asked"
         );
         let mut unknown = value.clone();
         unknown["baseline"]["shift"] = json!("teleport");

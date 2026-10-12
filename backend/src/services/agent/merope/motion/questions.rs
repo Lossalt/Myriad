@@ -212,12 +212,22 @@ pub(super) fn agreed_face(asked: Option<&str>) -> Vec<Value> {
         .collect()
 }
 
-/// The moment the questions are about.
+/// The moment the questions are about. With nothing said to her, she is
+/// the one who speaks up.
 pub(super) fn state(context: &MotionContext, persona: Option<&str>) -> Value {
+    let says = context.response_text.as_deref();
+    if context.user_text.trim().is_empty() {
+        return json!({
+            "she": persona.unwrap_or("a lively, warm companion"),
+            "she is": context.activity,
+            "she says, unprompted": says.unwrap_or("(not yet; she is about to speak)"),
+            "her mood": context.mood.band_after,
+        });
+    }
     json!({
         "she": persona.unwrap_or("a lively, warm companion"),
         "they said": context.user_text,
-        "she replies": context.response_text.as_deref().unwrap_or("(not yet; she is about to answer)"),
+        "she replies": says.unwrap_or("(not yet; she is about to answer)"),
         "her mood": context.mood.band_after,
     })
 }
@@ -1051,5 +1061,20 @@ mod tests {
         )
         .await;
         assert!(plan["baseline"]["via"].is_null());
+    }
+
+    #[test]
+    fn when_she_speaks_up_nobody_is_said_to_have_spoken() {
+        let mut moment = context("你今天的照片拍得真好看！");
+        moment.user_text = String::new();
+        moment.activity = "speaking up about what she noticed: a new photo".into();
+        let asked = state(&moment, None);
+        assert!(asked.get("they said").is_none());
+        assert!(asked["she is"].as_str().unwrap().contains("new photo"));
+        assert!(asked["she says, unprompted"].is_string());
+        assert!(
+            asked_for_question(&moment, None).is_none(),
+            "no one asked her for a face"
+        );
     }
 }

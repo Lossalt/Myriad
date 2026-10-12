@@ -539,7 +539,8 @@ pub(super) async fn attach_motion_to_result(
     live: bool,
 ) -> Result<AgentResponse, String> {
     let mut response = result?;
-    let Some(mood) = mood else {
+    // Said in a venue or a channel, the answer is not on her face to act.
+    let Some(mood) = mood.filter(|_| on_her_face(request)) else {
         return Ok(response);
     };
     let task_success = response.task.as_ref().and_then(|task| match task.status {

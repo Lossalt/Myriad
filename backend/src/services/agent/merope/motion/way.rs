@@ -47,8 +47,11 @@ pub(super) fn questions(
             looks.insert(name.into(), json!(means));
         }
     }
+    let unprompted = context.user_text.trim().is_empty();
     let moment = match (&context.phase, context.response_text.as_deref()) {
         (MotionPhase::Presence, _) => format!("While she is {}", context.activity),
+        (_, Some(says)) if unprompted => format!("She speaks up: 「{says}」"),
+        (_, None) if unprompted => "She is about to speak up".to_owned(),
         (_, Some(reply)) => format!(
             "Someone said: 「{}」. She answers: 「{reply}」",
             context.user_text
