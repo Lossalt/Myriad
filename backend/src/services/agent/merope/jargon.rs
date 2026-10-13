@@ -289,4 +289,64 @@ mod tests {
             assert_eq!(meaning.is_some(), own, "{term}: {meaning:?}");
         }
     }
+
+    /// The whole way, on its own schema with the site's judgment model: a
+    /// word she could not look up is watched, counted as people use it,
+    /// worked out at the fourth use, kept as the group's own, and known again
+    /// when it comes up there, and from another group as that group's.
+    /// `MYRIAD_MEDIA_TEST_DATABASE_URL=… cargo test --bin myriad-backend a_word_is_watched -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "spends on the site's judgment model"]
+    async fn a_word_is_watched_counted_worked_out_and_known_again() {
+        use sea_orm::ConnectionTrait;
+        let url = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL").expect("a test database");
+        let config_db = super::super::super::semantic_eval::load_configured_lite().await;
+        config_db.close().await.ok();
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "jargon_whole_way").await;
+        let db = isolated.db.clone();
+        db.execute_unprepared(
+            "INSERT INTO users (username, display_name, is_admin, is_owner) \
+             VALUES ('owner', 'owner', true, true)",
+        )
+        .await
+        .unwrap();
+        crate::services::process_db::set_process_database(db.clone());
+        let venue = "onebot:424242";
+        super::nominate(
+            &db,
+            venue,
+            "饭团",
+            &["you：饭团是什么".into(), "饭团又炸服了 谁去重启一下".into()],
+        )
+        .await;
+        for line in [
+            "谁还没有饭团的白名单",
+            "饭团今晚十点维护 别上线",
+            "我在饭团里盖了个城堡 坐标发群里了",
+        ] {
+            super::heard(venue, line);
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        }
+        let mut here = None;
+        for _ in 0..90 {
+            here = super::section_for(&db, venue, "今晚饭团开吗").await;
+            if here.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        let here = here.expect("worked out and kept");
+        println!("{here}");
+        assert!(here.contains("饭团（here）"), "{here}");
+        let elsewhere = super::section_for(&db, "onebot:7", "饭团今天开了吗")
+            .await
+            .expect("known from another group");
+        println!("{elsewhere}");
+        assert!(elsewhere.contains("饭团（in "), "{elsewhere}");
+        assert!(
+            super::section_for(&db, venue, "今天吃什么").await.is_none(),
+            "only when the talk uses it"
+        );
+        isolated.drop().await;
+    }
 }
