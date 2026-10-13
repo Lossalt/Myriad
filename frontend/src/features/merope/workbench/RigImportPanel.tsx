@@ -259,15 +259,18 @@ export function RigImportPanel({
               disabled={importing}
             />
           ) : null}
-          {rig.expressionsOffered && rig.enhanceExpressions ? (
-            <p className="merope-motion-rig__hint">
-              {aiExpressions.length > 0
-                ? format(labels.aiExpressionsReady, {
-                    kinds: aiExpressions
-                      .map((kind) => aiExpressionLabel(labels, kind))
-                      .join(' / '),
-                  })
-                : labels.aiExpressionsNone}
+          {/* Being drawn shows even unchosen: begun before a reload, or in another tab. */}
+          {rig.expressionsOffered && (rig.enhanceExpressions || rig.aiExpressionsBusy) ? (
+            <p className="merope-motion-rig__hint" role={rig.aiExpressionsBusy ? 'status' : undefined}>
+              {rig.aiExpressionsBusy && aiExpressions.length === 0
+                ? labels.aiExpressionsGenerating
+                : aiExpressions.length > 0
+                  ? format(labels.aiExpressionsReady, {
+                      kinds: aiExpressions
+                        .map((kind) => aiExpressionLabel(labels, kind))
+                        .join(' / '),
+                    })
+                  : labels.aiExpressionsNone}
             </p>
           ) : null}
           {rig.aiExpressionsError ? (
@@ -277,7 +280,7 @@ export function RigImportPanel({
           ) : null}
           <span className="merope-turn-archives__actions">
             {decomposeButton}
-            {canGenerateAiExpressions && rig.enhanceExpressions && aiExpressions.length > 0 ? (
+            {canGenerateAiExpressions && (rig.enhanceExpressions || rig.aiExpressionsBusy) && aiExpressions.length > 0 ? (
               <SettingsButton
                 type="button"
                 size="sm"
