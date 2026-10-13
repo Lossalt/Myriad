@@ -160,6 +160,40 @@ test('closes the alpha contour at the neck aperture', () => {
   assert.equal(clip.rest.at(-1), model.closurePoint.y)
 })
 
+test('a deep V the closure search does not reach keeps the neck showing down through it', () => {
+  const width = 40
+  const height = 40
+  const rgba = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y += 1) {
+    // The gap narrows to its point only at the collar's bottom row.
+    const halfGap = Math.max(1, 10 - Math.floor(y / 4))
+    for (let x = 2; x < width - 2; x += 1) {
+      if (x > 20 - halfGap && x < 20 + halfGap) continue
+      rgba[(y * width + x) * 4 + 3] = 255
+    }
+  }
+  const model = buildFrontCollarContactModel(rgba, width, height, {
+    x: 100,
+    y: 200,
+    w: width,
+    h: height,
+  })
+  assert.ok(model)
+  assert.equal(model.closurePoint, null)
+  const clip = createCollarClipMesh(
+    meshGl(),
+    {} as WebGLProgram,
+    model,
+    playbackLayer('neck', 95, 180, 50, 58),
+    playbackLayer('collar-front', 100, 200, 40, 40),
+  )
+  const lastContactY = model.handles[model.contactPairs.at(-1)! * 2 + 1]
+  assert.ok(lastContactY < 230, 'the contacts stop part way down the opening')
+  assert.equal(clip.rest.at(-1), 238, 'on down to the neck bottom, above the collar bottom')
+  assert.equal(clip.rest.at(-3), 238)
+  assert.equal(clip.indexCount, (clip.rest.length / 4 - 1) * 6)
+})
+
 function playbackLayer(
   role: string,
   x: number,

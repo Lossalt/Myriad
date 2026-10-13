@@ -176,6 +176,14 @@ export function createCollarClipMesh(
       model.closurePoint.x + seamAllowance,
       model.closurePoint.y,
     )
+  } else if (!model.closurePoint) {
+    // The opening goes on below where its contacts and closure are looked
+    // for (a deep V): the neck shows on down through it, as wide as at the
+    // last contact; the collar's sides in front of it cover the rest.
+    const bottom = Math.min(neck.y + neck.h, collar.y + collar.h)
+    if (bottom > lastContactY) {
+      restValues.push(restValues.at(-4)!, bottom, restValues.at(-2)!, bottom)
+    }
   }
   const rest = Float32Array.from(restValues)
   const deformed = rest.slice()
