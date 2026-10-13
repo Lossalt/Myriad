@@ -2,6 +2,7 @@ import type { Anime25DTorsoShellRotation } from './torsoDeformation'
 import type { Anime25DTurnKeyforms, BoundTurnKeyform } from './turnKeyforms'
 import type { Anime25DPlaybackLayer } from './types'
 import { HEAD_TURN_RADIANS } from './headTurn'
+import { isStandingFigure } from './standing'
 import { HEAD_YAW_SHARE } from './torsoDeformation'
 import { bindTurnKey, turnKeyformOffset } from './turnKeyforms'
 
@@ -147,7 +148,7 @@ export function playbackBodyKeys(
   playback: { bodyTurnKeyforms?: Anime25DTurnKeyforms; anchors: { groundY?: number } },
 ): Anime25DTurnKeyforms | undefined {
   const keys = playback.bodyTurnKeyforms
-  if (!keys || playback.anchors.groundY === undefined) return keys
+  if (!keys || !isStandingFigure(playback.anchors)) return keys
   return Object.fromEntries(Object.entries(keys).filter(([family]) => /^(thigh|shin|legwear|footwear)\b/.test(family)))
 }
 
@@ -183,5 +184,5 @@ export function bodyKeyShare(
   playback: { bodyTurnKeyforms?: Anime25DTurnKeyforms; anchors: { groundY?: number } },
 ): number | null {
   if (!playbackBodyKeys(playback)) return null
-  return playback.anchors.groundY === undefined ? BODY_TURN_SHARE : 1
+  return isStandingFigure(playback.anchors) ? 1 : BODY_TURN_SHARE
 }

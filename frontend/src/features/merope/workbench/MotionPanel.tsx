@@ -276,6 +276,9 @@ export function MotionPanel({
         {sliderCluster(labels.clusterBody, [
           'body',
           'bodyYaw',
+          'torsoTurn',
+          'bodyLift',
+          'bodyPitch',
           'armY',
           'armPos',
           'bust',
