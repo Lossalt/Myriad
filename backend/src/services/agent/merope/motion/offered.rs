@@ -3,17 +3,6 @@
 
 use super::*;
 
-pub(super) fn offered_cue_intents(state: Option<&RigStateSummary>) -> Vec<&'static str> {
-    let Some(state) = state else {
-        return PERFORMANCE_CUE_INTENTS.to_vec();
-    };
-    PERFORMANCE_CUE_INTENTS
-        .iter()
-        .copied()
-        .filter(|intent| cue_survives_state(state, intent))
-        .collect()
-}
-
 pub(super) fn offered_body_controls(state: Option<&RigStateSummary>) -> Vec<&'static str> {
     myriad_merope::PERFORMANCE_BODY_CONTROLS
         .iter()

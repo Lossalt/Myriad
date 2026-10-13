@@ -11,8 +11,10 @@ use super::control::{STANDING_LOOP_MS, activity_seed, next_seed};
 use super::offered::{offered_body_controls, offered_score_moves};
 use super::questions::{feeling_pose, tilt_tier};
 
-/// How what she is doing on her own shows on her (standing acting).
-pub(super) const WAYS: &[(&str, &str)] = &[
+/// How what she is doing on her own shows on her (standing acting); the
+/// shapes are in `plan_from_answers`, and the test walks every one.
+#[cfg(test)]
+const WAYS: &[(&str, &str)] = &[
     ("reading", "eyes down, moving along lines"),
     ("listening", "eyes soft, small nods with the music"),
     ("daydreaming", "gaze drifting off, lost in thought"),

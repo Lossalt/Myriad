@@ -8,10 +8,9 @@
 use std::time::{Duration, Instant};
 
 use myriad_merope::{
-    ChatPerformancePlan, PERFORMANCE_CUE_INTENTS, RIG_STATE_MOTION_STYLES, RigStateSummary,
-    ScoreBeat, SpeechPhrase, cue_is_playable, cue_survives_state, grounded_score,
-    grounded_speech_phrases, parse_performance_plan, plan_is_empty, refine_performance_plan,
-    round_motion_style,
+    ChatPerformancePlan, RIG_STATE_MOTION_STYLES, RigStateSummary, ScoreBeat, SpeechPhrase,
+    cue_is_playable, grounded_score, grounded_speech_phrases, parse_performance_plan,
+    plan_is_empty, refine_performance_plan, round_motion_style,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

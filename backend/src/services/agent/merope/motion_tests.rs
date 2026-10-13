@@ -1,7 +1,7 @@
 //! Unit tests for `motion.rs`, kept beside it so the module stays readable.
 
 use super::*;
-use myriad_merope::ChatPerformanceCue;
+use myriad_merope::{ChatPerformanceCue, PERFORMANCE_CUE_INTENTS, cue_survives_state};
 
 #[test]
 fn phases_have_stable_wire_names() {
@@ -61,9 +61,9 @@ fn rig(capabilities: &[&str], speaking: bool) -> RigStateSummary {
     .expect("summary")
 }
 
-/// The offered set and the enforced set are one predicate (`offered_cue_intents`).
+/// Refining keeps exactly the cues that survive the rig state.
 #[test]
-fn the_director_is_only_offered_cues_that_survive_the_filter() {
+fn refining_keeps_exactly_the_cues_that_survive_the_state() {
     for (capabilities, speaking) in [
         (&["head-body", "mouth-shapes"][..], false),
         (&["head-body", "cry-eye", "silly-eye"][..], false),
@@ -71,8 +71,12 @@ fn the_director_is_only_offered_cues_that_survive_the_filter() {
         (&[][..], false),
     ] {
         let state = rig(capabilities, speaking);
-        let offered = offered_cue_intents(Some(&state));
-        assert!(!offered.is_empty(), "{capabilities:?}");
+        let surviving: Vec<&str> = PERFORMANCE_CUE_INTENTS
+            .iter()
+            .copied()
+            .filter(|intent| cue_survives_state(&state, intent))
+            .collect();
+        assert!(!surviving.is_empty(), "{capabilities:?}");
 
         let plan = ChatPerformancePlan {
             baseline: None,
@@ -94,14 +98,8 @@ fn the_director_is_only_offered_cues_that_survive_the_filter() {
             .into_iter()
             .map(|cue| cue.intent)
             .collect();
-        assert_eq!(survived, offered, "{capabilities:?} speaking={speaking}");
+        assert_eq!(survived, surviving, "{capabilities:?} speaking={speaking}");
     }
-}
-
-/// A client that sends no rig state keeps the whole vocabulary.
-#[test]
-fn a_missing_summary_still_offers_every_cue() {
-    assert_eq!(offered_cue_intents(None), PERFORMANCE_CUE_INTENTS.to_vec());
 }
 
 #[test]
