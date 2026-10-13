@@ -368,6 +368,14 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        // 会话里还在写的回复：刷新或新开页面时接上
+        .route(
+            "/sessions/{session_id}/live-run",
+            get(live_session_run).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
         // 归档会话
         .route(
             "/sessions/{session_id}",

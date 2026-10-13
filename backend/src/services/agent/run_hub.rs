@@ -834,6 +834,26 @@ pub async fn user_executing_run_count(user_id: i32) -> usize {
     count
 }
 
+/// The run still writing in this session, if any: a page opened or reloaded
+/// meanwhile takes up its reply instead of showing it only on the next load.
+/// A run answered in a chat app or a group is not the site's to show.
+pub async fn executing_run_for_session(user_id: i32, session_id: &str) -> Option<String> {
+    let candidates = AGENT_RUNS
+        .read()
+        .await
+        .values()
+        .filter(|run| run.user_id == user_id && run.session_id.as_deref() == Some(session_id))
+        .filter(|run| !run.elsewhere.load(std::sync::atomic::Ordering::Relaxed))
+        .cloned()
+        .collect::<Vec<_>>();
+    for run in candidates {
+        if run.is_executing().await {
+            return Some(run.run_id.clone());
+        }
+    }
+    None
+}
+
 pub async fn get_run_for_user(run_id: &str, user_id: i32) -> Result<Option<Arc<AgentRun>>, String> {
     if let Some(run) = AGENT_RUNS
         .read()
@@ -905,6 +925,50 @@ mod tests {
         assert_eq!(shown.site_notices(), ["running"]);
         AGENT_RUNS.write().await.remove("run_quiet_from_start");
         AGENT_RUNS.write().await.remove("run_shown_from_start");
+    }
+
+    /// A page loaded while a reply is being written finds that run by its session.
+    #[tokio::test]
+    async fn the_run_writing_in_a_session_is_found_by_it() {
+        let in_session = |id: &str, session: &str| {
+            let mut run = AgentRun::new_for_test(id, 31);
+            Arc::get_mut(&mut run).unwrap().session_id = Some(session.into());
+            run
+        };
+        let writing = in_session("run_writing_in_s1", "s1");
+        let chat_app = in_session("run_in_a_chat_app", "s2");
+        chat_app.answered_elsewhere();
+        for run in [&writing, &chat_app] {
+            AGENT_RUNS
+                .write()
+                .await
+                .insert(run.run_id.clone(), (*run).clone());
+        }
+        assert_eq!(
+            executing_run_for_session(31, "s1").await.as_deref(),
+            Some("run_writing_in_s1")
+        );
+        assert_eq!(
+            executing_run_for_session(32, "s1").await,
+            None,
+            "another user's"
+        );
+        assert_eq!(
+            executing_run_for_session(31, "s2").await,
+            None,
+            "answered elsewhere"
+        );
+        writing
+            .publish(AgentProgressEvent::Error {
+                task_id: None,
+                message: "stopped".into(),
+                code: "CANCELLED".into(),
+            })
+            .await;
+        assert_eq!(executing_run_for_session(31, "s1").await, None, "finished");
+        for id in ["run_writing_in_s1", "run_in_a_chat_app"] {
+            AGENT_RUNS.write().await.remove(id);
+        }
     }
 
     #[tokio::test]

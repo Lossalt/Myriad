@@ -1347,6 +1347,15 @@ class AgentService {
     return response.messages
   }
 
+  /** The run still writing a reply in this session, for a page opened or reloaded meanwhile; null when none. */
+  async getLiveSessionRun(sessionId: string, signal = authSubject.signal): Promise<string | null> {
+    const response = await apiService.get<{ runId?: unknown }>(
+      `${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/live-run`,
+      { signal },
+    )
+    return typeof response.runId === 'string' && response.runId ? response.runId : null
+  }
+
   async archiveSession(sessionId: string): Promise<{ success: boolean }> {
     return apiService.delete<{ success: boolean }>(
       `${this.baseUrl}/sessions/${sessionId}`,

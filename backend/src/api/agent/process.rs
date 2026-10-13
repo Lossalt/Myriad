@@ -78,6 +78,19 @@ pub async fn subscribe_run_stream(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
+/// The run still writing a reply in this session, for a page opened or
+/// reloaded meanwhile to take it up (`{ "runId": null }` when none).
+/// GET /api/agent/sessions/{session_id}/live-run
+pub async fn live_session_run(
+    Extension(claims): Extension<Claims>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let user_id = parse_user_id(&claims)?;
+    let run_id =
+        crate::services::agent::run_hub::executing_run_for_session(user_id, &session_id).await;
+    Ok(Json(json!({ "runId": run_id })))
+}
+
 /// 获取任务状态
 /// GET /api/agent/tasks/{task_id}
 pub async fn get_task(

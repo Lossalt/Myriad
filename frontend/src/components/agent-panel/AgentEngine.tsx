@@ -259,6 +259,7 @@ export const AgentEngine: React.FC = () => {
     ((assistantMessageId: string, mode?: AgentPanelMode, generation?: number,
       speechOutput?: 'local' | 'external', runId?: string, subject?: AbortSignal) => (event: ProgressEvent) => void) | null
   >(null)
+  const followChatRunRef = useRef<((runId: string, chatSessionId: string) => unknown) | null>(null)
   const MAX_RESPONSE_GUARD_KEYS = 200
   const [frontendActionQueue] = useState(() =>
     new FrontendActionQueue(runFrontendAction, MAX_RESPONSE_GUARD_KEYS))
@@ -438,6 +439,22 @@ export const AgentEngine: React.FC = () => {
     [updateMessage],
   )
 
+  /** A reply still being written in this chat (begun before a reload, or in another tab) is taken up as it goes. */
+  const reattachLiveChat = useCallback(
+    async (chatSessionId: string, loaded: ChatMessage[], subject = authSubject.signal) => {
+      let runId: string | null
+      try {
+        runId = await agentService.getLiveSessionRun(chatSessionId, subject)
+      } catch {
+        return
+      }
+      if (!runId || subject.aborted || loadingMessageIdByModeRef.current.chat) return
+      if (loaded.some((message) => message.taskExecution?.runId === runId)) return
+      followChatRunRef.current?.(runId, chatSessionId)
+    },
+    [],
+  )
+
   const loadSession = useCallback(
     async (
       session: ChatSession,
@@ -483,6 +500,7 @@ export const AgentEngine: React.FC = () => {
           if (followUp) setAgentStatusAwaitingConfirmation(followUp)
         }
         if (requestedMode === 'work') void reattachLiveWork(loaded, reattachHints, subject)
+        else void reattachLiveChat(session.id, loaded, subject)
       } catch (error) {
         if (subject.aborted) return
         console.error('[AgentEngine] 加载会话消息失败:', error)
@@ -490,7 +508,7 @@ export const AgentEngine: React.FC = () => {
         if (!installed) await Promise.all(preparedBodies.map(body => releaseMessageBody(body).catch(() => {})))
       }
     },
-    [reattachLiveWork, sessionLoads],
+    [reattachLiveChat, reattachLiveWork, sessionLoads],
   )
 
   useEffect(() => {
@@ -1908,10 +1926,15 @@ export const AgentEngine: React.FC = () => {
     handleAgentResponseRef.current = handleAgentResponse
   }, [handleAgentResponse])
 
-  useEffect(() => bindRealtimeChat({
-    sessionId: () => sessionIdsByModeRef.current.chat,
-    adopt: (notice) => {
-      const messageId = `msg_rtc_${notice.runId}`
+  /**
+   * Shows a chat run this page did not start as it is written: one begun by
+   * voice or another device (`input` is what was said, added first), or one
+   * still writing when the page was loaded. Its reply grows in a new message;
+   * this page does not speak it.
+   */
+  const followChatRun = useCallback(
+    (runId: string, chatSessionId: string, input?: string) => {
+      const messageId = `msg_rtc_${runId}`
       const generation = chatTurnClockRef.current.next()
       const previous = loadingMessageIdByModeRef.current.chat
       if (previous) {
@@ -1920,25 +1943,33 @@ export const AgentEngine: React.FC = () => {
       }
       agentService.abortCurrentRequest('chat')
       setTurnGeneration(generation)
-      beginTurnTrace(messageId)
-      markTurnTraceOnce('input_final')
-      setSessionId(notice.sessionId, 'chat')
+      if (input !== undefined) {
+        beginTurnTrace(messageId)
+        markTurnTraceOnce('input_final')
+      }
+      setSessionId(chatSessionId, 'chat')
       const userMessageId = nextAgentMessageId('user')
-      setMessages((rows) => [...rows, {
-        id: userMessageId, sessionId: notice.sessionId, role: 'user',
-        content: notice.input.length > BODY_INLINE_CHARS ? '' : notice.input, createdAt: new Date(),
-      }, {
-        id: messageId, sessionId: notice.sessionId, role: 'assistant', content: '', createdAt: new Date(),
-        taskExecution: { taskId: '', runId: notice.runId, status: 'processing', progress: 0, steps: [] },
-      }], 'chat')
-      void updateMessage(userMessageId, { content: notice.input, role: 'user' })
+      setMessages((rows) => [
+        ...rows,
+        ...(input !== undefined
+          ? [{
+              id: userMessageId, sessionId: chatSessionId, role: 'user' as const,
+              content: input.length > BODY_INLINE_CHARS ? '' : input, createdAt: new Date(),
+            }]
+          : []),
+        {
+          id: messageId, sessionId: chatSessionId, role: 'assistant' as const, content: '', createdAt: new Date(),
+          taskExecution: { taskId: '', runId, status: 'processing' as const, progress: 0, steps: [] },
+        },
+      ], 'chat')
+      if (input !== undefined) void updateMessage(userMessageId, { content: input, role: 'user' })
       loadingMessageIdByModeRef.current.chat = messageId
       loadingByModeRef.current.chat = true
       setAgentLaneLoading('chat', true)
       setIsLoading(true)
       setAgentStatusThinking()
       // external audio must not be synthesized or lip-synced twice
-      void agentService.subscribeRun(notice.runId, createProgressHandler(messageId, 'chat', generation, 'external', notice.runId), 'chat')
+      void agentService.subscribeRun(runId, createProgressHandler(messageId, 'chat', generation, 'external', runId), 'chat')
         .then((response) => handleAgentResponse(messageId, response, 'chat', generation, 'external'))
         .catch((error) => {
           if (!isCurrentChatGeneration(generation, chatTurnClockRef.current.current())) return
@@ -1956,7 +1987,17 @@ export const AgentEngine: React.FC = () => {
         })
       return { messageId, generation }
     },
-  }), [createProgressHandler, handleAgentResponse, setMessages, setSessionId, t, updateMessage, updateMessageExecution])
+    [createProgressHandler, handleAgentResponse, setMessages, setSessionId, t, updateMessage, updateMessageExecution],
+  )
+
+  useEffect(() => {
+    followChatRunRef.current = followChatRun
+  }, [followChatRun])
+
+  useEffect(() => bindRealtimeChat({
+    sessionId: () => sessionIdsByModeRef.current.chat,
+    adopt: (notice) => followChatRun(notice.runId, notice.sessionId, notice.input),
+  }), [followChatRun])
 
   const historyAnswerBusy = useRef(false)
   const answerQuestion = useCallback(
