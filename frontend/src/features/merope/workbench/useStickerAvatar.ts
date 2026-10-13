@@ -36,11 +36,17 @@ export function useStickerAvatar(portraitUrl: string | null, failed: string) {
     }
   }, [busy, failed, portraitUrl])
 
+  /** An avatar the server finished on its own (begun before a reload) is taken up. */
+  const adopt = useCallback((next: string | null) => {
+    setUrl(next)
+    announceStickerChange()
+  }, [])
+
   /** A new master portrait voids the old sticker in the same write. */
   const voided = useCallback(() => {
     setUrl(null)
     announceStickerChange()
   }, [])
 
-  return { url, setUrl, busy, make, voided }
+  return { url, setUrl, busy, make, voided, adopt }
 }

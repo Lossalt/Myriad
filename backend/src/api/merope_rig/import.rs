@@ -396,7 +396,11 @@ pub(super) fn spawn_part_inventory(
     let Some(reference) = imported.analysis_reference.clone().filter(|_| !found) else {
         return;
     };
+    let Some(search) = super::parts::PartSearch::begin(outfit.clone()) else {
+        return;
+    };
     tokio::spawn(find_moving_parts(
+        search,
         db.clone(),
         imported.user_id,
         outfit,
@@ -410,6 +414,8 @@ pub(super) fn spawn_part_inventory(
 /// model never holds the import up, then saved into it as a new package,
 /// which takes over only while the imported one is still the slot's.
 pub(super) async fn find_moving_parts(
+    // Held until the search ends, so the page can tell it is running.
+    _search: super::parts::PartSearch,
     db: DatabaseConnection,
     user_id: i32,
     outfit: Option<String>,

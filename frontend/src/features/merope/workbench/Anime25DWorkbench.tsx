@@ -3,6 +3,7 @@ import type { PoseCorrection } from '../anime25drig/poseCorrections'
 import type { Anime25DPlayback } from '../anime25drig/types'
 import type { RigCharacterHandle } from '../character/RigCharacter'
 import type { AuthoredExpressionKind } from '../rig/authoredExpression'
+import type { MovingPartsSearch } from './MovingPartsPanel'
 import type { RigImportSource, RigMode } from './useRigImport'
 import { useState, useSyncExternalStore } from 'react'
 import { SettingGroup } from '../../../components/settings'
@@ -42,8 +43,8 @@ interface Props extends RigImportSource {
   correctionAssetId?: string | null
   correctionTarget?: string
   onSavePoseCorrections?: (corrections: PoseCorrection[]) => Promise<void>
-  /** Looks for the staged figure's moving parts again (MovingPartsPanel). */
-  onFindMovingParts?: () => Promise<void>
+  /** Looks for the staged figure's moving parts again, and watches a search running (MovingPartsPanel). */
+  movingParts?: MovingPartsSearch
 }
 
 type FacePanel = 'overview' | 'persona' | 'mind' | 'wardrobe' | 'motion'
@@ -66,7 +67,7 @@ export default function Anime25DWorkbench({
   correctionAssetId,
   correctionTarget,
   onSavePoseCorrections,
-  onFindMovingParts,
+  movingParts,
   ...source
 }: Props) {
   const { t } = useI18n()
@@ -177,7 +178,7 @@ export default function Anime25DWorkbench({
           correctionAssetId={correctionAssetId}
           correctionTarget={correctionTarget}
           onSavePoseCorrections={onSavePoseCorrections}
-          onFindMovingParts={onFindMovingParts}
+          movingParts={movingParts}
         />
       ) : null}
       </div>

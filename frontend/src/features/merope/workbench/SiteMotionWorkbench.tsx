@@ -22,14 +22,12 @@ import { siteMediaUrl } from '../../../utils/siteMediaUrl'
 import { isAnime25DPlayback } from '../anime25drig/types'
 import {
   decomposeSitePortraitWithSeeThrough,
-  findMovingParts,
   saveFullBodyPoseCorrections,
   saveRigPoseCorrections,
   uploadFullBodyPortrait,
   uploadOutfitPortrait,
 } from '../api'
 import { commitRigPsdAsset, preflightRigPsdAsset } from '../assets/pipeline'
-import { composeRestReference } from '../assets/restReference'
 import RigCharacter from '../character/RigCharacter'
 import { notifyFaceUpdated } from '../events/updates'
 import { useRigPreviewMotionLifecycle } from '../motion/useRigMotionLifecycle'
@@ -38,6 +36,7 @@ import { decomposeWithTurnKeyforms, resumeTurnKeyforms } from '../turnKeyformsAp
 import Anime25DWorkbench from './Anime25DWorkbench'
 import FieldHistory from './FieldHistory'
 import { FullBodyStageSwitch } from './FullBodyStageSwitch'
+import { stagedMovingPartsSearch } from './movingPartsSearch'
 import { OutfitDetail } from './OutfitDetail'
 import OutfitWardrobe from './OutfitWardrobe'
 import PersonaFieldHistory from './PersonaFieldHistory'
@@ -49,6 +48,7 @@ import { useFullBodyStage } from './useFullBodyStage'
 import { usePersonaRestore } from './usePersonaRestore'
 import { usePersonaWardrobe } from './usePersonaWardrobe'
 import { useSeeThroughToken } from './useSeeThroughToken'
+import { generationPending, useServerGeneration } from './useServerGeneration'
 import { useSiteFace } from './useSiteFace'
 import { useStickerAvatar } from './useStickerAvatar'
 import VisualHistory from './VisualHistory'
@@ -101,6 +101,8 @@ export default function SiteMotionWorkbench({
     setManagingOutfitId,
     generating,
   } = persona
+  // An avatar the server is still generating shows as being made, and is taken up when done.
+  const avatarRunning = useServerGeneration(!sticker.busy && generationPending(personaSnapshot?.avatarGeneration), persona.reload, () => sticker.adopt(persona.personaSnapshot?.avatarAssetId ?? null))
   const restore = usePersonaRestore({
     persona: personaSnapshot,
     setPersona: persona.setPersonaSnapshot,
@@ -257,16 +259,6 @@ export default function SiteMotionWorkbench({
     await reload()
   }
 
-  // The figure on stage's moving parts, looked for again in the background.
-  const findStagedMovingParts = async () => {
-    const manifest = staged ? staged.manifest : rigManifest
-    const assetId = staged ? staged.assetId : rigAssetId
-    const playback = manifest?.anime25dPlayback
-    const atlasUrl = manifest?.textures[0]?.url
-    if (!assetId || !playback || !isAnime25DPlayback(playback) || !atlasUrl) throw new Error(t.merope.rigPartsRefreshFailed)
-    await findMovingParts(assetId, await composeRestReference(playback, atlasUrl), stagedSet?.id)
-  }
-
   /** The owner uploaded a new master portrait for the worn outfit. */
   const adoptUploadedPortrait = async (url: string) => {
     reportMeropeError('')
@@ -377,7 +369,7 @@ export default function SiteMotionWorkbench({
             ]
           : []),
       ]}
-      sticker={sticker}
+      sticker={{ ...sticker, busy: sticker.busy || avatarRunning }}
       hasPortrait={Boolean(portraitUrl)}
       addressee={addressee}
       renderNameHistory={(close) => (
@@ -624,7 +616,13 @@ export default function SiteMotionWorkbench({
             ? format(t.merope.poseCorrection.targetFullBody, { name: wardrobeItemLabel(stagedSet, o.clothingStyle) })
             : format(t.merope.poseCorrection.targetBust, { name: wornLabel })}
           onSavePoseCorrections={stagedSet ? saveFullBodyCorrections : savePoseCorrections}
-          onFindMovingParts={findStagedMovingParts}
+          movingParts={stagedMovingPartsSearch(
+            staged ? staged.manifest : rigManifest,
+            staged ? staged.assetId : rigAssetId,
+            stagedSet?.id,
+            // The set or the bust now names the package the search saved.
+            async () => { await loadFace(); await reload(); notifyFaceUpdated() },
+          )}
         />
       </div>
       {portraitUrl && motionEnabled && studioHost

@@ -36,6 +36,7 @@ import {
   withCharacter,
   writeOutfit,
 } from '../persona/wardrobe'
+import { generationPending, useServerGeneration } from './useServerGeneration'
 import { reportMeropeError, structuredFromSnapshot } from './workbenchShared'
 
 interface Options {
@@ -107,6 +108,14 @@ export function usePersonaWardrobe({ face, onPortraitReplaced }: Options) {
   const reload = useCallback(async () => {
     hydrate(await agentService.getPersona())
   }, [hydrate])
+
+  // A portrait the server is still generating (begun before a reload, or in
+  // another tab) shows as generating, and is taken up when it is done.
+  const portraitRunning = useServerGeneration(
+    !generating && generationPending(personaSnapshot?.portraitGeneration),
+    reload,
+    () => { void loadFace().then(() => { onPortraitReplaced(); notifyFaceUpdated() }) },
+  )
 
   const saveVisualProfile = useCallback(
     async (patch: {
@@ -610,7 +619,7 @@ export function usePersonaWardrobe({ face, onPortraitReplaced }: Options) {
     activeFullBodyId,
     managingOutfitId,
     setManagingOutfitId,
-    generating,
+    generating: generating || portraitRunning,
     adopt,
     forget,
     reload,

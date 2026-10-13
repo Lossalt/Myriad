@@ -153,7 +153,9 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
         )
         .route(
             "/parts",
-            post(parts::find_site_rig_parts).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+            post(parts::find_site_rig_parts)
+                .get(parts::running_part_searches)
+                .layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
         .route(
             "/full-body/{outfit_id}/pose-corrections",

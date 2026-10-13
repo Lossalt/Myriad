@@ -339,139 +339,149 @@ pub async fn generate_portrait(
             Json(json!({ "error": message, "code": code })),
         ));
     }
-    let generated = match crate::services::ai_cost_ledger::with_site_ai_ledger(
-        user_id,
-        "merope",
-        "portrait",
-        image_generation::generate_image_with_background(
-            &config,
-            &prompt,
-            width,
-            height,
-            reference.as_ref(),
-            Some(image_generation::ImageBackground::Opaque),
-        ),
-    )
-    .await
-    {
-        Ok(generated) => generated,
-        Err(error) => {
-            release_portrait_generation_lease(&db, &generation_token).await;
-            return Err(portrait_generation_provider_error(error));
-        }
-    };
-    let actor = match crate::services::media::MediaActor::admin(user_id) {
-        Ok(actor) => actor,
-        Err(error) => {
-            release_portrait_generation_lease(&db, &generation_token).await;
-            return Err(internal_error(error.to_string()));
-        }
-    };
-    let persisted = match image_generation::persist_generated_with_status(
-        &db,
-        crate::services::media::MediaContext::site(
-            actor,
-            crate::services::media::MediaSource::Generated,
-        )
-        .with_producer_key(generation_token.clone()),
-        generated,
-        "portrait",
-        crate::services::media::MediaExposure::Private,
-    )
-    .await
-    {
-        Ok(persisted) => persisted,
-        Err(error) => {
-            release_portrait_generation_lease(&db, &generation_token).await;
-            return Err(bad_request(&error.to_string()));
-        }
-    };
-    let url = persisted.url.clone();
-    let portrait_generation = json!({
-        "fingerprint": contract_fingerprint,
-        "contract": generation_contract,
-        "provider": config.provider,
-        "model": config.model,
-        "referenceRole": reference_role,
-    });
-    let transaction = match db.begin().await {
-        Ok(transaction) => transaction,
-        Err(error) => {
-            release_portrait_generation_lease(&db, &generation_token).await;
-            cleanup_uncommitted_portrait(&db, &persisted).await;
-            return Err(internal_error(error));
-        }
-    };
-    let written = async {
-        let public_url = crate::services::media::normalize_local_url(
-            &transaction,
-            &url,
-            &crate::services::media::configured_origins().await,
-        )
-        .await
-        .map_err(|error| internal_error(error.to_string()))?;
-        let completed = merope::complete_portrait_generation(
-            &transaction,
-            name,
-            &visual_profile,
-            &generation_token,
-            &public_url,
-            &portrait_generation,
+    // The generation goes on to its end in its own task: a reload or a closed
+    // tab neither loses a portrait already being paid for nor leaves its lease
+    // pending with nothing behind it. The page sees `portraitGeneration.pending`
+    // until it is done.
+    let name = name.to_owned();
+    let db = db.clone();
+    tokio::spawn(async move {
+        let generated = match crate::services::ai_cost_ledger::with_site_ai_ledger(
             user_id,
+            "merope",
+            "portrait",
+            image_generation::generate_image_with_background(
+                &config,
+                &prompt,
+                width,
+                height,
+                reference.as_ref(),
+                Some(image_generation::ImageBackground::Opaque),
+            ),
         )
         .await
-        .map_err(internal_error)?;
-        if !completed {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "error": "Character visual inputs changed while the portrait was generating",
-                    "code": "character_visual_inputs_changed"
-                })),
-            ));
-        }
-        bind_generated_portrait(&transaction, user_id, &public_url, &contract_fingerprint).await?;
-        let cleared_asset = merope_rig::persist_active_asset(&transaction, None)
+        {
+            Ok(generated) => generated,
+            Err(error) => {
+                release_portrait_generation_lease(&db, &generation_token).await;
+                return Err(portrait_generation_provider_error(error));
+            }
+        };
+        let actor = match crate::services::media::MediaActor::admin(user_id) {
+            Ok(actor) => actor,
+            Err(error) => {
+                release_portrait_generation_lease(&db, &generation_token).await;
+                return Err(internal_error(error.to_string()));
+            }
+        };
+        let persisted = match image_generation::persist_generated_with_status(
+            &db,
+            crate::services::media::MediaContext::site(
+                actor,
+                crate::services::media::MediaSource::Generated,
+            )
+            .with_producer_key(generation_token.clone()),
+            generated,
+            "portrait",
+            crate::services::media::MediaExposure::Private,
+        )
+        .await
+        {
+            Ok(persisted) => persisted,
+            Err(error) => {
+                release_portrait_generation_lease(&db, &generation_token).await;
+                return Err(bad_request(&error.to_string()));
+            }
+        };
+        let url = persisted.url.clone();
+        let portrait_generation = json!({
+            "fingerprint": contract_fingerprint,
+            "contract": generation_contract,
+            "provider": config.provider,
+            "model": config.model,
+            "referenceRole": reference_role,
+        });
+        let transaction = match db.begin().await {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                release_portrait_generation_lease(&db, &generation_token).await;
+                cleanup_uncommitted_portrait(&db, &persisted).await;
+                return Err(internal_error(error));
+            }
+        };
+        let written = async {
+            let public_url = crate::services::media::normalize_local_url(
+                &transaction,
+                &url,
+                &crate::services::media::configured_origins().await,
+            )
+            .await
+            .map_err(|error| internal_error(error.to_string()))?;
+            let completed = merope::complete_portrait_generation(
+                &transaction,
+                &name,
+                &visual_profile,
+                &generation_token,
+                &public_url,
+                &portrait_generation,
+                user_id,
+            )
             .await
             .map_err(internal_error)?;
-        crate::services::media::bind_persona(
-            &transaction,
-            Some(&public_url),
-            None,
-            Some(&visual_profile),
-            &crate::services::media::configured_origins().await,
-        )
-        .await
-        .map_err(|error| internal_error(error.to_string()))?;
-        Ok((public_url, cleared_asset))
-    }
-    .await;
-    let committed = match written {
-        Ok(written) => transaction
-            .commit()
+            if !completed {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": "Character visual inputs changed while the portrait was generating",
+                        "code": "character_visual_inputs_changed"
+                    })),
+                ));
+            }
+            bind_generated_portrait(&transaction, user_id, &public_url, &contract_fingerprint).await?;
+            let cleared_asset = merope_rig::persist_active_asset(&transaction, None)
+                .await
+                .map_err(internal_error)?;
+            crate::services::media::bind_persona(
+                &transaction,
+                Some(&public_url),
+                None,
+                Some(&visual_profile),
+                &crate::services::media::configured_origins().await,
+            )
             .await
-            .map(|()| written)
-            .map_err(internal_error),
-        Err(error) => {
-            let _ = transaction.rollback().await;
-            Err(error)
+            .map_err(|error| internal_error(error.to_string()))?;
+            Ok((public_url, cleared_asset))
         }
-    };
-    let (public_url, cleared_asset) = match committed {
-        Ok(committed) => committed,
-        Err(error) => {
-            release_portrait_generation_lease(&db, &generation_token).await;
-            cleanup_uncommitted_portrait(&db, &persisted).await;
-            return Err(error);
-        }
-    };
-    merope_rig::mirror_active_asset(cleared_asset).await;
-    Ok(Json(json!({
-        "portraitUrl": public_url,
-        "portraitAssetId": public_url,
-        "characterAssetContractVersion": CharacterAssetProfile::Bust.contract().contract_version,
-        "generationFingerprint": contract_fingerprint,
-    })))
+        .await;
+        let committed = match written {
+            Ok(written) => transaction
+                .commit()
+                .await
+                .map(|()| written)
+                .map_err(internal_error),
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
+            }
+        };
+        let (public_url, cleared_asset) = match committed {
+            Ok(committed) => committed,
+            Err(error) => {
+                release_portrait_generation_lease(&db, &generation_token).await;
+                cleanup_uncommitted_portrait(&db, &persisted).await;
+                return Err(error);
+            }
+        };
+        merope_rig::mirror_active_asset(cleared_asset).await;
+        Ok(Json(json!({
+            "portraitUrl": public_url,
+            "portraitAssetId": public_url,
+            "characterAssetContractVersion": CharacterAssetProfile::Bust.contract().contract_version,
+            "generationFingerprint": contract_fingerprint,
+        })))
+    })
+    .await
+    .map_err(|error| internal_error(error.to_string()))?
 }
 
 #[cfg(test)]

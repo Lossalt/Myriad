@@ -190,6 +190,7 @@ pub async fn get_persona(
         body["persona"] = persona.persona_json.unwrap_or(Value::Null);
         body["visualProfile"] = persona.visual_profile.unwrap_or(Value::Null);
         body["portraitGeneration"] = persona.portrait_generation.unwrap_or(Value::Null);
+        body["avatarGeneration"] = persona.avatar_generation.unwrap_or(Value::Null);
         body["zone"] = json!(persona.zone);
     }
     Ok(Json(body))

@@ -1,6 +1,8 @@
 //! 补找会自己动的部件：对已有的装配包（穿着的半身，或某套全身）在后台重跑一次
 //! 部件分析，完成后另存为新包换上。用于这项分析出现之前导入的包，或上次没找成的。
 
+use std::{collections::BTreeMap, sync::Mutex, time::Instant};
+
 use axum::{
     Extension, Json,
     extract::{Multipart, Path, State},
@@ -24,6 +26,61 @@ use crate::{
     services::{agent::merope, merope_rig},
 };
 
+/// The searches running, by slot (none: the worn bust; a set's id: that
+/// full-body set), with when each began: a page opened while one runs shows it.
+static SEARCHES: Mutex<BTreeMap<Option<String>, Instant>> = Mutex::new(BTreeMap::new());
+
+/// A slot's search under way, given up when it ends, however it ends.
+pub(super) struct PartSearch(Option<String>);
+
+impl PartSearch {
+    /// The slot's search, unless one is running for it already.
+    pub(super) fn begin(outfit: Option<String>) -> Option<Self> {
+        let mut searches = SEARCHES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if searches.contains_key(&outfit) {
+            return None;
+        }
+        searches.insert(outfit.clone(), Instant::now());
+        Some(Self(outfit))
+    }
+}
+
+impl Drop for PartSearch {
+    fn drop(&mut self) {
+        SEARCHES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// The searches running now: the bust's (`outfitId` null) and any full-body set's.
+pub async fn running_part_searches(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<Json<Value>> {
+    require_merope_enabled().await?;
+    require_owner(&claims, &db).await?;
+    let searches = SEARCHES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let running: Vec<Value> = searches
+        .iter()
+        .map(|(outfit, began)| json!({ "outfitId": outfit, "seconds": began.elapsed().as_secs() }))
+        .collect();
+    Ok(Json(json!({ "searches": running })))
+}
+
+/// One search already running for the slot: this request joins it.
+fn already_running() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({ "started": false, "running": true })),
+    )
+}
+
 /// The worn bust's package: its moving parts looked for again.
 pub async fn find_site_rig_parts(
     State(db): State<DatabaseConnection>,
@@ -44,8 +101,11 @@ pub async fn find_site_rig_parts(
         .as_ref()
         .and_then(master_from_persona)
         .ok_or_else(|| not_found("Site portrait is missing"))?;
+    let Some(search) = PartSearch::begin(None) else {
+        return Ok(already_running());
+    };
     tokio::spawn(find_moving_parts(
-        db, user_id, None, previous, master, reference,
+        search, db, user_id, None, previous, master, reference,
     ));
     Ok((StatusCode::ACCEPTED, Json(json!({ "started": true }))))
 }
@@ -69,7 +129,11 @@ pub async fn find_full_body_parts(
         .as_ref()
         .and_then(|row| master_for(row, MasterSlot::FullBody(&outfit_id)))
         .ok_or_else(|| not_found("The full-body set has no picture"))?;
+    let Some(search) = PartSearch::begin(Some(outfit_id.clone())) else {
+        return Ok(already_running());
+    };
     tokio::spawn(find_moving_parts(
+        search,
         db,
         user_id,
         Some(outfit_id),

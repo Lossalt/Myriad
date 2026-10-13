@@ -3,6 +3,7 @@ import type { PoseCorrection } from '../anime25drig/poseCorrections'
 import type { Anime25DPlayback } from '../anime25drig/types'
 import type { RigCharacterHandle } from '../character/RigCharacter'
 import type { DriverSliderKey } from './motionControls'
+import type { MovingPartsSearch } from './MovingPartsPanel'
 import type { WorkbenchDriver } from './useWorkbenchDriver'
 import { useState } from 'react'
 import {
@@ -39,7 +40,7 @@ interface Props {
   correctionTarget?: string
   onSavePoseCorrections?: (corrections: PoseCorrection[]) => Promise<void>
   /** Looks for the staged figure's moving parts again. */
-  onFindMovingParts?: () => Promise<void>
+  movingParts?: MovingPartsSearch
 }
 
 /** The motion tab: expression presets, hand-set drivers, and the rig inspector. */
@@ -51,7 +52,7 @@ export function MotionPanel({
   correctionAssetId,
   correctionTarget = '',
   onSavePoseCorrections,
-  onFindMovingParts,
+  movingParts,
 }: Props) {
   const { t } = useI18n()
   const labels = t.merope
@@ -347,8 +348,8 @@ export function MotionPanel({
           onSave={onSavePoseCorrections}
         />
       ) : null}
-      {correctionPlayback && onFindMovingParts ? (
-        <MovingPartsPanel key={correctionAssetId ?? ''} playback={correctionPlayback} target={correctionTarget} onFind={onFindMovingParts} />
+      {correctionPlayback && movingParts ? (
+        <MovingPartsPanel key={correctionAssetId ?? ''} playback={correctionPlayback} target={correctionTarget} search={movingParts} />
       ) : null}
     </>
   )

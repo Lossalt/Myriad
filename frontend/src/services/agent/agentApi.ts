@@ -264,6 +264,8 @@ export interface AgentPersona {
   persona?: Record<string, unknown> | null
   visualProfile?: Record<string, unknown> | null
   portraitGeneration?: Record<string, unknown> | null
+  /** The sticker avatar's generation record; `pending` while one runs. Owner only. */
+  avatarGeneration?: Record<string, unknown> | null
   /** Her zone, an IANA name; empty is the site's own. Owner only. */
   zone?: string
   mood?: number

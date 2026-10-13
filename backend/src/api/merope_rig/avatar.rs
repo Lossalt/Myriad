@@ -152,118 +152,126 @@ pub async fn generate_sticker_avatar(
         ));
     }
 
-    let generated = match crate::services::ai_cost_ledger::with_site_ai_ledger(
-        user_id,
-        "merope",
-        "sticker-avatar",
-        image_generation::generate_image_with_references(
-            &config,
-            &prompt,
-            STICKER_AVATAR_SIZE,
-            STICKER_AVATAR_SIZE,
-            &[anchor, style],
-            Some(image_generation::ImageBackground::Transparent),
-        ),
-    )
-    .await
-    {
-        Ok(generated) => generated,
-        Err(error) => {
-            release_avatar_generation_lease(&db, &generation_token).await;
-            return Err(sticker_avatar_provider_error(error));
-        }
-    };
-    let actor = match crate::services::media::MediaActor::admin(user_id) {
-        Ok(actor) => actor,
-        Err(error) => {
-            release_avatar_generation_lease(&db, &generation_token).await;
-            return Err(internal_error(error.to_string()));
-        }
-    };
-    let persisted = match image_generation::persist_generated_with_status(
-        &db,
-        crate::services::media::MediaContext::site(
-            actor,
-            crate::services::media::MediaSource::Generated,
-        )
-        .with_producer_key(generation_token.clone()),
-        generated,
-        "avatar",
-        crate::services::media::MediaExposure::Private,
-    )
-    .await
-    {
-        Ok(persisted) => persisted,
-        Err(error) => {
-            release_avatar_generation_lease(&db, &generation_token).await;
-            return Err(bad_request(&error.to_string()));
-        }
-    };
-    let url = persisted.url.clone();
-    let avatar_generation = json!({
-        "fingerprint": contract_fingerprint,
-        "contract": contract,
-        "provider": config.provider,
-        "model": config.model,
-        "sourcePortraitAssetId": portrait_asset_id,
-    });
-    let commit = async {
-        let transaction = db.begin().await.map_err(internal_error)?;
-        let public_url = crate::services::media::normalize_local_url(
-            &transaction,
-            &url,
-            &crate::services::media::configured_origins().await,
-        )
-        .await
-        .map_err(|error| internal_error(error.to_string()))?;
-        let completed = merope::complete_avatar_generation(
-            &transaction,
-            &persona.name,
-            &stored_visual_profile,
-            &portrait_asset_id,
-            &generation_token,
-            &public_url,
-            &avatar_generation,
+    // The generation goes on to its end in its own task: a reload or a closed
+    // tab neither loses an avatar already being paid for nor leaves its lease
+    // pending with nothing behind it.
+    let db = db.clone();
+    tokio::spawn(async move {
+        let generated = match crate::services::ai_cost_ledger::with_site_ai_ledger(
             user_id,
+            "merope",
+            "sticker-avatar",
+            image_generation::generate_image_with_references(
+                &config,
+                &prompt,
+                STICKER_AVATAR_SIZE,
+                STICKER_AVATAR_SIZE,
+                &[anchor, style],
+                Some(image_generation::ImageBackground::Transparent),
+            ),
         )
         .await
-        .map_err(internal_error)?;
-        if !completed {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "error": "The master portrait changed while the avatar was generating",
-                    "code": "character_visual_inputs_changed"
-                })),
-            ));
-        }
-        crate::services::media::bind_persona(
-            &transaction,
-            Some(&portrait_asset_id),
-            Some(&public_url),
-            Some(&stored_visual_profile),
-            &crate::services::media::configured_origins().await,
+        {
+            Ok(generated) => generated,
+            Err(error) => {
+                release_avatar_generation_lease(&db, &generation_token).await;
+                return Err(sticker_avatar_provider_error(error));
+            }
+        };
+        let actor = match crate::services::media::MediaActor::admin(user_id) {
+            Ok(actor) => actor,
+            Err(error) => {
+                release_avatar_generation_lease(&db, &generation_token).await;
+                return Err(internal_error(error.to_string()));
+            }
+        };
+        let persisted = match image_generation::persist_generated_with_status(
+            &db,
+            crate::services::media::MediaContext::site(
+                actor,
+                crate::services::media::MediaSource::Generated,
+            )
+            .with_producer_key(generation_token.clone()),
+            generated,
+            "avatar",
+            crate::services::media::MediaExposure::Private,
         )
         .await
-        .map_err(|error| internal_error(error.to_string()))?;
-        transaction.commit().await.map_err(internal_error)?;
-        Ok(public_url)
-    }
-    .await;
-    let url = match commit {
-        Ok(url) => url,
-        Err(error) => {
-            release_avatar_generation_lease(&db, &generation_token).await;
-            cleanup_uncommitted_avatar(&db, &persisted).await;
-            return Err(error);
+        {
+            Ok(persisted) => persisted,
+            Err(error) => {
+                release_avatar_generation_lease(&db, &generation_token).await;
+                return Err(bad_request(&error.to_string()));
+            }
+        };
+        let url = persisted.url.clone();
+        let avatar_generation = json!({
+            "fingerprint": contract_fingerprint,
+            "contract": contract,
+            "provider": config.provider,
+            "model": config.model,
+            "sourcePortraitAssetId": portrait_asset_id,
+        });
+        let commit = async {
+            let transaction = db.begin().await.map_err(internal_error)?;
+            let public_url = crate::services::media::normalize_local_url(
+                &transaction,
+                &url,
+                &crate::services::media::configured_origins().await,
+            )
+            .await
+            .map_err(|error| internal_error(error.to_string()))?;
+            let completed = merope::complete_avatar_generation(
+                &transaction,
+                &persona.name,
+                &stored_visual_profile,
+                &portrait_asset_id,
+                &generation_token,
+                &public_url,
+                &avatar_generation,
+                user_id,
+            )
+            .await
+            .map_err(internal_error)?;
+            if !completed {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": "The master portrait changed while the avatar was generating",
+                        "code": "character_visual_inputs_changed"
+                    })),
+                ));
+            }
+            crate::services::media::bind_persona(
+                &transaction,
+                Some(&portrait_asset_id),
+                Some(&public_url),
+                Some(&stored_visual_profile),
+                &crate::services::media::configured_origins().await,
+            )
+            .await
+            .map_err(|error| internal_error(error.to_string()))?;
+            transaction.commit().await.map_err(internal_error)?;
+            Ok(public_url)
         }
-    };
-    Ok(Json(json!({
-        "avatarUrl": url,
-        "avatarAssetId": url,
-        "stickerAvatarContractVersion": STICKER_AVATAR_CONTRACT_VERSION,
-        "generationFingerprint": contract_fingerprint,
-    })))
+        .await;
+        let url = match commit {
+            Ok(url) => url,
+            Err(error) => {
+                release_avatar_generation_lease(&db, &generation_token).await;
+                cleanup_uncommitted_avatar(&db, &persisted).await;
+                return Err(error);
+            }
+        };
+        Ok(Json(json!({
+            "avatarUrl": url,
+            "avatarAssetId": url,
+            "stickerAvatarContractVersion": STICKER_AVATAR_CONTRACT_VERSION,
+            "generationFingerprint": contract_fingerprint,
+        })))
+    })
+    .await
+    .map_err(|error| internal_error(error.to_string()))?
 }
 
 fn portrait_required_for_avatar() -> ApiError {
