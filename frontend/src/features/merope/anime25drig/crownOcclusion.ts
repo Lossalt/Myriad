@@ -35,16 +35,19 @@ export function deriveCrownOcclusionBand(
   }
   if (count < 48 || coveredFront / count < 0.9 || coveredBack / count < 0.95) return null
   // Average coverage can hide a narrow, intentional part. Stop before an
-  // opening inside the nominal solid scalp, while retaining the cap above it.
+  // opening anywhere the cap would reach, across the whole face, while
+  // retaining the cap above it: the forehead the fringe shows at rest (a
+  // decomposition that drew the hairline, gaps between locks at the sides)
+  // is the portrait's, and the replayed hair would cover it in a band.
   // Two rows of contiguous exposed face reject isolated alpha pinholes.
   let start = 0.65; let end = 0.85
   let previousOpening: number | null = null
-  for (let row = 0; row < 16; row++) {
-    const progress = 0.2 + row / 15 * 0.45
+  for (let row = 0; row < 22; row++) {
+    const progress = 0.2 + row * 0.03
     const y = face.y + span * progress
     let run = 0; let opening = false
-    for (let column = 0; column < 24; column++) {
-      const x = face.x + face.w * (0.3 + (column + 0.5) / 24 * 0.4)
+    for (let column = 0; column < 48; column++) {
+      const x = face.x + face.w * (0.05 + (column + 0.5) / 48 * 0.9)
       run = alphaAt(face, facePixels, x, y) >= 192 && alphaAt(front, frontPixels, x, y) < 64 ? run + 1 : 0
       if (run >= 3) opening = true
     }

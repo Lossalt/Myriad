@@ -54,13 +54,28 @@ test('a narrow early forehead part limits the band even when average fringe cove
   assert.ok(band.start < band.end)
 })
 
-test('a normal lower fringe opening keeps the existing cap band', () => {
+test('a lower fringe opening ends the cap above it: the forehead it shows at rest stays', () => {
   const solid = raster()
   const fringe = raster()
   for (let y = 40; y < 60; y++) {
     for (let x = 60; x < 69; x++) fringe.pixels[(y * 100 + x) * 4 + 3] = 0
   }
-  assert.deepEqual(deriveCrownOcclusionBand(face, front, back, 60, solid, fringe, solid), { start: 0.39, end: 0.51 })
+  const band = deriveCrownOcclusionBand(face, front, back, 60, solid, fringe, solid)
+  assert.ok(band)
+  assert.ok(band.end <= 0.4, `the cap stops above the opening at 0.4: ${band.end}`)
+  assert.ok(band.start < band.end)
+})
+
+test('gaps between locks at the sides of the forehead limit the cap too', () => {
+  const solid = raster()
+  const fringe = raster()
+  for (let y = 30; y < 60; y++) {
+    for (let x = 10; x < 22; x++) fringe.pixels[(y * 100 + x) * 4 + 3] = 0
+    for (let x = 78; x < 90; x++) fringe.pixels[(y * 100 + x) * 4 + 3] = 0
+  }
+  const band = deriveCrownOcclusionBand(face, front, back, 60, solid, fringe, solid)
+  assert.ok(band, 'the middle is covered: keep the cap above the gaps')
+  assert.ok(band.end <= 0.3, `do not repaint the forehead the side gaps show: ${band.end}`)
 })
 
 test('front hair cut into locks covers the scalp together', () => {
