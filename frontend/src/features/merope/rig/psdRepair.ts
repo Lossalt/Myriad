@@ -2,6 +2,7 @@ import type { Anime25DSourceReference, RasterLayer } from './anime25dImportTypes
 import type { Anime25DPsdReconciliation } from './psdReconciliation'
 import type { RecoveredPiece } from './psdRepairLayers'
 import { analyzeAnime25DPsd, reportAnime25DPsdAnalysis } from './psdReconciliation'
+import { closeGarmentGaps } from './psdRepairGarment'
 import { hairHolder, hasExpressionVariants, mergeByGroup, mountFor, overlayLayer, revealableBelow, withPixels } from './psdRepairLayers'
 import { addAntialiasedRim, alphaAt, closeMask, components, fillSmallHoles, meanCoveredDistance } from './psdRepairMasks'
 
@@ -32,6 +33,12 @@ const RECOVER_MAX_SHARE = 0.02
  * as a bow with its long ribbons (7.2% of one figure) and still ride the head.
  */
 const RECOVER_MAX_HEAD_SHARE = 0.1
+/**
+ * A decomposition can drop the lower garment whole: no layer drew the hakama
+ * under a kimono (about a quarter of the compared area on that bust). Under
+ * the top garment's middle, mostly over nothing drawn, it is that garment.
+ */
+const RECOVER_MAX_GARMENT_SHARE = 0.5
 
 /**
  * Repairs what reconciliation can prove from the source illustration:
@@ -39,7 +46,8 @@ const RECOVER_MAX_HEAD_SHARE = 0.1
  *   when that layer matches as a whole rather than by coincidence.
  * - `missing` / `mismatch`, and weak `buried`: lift the illustration's own
  *   pixels into a rigid `objects` layer per body group, drawn above whatever
- *   it overrides. Garment-sized areas are only reported.
+ *   it overrides. Garment-sized areas are only reported, except a lower
+ *   garment no layer drew at all, which becomes the `bottomwear`.
  * Layers with expression variants are never edited or covered, so blinking and
  * speech stay live; such regions are only reported. Hidden surfaces cannot be
  * recovered because the illustration never shows them.
@@ -204,26 +212,41 @@ export function repairAnime25DPsd(
     )
     const maxArea = Math.round(before.compared * RECOVER_MAX_SHARE)
     const maxHeadArea = Math.round(before.compared * RECOVER_MAX_HEAD_SHARE)
+    const maxGarmentArea = Math.round(before.compared * RECOVER_MAX_GARMENT_SHARE)
     const chin = Math.max(
       -1,
       ...visible
         .filter((layer) => layer.role === 'face')
         .map((layer) => layer.top + layer.height),
     )
+    const lowerGarmentBelow = visible.some((layer) => layer.role === 'bottomwear')
+      ? null
+      : topGarmentMiddle(visible)
     for (const members of components(mask, bounds.width, bounds.height)) {
       if (!members.some((target) => seeds[target])) continue
       const shown = members.filter((target) => {
         const { x, y } = at(target)
         return reference.data[(y * reference.width + x) * 4 + 3] >= 250
       })
-      if (shown.length < before.minArea || shown.length > maxHeadArea) continue
+      if (shown.length < before.minArea || shown.length > maxGarmentArea) continue
       let mount = mountFor(before, shown, visible)
       if (shown.length > maxArea) {
-        // Ribbons hanging over the garment still hang from the hair.
         const middle =
           shown.reduce((sum, target) => sum + at(target).y, 0) / shown.length
-        if (middle >= chin) continue
-        if (mount.group !== 'head') {
+        if (middle >= chin) {
+          const overNothing = shown.filter((target) => before.top[target] < 0).length
+          if (
+            lowerGarmentBelow === null ||
+            middle < lowerGarmentBelow ||
+            overNothing * 2 < shown.length
+          ) {
+            continue
+          }
+          mount = { group: 'body', neighbour: visible.findLastIndex((layer) => layer.role === 'topwear'), owner: -1, role: 'bottomwear' }
+        } else if (shown.length > maxHeadArea) {
+          continue
+        } else if (mount.group !== 'head') {
+          // Ribbons hanging over the garment still hang from the hair.
           const holder = hairHolder(before, shown, visible)
           if (holder < 0) continue
           mount = { group: 'head', neighbour: holder, owner: -1, role: 'headwear' }
@@ -254,9 +277,14 @@ export function repairAnime25DPsd(
           reference.data[offset + 2],
           255,
         ])
-        above = Math.max(above, before.top[target])
+        // A garment goes over the body it covers, under the hair that swings over it.
+        const top = before.top[target]
+        if (mount.role !== 'bottomwear' || (top >= 0 && visible[top].group !== 'head')) {
+          above = Math.max(above, top)
+        }
       }
       addAntialiasedRim(before, shown, reference, pixels)
+      if (mount.role === 'bottomwear') closeGarmentGaps(before, shown, above, reference, pixels)
       pieces.push({ pixels, above, ...mount })
     }
   }
@@ -327,4 +355,13 @@ export function repairAnime25DPsd(
         )
       : null,
   }
+}
+
+/** Halfway down the top garment, or null when there is none to measure from. */
+function topGarmentMiddle(visible: readonly RasterLayer[]): number | null {
+  const tops = visible.filter((layer) => layer.role === 'topwear')
+  if (tops.length === 0) return null
+  const top = Math.min(...tops.map((layer) => layer.top))
+  const bottom = Math.max(...tops.map((layer) => layer.top + layer.height))
+  return (top + bottom) / 2
 }

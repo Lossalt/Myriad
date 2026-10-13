@@ -377,6 +377,60 @@ test('garment-sized disagreement is reported, not pasted over', () => {
   assert.equal(result.reconciliation?.regions[0]?.kind, 'mismatch')
 })
 
+test('a lower garment no layer drew is lifted as the bottomwear, over the top and under the hair', () => {
+  const top: Box = [40, 100, 120, 50]
+  const strand: Box = [90, 150, 10, 50]
+  const lock: Box = [110, 150, 10, 25]
+  const layers = [
+    layer('back-hair', strand, HAIR, 'head'),
+    layer('face', FACE, SKIN, 'head'),
+    layer('topwear', top, CLOTH),
+    layer('front-hair', lock, HAIR, 'head'),
+  ]
+  const result = repairAnime25DPsd(
+    layers,
+    allVisible,
+    reference((fill) => {
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      // Over the top's hem and below it, mostly where nothing was drawn.
+      fill([60, 140, 80, 40], GEM)
+      fill(strand, HAIR)
+      fill(lock, HAIR)
+    }),
+    2,
+  )
+  const skirt = result.layers.find((candidate) => candidate.role === 'bottomwear')
+  assert.ok(skirt, 'the garment is lifted')
+  assert.equal(skirt.group, 'body')
+  const names = result.layers.map((candidate) => candidate.role)
+  assert.deepEqual(names, ['back-hair', 'face', 'topwear', 'bottomwear', 'front-hair'])
+  assert.deepEqual(pixel(skirt, 70, 145), [...GEM, 255], 'over the hem')
+  assert.deepEqual(pixel(skirt, 95, 170), [...HAIR, 255], 'the strand under it is drawn on it')
+  assert.deepEqual(pixel(skirt, 115, 165), [...GEM, 255], 'under the lock it is filled')
+})
+
+test('a garment-sized gap is not taken for a lower garment the PSD already has', () => {
+  const top: Box = [40, 100, 120, 50]
+  const layers = [
+    layer('face', FACE, SKIN, 'head'),
+    layer('topwear', top, CLOTH),
+    layer('bottomwear', [60, 150, 80, 10], GEM),
+  ]
+  const result = repairAnime25DPsd(
+    layers,
+    allVisible,
+    reference((fill) => {
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      fill([60, 150, 80, 40], GEM)
+    }),
+    2,
+  )
+  assert.deepEqual(result.layers, layers)
+  assert.equal(result.reconciliation?.regions[0]?.kind, 'missing')
+})
+
 test('a PSD split from another illustration is left untouched', () => {
   const layers = [
     layer('face', FACE, SKIN, 'head'),

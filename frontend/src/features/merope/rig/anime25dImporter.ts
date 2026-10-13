@@ -154,6 +154,11 @@ export async function prepareAnime25DRigPsd(
       visibleInAnalysisReference,
       sourceReference,
     )
+    // A lower garment lifted from the portrait lands above the top it covers;
+    // the sleeves hanging over it go back in front where the portrait has them.
+    if (profile !== 'fullBody' && layers.some((layer) => layer.role === 'bottomwear' && layer.synthetic)) {
+      layers = stackArmsByReference(layers, sourceReference)
+    }
     reconciliation = repair.reconciliation
     layers.forEach((layer, index) => {
       layer.order = index
