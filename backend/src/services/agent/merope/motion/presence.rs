@@ -7,9 +7,9 @@ use myriad_merope::RigStateSummary;
 use serde_json::{Map, Value, json};
 
 use super::MotionContext;
-use super::control::STANDING_LOOP_MS;
+use super::control::{STANDING_LOOP_MS, activity_seed, next_seed};
 use super::offered::{offered_body_controls, offered_score_moves};
-use super::questions::{SURE, feeling_pose, tilt_tier};
+use super::questions::{feeling_pose, tilt_tier};
 
 /// How what she is doing on her own shows on her (standing acting).
 pub(super) const WAYS: &[(&str, &str)] = &[
@@ -47,25 +47,13 @@ fn plan_from_answers(
     context: &MotionContext,
     state: Option<&RigStateSummary>,
 ) -> Value {
-    let sure = |key: &str| -> Option<&str> {
-        let answer = &answers[key];
-        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
-            .then(|| answer["choice"].as_str())
-            .flatten()
-    };
+    let sure = |key: &str| super::control::sure(answers, key);
     let controls = offered_body_controls(state);
     let moves = offered_score_moves(state);
     // Uneven, but the same for the same activity: one direction serves everyone.
-    let mut seed = context.activity.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ b as u32).wrapping_mul(0x0100_0193)
-    });
+    let mut seed = activity_seed(&context.activity);
     let side = if seed % 2 == 0 { "" } else { "-" };
-    let mut jitter = |spread: u64| -> u64 {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        (seed as u64) % (spread * 2 + 1)
-    };
+    let mut jitter = |spread: u64| -> u64 { u64::from(next_seed(&mut seed)) % (spread * 2 + 1) };
     let other = if side.is_empty() { "-" } else { "" };
     // A tier toward her side of the look this time.
     let flip = |tier: &str| -> String {

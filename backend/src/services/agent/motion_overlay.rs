@@ -1,4 +1,4 @@
-// Motion overlay for Agent turns: local floor, Lite refinement, attach to result.
+// Motion overlay for Agent turns: local floor, the director's refinement, attach to result.
 
 use super::types::*;
 

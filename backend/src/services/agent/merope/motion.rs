@@ -41,10 +41,9 @@ const MOTION_TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// a chat model may take its time over every control (5–12 s measured).
 const STANDING_TIMEOUT: Duration = Duration::from_secs(28);
 const STANDING_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
-/// A standing score's period: long enough not to read as a loop, short enough to come round.
-pub(super) const STANDING_LOOP_MS: u32 = 20_000;
-pub(super) const STANDING_MIN_LOOP_MS: u32 = 6_000;
-pub(super) const STANDING_MAX_LOOP_MS: u32 = 60_000;
+/// A standing score's period (control::STANDING_LOOP_MS): long enough not
+/// to read as a loop, short enough to come round.
+pub(super) const STANDING_LOOP_MS: u32 = control::STANDING_LOOP_MS as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -255,13 +254,7 @@ async fn direct_motion_inner(
                             .map(|state| state.capabilities.as_slice()),
                     );
                     if context.phase == MotionPhase::Presence && !score.is_empty() {
-                        loop_ms = Some(
-                            value["loopMs"]
-                                .as_u64()
-                                .unwrap_or(STANDING_LOOP_MS as u64)
-                                .clamp(STANDING_MIN_LOOP_MS as u64, STANDING_MAX_LOOP_MS as u64)
-                                as u32,
-                        );
+                        loop_ms = Some(STANDING_LOOP_MS);
                     }
                 }
                 Some(parsed)
@@ -531,7 +524,6 @@ fn strip_motion_json(raw: &str) -> &str {
         .trim()
 }
 
-#[cfg(test)]
 /// A candidate judgment model tried on the director's questions (live acceptance).
 #[cfg(test)]
 pub(super) mod live_probe {

@@ -1,7 +1,7 @@
 //! Her acting judged by typed questions about the moment, each answered with
 //! how sure the judgment model is: a decisions model (TypeSafe Jev) on its
-//! own endpoint, a chat model as structured output. The answers become the
-//! same plan the chat director writes, so everything after it (grounding,
+//! own endpoint, a chat model as structured output. Either way the answers
+//! become one performance plan, so everything after it (grounding,
 //! capability filter, playback) is shared.
 //!
 //! Measured on the motion cases (10-12, a bust, two rounds): Jev about 0.6–1.2 s
@@ -88,13 +88,7 @@ pub(in crate::services::agent) fn decisions_url(base_url: &str) -> Option<String
 
 /// What is asked about this moment, from what this face can do.
 pub(super) fn questions(context: &MotionContext, state: Option<&RigStateSummary>) -> Value {
-    let criteria = |pairs: &[(&str, &str)]| -> Value {
-        pairs
-            .iter()
-            .map(|(name, means)| ((*name).to_owned(), json!(means)))
-            .collect::<Map<_, _>>()
-            .into()
-    };
+    let criteria = super::control::criteria;
     let mut questions = Map::new();
     questions.insert(
         "feeling".into(),
@@ -222,14 +216,36 @@ pub(super) fn state(context: &MotionContext, persona: Option<&str>) -> Value {
             "she is": context.activity,
             "she says, unprompted": says.unwrap_or("(not yet; she is about to speak)"),
             "her mood": context.mood.band_after,
+            "how she moves": way_of_moving(&context.motion_style),
         });
     }
-    json!({
+    let mut state = json!({
         "she": persona.unwrap_or("a lively, warm companion"),
         "they said": context.user_text,
         "she replies": says.unwrap_or("(not yet; she is about to answer)"),
         "her mood": context.mood.band_after,
-    })
+        "how she moves": way_of_moving(&context.motion_style),
+    });
+    // Her reply goes on from what she just said and acted: the acting goes on from it too.
+    if !context.previous_phrases.is_empty() {
+        let said: Vec<String> = context
+            .previous_phrases
+            .iter()
+            .map(|phrase| format!("「{}」 ({})", phrase.text, phrase.intent))
+            .collect();
+        state["she has just said, and acted"] = json!(said.join(" "));
+    }
+    state
+}
+
+/// Her way of moving this round (her persona's temperament and her mood,
+/// round_motion_style), in words the director weighs her answers by.
+pub(super) fn way_of_moving(motion_style: &str) -> &'static str {
+    match motion_style {
+        "restrained" => "reserved: small, held-in movements",
+        "open" => "open: free, ample movements",
+        _ => "ordinary, natural movements",
+    }
 }
 
 /// The reply's clauses a beat may land on, each its own first words.
@@ -355,12 +371,7 @@ pub(super) fn plan_from_answers(
     context: &MotionContext,
     state: Option<&RigStateSummary>,
 ) -> Value {
-    let sure = |key: &str| -> Option<&str> {
-        let answer = &answers[key];
-        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
-            .then(|| answer["choice"].as_str())
-            .flatten()
-    };
+    let sure = |key: &str| super::control::sure(answers, key);
     let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
     let feeling = if own {
         sure("feeling").unwrap_or("calm")
@@ -1075,6 +1086,26 @@ mod tests {
         assert!(
             asked_for_question(&moment, None).is_none(),
             "no one asked her for a face"
+        );
+    }
+
+    #[test]
+    fn the_director_hears_how_she_moves_and_what_she_just_said() {
+        let mut moment = context("其实可以先把原因说清楚。你觉得呢？");
+        moment.motion_style = "restrained".into();
+        moment.previous_phrases = vec![myriad_merope::SpeechPhrase {
+            text: "也许可以试试。".into(),
+            intent: "hesitate".into(),
+        }];
+        let asked = state(&moment, None);
+        assert!(asked["how she moves"].as_str().unwrap().contains("held-in"));
+        let said = asked["she has just said, and acted"].as_str().unwrap();
+        assert!(said.contains("也许可以试试") && said.contains("hesitate"));
+        moment.previous_phrases.clear();
+        assert!(
+            state(&moment, None)
+                .get("she has just said, and acted")
+                .is_none()
         );
     }
 }

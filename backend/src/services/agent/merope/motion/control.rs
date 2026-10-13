@@ -39,7 +39,7 @@ const ENERGY: &[(&str, &str)] = &[
     ("high", "lively, big movements"),
 ];
 
-fn criteria(pairs: &[(&str, &str)]) -> Value {
+pub(super) fn criteria(pairs: &[(&str, &str)]) -> Value {
     pairs
         .iter()
         .map(|(name, means)| ((*name).to_owned(), json!(means)))
@@ -280,12 +280,7 @@ pub(super) fn control_plan(
     context: &MotionContext,
     state: Option<&RigStateSummary>,
 ) -> Value {
-    let sure = |key: &str| -> Option<&str> {
-        let answer = &answers[key];
-        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
-            .then(|| answer["choice"].as_str())
-            .flatten()
-    };
+    let sure = |key: &str| sure(answers, key);
     let own = answers["own"]["noul"].as_f64().unwrap_or(1.0) >= OWN;
     let mut targets = answered_targets(answers, state, own);
     let face = lay_face(&mut targets, answers, state, own);
@@ -344,18 +339,27 @@ const STANDING_MOMENTS: u64 = 6;
 /// When in the loop each moment falls: uneven, so the repeat does not show,
 /// and the same for the same activity, so everyone watching sees one.
 pub(super) fn standing_moments(activity: &str) -> Vec<u64> {
-    let mut seed = activity.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ b as u32).wrapping_mul(0x0100_0193)
-    });
+    let mut seed = activity_seed(activity);
     let step = STANDING_LOOP_MS / STANDING_MOMENTS;
     (0..STANDING_MOMENTS)
-        .map(|index| {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            index * step + u64::from(seed) % (step * 2 / 3)
-        })
+        .map(|index| index * step + u64::from(next_seed(&mut seed)) % (step * 2 / 3))
         .collect()
+}
+
+/// A seed from what she is doing: the same activity, the same unevenness, so
+/// one rhythm serves everyone watching.
+pub(super) fn activity_seed(activity: &str) -> u32 {
+    activity.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ b as u32).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// The next of a seed's run of uneven numbers (xorshift).
+pub(super) fn next_seed(seed: &mut u32) -> u32 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 17;
+    *seed ^= *seed << 5;
+    *seed
 }
 
 /// What a decisions model is asked about her standing acting: her bearing
@@ -523,6 +527,7 @@ pub(super) fn standing_state(context: &MotionContext, persona: Option<&str>) -> 
         "she": persona.unwrap_or("a lively, warm companion"),
         "nobody is talking with her; she is": context.activity,
         "her mood": context.mood.band_after,
+        "how she moves": super::questions::way_of_moving(&context.motion_style),
     })
 }
 
@@ -533,12 +538,7 @@ pub(super) fn standing_plan(
     context: &MotionContext,
     state: Option<&RigStateSummary>,
 ) -> Value {
-    let sure = |key: &str| -> Option<&str> {
-        let answer = &answers[key];
-        (answer["confidence"].as_f64().unwrap_or(0.0) >= SURE)
-            .then(|| answer["choice"].as_str())
-            .flatten()
-    };
+    let sure = |key: &str| sure(answers, key);
     let mut targets = answered_targets(answers, state, true);
     let face = lay_face(&mut targets, answers, state, true);
     // How she holds her head over the stretch, unless a control said already.

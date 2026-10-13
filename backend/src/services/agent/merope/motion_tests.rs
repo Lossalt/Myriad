@@ -311,7 +311,6 @@ fn a_score_alone_is_a_performance_and_its_moves_follow_the_body() {
 fn standing_acting_is_directed_on_time_and_loops() {
     assert_eq!(MotionPhase::Presence.as_str(), "presence");
     assert_eq!(MotionPhase::Presence.activity(), "idle");
-    assert!(STANDING_MIN_LOOP_MS <= STANDING_LOOP_MS && STANDING_LOOP_MS <= STANDING_MAX_LOOP_MS);
 }
 
 #[test]
