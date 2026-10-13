@@ -49,6 +49,15 @@ export interface RigImportSource {
     fromArchive?: TurnArchiveUse,
     parts?: EnhanceParts,
   ) => Promise<File>
+  /**
+   * The split the server is already running for this portrait (the page was
+   * reloaded, or opened in another tab), picked up: its file once done, or
+   * null when none runs.
+   */
+  onResumeRigPsd?: (
+    onStatus: (status: TurnKeyformsStatus) => void,
+    signal: AbortSignal,
+  ) => Promise<File | null>
   /** Splits the portrait once without keys: the base the bust's redrawn expressions go on when its turn is not keyed. */
   onDecomposePlainPsd?: (
     signal: AbortSignal,
@@ -82,6 +91,7 @@ export function useRigImport({
   seeThroughTokenConfigured,
   onSaveSeeThroughToken,
   onDecomposeRigPsd,
+  onResumeRigPsd,
   onDecomposePlainPsd,
   bodyKeysOffered = false,
   onPreflightRigPsd,
@@ -234,6 +244,80 @@ export function useRigImport({
     }
   }
 
+  /** Preflights what a split made, with the redrawn expressions when they were chosen. */
+  const preflightSplit = async (file: File, expressions: boolean, controller: AbortController) => {
+    setDecomposeStatus(null)
+    controller.signal.throwIfAborted()
+    lastRigPsdRef.current = file
+    lastWithExpressionsRef.current = expressions
+    const imported = await onPreflightRigPsd(file,
+      (event) => {
+        if (!controller.signal.aborted) recordStage(event)
+      },
+      controller.signal,
+      { aiExpressions: expressions },
+    )
+    controller.signal.throwIfAborted()
+    setPreflight(imported)
+    setResult({
+      partCount: imported.partCount,
+      score: imported.report.score,
+      activated: false,
+    })
+  }
+
+  const failSplit = (reason: unknown) => {
+    failRigImport(
+      userFacingError(
+        generationFailureMessage(
+          reason,
+          labels.motionSeeThroughUpstream,
+          labels.motionSeeThroughTimeout,
+          seeThroughErrors,
+        ),
+        labels.motionSeeThroughUpstream,
+      ),
+    )
+  }
+
+  // A split the server is still running for this portrait shows its progress
+  // again and is preflighted when done, as if it had been started here; a
+  // resumed split never redraws expressions, it only uses ones already made.
+  useEffect(() => {
+    if (!onResumeRigPsd || !sourceMasterAssetId) return
+    const controller = new AbortController()
+    let picked = false
+    const pick = () => {
+      if (picked || controller.signal.aborted) return
+      picked = true
+      importAbortRef.current = controller
+      setMode('enhanced')
+      setOperation('decompose')
+    }
+    void (async () => {
+      try {
+        const file = await onResumeRigPsd((status) => {
+          if (controller.signal.aborted) return
+          pick()
+          setDecomposeStatus(status)
+        }, controller.signal)
+        if (!file || controller.signal.aborted) return
+        pick()
+        await preflightSplit(file, expressionsOffered && enhanceExpressions && aiExpressionsReady, controller)
+      } catch (reason) {
+        if (controller.signal.aborted || !picked) return
+        failSplit(reason)
+      } finally {
+        if (picked && importAbortRef.current === controller && !controller.signal.aborted) {
+          importAbortRef.current = null
+          setOperation(null)
+        }
+      }
+    })()
+    // Asked once per portrait: the callbacks are new each render.
+    return () => controller.abort()
+  }, [sourceGenerationFingerprint, sourceMasterAssetId])
+
   /**
    * Splits the portrait and preflights it, enhanced: fits the keys chosen (or
    * refits a kept job) and redraws the expressions as chosen, the two at
@@ -273,37 +357,10 @@ export function useRigImport({
         ? onGenerateAiExpressions()
         : Promise.resolve()
       const [file] = await Promise.all([split, redraw])
-      setDecomposeStatus(null)
-      controller.signal.throwIfAborted()
-      lastRigPsdRef.current = file
-      lastWithExpressionsRef.current = expressions
-      const imported = await onPreflightRigPsd(file,
-        (event) => {
-          if (!controller.signal.aborted) recordStage(event)
-        },
-        controller.signal,
-        { aiExpressions: expressions },
-      )
-      controller.signal.throwIfAborted()
-      setPreflight(imported)
-      setResult({
-        partCount: imported.partCount,
-        score: imported.report.score,
-        activated: false,
-      })
+      await preflightSplit(file, expressions, controller)
     } catch (reason) {
       if (controller.signal.aborted) return
-      failRigImport(
-        userFacingError(
-          generationFailureMessage(
-            reason,
-            labels.motionSeeThroughUpstream,
-            labels.motionSeeThroughTimeout,
-            seeThroughErrors,
-          ),
-          labels.motionSeeThroughUpstream,
-        ),
-      )
+      failSplit(reason)
     } finally {
       if (importAbortRef.current === controller && !controller.signal.aborted) {
         importAbortRef.current = null

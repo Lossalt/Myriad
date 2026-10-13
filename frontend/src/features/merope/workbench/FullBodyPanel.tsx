@@ -16,7 +16,7 @@ import {
   uploadFullBodyPortrait,
 } from '../api'
 import { commitFullBodyPsdAsset, preflightFullBodyPsdAsset } from '../assets/pipeline'
-import { decomposeWithTurnKeyforms } from '../turnKeyformsApi'
+import { decomposeWithTurnKeyforms, resumeTurnKeyforms } from '../turnKeyformsApi'
 import { FaceTabs } from './FaceTabs'
 import { RigImportPanel, RigModeTags } from './RigImportPanel'
 import { activeRigMode } from './rigMode'
@@ -90,6 +90,9 @@ export function FullBodyPanel({
         { sourceMasterAssetId: portrait ?? '', sourceGenerationFingerprint: fingerprint },
         { outfitId, fromArchive, parts, onStatus, signal },
       ),
+    // The set's split the server is still running, picked up after a reload.
+    onResumeRigPsd: (onStatus, signal) =>
+      resumeTurnKeyforms({ sourceMasterAssetId: portrait ?? '', sourceGenerationFingerprint: fingerprint }, { outfitId, onStatus, signal }),
     bodyKeysOffered: true,
     onPreflightRigPsd: (
       file: File,

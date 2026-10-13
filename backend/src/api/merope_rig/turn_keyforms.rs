@@ -1330,7 +1330,26 @@ pub async fn get_turn_keyforms(
         .as_ref()
         .filter(|job| job.id == id)
         .ok_or_else(missing_job)?;
-    Ok(Json(json!({
+    Ok(Json(job_status(job)))
+}
+
+/// The job still running, if any (there is one slot): a page opened or
+/// reloaded while it runs picks its progress up again.
+pub async fn running_turn_keyforms(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<Json<Value>> {
+    require_merope_enabled().await?;
+    require_owner(&claims, &db).await?;
+    let job = JOB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let running = job
+        .as_ref()
+        .filter(|job| !matches!(job.stage, Stage::Done | Stage::Failed));
+    Ok(Json(json!({ "job": running.map(job_status) })))
+}
+
+fn job_status(job: &Job) -> Value {
+    json!({
         "jobId": job.id,
         "outfitId": job.outfit_id,
         "sourceMasterAssetId": job.master_asset_id,
@@ -1347,7 +1366,7 @@ pub async fn get_turn_keyforms(
         "seconds": job.started.elapsed().as_secs(),
         "error": job.error,
         "archiveId": job.archive_id,
-    })))
+    })
 }
 
 pub async fn get_turn_keyforms_psd(

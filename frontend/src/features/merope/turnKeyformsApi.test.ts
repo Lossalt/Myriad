@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, it, mock } from 'node:test'
 import { ApiError, apiService } from '../../services/api'
 import { turnKeyformsFor } from './rig/turnKeyformImport'
-import { decomposeWithTurnKeyforms } from './turnKeyformsApi'
+import { decomposeWithTurnKeyforms, resumeTurnKeyforms } from './turnKeyformsApi'
 
 afterEach(() => mock.restoreAll())
 
@@ -52,4 +52,42 @@ it('a refusal is not retried', async () => {
     if (path.endsWith('job1')) throw new ApiError('Forbidden', 403)
     return { stage: 'done' }
   }))
+})
+
+it('a reloaded page picks up the job running for its portrait, without starting another', async () => {
+  const running = { jobId: 'run1', stage: 'decomposing', done: 2, total: 5, seconds: 700, sourceMasterAssetId: '/media/assets/a/b.png', outfitId: null }
+  mock.timers.enable({ apis: ['setTimeout'] })
+  const post = mock.method(apiService, 'post', async () => ({ jobId: 'fresh' }))
+  const polled: string[] = []
+  mock.method(apiService, 'get', async (path: string) => {
+    if (path.endsWith('/see-through/turn-keyforms')) return { job: running }
+    polled.push(path)
+    if (path.endsWith('/psd')) return new Blob([new Uint8Array([1])])
+    if (path.endsWith('/keyforms')) return keys
+    return { stage: 'done', done: 5, total: 5 }
+  })
+  const seen: string[] = []
+  const pending = resumeTurnKeyforms({ sourceMasterAssetId: '/media/assets/a/b.png' }, { onStatus: (status) => seen.push(status.stage) })
+  const state = { settled: false }
+  void pending.finally(() => { state.settled = true }).catch(() => {})
+  while (!state.settled) {
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(5000)
+  }
+  mock.timers.reset()
+  assert.ok(await pending)
+  assert.equal(post.mock.callCount(), 0, 'nothing new started')
+  assert.ok(polled[0].endsWith('/turn-keyforms/run1'))
+  assert.equal(seen[0], 'decomposing', 'its progress shows at once')
+})
+
+it('a job for another portrait or another set is not picked up', async () => {
+  const job = { jobId: 'run1', stage: 'decomposing', done: 2, total: 5, seconds: 700, sourceMasterAssetId: '/media/assets/a/b.png', outfitId: 'w-1' }
+  mock.method(apiService, 'get', async () => ({ job }))
+  const post = mock.method(apiService, 'post', async () => ({ jobId: 'fresh' }))
+  assert.equal(await resumeTurnKeyforms({ sourceMasterAssetId: '/media/assets/a/b.png' }), null, 'the bust is not the full-body set')
+  assert.equal(await resumeTurnKeyforms({ sourceMasterAssetId: '/media/assets/other.png' }, { outfitId: 'w-1' }), null)
+  assert.equal(post.mock.callCount(), 0)
+  mock.method(apiService, 'get', async () => ({ job: null }))
+  assert.equal(await resumeTurnKeyforms({ sourceMasterAssetId: '/media/assets/a/b.png' }), null, 'nothing runs')
 })

@@ -34,7 +34,7 @@ import RigCharacter from '../character/RigCharacter'
 import { notifyFaceUpdated } from '../events/updates'
 import { useRigPreviewMotionLifecycle } from '../motion/useRigMotionLifecycle'
 import { applyOutfit, isFullBodyItem, sortWardrobe, wardrobeItemLabel } from '../persona/wardrobe'
-import { decomposeWithTurnKeyforms } from '../turnKeyformsApi'
+import { decomposeWithTurnKeyforms, resumeTurnKeyforms } from '../turnKeyformsApi'
 import Anime25DWorkbench from './Anime25DWorkbench'
 import FieldHistory from './FieldHistory'
 import { FullBodyStageSwitch } from './FullBodyStageSwitch'
@@ -197,6 +197,11 @@ export default function SiteMotionWorkbench({
       { fromArchive, onStatus, signal },
     )
   }, [generationFingerprint, portraitUrl, t.merope.assetNeedsPortrait])
+
+  // The bust's split the server is still running, picked up after a reload.
+  const resumeRigPsd = useCallback((onStatus: (status: TurnKeyformsStatus) => void, signal: AbortSignal) =>
+    resumeTurnKeyforms({ sourceMasterAssetId: portraitUrl ?? '', sourceGenerationFingerprint: generationFingerprint || undefined }, { onStatus, signal }),
+  [generationFingerprint, portraitUrl])
 
   const decomposePlainRigPsd = useCallback(async () => {
     if (!portraitUrl) throw new Error(t.merope.assetNeedsPortrait)
@@ -593,6 +598,7 @@ export default function SiteMotionWorkbench({
           seeThroughTokenConfigured={seeThrough.configured}
           onSaveSeeThroughToken={seeThrough.save}
           onDecomposeRigPsd={decomposeRigPsd}
+          onResumeRigPsd={resumeRigPsd}
           onDecomposePlainPsd={decomposePlainRigPsd}
           onPreflightRigPsd={preflightRigPsd}
           onCommitRigPsd={commitRigPsd}

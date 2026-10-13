@@ -101,7 +101,7 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
         )
         .route(
             "/see-through/turn-keyforms",
-            post(turn_keyforms::start_turn_keyforms),
+            post(turn_keyforms::start_turn_keyforms).get(turn_keyforms::running_turn_keyforms),
         )
         .route(
             "/full-body/{outfit_id}/see-through/turn-keyforms",

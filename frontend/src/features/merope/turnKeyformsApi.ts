@@ -80,6 +80,8 @@ export async function decomposeWithTurnKeyforms(
     fromArchive?: TurnArchiveUse
     /** A full-body set's parts to key: its head's turn, its body's turn and weight shift (both when absent). */
     parts?: { head: boolean; body: boolean }
+    /** Pick up this job, already running, instead of starting one (runningTurnKeyformsFor). */
+    resumeJobId?: string
     onStatus?: (status: TurnKeyformsStatus) => void
     signal?: AbortSignal
   } = {},
@@ -98,7 +100,9 @@ export async function decomposeWithTurnKeyforms(
     return `${PREFIX}/see-through/turn-keyforms/${encodeURIComponent(jobId)}`
   }
   try {
-    let job = await begin()
+    let job = options.resumeJobId
+      ? `${PREFIX}/see-through/turn-keyforms/${encodeURIComponent(options.resumeJobId)}`
+      : await begin()
     let restarts = 0
     let failures = 0
     const deadline = Date.now() + TURN_KEYFORMS_LIMIT_MS
@@ -154,6 +158,31 @@ export async function decomposeWithTurnKeyforms(
     }
     throw meropeError(reason, currentCopy().merope.motionSeeThroughUpstream)
   }
+}
+
+/**
+ * The turn-keys job the server is running for this portrait and set (a bust's
+ * when `outfitId` is absent), if any: a page opened or reloaded while it runs
+ * picks up its progress, without starting another.
+ */
+export async function runningTurnKeyformsFor(sourceMasterAssetId: string, outfitId?: string): Promise<TurnKeyformsStatus | null> {
+  if (!sourceMasterAssetId) return null
+  const { job } = await apiService.get<{ job: (TurnKeyformsStatus & { sourceMasterAssetId?: string; outfitId?: string | null }) | null }>(
+    `${PREFIX}/see-through/turn-keyforms`,
+  )
+  if (!job || job.sourceMasterAssetId !== sourceMasterAssetId || (job.outfitId ?? undefined) !== outfitId) return null
+  return job
+}
+
+/** Picks up the job running for this portrait and set, if any, as decomposeWithTurnKeyforms; null when none runs. */
+export async function resumeTurnKeyforms(
+  input: Pick<SeeThroughDecomposeInput, 'sourceMasterAssetId' | 'sourceGenerationFingerprint'>,
+  options: { outfitId?: string; onStatus?: (status: TurnKeyformsStatus) => void; signal?: AbortSignal } = {},
+): Promise<File | null> {
+  const running = await runningTurnKeyformsFor(input.sourceMasterAssetId, options.outfitId)
+  if (!running) return null
+  options.onStatus?.(running)
+  return decomposeWithTurnKeyforms(input, { ...options, resumeJobId: running.jobId })
 }
 
 /** The kept turn-keys jobs, newest first. */
