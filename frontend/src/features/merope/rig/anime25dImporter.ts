@@ -21,6 +21,7 @@ import { anime25DBaseRole, normalizeAnime25DLayerName } from './anime25dLayerSem
 import { buildAnime25DBonesAndHandles, buildAnime25DLayerSources } from './anime25dSkeletonCompiler'
 import { addAuthoredExpressionLayers } from './authoredExpression'
 import { compensateSyntheticClosedEyeAngles } from './closedEyeCompensation'
+import { keepClosedEyeLines } from './closedEyeLines'
 import { CHARACTER_ASSET_PROFILES, MAX_RIG_PARTS, RIG_IR_VERSION } from './contract'
 import { raiseEarwearOverFrontHair } from './earwearOrder'
 import { synthesizeMissingExpressionAccents } from './expressionAccentLayers'
@@ -130,6 +131,10 @@ export async function prepareAnime25DRigPsd(
     expressionReferences,
   )
   layers = compileAnime25DExpressionLayers(layers, rig.anchors)
+  // A closed eye is lines on the face's own lid: a fill painted with it shows as a smear.
+  layers = layers.map((layer) => layer.role === 'eye-close' || layer.role === 'eye-close2'
+    ? { ...layer, data: keepClosedEyeLines(layer.data) }
+    : layer)
   layers = splitHighCollarOcclusion(layers, rig.anchors, sourceReference)
   layers.forEach((layer, index) => {
     layer.order = index
