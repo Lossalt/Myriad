@@ -168,6 +168,8 @@
   "personaHistoryRestore": "되돌리기",
   "personaHistoryReplacedAt": "{time}에 바뀜",
   "personaHistoryFromDevice": "동기화된 기기에서",
+  "personaHistoryMergedSubject": "병합 때 다른 그녀의 것",
+  "personaHistoryMergedLww": "병합 때 더 오래된 쪽",
   "historyVisualLanguage": "언어",
   "historyVisualSourceTags": "출처 태그",
   "historyZoneSite": "사이트를 따름",

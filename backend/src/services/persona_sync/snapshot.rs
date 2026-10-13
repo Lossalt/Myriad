@@ -1087,6 +1087,18 @@ async fn wearing<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, Db
     ))
 }
 
+/// How she looks on the site: her persona, her wardrobe and which set each
+/// end wears (what a merge's confirmation shows, H3d).
+pub(super) async fn looks<C: ConnectionTrait>(
+    db: &C,
+    pictures: &assets::Pictures,
+) -> Result<Vec<EntityVersion>, DbErr> {
+    let mut out: Vec<EntityVersion> = persona(db, pictures).await?.into_iter().collect();
+    out.extend(outfits(db, pictures).await?);
+    out.extend(wearing(db).await?);
+    Ok(out)
+}
+
 /// Everything the site has of her for the owner `owner`, every kind, read
 /// through `db` (an export reads it in one snapshot transaction), with the
 /// vectors of `embedding_model` when given.

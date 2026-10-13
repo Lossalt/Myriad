@@ -530,6 +530,7 @@ pub async fn cancel(
         super::import::called_off_on(&txn, id).await?;
         txn.commit().await?;
         super::import::forget_files(id).await;
+        super::merge::forget_retired(id).await;
         tracing::info!(move_id = %id, by_device = device.is_some(), "[host] her way into the site was called off: no her here");
         return Ok(None);
     }
@@ -606,7 +607,109 @@ pub(super) async fn import_step(
         return Ok(());
     }
     moving.phase = phase;
-    write(txn, State::Frozen, Some(&moving)).await?;
+    // A merge's her lives on while the device sends its own (H3d-1).
+    let state = if moving.kind == Kind::Merge {
+        lease.state
+    } else {
+        State::Frozen
+    };
+    write(txn, state, Some(&moving)).await?;
+    Ok(())
+}
+
+/// A merge (H3d) took a step before she stops: asked by the device
+/// (`Proposed`), confirmed by the owner and arriving (`Transferring`). The
+/// site's her lives on through both; another move cannot start meanwhile.
+pub(super) async fn merge_step(
+    txn: &sea_orm::DatabaseTransaction,
+    import_id: &str,
+    device: &str,
+    phase: Phase,
+) -> Result<Lease, MoveError> {
+    let lease = locked(txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.place() != Where::Here {
+        return Err(MoveError::NotHere);
+    }
+    let now = Utc::now();
+    let moving = match lease.moving {
+        Some(moving) if moving.id == import_id => Move {
+            phase,
+            confirmed_at: (phase != Phase::Proposed).then_some(now),
+            ..moving
+        },
+        Some(_) => return Err(MoveError::InProgress),
+        None => Move {
+            id: import_id.to_string(),
+            kind: Kind::Merge,
+            from: device.to_string(),
+            to: SITE.to_string(),
+            phase,
+            by: Starter::Device,
+            digest: None,
+            started_at: now,
+            confirmed_at: (phase != Phase::Proposed).then_some(now),
+        },
+    };
+    Ok(write(txn, State::Live, Some(&moving)).await?)
+}
+
+/// All of a merge is here: she stops (no end has her) for the moment the
+/// site takes the two of her together (`thaw` false), or goes on as she was
+/// when that failed (`thaw` true).
+pub(super) async fn merge_hold(
+    db: &DatabaseConnection,
+    import_id: &str,
+    thaw: bool,
+) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::NoHer)?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.id == import_id && moving.kind == Kind::Merge)
+        .ok_or(MoveError::Unknown)?;
+    moving.phase = if thaw {
+        Phase::Transferring
+    } else {
+        Phase::Applied
+    };
+    let state = if thaw { State::Live } else { State::Frozen };
+    let lease = write(&txn, state, Some(&moving)).await?;
+    txn.commit().await?;
+    tracing::info!(merge = %import_id, thaw, epoch = lease.epoch, "[host] a merge holds her still while she is taken together");
+    Ok(lease)
+}
+
+/// The merge `import_id` landed, in its transaction: she lives on the site
+/// again, one epoch on (H3d-18), her lineage the site's.
+pub(super) async fn merged(
+    txn: &sea_orm::DatabaseTransaction,
+    import_id: &str,
+) -> Result<Lease, DbErr> {
+    let row = txn
+        .query_one_raw(statement(
+            &format!(
+                "UPDATE agent_host_lease SET epoch = epoch + 1, state = 'live', move = NULL, \
+                 updated_at = NOW() WHERE id = 'her' AND holder = $1 AND move->>'id' = $2 \
+                 RETURNING {COLUMNS}"
+            ),
+            vec![SITE.into(), import_id.into()],
+        ))
+        .await?
+        .ok_or(DbErr::RecordNotUpdated)?;
+    Lease::from_row(&row)
+}
+
+/// A merge was called off: the site's her is where she was, as she was.
+pub(super) async fn merge_called_off<C: ConnectionTrait>(
+    db: &C,
+    import_id: &str,
+) -> Result<(), DbErr> {
+    db.execute_raw(statement(
+        "UPDATE agent_host_lease SET move = NULL, state = 'live', updated_at = NOW() \
+         WHERE id = 'her' AND holder = $1 AND move->>'id' = $2",
+        vec![SITE.into(), import_id.into()],
+    ))
+    .await?;
     Ok(())
 }
 

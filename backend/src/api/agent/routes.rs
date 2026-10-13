@@ -709,6 +709,16 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        // 合并前站点封存的她（H3d-12）：下载、删掉
+        .route(
+            "/host/retired/{name}",
+            get(super::devices::download_retired)
+                .delete(super::devices::delete_retired)
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::auth::auth_middleware,
+                )),
+        )
         .route(
             "/host/imports/{import_id}/cancel",
             post(super::devices::cancel_import).route_layer(from_fn_with_state(

@@ -168,6 +168,8 @@
   "personaHistoryRestore": "Rétablir",
   "personaHistoryReplacedAt": "Remplacé le {time}",
   "personaHistoryFromDevice": "depuis un appareil synchronisé",
+  "personaHistoryMergedSubject": "celle de l'autre elle, à la fusion",
+  "personaHistoryMergedLww": "la plus ancienne, à la fusion",
   "historyVisualLanguage": "Langue",
   "historyVisualSourceTags": "Tags d’origine",
   "historyZoneSite": "Suit le site",

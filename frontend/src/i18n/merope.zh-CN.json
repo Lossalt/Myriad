@@ -168,6 +168,8 @@
   "personaHistoryRestore": "换回",
   "personaHistoryReplacedAt": "{time} 被换下",
   "personaHistoryFromDevice": "来自同步的设备",
+  "personaHistoryMergedSubject": "合并时另一个她的",
+  "personaHistoryMergedLww": "合并时较早的那个",
   "historyVisualLanguage": "语言",
   "historyVisualSourceTags": "来源标签",
   "historyZoneSite": "跟随站点",

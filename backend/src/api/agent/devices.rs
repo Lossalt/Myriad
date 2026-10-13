@@ -43,7 +43,7 @@ async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpE
         .await
         .map_err(store_failed)?;
     // Her on her way into this site, which has none (H3c).
-    let import = crate::services::persona_sync::import::shown(db)
+    let import = crate::services::persona_sync::import::shown(db, owner)
         .await
         .map_err(store_failed)?;
     // Whether the site could take her in from a file now.
@@ -55,6 +55,8 @@ async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpE
         "devices": list.iter().map(|device| device_json(device, now)).collect::<Vec<_>>(),
         "host": host,
         "import": import,
+        // What the site sealed of its her before a merge (H3d-12).
+        "retired": crate::services::persona_sync::merge::retired().await,
         "empty": empty,
         "held": held,
         "limit": devices::MAX_DEVICES,
@@ -163,15 +165,76 @@ pub async fn cancel_move(
 /// confirms that the her on one of their devices comes to live on this
 /// site, which has none. The site's first lease names that device, frozen,
 /// until she lands.
+///
+/// A merge (H3d) is confirmed with `{passphrase}`: the site seals the her it
+/// has with it first (used once for the key, kept nowhere).
 pub async fn confirm_import(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Path(import_id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>, HttpError> {
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConfirmRequest {
+        #[serde(default)]
+        passphrase: Option<String>,
+    }
     let owner = super::persona::require_site_owner(&claims, &db).await?;
-    crate::services::persona_sync::import::confirm(&db, owner, &import_id)
+    let request: ConfirmRequest = if body.is_empty() {
+        ConfirmRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|_| {
+            super::sync::import_refused(
+                crate::services::persona_sync::import::ImportError::Invalid("body"),
+            )
+        })?
+    };
+    crate::services::persona_sync::import::confirm(&db, owner, &import_id, request.passphrase)
         .await
         .map_err(super::sync::import_refused)?;
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+/// GET /api/agent/host/retired/{name}: one copy the site sealed of its her
+/// before a merge, as it was written (the owner's passphrase opens it).
+pub async fn download_retired(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(name): Path<String>,
+) -> Result<axum::response::Response, HttpError> {
+    use axum::http::header;
+    super::persona::require_site_owner(&claims, &db).await?;
+    let path = crate::services::persona_sync::merge::retired_path(&name).ok_or_else(|| {
+        HttpError(AppError::not_found("No such file").with_code("retired_unknown"))
+    })?;
+    let bytes = tokio::fs::read(&path).await.map_err(store_failed)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+/// DELETE /api/agent/host/retired/{name}: the owner lets one such copy go.
+pub async fn delete_retired(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let path = crate::services::persona_sync::merge::retired_path(&name).ok_or_else(|| {
+        HttpError(AppError::not_found("No such file").with_code("retired_unknown"))
+    })?;
+    tokio::fs::remove_file(&path).await.map_err(store_failed)?;
+    tracing::info!(file = %name, "[merge] the owner let a copy sealed before a merge go");
     Ok(Json(device_list(&db, owner).await?))
 }
 

@@ -168,6 +168,8 @@
   "personaHistoryRestore": "元に戻す",
   "personaHistoryReplacedAt": "{time} に置き換え",
   "personaHistoryFromDevice": "同期したデバイスから",
+  "personaHistoryMergedSubject": "統合時のもう一人の彼女のもの",
+  "personaHistoryMergedLww": "統合時の古いほう",
   "historyVisualLanguage": "言語",
   "historyVisualSourceTags": "元のタグ",
   "historyZoneSite": "サイトに従う",

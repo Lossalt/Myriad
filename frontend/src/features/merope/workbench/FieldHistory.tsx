@@ -110,6 +110,11 @@ export default function FieldHistory({
                   {entry.origin === 'site'
                     ? ''
                     : ` · ${m.personaHistoryFromDevice}`}
+                  {entry.reason === 'subject'
+                    ? ` · ${m.personaHistoryMergedSubject}`
+                    : entry.reason === 'lww'
+                      ? ` · ${m.personaHistoryMergedLww}`
+                      : ''}
                 </small>
                 <div className="merope-persona-history__value">
                   {display(entry) || '—'}

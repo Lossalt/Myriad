@@ -168,6 +168,8 @@
   "personaHistoryRestore": "Restore",
   "personaHistoryReplacedAt": "Replaced {time}",
   "personaHistoryFromDevice": "from a synced device",
+  "personaHistoryMergedSubject": "the other her's, at the merge",
+  "personaHistoryMergedLww": "the older one, at the merge",
   "historyVisualLanguage": "Language",
   "historyVisualSourceTags": "Source tags",
   "historyZoneSite": "Follows the site",

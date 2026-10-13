@@ -152,6 +152,9 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
         epoch: 3,
         name: Some("Merope".into()),
         manifest,
+        kind: None,
+        subject: None,
+        preview: Vec::new(),
     };
     // Called off after the confirmation: no her, no lease.
     let asked = propose(db, 41, &mac.id, proposal(manifest.clone()))
@@ -161,7 +164,7 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
         take_page(db, &asked.id, &mac.id, opened.envelopes[0].clone()).await,
         Err(ImportError::Phase(_))
     ));
-    let frozen = confirm(db, 41, &asked.id).await.unwrap();
+    let frozen = confirm(db, 41, &asked.id, None).await.unwrap();
     assert_eq!(
         (frozen.holder.as_str(), frozen.state, frozen.epoch),
         (mac.id.as_str(), lease::State::Frozen, 3)
@@ -174,7 +177,7 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
     let asked = propose(db, 41, &mac.id, proposal(manifest.clone()))
         .await
         .unwrap();
-    confirm(db, 41, &asked.id).await.unwrap();
+    confirm(db, 41, &asked.id, None).await.unwrap();
     for page in &opened.envelopes {
         take_page(db, &asked.id, &mac.id, page.clone())
             .await
@@ -219,5 +222,192 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
     )
     .await;
     assert_eq!(staged, 0);
+    target.close().await;
+}
+
+/// The Mac's her (`fixtures/merge/other.json`, her pictures left out: a
+/// picture that is not sent is not taken), as one page from `dev`.
+fn mac_her(lineage: &str, dev: &str) -> Envelope {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../crates/myriad-persona-sync/fixtures/merge/other.json");
+    let mut entities: Vec<EntityVersion> =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    for entity in &mut entities {
+        if entity.kind == Kind::Outfit {
+            entity.body["portrait"] = Value::Null;
+            entity.digest.clear();
+        }
+        let text = serde_json::to_string(&*entity)
+            .unwrap()
+            .replace("dev_mac1", dev);
+        *entity = serde_json::from_str(&text).unwrap();
+        entity.digest.clear();
+    }
+    myriad_persona_sync::canonicalize_envelope(Envelope {
+        format: myriad_persona_sync::FORMAT.into(),
+        format_version: myriad_persona_sync::FORMAT_VERSION,
+        lineage: Some(lineage.into()),
+        origin: dev.into(),
+        embedding_model: None,
+        entities,
+        embeddings: Vec::new(),
+        assets: Vec::new(),
+    })
+    .unwrap()
+}
+
+/// A Mac with a her of its own (Luna) meets the site's (Merope), the owner
+/// having chosen the Mac's (H3d): nothing moves until the owner confirms
+/// with a passphrase, which seals the site's her into `retired/` first; she
+/// lives on while the pages arrive; then she is one: Luna's persona with
+/// Merope's values in her history (`subject`), both sides' memories and
+/// conversations, the Mac's proposal for that Mac, the site's lineage one
+/// epoch on. Turned down, the site is as it was and the sealed copy goes.
+#[tokio::test]
+async fn a_macs_her_is_merged_into_the_sites() {
+    let Some(target) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+        return;
+    };
+    let db = &target.db;
+    seed(db).await;
+    let born = lease::read(db).await.unwrap().unwrap();
+    let (mac, _) = super::super::devices::add(db, 41, "书房的 Mac")
+        .await
+        .unwrap();
+    let page = mac_her("0b1e3f6a-mac-born", &mac.id);
+    let manifest = Manifest::of_envelopes(std::slice::from_ref(&page)).unwrap();
+    let preview: Vec<EntityVersion> = page
+        .entities
+        .iter()
+        .filter(|entity| matches!(entity.kind, Kind::Persona | Kind::Outfit | Kind::Wearing))
+        .cloned()
+        .collect();
+    let proposal = |subject: Option<&str>| Proposal {
+        lineage: "0b1e3f6a-mac-born".into(),
+        epoch: 1,
+        name: Some("Luna".into()),
+        manifest: manifest.clone(),
+        kind: Some("merge".into()),
+        subject: subject.map(str::to_string),
+        preview: preview.clone(),
+    };
+
+    // Turned down: the site is as it was, the sealed copy gone.
+    let asked = propose(db, 41, &mac.id, proposal(Some("device")))
+        .await
+        .unwrap();
+    let shown = shown(db, 41).await.unwrap();
+    assert_eq!(shown["kind"], "merge");
+    assert_eq!(shown["merge"]["names"]["device"], "Luna");
+    assert!(
+        shown["merge"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["field"] == "personality" && field["toHistory"] == "host"),
+        "{shown}"
+    );
+    assert!(matches!(
+        confirm(db, 41, &asked.id, None).await,
+        Err(ImportError::Invalid("passphrase"))
+    ));
+    confirm(db, 41, &asked.id, Some("合并前".into()))
+        .await
+        .unwrap();
+    let sealed = super::super::merge::retired_dir()
+        .join(format!("her-before-merge-{}.her-archive", asked.id));
+    assert!(sealed.is_file());
+    // She lives on while the pages come.
+    assert_eq!(
+        lease::read(db).await.unwrap().unwrap().state,
+        lease::State::Live
+    );
+    cancel(db, &asked.id, None).await.unwrap();
+    assert!(!sealed.exists());
+    let here = lease::read(db).await.unwrap().unwrap();
+    assert!(here.moving.is_none());
+    assert_eq!(here.epoch, born.epoch);
+
+    // Confirmed and sent: she is one.
+    let asked = propose(db, 41, &mac.id, proposal(Some("device")))
+        .await
+        .unwrap();
+    confirm(db, 41, &asked.id, Some("合并前".into()))
+        .await
+        .unwrap();
+    take_page(db, &asked.id, &mac.id, page.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        lease::read(db).await.unwrap().unwrap().state,
+        lease::State::Live
+    );
+    let landed = commit(db, 41, &asked.id, &mac.id, &manifest.digest)
+        .await
+        .unwrap();
+    assert_eq!(landed.counts.get("memory"), Some(&2));
+    let here = lease::read(db).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            here.holder.as_str(),
+            here.lineage.as_str(),
+            here.epoch,
+            here.state
+        ),
+        (
+            "site",
+            born.lineage.as_str(),
+            born.epoch + 1,
+            lease::State::Live
+        )
+    );
+    assert!(here.moving.is_none());
+    let name: String = one(db, "SELECT name FROM agent_persona", "name").await;
+    assert_eq!(name, "Luna");
+    let reason: String = one(
+        db,
+        "SELECT reason FROM agent_persona_field_history WHERE field = 'name'",
+        "reason",
+    )
+    .await;
+    assert_eq!(reason, "subject");
+    let old: Value = one(
+        db,
+        "SELECT value FROM agent_persona_field_history WHERE field = 'name'",
+        "value",
+    )
+    .await;
+    assert_eq!(old, json!("Merope"));
+    let sessions: i64 = one(db, "SELECT COUNT(*)::BIGINT AS n FROM agent_sessions", "n").await;
+    assert_eq!(sessions, 2);
+    let place: Value = one(
+        db,
+        "SELECT proposal FROM agent_intentions WHERE id = 'int_mac'",
+        "proposal",
+    )
+    .await;
+    assert_eq!(place["place"], "mac");
+    assert_eq!(place["device_id"], json!(mac.id));
+    let wardrobe: Value = one(
+        db,
+        "SELECT visual_profile FROM agent_persona",
+        "visual_profile",
+    )
+    .await;
+    let ids: Vec<&str> = wardrobe["wardrobe"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(ids.len(), 3, "{wardrobe}");
+    assert!(ids.contains(&"default") && ids.contains(&"mac-hat"));
+    assert_eq!(wardrobe["activeOutfitId"], "default");
+    let mood: f64 = one(db, "SELECT mood FROM agent_addressee_state", "mood").await;
+    assert!(mood.is_finite());
+    let sealed = super::super::merge::retired_dir()
+        .join(format!("her-before-merge-{}.her-archive", asked.id));
+    assert!(sealed.is_file(), "the site's her before the merge is kept");
+    let _ = std::fs::remove_file(&sealed);
     target.close().await;
 }

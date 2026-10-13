@@ -175,6 +175,16 @@ CREATE TABLE IF NOT EXISTS agent_host_import (
     confirmed_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL
 );
+-- The first meeting of two of her (H3d, E7): a device's her merged into the
+-- site's. `kind` says so; `subject` is who she is when her names differ
+-- (`site` or `device`, chosen on the device); `preview` is the device's
+-- persona and wardrobe as the owner is shown them before confirming;
+-- `retired` names the file the site sealed of its own her when the owner
+-- confirmed (the passphrase is not kept).
+ALTER TABLE agent_host_import ADD COLUMN IF NOT EXISTS kind VARCHAR(8) NOT NULL DEFAULT 'import';
+ALTER TABLE agent_host_import ADD COLUMN IF NOT EXISTS subject VARCHAR(8);
+ALTER TABLE agent_host_import ADD COLUMN IF NOT EXISTS preview JSONB;
+ALTER TABLE agent_host_import ADD COLUMN IF NOT EXISTS retired TEXT;
 -- What a device has sent of her so far, each entity in its canonical form
 -- (`kind` = `embedding` for a vector, by memory id), until she lands.
 CREATE TABLE IF NOT EXISTS agent_host_import_staging (

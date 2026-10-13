@@ -38,6 +38,9 @@
     "Too large, or not where the upload stands": "import_size",
     "The request does not read": "import_invalid",
     "She could not be brought in": "import_failed",
+    "The site has no her to merge into": "merge_no_her",
+    "No such file": "retired_unknown",
+    "Her names changed since the owner confirmed; confirm the merge again": "merge_changed",
     "Database error": "database_error",
     "Failed to update devices": "devices_update_failed",
     "Sync failed": "sync_failed",
@@ -1738,6 +1741,9 @@
     "archive_unreadable",
     "import_size",
     "import_invalid",
-    "import_failed"
+    "import_failed",
+    "merge_no_her",
+    "merge_changed",
+    "retired_unknown"
   ]
 }

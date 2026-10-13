@@ -83,7 +83,7 @@ pub fn is_import(id: &str) -> bool {
     id.starts_with(ID_PREFIX)
 }
 
-fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
+pub(super) fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
     Statement::from_sql_and_values(DatabaseBackend::Postgres, sql, values)
 }
 
@@ -103,6 +103,25 @@ pub struct Proposal {
     #[serde(default)]
     pub name: Option<String>,
     pub manifest: Manifest,
+    /// `merge`: its her is brought into the site's (H3d); otherwise into a
+    /// site with none.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Who she is when her names differ: `site` or `device`.
+    #[serde(default)]
+    pub subject: Option<String>,
+    /// Its persona and wardrobe, for the owner to see before confirming a
+    /// merge (checked against the manifest when she lands).
+    #[serde(default)]
+    pub preview: Vec<EntityVersion>,
+}
+
+/// What an import is.
+pub mod kind {
+    /// Her into a site that has none (H3c).
+    pub const IMPORT: &str = "import";
+    /// A device's her into the site's, the first time they meet (H3d).
+    pub const MERGE: &str = "merge";
 }
 
 /// One import as stored.
@@ -121,9 +140,18 @@ pub struct Session {
     pub total: Option<i64>,
     pub created_at: DateTime<FixedOffset>,
     pub confirmed_at: Option<DateTime<FixedOffset>>,
+    pub kind: String,
+    pub subject: Option<String>,
+    pub preview: Vec<EntityVersion>,
+    /// The file the site sealed of its own her before a merge.
+    pub retired: Option<String>,
 }
 
 impl Session {
+    pub fn is_merge(&self) -> bool {
+        self.kind == kind::MERGE
+    }
+
     fn from_row(row: &sea_orm::QueryResult) -> Result<Self, DbErr> {
         Ok(Self {
             id: row.try_get("", "id")?,
@@ -140,6 +168,13 @@ impl Session {
             total: row.try_get("", "total")?,
             created_at: row.try_get("", "created_at")?,
             confirmed_at: row.try_get("", "confirmed_at")?,
+            kind: row.try_get("", "kind")?,
+            subject: row.try_get("", "subject")?,
+            preview: row
+                .try_get::<Option<Value>>("", "preview")?
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default(),
+            retired: row.try_get("", "retired")?,
         })
     }
 
@@ -169,12 +204,15 @@ impl Session {
             "total": self.total,
             "createdAt": self.created_at.to_rfc3339(),
             "confirmedAt": self.confirmed_at.map(|at| at.to_rfc3339()),
+            "kind": self.kind,
+            "subject": self.subject,
+            "retired": self.retired,
         })
     }
 }
 
 const COLUMNS: &str = "id, source, device_id, lineage, epoch, name, manifest, phase, received, \
-                       total, created_at, confirmed_at";
+                       total, created_at, confirmed_at, kind, subject, preview, retired";
 
 /// Why an import cannot go on.
 #[derive(Debug)]
@@ -196,6 +234,13 @@ pub enum ImportError {
     Size,
     /// A request that does not read.
     Invalid(&'static str),
+    /// A merge into a site with no her.
+    NoHer,
+    /// A merge while she does not live on the site (or is moving).
+    NotHere,
+    /// Her names on the two sides are now the same where they differed when
+    /// the owner confirmed, or the other way round.
+    Changed,
     Failed(String),
 }
 
@@ -254,6 +299,21 @@ impl ImportError {
                 "import_invalid",
                 "The request does not read",
             ),
+            Self::NoHer => (
+                StatusCode::CONFLICT,
+                "merge_no_her",
+                "The site has no her to merge into",
+            ),
+            Self::NotHere => (
+                StatusCode::CONFLICT,
+                "host_moved",
+                "She does not live on this site now",
+            ),
+            Self::Changed => (
+                StatusCode::CONFLICT,
+                "merge_changed",
+                "Her names changed since the owner confirmed; confirm the merge again",
+            ),
             Self::Failed(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "import_failed",
@@ -299,8 +359,9 @@ pub async fn current<C: ConnectionTrait>(db: &C) -> Result<Option<Session>, DbEr
     .transpose()
 }
 
-/// The import under way (not committed), as the devices page shows it.
-pub async fn shown<C: ConnectionTrait>(db: &C) -> Result<Value, DbErr> {
+/// The import under way (not committed), as the devices page shows it; a
+/// merge with what the owner is shown before confirming it.
+pub async fn shown(db: &DatabaseConnection, owner: i32) -> Result<Value, DbErr> {
     let Some(session) = current(db)
         .await?
         .filter(|session| session.phase != phase::COMMITTED)
@@ -311,7 +372,11 @@ pub async fn shown<C: ConnectionTrait>(db: &C) -> Result<Value, DbErr> {
         Some(device) => lease::device_name(db, device).await?,
         None => None,
     };
-    Ok(session.json(name))
+    let mut shown = session.json(name.clone());
+    if session.is_merge() {
+        shown["merge"] = super::merge::preview(db, owner, &session, name).await?;
+    }
+    Ok(shown)
 }
 
 /// The import this device asked for, as it reads it back (committed too, so
@@ -323,7 +388,7 @@ pub async fn shown_for_device<C: ConnectionTrait>(db: &C, device: &str) -> Resul
         .map_or(Value::Null, |session| session.json(None)))
 }
 
-async fn one_at_a_time(txn: &DatabaseTransaction) -> Result<(), DbErr> {
+pub(super) async fn one_at_a_time(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_raw(statement(
         "SELECT pg_advisory_xact_lock(hashtext('agent_host_import'))",
         vec![],
@@ -332,7 +397,7 @@ async fn one_at_a_time(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     Ok(())
 }
 
-async fn locked(txn: &DatabaseTransaction, id: &str) -> Result<Option<Session>, DbErr> {
+pub(super) async fn locked(txn: &DatabaseTransaction, id: &str) -> Result<Option<Session>, DbErr> {
     txn.query_one_raw(statement(
         &format!("SELECT {COLUMNS} FROM agent_host_import WHERE id = $1 FOR UPDATE"),
         vec![id.into()],
@@ -375,6 +440,18 @@ async fn make_room(txn: &DatabaseTransaction, device: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// A move of the lease refused, as an import is.
+pub(super) fn merge_refused(error: lease::MoveError) -> ImportError {
+    match error {
+        lease::MoveError::NoHer => ImportError::NoHer,
+        lease::MoveError::NotHere => ImportError::NotHere,
+        lease::MoveError::InProgress => ImportError::Busy,
+        lease::MoveError::Unknown => ImportError::Unknown,
+        lease::MoveError::Phase(phase) => ImportError::Phase(format!("{phase:?}").to_lowercase()),
+        lease::MoveError::Db(error) => ImportError::Failed(error.to_string()),
+    }
+}
+
 fn check_lineage(lineage: &str) -> Result<(), ImportError> {
     let ok = !lineage.is_empty()
         && lineage.len() <= 36
@@ -400,9 +477,35 @@ pub async fn propose(
     if proposal.epoch < 1 {
         return Err(ImportError::Invalid("epoch"));
     }
+    let merging = match proposal.kind.as_deref() {
+        None | Some(kind::IMPORT) => false,
+        Some(kind::MERGE) => true,
+        Some(_) => return Err(ImportError::Invalid("kind")),
+    };
+    let subject = match proposal.subject.as_deref() {
+        None => None,
+        Some(side @ ("site" | "device")) if merging => Some(side.to_string()),
+        Some(_) => return Err(ImportError::Invalid("subject")),
+    };
+    let preview: Vec<EntityVersion> = proposal
+        .preview
+        .iter()
+        .filter(|entity| matches!(entity.kind, Kind::Persona | Kind::Outfit | Kind::Wearing))
+        .cloned()
+        // Only shown: its digest is the site's own reading of it.
+        .map(|mut entity| {
+            entity.digest.clear();
+            myriad_persona_sync::canonicalize(entity)
+        })
+        .collect::<Result<_, _>>()
+        .map_err(|_| ImportError::Invalid("preview"))?;
     let txn = db.begin().await?;
     one_at_a_time(&txn).await?;
-    if let Some(refusal) = not_empty(&txn, owner).await? {
+    if merging {
+        if not_empty(&txn, owner).await?.is_none() {
+            return Err(ImportError::NoHer);
+        }
+    } else if let Some(refusal) = not_empty(&txn, owner).await? {
         return Err(refusal);
     }
     make_room(&txn, Some(device)).await?;
@@ -416,23 +519,39 @@ pub async fn propose(
         .query_one_raw(statement(
             &format!(
                 "INSERT INTO agent_host_import (id, source, device_id, lineage, epoch, name, \
-                 manifest, phase, created_at, updated_at) \
-                 VALUES ($1, 'device', $2, $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING {COLUMNS}"
+                 manifest, phase, created_at, updated_at, kind, subject, preview) \
+                 VALUES ($1, 'device', $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $9, $10) \
+                 RETURNING {COLUMNS}"
             ),
             vec![
-                id.into(),
+                id.clone().into(),
                 device.into(),
                 proposal.lineage.into(),
                 proposal.epoch.into(),
                 name.into(),
                 manifest.into(),
                 phase::PROPOSED.into(),
+                (if merging { kind::MERGE } else { kind::IMPORT }).into(),
+                subject.into(),
+                merging
+                    .then(|| serde_json::to_value(&preview))
+                    .transpose()
+                    .map_err(ImportError::failed)?
+                    .into(),
             ],
         ))
         .await?
         .ok_or_else(|| ImportError::failed("no row"))?;
     let session = Session::from_row(&row)?;
+    if merging {
+        lease::merge_step(&txn, &id, device, lease::Phase::Proposed)
+            .await
+            .map_err(merge_refused)?;
+    }
     txn.commit().await?;
+    if merging {
+        lease::reload(db).await;
+    }
     tracing::info!(import = %session.id, device, "[import] a device asked to bring her here; the owner confirms on the site");
     Ok(session)
 }
@@ -443,7 +562,14 @@ pub async fn confirm(
     db: &DatabaseConnection,
     owner: i32,
     id: &str,
+    passphrase: Option<String>,
 ) -> Result<lease::Lease, ImportError> {
+    if current(db)
+        .await?
+        .is_some_and(|session| session.id == id && session.is_merge())
+    {
+        return super::merge::confirm(db, owner, id, passphrase.unwrap_or_default()).await;
+    }
     let txn = db.begin().await?;
     one_at_a_time(&txn).await?;
     let session = locked(&txn, id).await?.ok_or(ImportError::Unknown)?;
@@ -482,7 +608,9 @@ pub async fn called_off_on<C: ConnectionTrait>(db: &C, id: &str) -> Result<(), D
         vec![id.into()],
     ))
     .await?;
-    lease::forget_arrival(db, id).await
+    lease::forget_arrival(db, id).await?;
+    // A merge leaves the site's her where she lives, as she was.
+    lease::merge_called_off(db, id).await
 }
 
 /// The files an import kept while it was under way.
@@ -517,6 +645,7 @@ pub async fn cancel(
     called_off_on(&txn, id).await?;
     txn.commit().await?;
     forget_files(id).await;
+    super::merge::forget_retired(id).await;
     lease::reload(db).await;
     tracing::info!(import = %id, by_device = device.is_some(), "[import] called off: the site is as it was");
     Ok(())
@@ -724,14 +853,14 @@ pub async fn received(
 
 /// Her, as one side holds her whole: entities, vectors, the files by asset
 /// id (`image` for a picture, the rig's two files), and where she came from.
-struct Whole {
-    origin: String,
-    lineage: Option<String>,
-    epoch: Option<i64>,
-    model: Option<EmbeddingModel>,
-    entities: Vec<EntityVersion>,
-    embeddings: Vec<Embedding>,
-    files: BTreeMap<String, BTreeMap<String, Vec<u8>>>,
+pub(super) struct Whole {
+    pub(super) origin: String,
+    pub(super) lineage: Option<String>,
+    pub(super) epoch: Option<i64>,
+    pub(super) model: Option<EmbeddingModel>,
+    pub(super) entities: Vec<EntityVersion>,
+    pub(super) embeddings: Vec<Embedding>,
+    pub(super) files: BTreeMap<String, BTreeMap<String, Vec<u8>>>,
 }
 
 /// The device says all of her is sent: she is checked against what the
@@ -832,7 +961,11 @@ pub async fn commit(
         whole.files.insert(asset.id.clone(), files);
     }
     check_files(&whole.files, &refs)?;
-    let landed = land(db, owner, Some(id), whole).await?;
+    let landed = if session.is_merge() {
+        super::merge::commit(db, owner, &session, whole).await?
+    } else {
+        land(db, owner, Some(id), whole).await?
+    };
     forget_files(id).await;
     Ok(landed)
 }
@@ -1080,7 +1213,7 @@ pub struct Landed {
     pub her_on: bool,
 }
 
-async fn her_on() -> bool {
+pub(super) async fn her_on() -> bool {
     crate::GLOBAL_DYNAMIC_CONFIG
         .read()
         .await
@@ -1102,14 +1235,14 @@ fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn at(micros: i64) -> DateTime<FixedOffset> {
+pub(super) fn at(micros: i64) -> DateTime<FixedOffset> {
     Utc.timestamp_micros(micros)
         .single()
         .unwrap_or_else(Utc::now)
         .fixed_offset()
 }
 
-fn utc(micros: i64) -> DateTime<Utc> {
+pub(super) fn utc(micros: i64) -> DateTime<Utc> {
     Utc.timestamp_micros(micros)
         .single()
         .unwrap_or_else(Utc::now)
@@ -1122,8 +1255,8 @@ fn own_end(origin: &str) -> &'static str {
 
 /// How long the site keeps each of her own records it keeps in the
 /// registry (as `merope::pace`, `vitals`, `serial`, `soup`, `doing` do).
-const KEEP_DAYS: i64 = 400;
-const KEEP_PRESENT_DAYS: i64 = 2;
+pub(super) const KEEP_DAYS: i64 = 400;
+pub(super) const KEEP_PRESENT_DAYS: i64 = 2;
 
 /// Writes her into the empty site in one transaction: everything of her,
 /// the lease naming the site, and the import committed.
@@ -1153,52 +1286,7 @@ async fn land(
 
     // Files first, outside the transaction: a picture is kept once by its
     // sha256 (a retry finds it), a rig as its package.
-    let pictures = assets::Pictures::new(db, owner);
-    let actor = MediaActor::admin(owner).map_err(ImportError::failed)?;
-    let mut urls: BTreeMap<String, String> = BTreeMap::new();
-    for (asset, files) in &whole.files {
-        if let Some(bytes) = files.get("") {
-            let media_type = sniff(bytes).ok_or_else(|| {
-                ImportError::Mismatch(format!("the picture {asset} is not an image"))
-            })?;
-            let ctx = MediaContext::site(actor.clone(), MediaSource::Import)
-                .with_producer_key(format!("persona-import:{asset}"));
-            let (kept, _) = pictures
-                .media
-                .persist_ready_bytes(
-                    db,
-                    ctx,
-                    NewMediaBytes {
-                        bytes: bytes.clone().into(),
-                        claimed_mime: media_type.to_string(),
-                        filename: format!(
-                            "{}.{}",
-                            &asset[..16],
-                            media_type.trim_start_matches("image/")
-                        ),
-                        max_bytes: super::ASSET_MAX_BYTES as usize,
-                        derived_from_id: None,
-                        exposure: MediaExposure::Public,
-                    },
-                )
-                .await
-                .map_err(ImportError::failed)?;
-            urls.insert(asset.clone(), kept.url);
-        } else if let (Some(manifest), Some(atlas)) =
-            (files.get(RIG_MANIFEST_FILE), files.get(RIG_ATLAS_FILE))
-        {
-            let mut manifest: myriad_merope::RigManifest =
-                serde_json::from_slice(manifest).map_err(ImportError::failed)?;
-            let url = crate::services::merope_rig::public_atlas_url(asset);
-            for texture in &mut manifest.textures {
-                texture.url = url.clone();
-            }
-            let json = serde_json::to_string(&manifest).map_err(ImportError::failed)?;
-            crate::services::merope_rig::persist_package(asset, atlas, &json)
-                .await
-                .map_err(ImportError::failed)?;
-        }
-    }
+    let urls = keep_files(db, owner, &whole.files).await?;
     let picture_url = |picture: Option<&Picture>| -> Option<String> {
         picture
             .and_then(Picture::asset)
@@ -1943,10 +2031,66 @@ async fn land(
     })
 }
 
+/// Her pictures into the media library (each once, by its sha256) and her
+/// rigs as packages: the address each picture is at now, by asset id.
+pub(super) async fn keep_files(
+    db: &DatabaseConnection,
+    owner: i32,
+    files: &BTreeMap<String, BTreeMap<String, Vec<u8>>>,
+) -> Result<BTreeMap<String, String>, ImportError> {
+    let pictures = assets::Pictures::new(db, owner);
+    let actor = MediaActor::admin(owner).map_err(ImportError::failed)?;
+    let mut urls: BTreeMap<String, String> = BTreeMap::new();
+    for (asset, files) in files {
+        if let Some(bytes) = files.get("") {
+            let media_type = sniff(bytes).ok_or_else(|| {
+                ImportError::Mismatch(format!("the picture {asset} is not an image"))
+            })?;
+            let ctx = MediaContext::site(actor.clone(), MediaSource::Import)
+                .with_producer_key(format!("persona-import:{asset}"));
+            let (kept, _) = pictures
+                .media
+                .persist_ready_bytes(
+                    db,
+                    ctx,
+                    NewMediaBytes {
+                        bytes: bytes.clone().into(),
+                        claimed_mime: media_type.to_string(),
+                        filename: format!(
+                            "{}.{}",
+                            &asset[..16],
+                            media_type.trim_start_matches("image/")
+                        ),
+                        max_bytes: super::ASSET_MAX_BYTES as usize,
+                        derived_from_id: None,
+                        exposure: MediaExposure::Public,
+                    },
+                )
+                .await
+                .map_err(ImportError::failed)?;
+            urls.insert(asset.clone(), kept.url);
+        } else if let (Some(manifest), Some(atlas)) =
+            (files.get(RIG_MANIFEST_FILE), files.get(RIG_ATLAS_FILE))
+        {
+            let mut manifest: myriad_merope::RigManifest =
+                serde_json::from_slice(manifest).map_err(ImportError::failed)?;
+            let url = crate::services::merope_rig::public_atlas_url(asset);
+            for texture in &mut manifest.textures {
+                texture.url = url.clone();
+            }
+            let json = serde_json::to_string(&manifest).map_err(ImportError::failed)?;
+            crate::services::merope_rig::persist_package(asset, atlas, &json)
+                .await
+                .map_err(ImportError::failed)?;
+        }
+    }
+    Ok(urls)
+}
+
 /// The site's model, when the vectors that came were made with it (H3c-13):
 /// the same name, and the same length as the site's own vectors, or any
 /// length while the site has none yet.
-async fn vectors_fit<C: ConnectionTrait>(
+pub(super) async fn vectors_fit<C: ConnectionTrait>(
     db: &C,
     theirs: Option<&EmbeddingModel>,
 ) -> Result<Option<EmbeddingModel>, DbErr> {

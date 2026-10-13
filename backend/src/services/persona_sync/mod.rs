@@ -12,6 +12,7 @@ pub mod export;
 pub mod fields;
 pub mod import;
 pub mod lease;
+pub mod merge;
 mod outside;
 pub mod snapshot;
 

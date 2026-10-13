@@ -983,6 +983,12 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("created_at", "timestamp with time zone").not_null(),
                 ColumnDef::new("confirmed_at", "timestamp with time zone"),
                 ColumnDef::new("updated_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("kind", "character varying")
+                    .not_null()
+                    .default_value("'import'"),
+                ColumnDef::new("subject", "character varying"),
+                ColumnDef::new("preview", "jsonb"),
+                ColumnDef::new("retired", "text"),
             ],
         },
         TableDef {

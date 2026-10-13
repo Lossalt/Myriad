@@ -117,6 +117,38 @@ export interface HostImport {
   total: number | null
   createdAt: string
   confirmedAt: string | null
+  /** `merge`: a device's her into the site's, the first time they meet (H3d). */
+  kind?: 'import' | 'merge'
+  /** Who she is when her names differ, as chosen on the device. */
+  subject?: 'site' | 'device' | null
+  /** The file the site sealed of its her when the owner confirmed a merge. */
+  retired?: string | null
+  /** What the owner is shown before confirming a merge. */
+  merge?: HostMergePreview | null
+}
+
+/** A merge as the owner sees it before confirming (H3d). */
+export interface HostMergePreview {
+  sameName: boolean
+  sameLineage: boolean
+  names: { site: string | null; device: string | null }
+  subject: 'site' | 'device' | null
+  fields: {
+    field: string
+    from: 'host' | 'other' | null
+    both: boolean
+    toHistory: 'host' | 'other' | null
+  }[]
+  renamed: { kind: string; side: 'host' | 'other'; from: string; to: string }[]
+  site: { memories: number; diary: number; affectEvents: number }
+  unreadable?: boolean
+}
+
+/** A copy the site sealed of its her before a merge. */
+export interface HostRetired {
+  name: string
+  bytes: number
+  at: string | null
 }
 
 /** What landed when she came in. */
@@ -138,6 +170,8 @@ export interface SyncDeviceList {
   empty?: boolean
   /** Messages that came by chat app while she was away, held until she is back. */
   held?: number
+  /** What the site sealed of its her before a merge. */
+  retired?: HostRetired[]
   limit: number
 }
 
@@ -540,9 +574,29 @@ class AgentService {
   }
 
   /** Confirms, logged in, that the her on a device comes to live here (the site has none). */
-  async confirmHostImport(id: string): Promise<SyncDeviceList> {
+  async confirmHostImport(
+    id: string,
+    passphrase?: string,
+  ): Promise<SyncDeviceList> {
     return apiService.post(
       `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/confirm`,
+      passphrase === undefined ? undefined : { passphrase },
+      { timeout: 300000 },
+    )
+  }
+
+  /** One copy the site sealed of its her before a merge, as it was written. */
+  async downloadRetired(name: string): Promise<Blob> {
+    return apiService.request<Blob>(
+      `${this.baseUrl}/host/retired/${encodeURIComponent(name)}`,
+      { method: 'GET', responseType: 'blob', timeout: 300000 },
+    )
+  }
+
+  /** Lets one such copy go. */
+  async deleteRetired(name: string): Promise<SyncDeviceList> {
+    return apiService.delete(
+      `${this.baseUrl}/host/retired/${encodeURIComponent(name)}`,
     )
   }
 

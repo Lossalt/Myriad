@@ -42,6 +42,8 @@ export function AgentDevicesGroup() {
   const [importPassphrase, setImportPassphrase] = useState('')
   const [importProgress, setImportProgress] = useState<string | null>(null)
   const [landedNote, setLandedNote] = useState<string | null>(null)
+  const [mergePass, setMergePass] = useState('')
+  const [mergeAgain, setMergeAgain] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
   const fail = useCallback((error: unknown, fallback: string) => {
@@ -175,6 +177,55 @@ export function AgentDevicesGroup() {
       }
     },
     [c.agentHostImportFailed, fail, load],
+  )
+
+  // A device's her merged into the site's (H3d): confirmed here, logged in,
+  // with a passphrase the site seals its own her with first (used once).
+  const mergeAction = useCallback(
+    async (action: 'confirm' | 'cancel', pending: HostImport) => {
+      setWorking(true)
+      try {
+        setList(
+          action === 'confirm'
+            ? await agentService.confirmHostImport(pending.id, mergePass)
+            : await agentService.cancelHostImport(pending.id),
+        )
+        setMergePass('')
+        setMergeAgain('')
+      } catch (error) {
+        fail(error, c.agentHostMergeFailed)
+        await load()
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentHostMergeFailed, fail, load, mergePass],
+  )
+
+  const retiredAction = useCallback(
+    async (action: 'download' | 'delete', name: string) => {
+      setWorking(true)
+      try {
+        if (action === 'delete') {
+          setList(await agentService.deleteRetired(name))
+          return
+        }
+        const blob = await agentService.downloadRetired(name)
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = name
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+      } catch (error) {
+        fail(error, c.agentDevicesLoadFailed)
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentDevicesLoadFailed, fail],
   )
 
   const countsLine = useCallback(
@@ -471,7 +522,168 @@ export function AgentDevicesGroup() {
           </p>
         </InfoActionCard>
       ) : null}
-      {pending && pending.source === 'device' ? (
+      {pending && pending.source === 'device' && pending.kind === 'merge' ? (
+        pending.phase === 'proposed' ? (
+          <InfoActionCard
+            title={format(c.agentHostMergeProposedTitle, {
+              device: pending.deviceName ?? c.agentHostUnknownDevice,
+              name: pending.name ?? '—',
+            })}
+            tone="info"
+            actions={[
+              {
+                key: 'confirm',
+                label: c.agentHostMergeConfirm,
+                onClick: () => void mergeAction('confirm', pending),
+                disabled: working || !mergePass || mergePass !== mergeAgain,
+                variant: 'primary',
+                confirm: c.agentHostMergeConfirmConfirm,
+              },
+              {
+                key: 'decline',
+                label: c.agentHostMergeDecline,
+                onClick: () => void mergeAction('cancel', pending),
+                disabled: working,
+                variant: 'secondary',
+                confirm: c.agentHostMergeDeclineConfirm,
+              },
+            ]}
+          >
+            {pending.merge && !pending.merge.unreadable ? (
+              <>
+                <p className="setting-hint">
+                  {pending.merge.sameName
+                    ? format(c.agentHostMergeSameName, {
+                        name: pending.merge.names.site ?? '—',
+                      })
+                    : pending.subject === 'device'
+                      ? format(c.agentHostMergeSubjectDevice, {
+                          device: pending.deviceName ?? c.agentHostUnknownDevice,
+                          name: pending.merge.names.device ?? '—',
+                        })
+                      : format(c.agentHostMergeSubjectSite, {
+                          site: pending.merge.names.site ?? '—',
+                        })}
+                  {pending.merge.sameLineage
+                    ? ` ${c.agentHostMergeSameLineage}`
+                    : ''}
+                </p>
+                <ul className="setting-hint">
+                  {pending.merge.fields.map((outcome) => (
+                    <li key={outcome.field}>
+                      {outcome.field}：
+                      {outcome.both
+                        ? c.agentHostMergeFromBoth
+                        : outcome.from === 'host'
+                          ? c.agentHostMergeFromSite
+                          : outcome.from === 'other'
+                            ? c.agentHostMergeFromDevice
+                            : c.agentHostMergeUnset}
+                      {outcome.toHistory ? c.agentHostMergeToHistory : ''}
+                    </li>
+                  ))}
+                </ul>
+                {pending.merge.renamed.map((renamed) => (
+                  <p className="setting-hint" key={`${renamed.side}:${renamed.from}`}>
+                    {format(c.agentHostMergeRenamed, {
+                      from: renamed.from,
+                      to: renamed.to,
+                      side:
+                        renamed.side === 'host'
+                          ? c.agentHostMergeSideSite
+                          : c.agentHostMergeSideDevice,
+                    })}
+                  </p>
+                ))}
+                <p className="setting-hint">
+                  {format(c.agentHostMergeCounts, {
+                    counts: countsLine(pending.counts),
+                    memories: pending.merge.site.memories,
+                    diary: pending.merge.site.diary,
+                  })}
+                </p>
+              </>
+            ) : (
+              <p className="setting-hint">{countsLine(pending.counts)}</p>
+            )}
+            <p className="info-action-card-lede">{c.agentHostMergeBody}</p>
+            <InputItem
+              itemKey="agent_merge_passphrase"
+              label={c.agentHostMergePassphrase}
+              value={mergePass}
+              onChange={setMergePass}
+              inputType="password"
+              autoComplete="off"
+              layout="vertical"
+            />
+            <InputItem
+              itemKey="agent_merge_again"
+              label={c.agentHostMergeAgain}
+              value={mergeAgain}
+              onChange={setMergeAgain}
+              inputType="password"
+              autoComplete="off"
+              layout="vertical"
+            />
+            {mergeAgain && mergePass !== mergeAgain ? (
+              <p className="setting-hint">{c.agentHostExportMismatch}</p>
+            ) : null}
+          </InfoActionCard>
+        ) : (
+          <InfoActionCard
+            title={format(c.agentHostMergingTitle, {
+              device: pending.deviceName ?? c.agentHostUnknownDevice,
+            })}
+            tone="info"
+            actions={[
+              {
+                key: 'cancel',
+                label: c.agentHostMergeCancel,
+                onClick: () => void mergeAction('cancel', pending),
+                disabled: working,
+                variant: 'secondary',
+                confirm: c.agentHostMergeCancelConfirm,
+              },
+            ]}
+          >
+            <p className="info-action-card-lede">{c.agentHostMergingBody}</p>
+            <p className="setting-hint">{countsLine(pending.counts)}</p>
+          </InfoActionCard>
+        )
+      ) : null}
+      {(list?.retired ?? []).map((file, index) => (
+        <InfoActionCard
+          key={file.name}
+          title={`${c.agentHostRetiredTitle} · ${file.name}`}
+          tone="info"
+          actions={[
+            {
+              key: 'download',
+              label: c.agentHostRetiredDownload,
+              onClick: () => void retiredAction('download', file.name),
+              disabled: working,
+              variant: 'secondary',
+            },
+            {
+              key: 'delete',
+              label: c.agentHostRetiredDelete,
+              onClick: () => void retiredAction('delete', file.name),
+              disabled: working,
+              variant: 'secondary',
+              confirm: c.agentHostRetiredDeleteConfirm,
+            },
+          ]}
+        >
+          {index === 0 ? (
+            <p className="info-action-card-lede">{c.agentHostRetiredBody}</p>
+          ) : null}
+          <p className="setting-hint">
+            {(file.bytes / 1048576).toFixed(1)} MB
+            {file.at ? ` · ${new Date(file.at).toLocaleString(locale || undefined)}` : ''}
+          </p>
+        </InfoActionCard>
+      ))}
+      {pending && pending.source === 'device' && pending.kind !== 'merge' ? (
         pending.phase === 'proposed' ? (
           <InfoActionCard
             title={format(c.agentHostImportProposedTitle, {
