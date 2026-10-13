@@ -20,7 +20,7 @@ use std::{
 use myriad_persona_sync::{
     AssetRef, AssetType, EntityVersion, Kind, PersonaBody, Picture,
     canonical::sha256_hex,
-    entity::{OutfitBody, StickerBody},
+    entity::{ConversationBody, OutfitBody, StickerBody},
 };
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, EntityTrait};
 
@@ -99,6 +99,27 @@ impl Pictures {
         Some(asset)
     }
 
+    /// A picture of the site's own media library at `url`, as it crosses:
+    /// never fetched from outside (what someone wrote in a chat is not an
+    /// address the site goes to).
+    pub async fn local_picture_at(&self, url: &str) -> Picture {
+        match crate::services::image_generation::read_public_local_media_on(
+            &self.db,
+            self.store(),
+            url,
+        )
+        .await
+        {
+            Some((bytes, media_type)) => Picture::Image(AssetRef {
+                id: sha256_hex(&bytes),
+                kind: AssetType::Image,
+                bytes: bytes.len() as u64,
+                media_type,
+            }),
+            None => Picture::unreadable(),
+        }
+    }
+
     /// A picture field as it crosses: the image, or the mark that the site
     /// has a picture there and cannot read it.
     pub async fn picture_at(&self, url: &str) -> Picture {
@@ -156,6 +177,15 @@ pub fn referenced(entities: &[EntityVersion]) -> Vec<AssetRef> {
             Kind::Sticker => {
                 if let Ok(sticker) = entity.body_as::<StickerBody>() {
                     out.extend(sticker.image.asset().cloned());
+                }
+            }
+            Kind::Conversation => {
+                if let Ok(conversation) = entity.body_as::<ConversationBody>() {
+                    out.extend(conversation.lines.iter().flat_map(|line| {
+                        line.pictures
+                            .iter()
+                            .filter_map(|picture| picture.image.asset().cloned())
+                    }));
                 }
             }
             Kind::Persona => {

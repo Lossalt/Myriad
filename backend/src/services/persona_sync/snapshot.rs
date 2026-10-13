@@ -2,7 +2,9 @@
 //!
 //! A pull from the start is a whole snapshot: every entity in `(kind, id)`
 //! order, `kind` in [`Kind::ALL`] order and `id` in byte order (SQL compares
-//! `COLLATE "C"` to agree with Rust). The cursor is the last `(kind, id)`
+//! `COLLATE "C"` to agree with Rust). A pull for the first comparison lists
+//! only [`Kind::COMPARED`]; a move or an export lists every kind
+//! ([`whole`]). The cursor is the last `(kind, id)`
 //! sent; the next page starts after it, so an interrupted pull resumes and
 //! a page fetched twice is the same page. Read only: nothing here writes.
 //!
@@ -16,9 +18,11 @@ use chrono::{DateTime, FixedOffset};
 use myriad_persona_sync::{
     AssetRef, EntityVersion, Kind, OWNER, Rev, State,
     entity::{
-        Affect, AffectAnchorBody, AffectEventBody, Baseline, Concept, DiaryBody, Embedding,
-        EmbeddingModel, MemoryAudience, MemoryBody, MemoryVenue, OutfitBody, PERSONA_ID,
-        SOUP_GAME_ID, StickerBody,
+        Affect, AffectAnchorBody, AffectEventBody, Baseline, Concept, ConversationBody,
+        ConversationLine, DiaryBody, Embedding, EmbeddingModel, FieldHistoryBody, IntentionBody,
+        LinePicture, MemoryAudience, MemoryBody, MemoryVenue, OutfitBody, OwnerStateBody, PACE_ID,
+        PERSONA_ID, PRESENT_ID, PaceBody, PresentBody, PresentDoing, PresentLazing,
+        ProactiveLineBody, SOUP_GAME_ID, StickerBody, WearingBody, Worn,
     },
     hlc,
     persona::{PersonaBody, PersonaField},
@@ -126,10 +130,12 @@ fn entity_from<B: Serialize>(
     }
 }
 
-/// One page of the snapshot for the owner `owner`, after `after`.
+/// One page of the snapshot for the owner `owner` of `kinds` (in
+/// [`Kind::ALL`] order), after `after`.
 pub async fn page(
     db: &DatabaseConnection,
     owner: i32,
+    kinds: &[Kind],
     after: Option<&Cursor>,
     limits: &Limits,
     embedding_model: Option<&EmbeddingModel>,
@@ -140,7 +146,7 @@ pub async fn page(
         ..Page::default()
     };
     let mut bytes = 0usize;
-    'kinds: for kind in Kind::ALL {
+    'kinds: for kind in kinds.iter().copied() {
         let after_id = match after {
             Some(cursor) if kind < cursor.kind => continue,
             Some(cursor) if kind == cursor.kind => Some(cursor.id.as_str()),
@@ -193,6 +199,14 @@ async fn of_kind<C: ConnectionTrait>(
         Kind::SoupGame => soup(db, owner).await?.into_iter().collect(),
         Kind::Sticker => return stickers(db, pictures, after, limit).await,
         Kind::VitalsDay => vitals(db).await?,
+        Kind::Conversation => return conversations(db, pictures, owner, after, limit).await,
+        Kind::FieldHistory => field_history(db).await?,
+        Kind::Intention => return intentions(db, owner, after, limit).await,
+        Kind::OwnerState => owner_state(db, owner).await?.into_iter().collect(),
+        Kind::Pace => pace(db).await?.into_iter().collect(),
+        Kind::Present => present(db).await?.into_iter().collect(),
+        Kind::ProactiveLine => proactive_lines(db, owner).await?,
+        Kind::Wearing => wearing(db).await?.into_iter().collect(),
     };
     found.sort_by(|a, b| a.id.cmp(&b.id));
     found.retain(|entity| after.is_none_or(|after| entity.id.as_str() > after));
@@ -358,7 +372,8 @@ async fn stickers<C: ConnectionTrait>(
     let rows = db
         .query_all_raw(statement(
             &format!(
-                "SELECT id, picture, meaning, asset_id, identity, created_at FROM merope_stickers \
+                "SELECT id, picture, meaning, asset_id, identity, sent, last_sent_at, created_at \
+                 FROM merope_stickers \
                  WHERE venue IS NULL{} ORDER BY id COLLATE \"C\" LIMIT $1",
                 after_clause(after, "id", 2)
             ),
@@ -382,6 +397,10 @@ async fn stickers<C: ConnectionTrait>(
             identity: row.try_get("", "identity")?,
             created_at: created_at.timestamp_micros(),
             image,
+            sent: u32::try_from(row.try_get::<i32>("", "sent")?).ok(),
+            last_sent_at: row
+                .try_get::<Option<DateTime<FixedOffset>>>("", "last_sent_at")?
+                .map(|at| at.timestamp_micros()),
         };
         out.extend(entity(
             Kind::Sticker,
@@ -627,6 +646,466 @@ async fn vitals<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr>
             )
         })
         .collect())
+}
+
+/// The owner's private conversations with her (D14, H3-1), each with all of
+/// its lines: not a group's, not Work, not one they deleted. Pictures in a
+/// line cross by the address written in it; only the site's own media is
+/// read, never an outside address in what someone wrote.
+async fn conversations<C: ConnectionTrait>(
+    db: &C,
+    pictures: &assets::Pictures,
+    owner: i32,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<EntityVersion>, DbErr> {
+    let mut values: Vec<sea_orm::Value> = vec![owner.into(), (limit as i64).into()];
+    if let Some(after) = after {
+        values.push(after.into());
+    }
+    let sessions = db
+        .query_all_raw(statement(
+            &format!(
+                "SELECT id, title, created_at, last_active_at FROM agent_sessions \
+                 WHERE user_id = $1 AND context->>'mode' = 'chat' AND context->>'venue' IS NULL \
+                   AND NOT archived AND message_count > 0{} \
+                 ORDER BY id COLLATE \"C\" LIMIT $2",
+                after_clause(after, "id", 3)
+            ),
+            values,
+        ))
+        .await?;
+    let mut out = Vec::new();
+    for session in &sessions {
+        let id: String = session.try_get("", "id")?;
+        let created_at: DateTime<FixedOffset> = session.try_get("", "created_at")?;
+        let active: DateTime<FixedOffset> = session.try_get("", "last_active_at")?;
+        let rows = db
+            .query_all_raw(statement(
+                "SELECT id, role, content, metadata, created_at FROM agent_messages \
+                 WHERE session_id = $1 AND role IN ('user', 'assistant') \
+                 ORDER BY created_at, id",
+                vec![id.clone().into()],
+            ))
+            .await?;
+        let mut lines = Vec::with_capacity(rows.len());
+        let mut newest = active;
+        for row in &rows {
+            let content: String = row.try_get("", "content")?;
+            if content.trim().is_empty() {
+                continue;
+            }
+            let at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
+            newest = newest.max(at);
+            let metadata: Option<Value> = row.try_get("", "metadata")?;
+            let mut line_pictures = Vec::new();
+            for url in pictures_in(&content) {
+                line_pictures.push(LinePicture {
+                    image: pictures.local_picture_at(&url).await,
+                    url,
+                });
+            }
+            lines.push(ConversationLine {
+                id: format!("msg_{}", row.try_get::<i32>("", "id")?),
+                role: row.try_get("", "role")?,
+                content,
+                at: at.timestamp_micros(),
+                cut_off: metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("cutOff"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                heard_chars: metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("heardChars"))
+                    .and_then(Value::as_u64),
+                pictures: line_pictures,
+            });
+        }
+        if lines.is_empty() {
+            continue;
+        }
+        let body = ConversationBody {
+            title: session
+                .try_get::<Option<String>>("", "title")?
+                .filter(|title| !title.trim().is_empty()),
+            created_at: created_at.timestamp_micros(),
+            last_active_at: active.timestamp_micros(),
+            lines,
+        };
+        out.extend(entity(
+            Kind::Conversation,
+            &id,
+            site_rev(newest),
+            State::Live,
+            &body,
+        ));
+    }
+    Ok(out)
+}
+
+/// The site media a line shows, by the address written in it: a path under
+/// `/media/` (or `/api/media/`), bare or as a markdown picture. Outside
+/// addresses are not pictures of the site and are left as written.
+pub(crate) fn pictures_in(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for token in content.split(|c: char| {
+        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | '<' | '>')
+    }) {
+        let url = token.trim_end_matches(['.', ',', ';', '!', '?', '。', '，']);
+        let local = url.starts_with("/media/") || url.starts_with("/api/media/");
+        if local && url.len() > "/media/".len() && !out.iter().any(|seen| seen == url) {
+            out.push(url.to_string());
+        }
+    }
+    out
+}
+
+/// The values her persona's fields had before a write replaced them.
+async fn field_history<C: ConnectionTrait>(db: &C) -> Result<Vec<EntityVersion>, DbErr> {
+    let rows = db
+        .query_all_raw(statement(
+            "SELECT field, value, rev, origin, replaced_at, replaced_by_rev, reason \
+             FROM agent_persona_field_history ORDER BY replaced_at, id",
+            Vec::new(),
+        ))
+        .await?;
+    let mut by_id: BTreeMap<String, EntityVersion> = BTreeMap::new();
+    for row in &rows {
+        let replaced_at: DateTime<FixedOffset> = row.try_get("", "replaced_at")?;
+        let (Ok(rev), Ok(replaced_by)) = (
+            row.try_get::<String>("", "rev")?.parse::<Rev>(),
+            row.try_get::<String>("", "replaced_by_rev")?.parse::<Rev>(),
+        ) else {
+            tracing::warn!("[sync] a past field value has no readable revision; left out");
+            continue;
+        };
+        let body = FieldHistoryBody {
+            field: row.try_get("", "field")?,
+            value: row
+                .try_get::<Option<Value>>("", "value")?
+                .unwrap_or(Value::Null),
+            rev,
+            origin: row.try_get("", "origin")?,
+            replaced_at: replaced_at.timestamp_micros(),
+            replaced_by_rev: replaced_by.clone(),
+            reason: row.try_get("", "reason")?,
+        };
+        let id = body.id();
+        let origin = replaced_by.node.clone();
+        // The same value replaced twice is one past value, at its last.
+        if let Some(found) = entity_from(
+            Kind::FieldHistory,
+            &id,
+            replaced_by,
+            &origin,
+            State::Live,
+            &body,
+        ) {
+            by_id.insert(id, found);
+        }
+    }
+    Ok(by_id.into_values().collect())
+}
+
+/// What she proposed to do for the owner, open or settled. Which Work run
+/// it led to is the platform's and stays here.
+async fn intentions<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<EntityVersion>, DbErr> {
+    let mut values: Vec<sea_orm::Value> = vec![owner.into(), (limit as i64).into()];
+    if let Some(after) = after {
+        values.push(after.into());
+    }
+    let rows = db
+        .query_all_raw(statement(
+            &format!(
+                "SELECT id, source_event_id, summary, reason_code, status, proposal, \
+                 result_summary, expires_at, created_at, updated_at, accept_source \
+                 FROM agent_intentions WHERE user_id = $1{} ORDER BY id COLLATE \"C\" LIMIT $2",
+                after_clause(after, "id", 3)
+            ),
+            values,
+        ))
+        .await?;
+    let mut out = Vec::new();
+    for row in &rows {
+        let id: String = row.try_get("", "id")?;
+        let created_at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
+        let updated_at: DateTime<FixedOffset> = row.try_get("", "updated_at")?;
+        let expires_at: Option<DateTime<FixedOffset>> = row.try_get("", "expires_at")?;
+        let body = IntentionBody {
+            summary: row.try_get("", "summary")?,
+            reason_code: row.try_get("", "reason_code")?,
+            status: row.try_get("", "status")?,
+            proposal: row
+                .try_get::<Option<Value>>("", "proposal")?
+                .filter(Value::is_object),
+            result_summary: row.try_get("", "result_summary")?,
+            source_event_id: row.try_get("", "source_event_id")?,
+            accept_source: row.try_get("", "accept_source")?,
+            created_at: created_at.timestamp_micros(),
+            updated_at: updated_at.timestamp_micros(),
+            expires_at: expires_at.map(|at| at.timestamp_micros()),
+        };
+        out.extend(entity(
+            Kind::Intention,
+            &id,
+            site_rev(updated_at),
+            State::Live,
+            &body,
+        ));
+    }
+    Ok(out)
+}
+
+/// Her state toward the owner past her affect.
+async fn owner_state<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+) -> Result<Option<EntityVersion>, DbErr> {
+    let Some(state) = crate::models::entities::agent_addressee_state::Entity::find_by_id(owner)
+        .one(db)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let micros = |at: Option<DateTime<FixedOffset>>| at.map(|at| at.timestamp_micros());
+    let body = OwnerStateBody {
+        activity: Some(state.activity.clone()).filter(|activity| !activity.trim().is_empty()),
+        activity_updated_at: Some(state.activity_updated_at.timestamp_micros()),
+        do_not_disturb: state.do_not_disturb,
+        dnd_start_minute: state.dnd_start_minute,
+        dnd_end_minute: state.dnd_end_minute,
+        last_user_message_at: micros(state.last_user_message_at),
+        last_proactive_at: micros(state.last_proactive_at),
+        music_mood_credited_at: micros(state.music_mood_credited_at),
+    };
+    Ok(entity(
+        Kind::OwnerState,
+        OWNER,
+        site_rev(state.updated_at),
+        State::Live,
+        &body,
+    ))
+}
+
+/// Her pace: her usual as of a day, and each day's lazing kept.
+async fn pace<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, DbErr> {
+    let records = registry(db, her::PACE_NAMESPACE).await?;
+    let mut body = PaceBody {
+        pace: None,
+        lazed: BTreeMap::new(),
+    };
+    let mut newest = None;
+    for (record, payload, updated_at) in records {
+        if record == "pace" {
+            body.pace = serde_json::from_value(payload).ok();
+        } else if let Some(day) = record.strip_prefix("lazed:") {
+            match payload.as_f64() {
+                Some(minutes) => {
+                    body.lazed.insert(day.to_string(), minutes);
+                }
+                None => continue,
+            }
+        } else {
+            continue;
+        }
+        newest = newest.max(Some(updated_at));
+    }
+    let Some(newest) = newest else {
+        return Ok(None);
+    };
+    Ok(entity(
+        Kind::Pace,
+        PACE_ID,
+        site_rev(newest),
+        State::Live,
+        &body,
+    ))
+}
+
+/// What she is in the middle of now, as the site keeps it across a restart
+/// (`merope/doing/kept.rs`).
+async fn present<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, DbErr> {
+    #[derive(Deserialize)]
+    struct Kept {
+        doing: Option<KeptDoing>,
+        lazing: Option<KeptLazing>,
+    }
+    #[derive(Deserialize)]
+    struct KeptDoing {
+        thing: myriad_merope::sources::Thing,
+        started: DateTime<chrono::Utc>,
+        ends: DateTime<chrono::Utc>,
+        why: String,
+        #[serde(default)]
+        had_before: u64,
+    }
+    #[derive(Deserialize)]
+    struct KeptLazing {
+        kind: String,
+        started: DateTime<chrono::Utc>,
+        ends: DateTime<chrono::Utc>,
+    }
+    let Some((_, payload, updated_at)) = registry(db, her::PRESENT_NAMESPACE)
+        .await?
+        .into_iter()
+        .find(|(record, _, _)| record == PRESENT_ID)
+    else {
+        return Ok(None);
+    };
+    let Ok(kept) = serde_json::from_value::<Kept>(payload) else {
+        tracing::warn!("[sync] what she is doing now does not read; left out");
+        return Ok(None);
+    };
+    let body = PresentBody {
+        doing: kept.doing.map(|doing| PresentDoing {
+            thing: doing.thing,
+            started: doing.started.timestamp_micros(),
+            ends: doing.ends.timestamp_micros(),
+            why: doing.why,
+            had_before: doing.had_before,
+        }),
+        lazing: kept.lazing.map(|lazing| PresentLazing {
+            kind: lazing.kind,
+            started: lazing.started.timestamp_micros(),
+            ends: lazing.ends.timestamp_micros(),
+        }),
+    };
+    Ok(entity(
+        Kind::Present,
+        PRESENT_ID,
+        site_rev(updated_at),
+        State::Live,
+        &body,
+    ))
+}
+
+/// The lines she said to the owner unprompted.
+async fn proactive_lines<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+) -> Result<Vec<EntityVersion>, DbErr> {
+    let rows = db
+        .query_all_raw(statement(
+            "SELECT id, role, content, event_key, notified, created_at, say_id, metadata \
+             FROM agent_proactive_messages WHERE user_id = $1 ORDER BY id",
+            vec![owner.into()],
+        ))
+        .await?;
+    let mut out = Vec::new();
+    for row in &rows {
+        let content: String = row.try_get("", "content")?;
+        if content.trim().is_empty() {
+            continue;
+        }
+        let number: i64 = row.try_get("", "id")?;
+        let say_id: Option<String> = row.try_get("", "say_id")?;
+        let created_at: DateTime<FixedOffset> = row.try_get("", "created_at")?;
+        let metadata: Option<Value> = row.try_get("", "metadata")?;
+        let id = say_id
+            .as_deref()
+            .map(|say| format!("say_{say}"))
+            .unwrap_or_else(|| format!("pro_{number}"));
+        let body = ProactiveLineBody {
+            role: row.try_get("", "role")?,
+            content,
+            at: created_at.timestamp_micros(),
+            say_id,
+            event_key: row
+                .try_get::<Option<String>>("", "event_key")?
+                .filter(|key| !key.is_empty()),
+            notified: row.try_get("", "notified")?,
+            cut_off: metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("cutOff"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            heard_chars: metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("heardChars"))
+                .and_then(Value::as_u64),
+        };
+        out.extend(entity(
+            Kind::ProactiveLine,
+            &id,
+            site_rev(created_at),
+            State::Live,
+            &body,
+        ));
+    }
+    Ok(out)
+}
+
+/// Which set each end wears (D7): the site's bust and full-body sets, and
+/// each app's on her link.
+async fn wearing<C: ConnectionTrait>(db: &C) -> Result<Option<EntityVersion>, DbErr> {
+    let Some(row) = persona_row(db).await? else {
+        return Ok(None);
+    };
+    let Some(profile) = row.visual_profile.as_ref() else {
+        return Ok(None);
+    };
+    let worn = |key: &str| text(profile, key);
+    let mut body = WearingBody::default();
+    let site = Worn {
+        outfit: worn("activeOutfitId"),
+        full_body: worn("activeFullBodyOutfitId"),
+    };
+    if site != Worn::default() {
+        body.ends.insert(hlc::SITE.to_string(), site);
+    }
+    for (end, outfit) in profile
+        .get("activeOutfitByEnd")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(outfit) = outfit.as_str().filter(|id| !id.trim().is_empty()) {
+            body.ends.insert(
+                end.clone(),
+                Worn {
+                    outfit: Some(outfit.to_string()),
+                    full_body: None,
+                },
+            );
+        }
+    }
+    if body.ends.is_empty() {
+        return Ok(None);
+    }
+    Ok(entity(
+        Kind::Wearing,
+        PERSONA_ID,
+        site_rev(row.updated_at),
+        State::Live,
+        &body,
+    ))
+}
+
+/// Everything the site has of her for the owner `owner`, every kind, read
+/// through `db` (an export reads it in one snapshot transaction), with the
+/// vectors of `embedding_model` when given.
+pub async fn whole<C: ConnectionTrait>(
+    db: &C,
+    pictures: &assets::Pictures,
+    owner: i32,
+    embedding_model: Option<&EmbeddingModel>,
+) -> Result<(Vec<EntityVersion>, Vec<Embedding>), DbErr> {
+    const ALL: usize = 1 << 30;
+    let mut entities = Vec::new();
+    for kind in Kind::ALL {
+        entities.extend(of_kind(db, pictures, owner, kind, None, ALL).await?);
+    }
+    let embeddings = match embedding_model {
+        Some(model) => embeddings(db, &entities, model).await?,
+        None => Vec::new(),
+    };
+    Ok((entities, embeddings))
 }
 
 /// How her affect toward the owner moved, each change after the anchor's
@@ -944,15 +1423,29 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         let mut after: Option<Cursor> = None;
         let mut pages = 0;
         loop {
-            let page = page(db, 41, after.as_ref(), &limits, Some(&model))
-                .await
-                .unwrap();
+            let page = page(
+                db,
+                41,
+                &Kind::COMPARED,
+                after.as_ref(),
+                &limits,
+                Some(&model),
+            )
+            .await
+            .unwrap();
             pages += 1;
             assert!(page.entities.len() <= 2);
             // The same page again is the same page.
-            let again = super::page(db, 41, after.as_ref(), &limits, Some(&model))
-                .await
-                .unwrap();
+            let again = super::page(
+                db,
+                41,
+                &Kind::COMPARED,
+                after.as_ref(),
+                &limits,
+                Some(&model),
+            )
+            .await
+            .unwrap();
             assert_eq!(again.entities, page.entities);
             all.extend(page.entities);
             embeddings.extend(page.embeddings);
@@ -1070,6 +1563,7 @@ INSERT INTO runtime_registry (namespace, record_id, payload, expires_at, updated
         let rest = page(
             db,
             41,
+            &Kind::COMPARED,
             Some(&middle),
             &Limits {
                 entities: 100,

@@ -52,6 +52,10 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 | --- | --- |
 | `sync.affect_fold` | `{anchor, events:[变化], upto}` → `{anchor}`：把 `upto`（含）以前的变化折进锚点，锚点停在最后一条之后并记下它（`throughEvent`）；只有站点写锚点 |
 | `sync.affect_replay` | `{anchor, events:[变化], now, baselineNow}` → `{affect}`：她对站长现在的心情 |
+| `sync.archive_key` | `{passphrase, kdf}` → `{key}`：按文件头里的 argon2id 代价从口令（NFC）派生密钥 |
+| `sync.archive_open` | `{start}`（文件开头，base64）→ `{header, offset}`；或 `{key, header, index, last, data}`（一块密文）→ `{data}`：除最后一块外每块恰好 `chunkBytes` + 16 字节 |
+| `sync.archive_part` | `{part}` → `{head}`；或 `{bytes}` → `{part, headBytes}`（不够一个头时 `{part: null}`） |
+| `sync.archive_seal` | `{salt, noncePrefix, fields}`（16、19 字节随机数，base64）→ `{header, line}`；或 `{key, header, index, last, data}`（一块明文）→ `{sealed}` |
 | `sync.canonicalize` | `{entities:[粗实体]}` → `{entities:[{entity, canonical}]}`；`digest` 可留空，写了就必须对 |
 | `sync.check_rev` | `{rev, now}` → `{accepted, aheadMs, maxAheadMs}`：`now` 是站点的时间，`rev` 超前它 5 分钟以上就不收 |
 | `sync.compare` | `{local:[实体], remote:[实体]}` → 比对结果（各字段、各类的相同／只在一端／两端不同，`sameName`、`needsSubject`，`unreadablePictures` 两端各自读不到的图） |
@@ -59,10 +63,14 @@ void myriad_core_buf_free(MyriadCoreBuf buf);
 | `sync.hlc_next` | `{last?, now, node}` → `{rev}` |
 | `sync.hlc_observe` | `{last?, seen, now, node}` → `{last}` |
 | `sync.legacy_rev` | `{updatedAt, origin?}` → `{rev}`（没有修订的旧行现算） |
+| `sync.manifest` | `{envelopes}` → `{manifest}`：每类实体、向量、文件的条数和 digest，与读的顺序无关 |
 | `sync.persona_diff` | `{before, after, revs, legacyRev, rev, origin, reason?}` → `{changed, revs, history}`：人设一次写入逐字段比（字段没了算 `null`），变了的字段记成这次的 `{rev, origin}`，被换掉的旧值连同它原来的 rev 进 `history`（原来就没值的不进）；没有 rev 的旧字段按 `legacyRev`、`site` 算；`reason` 默认 `edit` |
 | `sync.rig_package_id` | `{atlas: base64, manifest}` → `{id}` |
 
 格式里几条平台要照做的规矩：
+
+- **第 2 版的几类只在搬家和导出时出现。** `conversation`（站长的一场私聊连同每一句，含「没听完」标记和句子里的站点图片）、`proactive_line`、`intention`、`owner_state`、`pace`、`present`、`wearing`、`field_history` 是第 2 版加的。首次比对的 pull 只发前 13 类（`Kind::COMPARED`），`sync.compare` 也只读它们。
+- **导出文件 `myriad.her-archive`。** 第一行是明文头（规范 JSON），之后是分块的 XChaCha20-Poly1305：nonce 为头里的 19 字节前缀 + 块序号（u32 大端）+ 最后一块标记，头这一行是每块的附加数据。截断、换块、改头都打不开，口令错和文件坏说的是同一句话。流里依次是信封页、它们引用的文件（rig 是 `manifest.json` 加 `atlas.png`）、清单。导出文件总是加密。盐和 nonce 前缀由调用方从系统随机源取来传入，核心不读随机数。黄金文件在 `fixtures/archive/`。
 
 - **不透明的人设键。** 人设里本端不认识的键（站点的 `displayName`、`draftSource`，以及以后别的端加的键）是 `opaque` 类：原样存下，原样传回（值和 `rev` 都不动），按单值合并。比对不列它们：不用这个键的一端谈不上和别人不同。
 - **读不到的图。** 立绘、贴纸、贴纸头像的位置上要么是图片资产，要么是 `{"unreadable": true}`：这一端有这张图，但读不出来（外链失效、文件没了）。没有可拉的文件，界面照比对里的 `unreadablePictures` 提示「站点上有张图读不到」。站点上外链的图（`http`/`https`）在第一次被设备读到时，经出站守卫下载、存进站点的媒体库，她的人设、衣柜立绘、贴纸头像和贴纸改指向这份副本；之后外链失效也不影响。下载失败的地址 10 分钟后再试，这期间带标记。rig 以某个地址为母图时，那个地址保留不改，图从副本读。图按字节的 sha256 跨端，换地址不改变跨端的任何内容。

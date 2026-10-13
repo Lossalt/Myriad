@@ -31,10 +31,20 @@ macro_rules! fixture {
 const ENTITIES: &[(Kind, &[u8])] = &[
     (Kind::AffectAnchor, fixture!("entities/affect_anchor.json")),
     (Kind::AffectEvent, fixture!("entities/affect_event.json")),
+    (Kind::Conversation, fixture!("entities/conversation.json")),
     (Kind::Diary, fixture!("entities/diary.json")),
+    (Kind::FieldHistory, fixture!("entities/field_history.json")),
+    (Kind::Intention, fixture!("entities/intention.json")),
     (Kind::Memory, fixture!("entities/memory.json")),
     (Kind::Outfit, fixture!("entities/outfit.json")),
+    (Kind::OwnerState, fixture!("entities/owner_state.json")),
+    (Kind::Pace, fixture!("entities/pace.json")),
     (Kind::Persona, fixture!("entities/persona.json")),
+    (Kind::Present, fixture!("entities/present.json")),
+    (
+        Kind::ProactiveLine,
+        fixture!("entities/proactive_line.json"),
+    ),
     (
         Kind::SerialFollowing,
         fixture!("entities/serial_following.json"),
@@ -45,6 +55,7 @@ const ENTITIES: &[(Kind, &[u8])] = &[
     (Kind::SoupGame, fixture!("entities/soup_game.json")),
     (Kind::Sticker, fixture!("entities/sticker.json")),
     (Kind::VitalsDay, fixture!("entities/vitals_day.json")),
+    (Kind::Wearing, fixture!("entities/wearing.json")),
 ];
 
 fn golden(bytes: &[u8]) -> &str {
@@ -74,7 +85,7 @@ fn every_golden_entity_comes_back_in_its_own_bytes() {
 
 #[test]
 fn an_entity_that_breaks_the_format_is_bad_input() {
-    let mut memory: Value = serde_json::from_slice(ENTITIES[3].1).unwrap();
+    let mut memory: Value = serde_json::from_slice(ENTITIES[6].1).unwrap();
     memory["body"]["audience"]["members"] = json!(["7"]);
     let (status, out) = ffi("sync.canonicalize", &json!({ "entities": [memory] }));
     assert_eq!(status, STATUS_BAD_INPUT);

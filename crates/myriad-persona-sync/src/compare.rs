@@ -185,7 +185,12 @@ type Side = BTreeMap<(Kind, String), EntityVersion>;
 
 fn side(entities: Vec<EntityVersion>, which: &str) -> Result<Side, SyncError> {
     let mut out = BTreeMap::new();
-    for entity in entities {
+    // Only what two sides compare (format version 1's kinds): the rest
+    // crosses when she moves, never into a comparison.
+    for entity in entities
+        .into_iter()
+        .filter(|entity| entity.kind.is_compared())
+    {
         let entity =
             canonicalize(entity).map_err(|error| SyncError::new(format!("{which}: {error}")))?;
         let key = (entity.kind, entity.id.clone());
@@ -214,6 +219,14 @@ fn category_of(entity: &EntityVersion) -> Result<Option<Category>, SyncError> {
         Kind::SoupGame => Category::Soup,
         Kind::Sticker => Category::Stickers,
         Kind::VitalsDay => Category::Vitals,
+        Kind::Conversation
+        | Kind::FieldHistory
+        | Kind::Intention
+        | Kind::OwnerState
+        | Kind::Pace
+        | Kind::Present
+        | Kind::ProactiveLine
+        | Kind::Wearing => return Ok(None),
     }))
 }
 

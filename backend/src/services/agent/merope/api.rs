@@ -48,6 +48,8 @@ pub mod strangers {
 /// What syncing her reads (`services::persona_sync`): where her records are
 /// kept, and what her mood settles toward.
 pub mod sync {
+    pub(crate) use crate::services::agent::merope::doing::PRESENT_NAMESPACE;
+    pub(crate) use crate::services::agent::merope::pace::NAMESPACE as PACE_NAMESPACE;
     pub(crate) use crate::services::agent::merope::serial::NAMESPACE as SERIAL_NAMESPACE;
     pub(crate) use crate::services::agent::merope::sore::weighs_on as sore_weighs_on;
     pub(crate) use crate::services::agent::merope::soup::GAMES_NAMESPACE as SOUP_NAMESPACE;

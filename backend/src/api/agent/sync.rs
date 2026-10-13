@@ -206,9 +206,12 @@ pub async fn sync_pull(
             .clamp(1, persona_sync::PULL_MAX_ENTITIES),
         bytes: persona_sync::PULL_MAX_BYTES,
     };
+    // The first comparison reads only what two sides compare; the rest of
+    // her crosses when she moves.
     let page = page(
         &db,
         owner_of(&device),
+        &myriad_persona_sync::Kind::COMPARED,
         after.as_ref(),
         &limits,
         shared.as_ref(),
@@ -495,7 +498,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{hello}");
         assert_eq!(hello["limits"]["clockMaxAheadMs"], 300_000);
-        assert_eq!(hello["formatVersion"], 1);
+        assert_eq!(hello["formatVersion"], myriad_persona_sync::FORMAT_VERSION);
         assert_eq!(hello["empty"], true);
         assert_eq!(hello["persona"], Value::Null);
         // No her yet: no lease. A Mac from before leases still reads its role.

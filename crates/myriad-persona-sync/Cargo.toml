@@ -16,6 +16,7 @@ license = "AGPL-3.0-only"
 # sealed.
 argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 myriad-merope = { path = "../myriad-merope" }
 serde = { version = "1", features = ["derive"] }
 # Both sides parse numbers back to the exact same bits, so a body's digest

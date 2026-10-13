@@ -5,7 +5,7 @@ import type {
   SyncDeviceList,
 } from '../../services/agent/agentApi'
 import type { ManagedListItem, ManagedListStat } from '../settings/ManagedList'
-import { LuMonitor, LuPlus } from '@lib/icons'
+import { LuDownload, LuMonitor, LuPlus } from '@lib/icons'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useConfigI18n as useI18n } from '../../contexts/I18nContext'
@@ -33,6 +33,9 @@ export function AgentDevicesGroup() {
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(
     null,
   )
+  const [exportOpen, setExportOpen] = useState(false)
+  const [passphrase, setPassphrase] = useState('')
+  const [again, setAgain] = useState('')
 
   const fail = useCallback((error: unknown, fallback: string) => {
     showStickyToast({
@@ -115,6 +118,36 @@ export function AgentDevicesGroup() {
     [c.agentHostActionFailed, fail, load],
   )
 
+  // 「导出她」: always sealed with the passphrase typed here, used once by
+  // the site for the key and kept nowhere (H3-6, H3b-3).
+  const exportHer = useCallback(async () => {
+    if (!passphrase || passphrase !== again) return
+    setWorking(true)
+    try {
+      const blob = await agentService.exportHer(passphrase)
+      const stamp = new Date()
+        .toISOString()
+        .slice(0, 16)
+        .replace(/[-:]/g, '')
+        .replace('T', '-')
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `her-${stamp}.her-archive`
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      URL.revokeObjectURL(url)
+      setPassphrase('')
+      setAgain('')
+      setExportOpen(false)
+    } catch (error) {
+      fail(error, c.agentHostExportFailed)
+    } finally {
+      setWorking(false)
+    }
+  }, [again, c.agentHostExportFailed, fail, passphrase])
+
   const when = useCallback(
     (at: string) => new Date(at).toLocaleString(locale || undefined),
     [locale],
@@ -127,6 +160,13 @@ export function AgentDevicesGroup() {
   const move = host?.move ?? null
   const deviceName = (id: string, name: string | null) =>
     id === 'site' ? c.agentHostSite : (name ?? c.agentHostUnknownDevice)
+  // Her copy here is her only while she lives here or is moving (H3b-5).
+  const exportable =
+    host !== null &&
+    (host.state === 'frozen' ||
+      (host.state === 'live' && host.holder === 'site'))
+  const livesElsewhere =
+    host !== null && host.state === 'live' && host.holder !== 'site'
 
   // Choosing a host here comes later (H4); for now this says where she
   // lives, and a move a device asked for is confirmed or turned down here.
@@ -305,6 +345,75 @@ export function AgentDevicesGroup() {
             })}
           </p>
         </InfoActionCard>
+      ) : null}
+      {exportable ? (
+        exportOpen ? (
+          <InfoActionCard
+            title={c.agentHostExportTitle}
+            tone="info"
+            actions={[
+              {
+                key: 'export',
+                label: c.agentHostExportGo,
+                onClick: () => void exportHer(),
+                disabled: working || !passphrase || passphrase !== again,
+                variant: 'primary',
+              },
+              {
+                key: 'close',
+                label: t.common.cancel,
+                onClick: () => {
+                  setExportOpen(false)
+                  setPassphrase('')
+                  setAgain('')
+                },
+                disabled: working,
+                variant: 'secondary',
+              },
+            ]}
+          >
+            <p className="info-action-card-lede">{c.agentHostExportBody}</p>
+            <InputItem
+              itemKey="agent_export_passphrase"
+              label={c.agentHostExportPassphrase}
+              value={passphrase}
+              onChange={setPassphrase}
+              inputType="password"
+              autoComplete="new-password"
+              layout="vertical"
+            />
+            <InputItem
+              itemKey="agent_export_passphrase_again"
+              label={c.agentHostExportAgain}
+              value={again}
+              onChange={setAgain}
+              inputType="password"
+              autoComplete="new-password"
+              layout="vertical"
+            />
+            {again && passphrase !== again ? (
+              <p className="setting-hint">{c.agentHostExportMismatch}</p>
+            ) : null}
+          </InfoActionCard>
+        ) : (
+          <div className="agent-devices-form">
+            <SettingsButton
+              variant="secondary"
+              size="sm"
+              icon={<LuDownload size={14} />}
+              disabled={working}
+              onClick={() => setExportOpen(true)}
+            >
+              {c.agentHostExport}
+            </SettingsButton>
+          </div>
+        )
+      ) : livesElsewhere && host ? (
+        <p className="setting-hint">
+          {format(c.agentHostExportElsewhere, {
+            where: deviceName(host.holder, host.holderName),
+          })}
+        </p>
       ) : null}
       {issued ? (
         <InfoActionCard

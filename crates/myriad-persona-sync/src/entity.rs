@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use myriad_merope::{serial, soup, vitals};
+use myriad_merope::{pace, serial, soup, sources, vitals};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ use crate::{
 pub const FORMAT: &str = "myriad.her";
 /// Bumped only for a change an older side cannot read; a new optional
 /// field does not bump it.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 /// The one person a synced memory can be with.
 pub const OWNER: &str = "owner";
 /// Longest entity id.
@@ -52,15 +52,28 @@ pub struct Envelope {
 }
 
 /// The kinds of entity, in the order a snapshot lists them (by name).
+///
+/// The first thirteen are what two sides compare before they first merge;
+/// the rest (since format version 2) cross only when she moves or is
+/// exported whole: what she said with the owner, what she proposed, her
+/// pace and what she is doing now, which set each end wears, her state
+/// toward the owner and the history of her persona's fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     AffectAnchor,
     AffectEvent,
+    Conversation,
     Diary,
+    FieldHistory,
+    Intention,
     Memory,
     Outfit,
+    OwnerState,
+    Pace,
     Persona,
+    Present,
+    ProactiveLine,
     SerialFollowing,
     SerialPast,
     SerialShelf,
@@ -68,10 +81,37 @@ pub enum Kind {
     SoupGame,
     Sticker,
     VitalsDay,
+    Wearing,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 13] = [
+    pub const ALL: [Kind; 21] = [
+        Kind::AffectAnchor,
+        Kind::AffectEvent,
+        Kind::Conversation,
+        Kind::Diary,
+        Kind::FieldHistory,
+        Kind::Intention,
+        Kind::Memory,
+        Kind::Outfit,
+        Kind::OwnerState,
+        Kind::Pace,
+        Kind::Persona,
+        Kind::Present,
+        Kind::ProactiveLine,
+        Kind::SerialFollowing,
+        Kind::SerialPast,
+        Kind::SerialShelf,
+        Kind::SerialWork,
+        Kind::SoupGame,
+        Kind::Sticker,
+        Kind::VitalsDay,
+        Kind::Wearing,
+    ];
+
+    /// What a pull for the first comparison lists, and what a comparison
+    /// reads (format version 1's kinds).
+    pub const COMPARED: [Kind; 13] = [
         Kind::AffectAnchor,
         Kind::AffectEvent,
         Kind::Diary,
@@ -87,14 +127,25 @@ impl Kind {
         Kind::VitalsDay,
     ];
 
+    pub fn is_compared(self) -> bool {
+        Self::COMPARED.contains(&self)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::AffectAnchor => "affect_anchor",
             Kind::AffectEvent => "affect_event",
+            Kind::Conversation => "conversation",
             Kind::Diary => "diary",
+            Kind::FieldHistory => "field_history",
+            Kind::Intention => "intention",
             Kind::Memory => "memory",
             Kind::Outfit => "outfit",
+            Kind::OwnerState => "owner_state",
+            Kind::Pace => "pace",
             Kind::Persona => "persona",
+            Kind::Present => "present",
+            Kind::ProactiveLine => "proactive_line",
             Kind::SerialFollowing => "serial_following",
             Kind::SerialPast => "serial_past",
             Kind::SerialShelf => "serial_shelf",
@@ -102,6 +153,7 @@ impl Kind {
             Kind::SoupGame => "soup_game",
             Kind::Sticker => "sticker",
             Kind::VitalsDay => "vitals_day",
+            Kind::Wearing => "wearing",
         }
     }
 
@@ -112,11 +164,13 @@ impl Kind {
     /// The id of a kind that has exactly one entity.
     pub fn fixed_id(self) -> Option<&'static str> {
         match self {
-            Kind::Persona => Some(PERSONA_ID),
-            Kind::AffectAnchor => Some(OWNER),
+            Kind::Persona | Kind::Wearing => Some(PERSONA_ID),
+            Kind::AffectAnchor | Kind::OwnerState => Some(OWNER),
             Kind::SerialPast => Some("past"),
             Kind::SerialShelf => Some("shelf"),
             Kind::SoupGame => Some(SOUP_GAME_ID),
+            Kind::Pace => Some(PACE_ID),
+            Kind::Present => Some(PRESENT_ID),
             _ => None,
         }
     }
@@ -141,6 +195,10 @@ impl fmt::Display for Kind {
 pub const PERSONA_ID: &str = "her";
 /// The game of soup she plays with the owner, by the site's record id.
 pub const SOUP_GAME_ID: &str = "p:owner";
+/// Her pace's id.
+pub const PACE_ID: &str = "pace";
+/// What she is doing now: its id.
+pub const PRESENT_ID: &str = "now";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -366,6 +424,24 @@ fn normalize_body(kind: Kind, state: State, id: &str, body: Value) -> Result<Val
         }
         Kind::SoupGame => typed::<soup::Game>(body)?,
         Kind::Sticker => checked::<StickerBody>(body)?,
+        Kind::Conversation => checked::<ConversationBody>(body)?,
+        Kind::FieldHistory => {
+            let mut history: FieldHistoryBody =
+                serde_json::from_value(body).map_err(SyncError::from_json)?;
+            history.check_body()?;
+            if id != history.id() {
+                return Err(SyncError::new(
+                    "a field's past value is under <field>@<its revision>",
+                ));
+            }
+            serde_json::to_value(history).map_err(SyncError::from_json)?
+        }
+        Kind::Intention => checked::<IntentionBody>(body)?,
+        Kind::OwnerState => typed::<OwnerStateBody>(body)?,
+        Kind::Pace => checked::<PaceBody>(body)?,
+        Kind::Present => typed::<PresentBody>(body)?,
+        Kind::ProactiveLine => checked::<ProactiveLineBody>(body)?,
+        Kind::Wearing => checked::<WearingBody>(body)?,
         Kind::VitalsDay => {
             let mut day: vitals::Day =
                 serde_json::from_value(body).map_err(SyncError::from_json)?;
@@ -726,11 +802,312 @@ pub struct StickerBody {
     pub identity: String,
     pub created_at: i64,
     pub image: Picture,
+    /// How many times she has sent it, when the side counts.
+    #[serde(default)]
+    pub sent: Option<u32>,
+    #[serde(default)]
+    pub last_sent_at: Option<i64>,
 }
 
 impl CheckBody for StickerBody {
     fn check_body(&mut self) -> Result<(), SyncError> {
         self.image.check()
+    }
+}
+
+/// One of her private conversations with the owner, with every line of it
+/// (D14: conversations are kept only where she lives). Not a group's, not
+/// Work, not one the owner deleted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConversationBody {
+    #[serde(default)]
+    pub title: Option<String>,
+    pub created_at: i64,
+    pub last_active_at: i64,
+    /// Oldest first.
+    pub lines: Vec<ConversationLine>,
+}
+
+/// A line of a conversation: the owner's or hers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConversationLine {
+    /// Unique within the conversation.
+    pub id: String,
+    /// `user` (the owner) or `assistant` (her).
+    pub role: String,
+    /// As written, with the addresses of the pictures in it.
+    pub content: String,
+    pub at: i64,
+    /// Her line was cut off: how (`partial`, `unheard_end`, …), as the side
+    /// marked it.
+    #[serde(default)]
+    pub cut_off: Option<String>,
+    /// How many of its characters were heard aloud, when known.
+    #[serde(default)]
+    pub heard_chars: Option<u64>,
+    /// The pictures the content shows, by the address written in it: the
+    /// side that takes the line in puts each in its own library and
+    /// rewrites the address.
+    #[serde(default)]
+    pub pictures: Vec<LinePicture>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinePicture {
+    pub url: String,
+    pub image: Picture,
+}
+
+fn check_role(role: &str) -> Result<(), SyncError> {
+    match role {
+        "user" | "assistant" => Ok(()),
+        _ => Err(SyncError::new(
+            "a line is the owner's (user) or hers (assistant)",
+        )),
+    }
+}
+
+impl CheckBody for ConversationBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        let mut ids = std::collections::BTreeSet::new();
+        for line in &mut self.lines {
+            check_role(&line.role)?;
+            if line.id.is_empty() || !ids.insert(line.id.clone()) {
+                return Err(SyncError::new("each line of a conversation has its own id"));
+            }
+            for picture in &mut line.pictures {
+                picture.image.check()?;
+            }
+        }
+        self.lines.sort_by(|a, b| (a.at, &a.id).cmp(&(b.at, &b.id)));
+        Ok(())
+    }
+}
+
+/// A line she said to the owner unprompted (D27: marked when cut off, as
+/// her replies are).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProactiveLineBody {
+    pub role: String,
+    pub content: String,
+    pub at: i64,
+    /// The `say` it came from, when it came from one.
+    #[serde(default)]
+    pub say_id: Option<String>,
+    /// Why she wrote, as the side keyed it.
+    #[serde(default)]
+    pub event_key: Option<String>,
+    /// The owner was told of it.
+    #[serde(default)]
+    pub notified: bool,
+    #[serde(default)]
+    pub cut_off: Option<String>,
+    #[serde(default)]
+    pub heard_chars: Option<u64>,
+}
+
+impl CheckBody for ProactiveLineBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        check_role(&self.role)
+    }
+}
+
+/// Something she proposed to do for the owner, open or settled. The Work
+/// it led to is the platform's and stays where it ran; what came of it is
+/// `resultSummary`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IntentionBody {
+    pub summary: String,
+    pub reason_code: String,
+    /// `proposed`, `accepted`, `done`, … as the side keeps it.
+    pub status: String,
+    /// What she would do, where and on which device (`WorkProposal`).
+    #[serde(default)]
+    pub proposal: Option<Value>,
+    #[serde(default)]
+    pub result_summary: Option<String>,
+    #[serde(default)]
+    pub source_event_id: Option<String>,
+    #[serde(default)]
+    pub accept_source: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+impl CheckBody for IntentionBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        if self.status.trim().is_empty() {
+            return Err(SyncError::new("an intention has a status"));
+        }
+        if self
+            .proposal
+            .as_ref()
+            .is_some_and(|proposal| !proposal.is_object())
+        {
+            return Err(SyncError::new("a proposal is an object"));
+        }
+        Ok(())
+    }
+}
+
+/// A value a persona field had before a write replaced it, kept as her
+/// history (it can be put back). Under `<field>@<the value's revision>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldHistoryBody {
+    pub field: String,
+    /// `null` when the field was not set.
+    pub value: Value,
+    pub rev: Rev,
+    pub origin: String,
+    pub replaced_at: i64,
+    pub replaced_by_rev: Rev,
+    /// `edit`, `subject`, `lww`, … (`ReplacedValue::reason`).
+    pub reason: String,
+}
+
+impl FieldHistoryBody {
+    /// The id it crosses under.
+    pub fn id(&self) -> String {
+        format!("{}@{}", self.field, self.rev)
+    }
+}
+
+impl CheckBody for FieldHistoryBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        if self.field.trim().is_empty() || self.reason.trim().is_empty() {
+            return Err(SyncError::new(
+                "a past value names its field and why it went",
+            ));
+        }
+        check_node(&self.origin)
+    }
+}
+
+/// Her state toward the owner besides her affect (which is the anchor and
+/// its events): what they are doing, when not to disturb them, and when
+/// each last wrote or went.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerStateBody {
+    #[serde(default)]
+    pub activity: Option<String>,
+    #[serde(default)]
+    pub activity_updated_at: Option<i64>,
+    #[serde(default)]
+    pub do_not_disturb: bool,
+    #[serde(default)]
+    pub dnd_start_minute: Option<i32>,
+    #[serde(default)]
+    pub dnd_end_minute: Option<i32>,
+    #[serde(default)]
+    pub last_user_message_at: Option<i64>,
+    #[serde(default)]
+    pub last_proactive_at: Option<i64>,
+    /// When listening together last lifted her mood.
+    #[serde(default)]
+    pub music_mood_credited_at: Option<i64>,
+}
+
+/// Her pace (`myriad_merope::pace`): her usual as of a day, and the minutes
+/// she lazed about on each day kept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PaceBody {
+    #[serde(default)]
+    pub pace: Option<pace::Pace>,
+    /// By day (`YYYY-MM-DD`, her day).
+    #[serde(default)]
+    pub lazed: std::collections::BTreeMap<String, f64>,
+}
+
+impl CheckBody for PaceBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        for (day, minutes) in &self.lazed {
+            if chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err() || !minutes.is_finite() {
+                return Err(SyncError::new("lazing is minutes by day"));
+            }
+        }
+        if self
+            .pace
+            .as_ref()
+            .is_some_and(|pace| !pace.usual_minutes.is_finite())
+        {
+            return Err(SyncError::new("her usual is a number"));
+        }
+        Ok(())
+    }
+}
+
+/// What she is in the middle of now, if anything: a thing of her own, or
+/// lazing about. Kept briefly; a side that takes an old one lets it go by.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresentBody {
+    #[serde(default)]
+    pub doing: Option<PresentDoing>,
+    #[serde(default)]
+    pub lazing: Option<PresentLazing>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresentDoing {
+    pub thing: sources::Thing,
+    pub started: i64,
+    pub ends: i64,
+    pub why: String,
+    #[serde(default)]
+    pub had_before: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresentLazing {
+    pub kind: String,
+    pub started: i64,
+    pub ends: i64,
+}
+
+/// Which set each end wears (D7), by end: `site` (its bust set and its
+/// full-body set), `app:<device>` (the set that app wears), `local` (an
+/// app with no site).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WearingBody {
+    pub ends: std::collections::BTreeMap<String, Worn>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Worn {
+    /// The set worn (a bust, or the only set an app wears).
+    #[serde(default)]
+    pub outfit: Option<String>,
+    /// The full-body set, where the end has one.
+    #[serde(default)]
+    pub full_body: Option<String>,
+}
+
+impl CheckBody for WearingBody {
+    fn check_body(&mut self) -> Result<(), SyncError> {
+        for end in self.ends.keys() {
+            let ok = match end.strip_prefix("app:") {
+                Some(device) => check_node(device).is_ok(),
+                None => end == "site" || end == "local",
+            };
+            if !ok {
+                return Err(SyncError::new("an end is site, local or app:<device>"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -996,6 +1373,51 @@ mod tests {
             "value": {"unreadable": true}, "rev": "001760000000123-000000-site", "origin": "site",
         }}});
         assert!(canonicalize(entity(Kind::Persona, "her", State::Live, persona)).is_ok());
+    }
+
+    /// What crosses only when she moves keeps its own rules: a line is the
+    /// owner's or hers and has its own id, a field's past value is under
+    /// its field and revision, an end is named as one, lazing is by day.
+    #[test]
+    fn the_kinds_a_move_carries_check_their_bodies() {
+        let fixture = |kind: Kind| -> EntityVersion {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("fixtures/entities/{kind}.json"));
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let fresh = |kind: Kind, edit: &dyn Fn(&mut Value)| {
+            let mut entity = fixture(kind);
+            entity.digest.clear();
+            edit(&mut entity.body);
+            canonicalize(entity)
+        };
+        for kind in Kind::ALL.into_iter().filter(|kind| !kind.is_compared()) {
+            assert!(fresh(kind, &|_| {}).is_ok(), "{kind}");
+        }
+        assert!(
+            fresh(Kind::Conversation, &|body| body["lines"][0]["role"] =
+                json!("system"))
+            .is_err()
+        );
+        assert!(
+            fresh(Kind::Conversation, &|body| body["lines"][1]["id"] =
+                json!("msg_41"))
+            .is_err()
+        );
+        // Lines come back oldest first whatever order they were listed in.
+        let reversed = fresh(Kind::Conversation, &|body| {
+            body["lines"].as_array_mut().unwrap().reverse()
+        })
+        .unwrap();
+        assert_eq!(reversed.body["lines"][0]["id"], "msg_41");
+        assert!(fresh(Kind::FieldHistory, &|body| body["field"] = json!("zone")).is_err());
+        assert!(fresh(Kind::Wearing, &|body| body["ends"]["phone"] = json!({})).is_err());
+        assert!(fresh(Kind::Pace, &|body| body["lazed"]["yesterday"] = json!(3.0)).is_err());
+        assert!(fresh(Kind::ProactiveLine, &|body| body["role"] = json!("tool")).is_err());
+        assert!(fresh(Kind::Intention, &|body| body["proposal"] = json!("x")).is_err());
+        let mut elsewhere = fixture(Kind::Pace);
+        elsewhere.id = "pace2".into();
+        assert!(canonicalize(elsewhere).is_err());
     }
 
     #[test]

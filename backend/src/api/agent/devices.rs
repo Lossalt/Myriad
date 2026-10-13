@@ -185,6 +185,84 @@ pub async fn add_device(
         .into_response())
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRequest {
+    passphrase: String,
+}
+
+/// POST /api/agent/host/export: 「导出她」. The owner, logged in, gets
+/// everything the site has of her as one `myriad.her-archive` file sealed
+/// with the passphrase they typed (always sealed, H3-6). The passphrase is
+/// used once for the key and kept nowhere. Only while she lives here or is
+/// moving.
+pub async fn export_her(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Json(request): Json<ExportRequest>,
+) -> Result<axum::response::Response, HttpError> {
+    use crate::services::persona_sync::export::{self, ExportError};
+    use axum::http::header;
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let refused = |status: StatusCode, error: &str, code: &str, extra: Option<(&str, Value)>| {
+        let mut body = json!({ "error": error, "code": code });
+        if let Some((key, value)) = extra {
+            body[key] = value;
+        }
+        HttpError::from((status, Json(body)))
+    };
+    match export::export(&db, owner, request.passphrase).await {
+        Ok(file) => Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", file.name),
+                ),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            file.bytes,
+        )
+            .into_response()),
+        Err(ExportError::Passphrase) => Err(refused(
+            StatusCode::BAD_REQUEST,
+            "An export is sealed with a passphrase",
+            "passphrase_required",
+            None,
+        )),
+        Err(ExportError::Elsewhere(device)) => {
+            let name = match device {
+                Some(id) => lease::device_name(&db, &id).await.ok().flatten(),
+                None => None,
+            };
+            Err(refused(
+                StatusCode::CONFLICT,
+                "She does not live on this site now",
+                "host_moved",
+                Some((
+                    "host",
+                    json!(name.map(|name| json!({ "kind": "app", "name": name }))),
+                )),
+            ))
+        }
+        Err(ExportError::Empty) => Err(refused(
+            StatusCode::NOT_FOUND,
+            "The site has no her to export",
+            "her_absent",
+            None,
+        )),
+        Err(ExportError::Failed(what)) => {
+            tracing::error!(what, "[sync] she could not be exported");
+            Err(refused(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "She could not be exported",
+                "export_failed",
+                None,
+            ))
+        }
+    }
+}
+
 /// DELETE /api/agent/devices/{device_id}
 pub async fn remove_device(
     State(db): State<DatabaseConnection>,

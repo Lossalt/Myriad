@@ -500,6 +500,19 @@ class AgentService {
     )
   }
 
+  /**
+   * 「导出她」: everything the site has of her as one file, sealed with this
+   * passphrase. The site uses it once for the key and keeps it nowhere.
+   */
+  async exportHer(passphrase: string): Promise<Blob> {
+    return apiService.request<Blob>(`${this.baseUrl}/host/export`, {
+      method: 'POST',
+      body: JSON.stringify({ passphrase }),
+      responseType: 'blob',
+      timeout: 300000,
+    })
+  }
+
   async unpairQq(): Promise<{ success: boolean }> {
     return apiService.delete(`${this.baseUrl}/qq/pairing`)
   }
