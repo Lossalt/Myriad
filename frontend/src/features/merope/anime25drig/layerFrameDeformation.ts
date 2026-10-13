@@ -334,6 +334,7 @@ export function settleDependentLayers(
       }
       if (layer.attachmentTurn && deformAttachmentTurn(layer.attachmentTurn, secondaryDeformationFrame.headTurn?.amount ?? 0, secondaryDeformationFrame.headTurn?.nodAmount ?? 0, layer.rest, layer.deformed))
         layer.geometryDirty = true
+      if (layer.earSide) layer.behindFace = earBehindFace(layer.earSide, secondaryDeformationFrame.headTurn?.sine ?? 0)
     }
   }
   return savedUploadBytes
@@ -421,4 +422,19 @@ export function deformLayers(
     }
     layer.geometryDirty = true
   }
+}
+
+/**
+ * An earring goes behind the face as the head turns its side away, from
+ * about EAR_HIDES_FROM of turn to EAR_HIDDEN_AT: the far ear it hangs from is
+ * behind the cheek by then. A computed turn (11 degrees) barely starts it; a
+ * keyed one (30) hides it.
+ */
+const EAR_HIDES_FROM = Math.sin((6 * Math.PI) / 180)
+const EAR_HIDDEN_AT = Math.sin((20 * Math.PI) / 180)
+
+export function earBehindFace(side: number, turnSine: number): number {
+  const away = (side * turnSine - EAR_HIDES_FROM) / (EAR_HIDDEN_AT - EAR_HIDES_FROM)
+  const t = Math.max(0, Math.min(1, away))
+  return t * t * (3 - 2 * t)
 }

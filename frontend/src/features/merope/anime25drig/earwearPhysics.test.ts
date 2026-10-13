@@ -1,7 +1,8 @@
 import type { Anime25DPlaybackLayer } from './types'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindEarwearPhysics, EarwearPhysics } from './earwearPhysics'
+import { bindEarwearPhysics, earSideOf, EarwearPhysics } from './earwearPhysics'
+import { earBehindFace } from './layerFrameDeformation'
 
 const anchor = { x: 30, y: 40 }
 test('silhouette gate uses occupied pixels, rejects studs and unresolved pairs, and preserves explicit physics', () => {
@@ -136,4 +137,23 @@ test('a keyed earring held still hangs in its keyed pose: the key rotation it to
   }
   const host = matrix(0, 0.3)
   for (let k = 0; k < 9; k++) assert.ok(Math.abs(m[k] - host[k]) < 1e-4, `matrix[${k}] ${m[k]} vs ${host[k]}`)
+})
+
+test('an earring goes behind the face as the head turns its side away, not toward it', () => {
+  const face = { cx: 500, x0: 300, x1: 700 }
+  assert.equal(earSideOf(720, face), 1)
+  assert.equal(earSideOf(280, face), -1)
+  assert.equal(earSideOf(520, face), 0, 'one hung in front of the face is on no side')
+  const at = (degrees: number) => Math.sin((degrees * Math.PI) / 180)
+  // A head turned toward the right of the picture takes its right side away.
+  assert.equal(earBehindFace(1, at(30)), 1, 'a keyed full turn hides the far one')
+  assert.equal(earBehindFace(-1, at(30)), 0, 'the near one stays in front')
+  assert.equal(earBehindFace(1, at(4)), 0, 'a small turn leaves it as drawn')
+  assert.ok(earBehindFace(1, at(11)) < 0.5, 'a computed full turn barely starts it')
+  let previous = 0
+  for (let degrees = 0; degrees <= 30; degrees += 0.5) {
+    const share = earBehindFace(1, at(degrees))
+    assert.ok(share >= previous && share - previous < 0.1, `smooth at ${degrees}`)
+    previous = share
+  }
 })

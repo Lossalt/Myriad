@@ -18,7 +18,7 @@ import {
   createAnime25DLayerDeformationPlan,
   resolveAnime25DDeformationDependencies,
 } from './deformationDependencies'
-import { bindEarwearPhysics, bindHangBend, bindHangingPhysics } from './earwearPhysics'
+import { bindEarwearPhysics, bindHangBend, bindHangingPhysics, earSideOf } from './earwearPhysics'
 import { resolveAnime25DExpressionDeformation } from './expressionDeformation'
 import { bindFigureLayer } from './figureSkeleton'
 import { bindHairRootMotion } from './hairRootMotion'
@@ -479,6 +479,7 @@ export function bindLayerAttachments(
       // with its swing, not by a key warping it like a patch of its host.
       layer.earwearPhysics = bindHangingPhysics(layer.source, layer.attachment, playback, readBindingPixels)
       bindHangBend(layer, playback.partProfile)
+      if (layer.source.role === 'earwear') layer.earSide = earSideOf(layer.attachment.x, playback.anchors.face)
       const { hostSource } = layer.attachment
       layer.attachmentTurn = layer.earwearPhysics ? null : bindAttachmentTurn(playback.turnKeyforms, layer.source, layer.rest, hostSource, layer.attachment)
       if (layer.attachmentTurn) layer.deformed = layer.rest.slice()

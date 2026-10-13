@@ -311,3 +311,12 @@ export class EarwearPhysics {
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v))
 }
+
+/** An earring hung this far out from the face's middle, as a share of its half-width, is on a side of the head. */
+const EAR_SIDE_OUT = 0.3
+
+/** Which side of the head an earring hangs on (+1 the right of the picture), or 0 in front of the face. */
+export function earSideOf(x: number, face: Readonly<{ cx: number; x0: number; x1: number }>): number {
+  const out = (x - face.cx) / Math.max(1, (face.x1 - face.x0) / 2)
+  return Math.abs(out) < EAR_SIDE_OUT ? 0 : Math.sign(out)
+}

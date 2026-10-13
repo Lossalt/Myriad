@@ -31,6 +31,11 @@ export interface Anime25DRenderableLayer {
   crownOccluders?: { layer: Anime25DRenderableLayer; start: number; end: number }[]
   /** Painted live into its own texture instead of read from the atlas. */
   ownTexture?: Anime25DOwnTexture | null
+  /**
+   * The share of it seen from behind the face this frame, drawn there instead
+   * of in its own place: an earring on the side the head turns away.
+   */
+  behindFace?: number
 }
 
 export interface Anime25DOwnTexture {
@@ -170,8 +175,13 @@ export function drawAnime25DFrame(
   gl.bindTexture(gl.TEXTURE_2D, atlasTexture)
   gl.uniform4f(bindings.ownUv, 0, 0, 0, 0)
   drawEyeMask(gl, bindings, layers, frame, work)
+  let behindDrawn = false
   for (const layer of layers) {
-    const opacity = layer.frameOpacity
+    if (!behindDrawn && layer.source.role === 'face') {
+      behindDrawn = true
+      drawBehindFace(gl, bindings, layers, frame, atlasTexture, work)
+    }
+    const opacity = layer.frameOpacity * (1 - (layer.behindFace ?? 0))
     if (opacity < 0.004 && !layer.retainWhenHidden) continue
     if (layer.renderKind === 'iris' && eyeMaskChannel(layer) === null) continue
     const usesOwnGeometry = anime25DLayerUsesOwnGeometry(
@@ -359,7 +369,7 @@ function bindLayerUniforms(
   frame: Readonly<Anime25DRenderFrame>,
 ): void {
   gl.uniformMatrix3fv(bindings.layerTransform, false, layer.layerTransform)
-  gl.uniform1f(bindings.opacity, layer.frameOpacity)
+  gl.uniform1f(bindings.opacity, layer.frameOpacity * (1 - (layer.behindFace ?? 0)))
   const multiply = layer.frameMultiply
   gl.uniform3f(bindings.multiply, multiply ? multiply[0] : 1, multiply ? multiply[1] : 1, multiply ? multiply[2] : 1)
   gl.uniform2f(bindings.crownBand, 0, 0)
@@ -383,6 +393,43 @@ function bindLayerUniforms(
     layer.source.atlas.w,
     layer.source.atlas.h,
   )
+}
+
+/**
+ * What is seen from behind the face, drawn whole just before it: the face and
+ * everything over it hide what of it they cover, and its own place draws the
+ * rest of its share (behindFace). The two are the same drawing, so where
+ * nothing covers it the change of place does not show.
+ */
+function drawBehindFace(
+  gl: WebGL2RenderingContext,
+  bindings: Readonly<Anime25DRendererBindings>,
+  layers: readonly Anime25DRenderableLayer[],
+  frame: Readonly<Anime25DRenderFrame>,
+  atlasTexture: WebGLTexture,
+  work?: Anime25DFrameWork,
+): void {
+  for (const layer of layers) {
+    if ((layer.behindFace ?? 0) < 0.004 || layer.frameOpacity < 0.004 || !layer.vao) continue
+    bindLayerUniforms(gl, bindings, layer, frame)
+    gl.uniform1f(bindings.opacity, layer.frameOpacity)
+    gl.uniform1f(bindings.cut, 0)
+    const own = layer.ownTexture
+    if (own) {
+      gl.bindTexture(gl.TEXTURE_2D, own.texture)
+      gl.uniform4f(bindings.ownUv, own.uv[0], own.uv[1], own.uv[2], own.uv[3])
+    }
+    gl.bindVertexArray(layer.vao)
+    gl.drawElements(gl.TRIANGLES, layer.indexCount, gl.UNSIGNED_SHORT, 0)
+    if (own) {
+      gl.uniform4f(bindings.ownUv, 0, 0, 0, 0)
+      gl.bindTexture(gl.TEXTURE_2D, atlasTexture)
+    }
+    if (work) {
+      work.drawnLayers += 1
+      work.drawCalls += 1
+    }
+  }
 }
 
 function drawCollarMaskedLayer(
