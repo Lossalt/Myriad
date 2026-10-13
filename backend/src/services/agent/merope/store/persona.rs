@@ -253,7 +253,7 @@ where
 }
 
 /// Memory sources that belong to the persona, not to Work.
-pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 23] = [
+pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 24] = [
     "chat",
     "event",
     "narrative",
@@ -279,6 +279,8 @@ pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 23] = [
     super::super::chat_days::SOURCE,
     super::super::others::SPOKE_UP,
     super::super::recognizing::SOURCE,
+    // A group's own words she worked out.
+    super::super::jargon::SOURCE,
 ];
 
 pub async fn clear_persona_on<C>(db: &C) -> Result<(), anyhow::Error>
@@ -323,6 +325,8 @@ where
     super::super::clock::note_zone(None);
     // How often she has talked with people outside the community.
     super::super::strangers::forget_counts(db).await?;
+    // The words she was still working out in each group.
+    super::super::jargon::forget_watched(db).await?;
     // Turtle soups on now.
     super::super::soup::forget_games(db).await?;
     // The serial she followed and the books she finished or let go.

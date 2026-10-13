@@ -16,8 +16,8 @@ fn what_they_said_is_plain_and_the_rest_says_how_she_knows() {
             created_at: chrono::Utc::now().fixed_offset(),
             brought_to_mind: false,
         };
-    // This year's are without the year.
-    let today = chrono::Utc::now().format("%m-%d").to_string();
+    // This year's are without the year, the day on her clock.
+    let today = super::super::clock::local_now().format("%m-%d").to_string();
     assert_eq!(
         super::as_known(&note("chat", "user")),
         format!("[{today}] 养了一只猫叫年糕")

@@ -72,6 +72,14 @@ async fn keep_watched(db: &DatabaseConnection, venue: &str, watched: Vec<Watched
     }
 }
 
+/// Forget the words she watches in every group, with the persona.
+pub async fn forget_watched<C: sea_orm::ConnectionTrait>(db: &C) -> Result<u64, sea_orm::DbErr> {
+    if let Ok(mut all) = WATCHED.lock() {
+        all.clear();
+    }
+    crate::services::runtime_registry::delete_matching(db, NAMESPACE, None, None, None, None).await
+}
+
 /// Watch `term` in the group `venue` (as sessions keep it): she was unsure
 /// of it and could not look it up. `used` are lines of the talk using it;
 /// hers (`you：…`) do not count.

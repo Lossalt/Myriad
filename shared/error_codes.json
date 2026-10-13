@@ -1712,6 +1712,8 @@
     "move_in_progress",
     "move_unknown",
     "move_phase",
-    "invalid_move_kind"
+    "invalid_move_kind",
+    "figure_picture_missing",
+    "turn_archive_missing"
   ]
 }
