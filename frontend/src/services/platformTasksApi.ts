@@ -71,6 +71,18 @@ export async function clearPlatformCache(platformId: string): Promise<void> {
   requireSuccess(await apiService.delete<Envelope>(`/cache/${platformId}`))
 }
 
+/**
+ * The platform's processing task still running on the server, if any: a page
+ * opened or reloaded while it runs shows it again. Resolves its id, or null.
+ */
+export async function getRunningPlatformTask(platformId: string): Promise<string | null> {
+  const data = requireSuccess(
+    await apiService.get<Envelope & { task?: Task | null }>(`/tasks/platform/${encodeURIComponent(platformId)}`),
+  )
+  const task = data.task
+  return task && (task.status === 'Pending' || task.status === 'Processing') ? task.id : null
+}
+
 /** Queues background processing; resolves the task id to poll. */
 export async function submitPlatformTask(platformId: string): Promise<string> {
   const data = requireSuccess(

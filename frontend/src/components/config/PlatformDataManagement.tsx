@@ -10,6 +10,7 @@ import {
   fetchPlatformData,
   getPlatformCacheStatus,
   getPlatformMetadataStatus,
+  getRunningPlatformTask,
   submitPlatformTask,
 } from '../../services/platformTasksApi'
 import { resolvePlatformId } from '../../utils/platformId'
@@ -132,6 +133,19 @@ export default function PlatformDataManagement({
       loadRequestRef.current += 1
     }
   }, [loadStatus])
+
+  // A processing task already running for this platform (started before a
+  // reload, or in another tab) shows its progress again.
+  useEffect(() => {
+    if (!platformId) return
+    let current = true
+    getRunningPlatformTask(platformId).then((taskId) => {
+      if (!current || !taskId) return
+      setActiveTask(taskId)
+      setProcessing(true)
+    }, () => {})
+    return () => { current = false }
+  }, [platformId])
 
   const refreshPlatform = async () => {
     if (!platformId) return
