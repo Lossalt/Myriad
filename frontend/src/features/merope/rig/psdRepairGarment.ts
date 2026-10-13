@@ -63,17 +63,21 @@ export function droppedGarment(
 /** How far across the seam a dropped part is compared with the layer it may continue. */
 const GARMENT_TOUCH = 3
 
+/** What the outfit is made of: a dropped piece touching one of these may be the rest of it. */
+const WORN = new Set(['topwear', 'bottomwear', 'legwear', 'handwear', 'footwear'])
+
 /**
- * Of each garment kind, the layer the part carries on: the one it touches
- * most along its rim, where the portrait's colours either side of the seam
- * match on average. -1 for none.
+ * The garment layer a dropped piece carries on: of the layers it touches
+ * whose roles `of` accepts, the one it touches most along its rim where the
+ * portrait's colours either side of the seam match on average. -1 for none.
  */
-function continuedLayers(
+function carriedOn(
   analysis: Readonly<Anime25DPsdAnalysis>,
   shown: readonly number[],
   visible: readonly RasterLayer[],
   reference: Readonly<Anime25DSourceReference>,
-): Record<GarmentRole, number> {
+  of: (role: string) => boolean,
+): number {
   const { bounds } = analysis
   const pixel = (target: number) => {
     const x = bounds.x0 + (target % bounds.width)
@@ -84,7 +88,7 @@ function continuedLayers(
   const seams = new Map<number, { pairs: number; distance: number }>()
   for (const [target, member] of fringe(shown, bounds.width, bounds.height, GARMENT_TOUCH)) {
     const index = analysis.top[target]
-    if (inside.has(target) || index < 0 || !(visible[index].role in HIDDEN_BY)) continue
+    if (inside.has(target) || index < 0 || !of(visible[index].role)) continue
     const from = pixel(member)
     const color = [reference.data[from], reference.data[from + 1], reference.data[from + 2]] as const
     const seam = seams.get(index) ?? { pairs: 0, distance: 0 }
@@ -92,19 +96,44 @@ function continuedLayers(
     seam.distance += rgbDistance(reference.data, pixel(target), color)
     seams.set(index, seam)
   }
-  const continued = (role: GarmentRole) => {
-    let best = -1
-    let pairs = 0
-    for (const [index, seam] of seams) {
-      if (visible[index].role !== role || seam.distance / seam.pairs > MATCH_DISTANCE) continue
-      if (seam.pairs > pairs) {
-        best = index
-        pairs = seam.pairs
-      }
-    }
-    return best
+  let best = -1
+  let pairs = 0
+  for (const [index, seam] of seams) {
+    if (seam.distance / seam.pairs > MATCH_DISTANCE || seam.pairs <= pairs) continue
+    best = index
+    pairs = seam.pairs
   }
-  return { bottomwear: continued('bottomwear'), legwear: continued('legwear') }
+  return best
+}
+
+/** Of each garment kind, the layer the part carries on (carriedOn), or -1. */
+function continuedLayers(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  shown: readonly number[],
+  visible: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): Record<GarmentRole, number> {
+  return {
+    bottomwear: carriedOn(analysis, shown, visible, reference, (role) => role === 'bottomwear'),
+    legwear: carriedOn(analysis, shown, visible, reference, (role) => role === 'legwear'),
+  }
+}
+
+/**
+ * A small piece no layer drew that carries on a garment it touches: its
+ * frayed edge where a decomposition stopped short (notches along a hakama
+ * the importer had lifted as loose objects that moved on their own). It
+ * joins that garment; null when it carries on none.
+ */
+export function garmentEdge(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  shown: readonly number[],
+  visible: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): Pick<RecoveredPiece, 'group' | 'neighbour' | 'owner' | 'role'> | null {
+  const owner = carriedOn(analysis, shown, visible, reference, (role) => WORN.has(role))
+  if (owner < 0) return null
+  return { group: visible[owner].group, neighbour: owner, owner, role: visible[owner].role }
 }
 
 function spanOf(visible: readonly RasterLayer[], role: string): { top: number; bottom: number } | null {

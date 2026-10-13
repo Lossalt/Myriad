@@ -489,6 +489,26 @@ test('legs the decomposition drew under a dropped skirt go under it', () => {
   assert.deepEqual(pixel(result.layers[3], 100, 170), [...GEM, 255])
 })
 
+test('a frayed edge of a garment joins it instead of moving as a loose object', () => {
+  const top: Box = [40, 100, 120, 50]
+  const skirt: Box = [60, 150, 80, 30]
+  const result = repairAnime25DPsd(
+    [layer('face', FACE, SKIN, 'head'), layer('topwear', top, CLOTH), layer('bottomwear', skirt, GEM)],
+    allVisible,
+    reference((fill) => {
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      fill(skirt, GEM)
+      // 12 x 10 more of the skirt past its drawn edge: well under a garment's share.
+      fill([140, 160, 12, 10], GEM)
+    }),
+    2,
+  )
+  assert.deepEqual(result.layers.map((candidate) => candidate.role), ['face', 'topwear', 'bottomwear'])
+  assert.deepEqual(pixel(result.layers[2], 145, 165), [...GEM, 255])
+  assert.equal(result.reconciliation?.repairs.recovered, 1)
+})
+
 test('a PSD split from another illustration is left untouched', () => {
   const layers = [
     layer('face', FACE, SKIN, 'head'),

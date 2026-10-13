@@ -2,7 +2,7 @@ import type { Anime25DSourceReference, RasterLayer } from './anime25dImportTypes
 import type { Anime25DPsdReconciliation } from './psdReconciliation'
 import type { RecoveredPiece } from './psdRepairLayers'
 import { analyzeAnime25DPsd, reportAnime25DPsdAnalysis } from './psdReconciliation'
-import { closeGarmentGaps, droppedGarment } from './psdRepairGarment'
+import { closeGarmentGaps, droppedGarment, garmentEdge } from './psdRepairGarment'
 import { hairHolder, hasExpressionVariants, mergeByGroup, mountFor, overlayLayer, revealableBelow, withPixels } from './psdRepairLayers'
 import { addAntialiasedRim, alphaAt, closeMask, components, fillSmallHoles, meanCoveredDistance } from './psdRepairMasks'
 
@@ -227,6 +227,7 @@ export function repairAnime25DPsd(
       })
       if (shown.length < before.minArea || shown.length > maxGarmentArea) continue
       let mount = mountFor(before, shown, visible)
+      if (mount.owner < 0 && mount.role === 'objects') mount = garmentEdge(before, shown, visible, reference) ?? mount
       let garment = false
       if (shown.length > maxArea) {
         const middle =
