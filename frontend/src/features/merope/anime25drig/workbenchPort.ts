@@ -38,7 +38,10 @@ export interface Anime25DWorkbenchPort {
   setDriver: (partial: Partial<Anime25DDriver>) => void
   replaceDriver: (driver: Anime25DDriver) => void
   blinkNow: () => void
-  /** Her face takes a look (the contract's facePresets; null for none) the way the director's does, by `shift` (faceShifts). */
-  playFace: (face: string | null, shift: string | null) => void
+  /**
+   * Her face takes a look (the contract's facePresets; null for none) the way
+   * the director's does, by `shift` (faceShifts), passing through `via` on the way.
+   */
+  playFace: (face: string | null, shift: string | null, via?: readonly string[]) => void
   debugSnapshot: () => Anime25DDebugSnapshot | null
 }

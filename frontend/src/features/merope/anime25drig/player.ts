@@ -364,7 +364,7 @@ export class Anime25DPlayer {
     return { ...this.current }
   }
 
-  playFace(face: string | null, shift: string | null): void { this.motion.directedPose.preview(face, shift, this.time) }
+  playFace(face: string | null, shift: string | null, via?: readonly string[]): void { this.motion.directedPose.preview(face, shift, this.time, via) }
 
   blinkNow(): void {
     this.motion.blinkNow(this.time)

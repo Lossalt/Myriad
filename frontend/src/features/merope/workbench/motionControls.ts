@@ -205,6 +205,15 @@ export const FACE_SHIFT_BUTTONS = [
   ['pause', 'faceShiftPause'],
 ] as const satisfies ReadonlyArray<readonly [string, StringLabel]>
 
+/** Looks the workbench can pass through on the way to the next, as the director's via: none, her ordinary face, or a look. */
+export const FACE_VIA_CHOICES = ['none', 'plain', 'surprised', 'worried'] as const
+
+export function faceViaLabel(labels: Labels, id: (typeof FACE_VIA_CHOICES)[number]): string {
+  if (id === 'none') return labels.faceViaNone
+  if (id === 'plain') return labels.faceViaPlain
+  return facePresetLabel(labels, id)
+}
+
 export function expressionLabel(labels: Labels, button: Pick<ExpressionButton, 'kind' | 'id'>): string {
   return button.kind === 'face' ? facePresetLabel(labels, button.id) : presetLabel(labels, button.id)
 }

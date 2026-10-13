@@ -20,6 +20,8 @@ import {
   EXPRESSION_GROUPS,
   expressionLabel,
   FACE_SHIFT_BUTTONS,
+  FACE_VIA_CHOICES,
+  faceViaLabel,
   inspectFields,
 } from './motionControls'
 import { MovingPartsPanel } from './MovingPartsPanel'
@@ -53,6 +55,8 @@ export function MotionPanel({
   const labels = t.merope
   const { driver, snapshot, applyDriver, patchDriver, applyPreset, resetPose } = motion
   const [shift, setShift] = useState('ease')
+  const [via, setVia] = useState<(typeof FACE_VIA_CHOICES)[number]>('none')
+  const passing = via === 'none' ? [] : [via]
 
   const sliderCluster = (title: string, keys: DriverSliderKey[]) => (
     <div className="merope-motion-home__cluster">
@@ -103,7 +107,7 @@ export function MotionPanel({
                   onClick={() => {
                     // A look of hers comes over her own face the way the director's does; a drawn one is set.
                     applyPreset(button.kind === 'face' ? {} : button.driver)
-                    characterRef.current?.playFace(button.kind === 'face' ? button.id : null, shift)
+                    characterRef.current?.playFace(button.kind === 'face' ? button.id : null, shift, passing)
                   }}
                 >
                   {expressionLabel(labels, button)}
@@ -130,6 +134,23 @@ export function MotionPanel({
           </div>
         </div>
         <div className="merope-motion-home__chips">
+          <strong>{labels.faceViaTitle}</strong>
+          <div>
+            {FACE_VIA_CHOICES.map((id) => (
+              <SettingsButton
+                key={id}
+                type="button"
+                size="sm"
+                aria-pressed={via === id}
+                disabled={!motionEnabled}
+                onClick={() => setVia(id)}
+              >
+                {faceViaLabel(labels, id)}
+              </SettingsButton>
+            ))}
+          </div>
+        </div>
+        <div className="merope-motion-home__chips">
           <strong>{labels.expressionsActions}</strong>
           <div>
             <SettingsButton
@@ -145,7 +166,7 @@ export function MotionPanel({
               size="sm"
               disabled={!motionEnabled}
               onClick={() => {
-                characterRef.current?.playFace(null, shift)
+                characterRef.current?.playFace(null, shift, passing)
                 resetPose()
               }}
             >

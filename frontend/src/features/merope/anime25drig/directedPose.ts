@@ -163,9 +163,9 @@ export class DirectedPoseController {
     this.acting.setSpeaking(speaking)
   }
 
-  /** Workbench: her face takes a look on its own, as from the director, without a bearing. */
-  preview(face: string | null, shift: string | null, time: number): void {
-    this.set(face ? facePose(face) : null, time, face, shift)
+  /** Workbench: her face takes a look on its own, as from the director, without a bearing, by way of `via`. */
+  preview(face: string | null, shift: string | null, time: number, via?: readonly string[]): void {
+    this.set(face ? facePose(face) : null, time, face, shift, via)
   }
 
   /** The look her face holds, whose life plays over it while it holds; what it was doing settles from where it is. */

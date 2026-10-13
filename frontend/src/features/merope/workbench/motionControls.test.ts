@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import zh from '../../../i18n/merope.zh-CN.json' with { type: 'json' }
-import { FACE_PRESETS } from '../events/performanceContract'
-import { EXPRESSION_GROUPS, FACE_PRESET_BUTTONS, facePresetDriver, facePresetLabel, PRESETS } from './motionControls'
+import { FACE_PRESETS, PLAIN_FACE } from '../events/performanceContract'
+import { EXPRESSION_GROUPS, FACE_PRESET_BUTTONS, FACE_VIA_CHOICES, facePresetDriver, facePresetLabel, faceViaLabel, PRESETS } from './motionControls'
 
 test('every look the director can pick is a named button in the workbench', () => {
   assert.deepEqual(FACE_PRESET_BUTTONS.map((preset) => preset.id), Object.keys(FACE_PRESETS))
@@ -31,4 +31,11 @@ test('every expression is in exactly one group, by whether it moves', () => {
     new Set([...PRESETS.map((preset) => `drawn:${preset.id}`), ...Object.keys(FACE_PRESETS).map((id) => `face:${id}`)]),
   )
   for (const group of EXPRESSION_GROUPS) assert.ok(zh[group.title as keyof typeof zh], group.title)
+})
+
+test('the looks passed on the way are the ones the director can pass, each named', () => {
+  for (const id of FACE_VIA_CHOICES) {
+    if (id !== 'none') assert.ok(id === PLAIN_FACE || id in FACE_PRESETS, id)
+    assert.notEqual(faceViaLabel(zh as never, id), id, id)
+  }
 })
