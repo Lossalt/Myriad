@@ -126,6 +126,10 @@ pub(super) async fn start_chat_turn(
 ) {
     use crate::services::agent::merope::group::timing;
     let may_sleep = can_answer_later(sink.platform());
+    // What waits must be answerable after a restart: where, and paired with whom.
+    if may_sleep {
+        super::remember_sink(&db, user_id, session_key, &sink).await;
+    }
     // Where she can answer later, what she has not answered survives a
     // restart: asleep or awake, before she reads it or while she answers.
     if !take_in(session_key, input, images) {
@@ -265,7 +269,7 @@ async fn answer(
     // She left the site while this waited for her (asleep, about to read
     // it): held for when she is back, not started and refused (D3).
     if super::held::away() {
-        super::held::hold(&db, platform, session_key, user_id, input, images).await;
+        super::held::hold(&db, &sink, session_key, user_id, input, images).await;
         return;
     }
     sink.send_typing().await;
@@ -314,7 +318,7 @@ async fn answer(
             let body = error.to_json();
             // A move began as she was about to answer: held, not refused.
             if super::held::is_away_refusal(&body) {
-                super::held::hold(&db, platform, session_key, user_id, input, images).await;
+                super::held::hold(&db, &sink, session_key, user_id, input, images).await;
                 return;
             }
             let message = body

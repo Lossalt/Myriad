@@ -86,12 +86,15 @@ fn images_of(value: &Value) -> Vec<ChannelImageRef> {
 /// once.
 pub(super) async fn hold(
     db: &DatabaseConnection,
-    platform: ChannelPlatform,
+    sink: &super::ChannelSink,
     session_key: &str,
     user_id: i32,
     text: &str,
     images: &[ChannelImageRef],
 ) {
+    let platform = sink.platform();
+    // Answered from the session once she is back: where, and paired with whom.
+    super::remember_sink(db, user_id, session_key, sink).await;
     let inbound = INBOUND
         .try_with(|id| id.clone())
         .ok()
@@ -327,17 +330,17 @@ mod tests {
         db.execute_unprepared("INSERT INTO users (id, username) VALUES (41, 'owner41')")
             .await
             .unwrap();
-        let platform = ChannelPlatform::Telegram;
+        let sink = onebot_sink(db);
         for (id, text) in [
             ("tg:1:7", "下雨了"),
             ("tg:1:8", "你在吗"),
             ("tg:1:7", "下雨了"),
         ] {
             INBOUND
-                .scope(id.to_string(), hold(db, platform, "tg:1", 41, text, &[]))
+                .scope(id.to_string(), hold(db, &sink, "tg:1", 41, text, &[]))
                 .await;
         }
-        hold(db, platform, "tg:2", 41, "另一个对话", &[]).await;
+        hold(db, &sink, "tg:2", 41, "另一个对话", &[]).await;
         assert_eq!(count(db).await.unwrap(), 3);
         let taken = take(db, "tg:1").await.unwrap();
         assert_eq!(taken.text, "下雨了\n你在吗");
@@ -348,6 +351,59 @@ mod tests {
         assert_eq!(count(db).await.unwrap(), 1);
         assert_eq!(clear(db).await.unwrap(), 1);
         assert_eq!(count(db).await.unwrap(), 0);
+        fixture.close().await;
+    }
+
+    fn onebot_sink(db: &DatabaseConnection) -> super::super::ChannelSink {
+        super::super::ChannelSink {
+            transport: super::super::transport::ChannelTransport::OneBot {
+                user_id: "20002".into(),
+            },
+            binding: crate::services::channel_pairing::ChannelBinding {
+                user_id: 41,
+                provider: "onebot".into(),
+                identity_id: 1,
+                scope: String::new(),
+            },
+            db: db.clone(),
+        }
+    }
+
+    /// What is held keeps where to answer its chat, so she can answer it once
+    /// she is back even where no Work run ever kept it (a chat that only
+    /// talked to her).
+    #[tokio::test]
+    async fn a_held_chat_keeps_where_to_answer_it() {
+        use sea_orm::ConnectionTrait;
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        db.execute_unprepared("INSERT INTO users (id, username) VALUES (41, 'owner41')")
+            .await
+            .unwrap();
+        let platform = ChannelPlatform::OneBot;
+        let stored = super::super::StoredSession {
+            session_id: String::new(),
+            last_run_id: None,
+            last_event_seq: 0,
+            original_input: String::new(),
+            binding: None,
+            address: None,
+            chat_session_id: Some("ses_x".into()),
+        };
+        super::super::put_session(db, platform, 41, "ob:1", stored)
+            .await
+            .unwrap();
+        let sink = onebot_sink(db);
+        hold(db, &sink, "ob:1", 41, "下雨了", &[]).await;
+        let kept = super::super::load_session(db, platform, "ob:1")
+            .await
+            .unwrap();
+        assert_eq!(kept.binding.map(|binding| binding.user_id), Some(41));
+        assert!(kept.address.is_some());
+        assert_eq!(kept.chat_session_id.as_deref(), Some("ses_x"));
+        assert_eq!(count(db).await.unwrap(), 1);
         fixture.close().await;
     }
 

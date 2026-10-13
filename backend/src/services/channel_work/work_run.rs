@@ -47,7 +47,7 @@ pub(super) async fn start_work_run(
             let body = error.to_json();
             // A move began as it was about to start: held, not refused (D3).
             if super::held::is_away_refusal(&body) {
-                super::held::hold(&db, sink.platform(), session_key, user_id, input, &[]).await;
+                super::held::hold(&db, &sink, session_key, user_id, input, &[]).await;
                 return;
             }
             let message = body
@@ -163,15 +163,7 @@ pub(super) async fn resume_pending(
             }
             // The prompt is back as it was; their answer is held (D3).
             if super::held::is_away_refusal(&body) {
-                super::held::hold(
-                    &db,
-                    sink.platform(),
-                    session_key,
-                    user_id,
-                    latest_input,
-                    &[],
-                )
-                .await;
+                super::held::hold(&db, &sink, session_key, user_id, latest_input, &[]).await;
                 return;
             }
             let message = body

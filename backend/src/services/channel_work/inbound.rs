@@ -189,7 +189,7 @@ pub(super) async fn continue_text(
     // She is not on the site: held for when she is back, and nobody is
     // answered, not even with a refusal (D3).
     if super::held::away() {
-        super::held::hold(db, platform, session_key, user_id, input, images).await;
+        super::held::hold(db, &sink, session_key, user_id, input, images).await;
         return;
     }
     // Back: what was held in this chat is read with what came now.

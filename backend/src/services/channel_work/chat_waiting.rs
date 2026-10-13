@@ -123,7 +123,7 @@ pub(crate) async fn take_back_waiting(db: &DatabaseConnection) {
         // She is not on the site: what was waiting is held for when she is
         // back, never started and refused (D3).
         if super::held::away() {
-            super::held::hold(&db, sink.platform(), &session_key, user_id, &texts, &images).await;
+            super::held::hold(&db, &sink, &session_key, user_id, &texts, &images).await;
             forget_waiting(&db, &session_key).await;
             continue;
         }

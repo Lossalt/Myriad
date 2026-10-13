@@ -92,6 +92,27 @@ pub(super) async fn load_session(
         .flatten()
 }
 
+/// Where to answer this chat and whom it is paired with, kept with its
+/// session, so that what waited (asleep) or was held (she was away, D3) can
+/// be answered after a restart or once she is back. Only a Work run kept them
+/// before, so a chat that never handed off Work lost both.
+pub(super) async fn remember_sink(
+    db: &DatabaseConnection,
+    user_id: i32,
+    session_key: &str,
+    sink: &ChannelSink,
+) {
+    let platform = sink.platform();
+    let Some(mut stored) = load_session(db, platform, session_key).await else {
+        return;
+    };
+    stored.binding = Some(sink.binding.clone());
+    stored.address = Some(sink.transport.address());
+    if let Err(error) = put_session(db, platform, user_id, session_key, stored).await {
+        tracing::warn!(%error, "[Channel] could not keep where to answer this chat");
+    }
+}
+
 pub(super) async fn load_pending(
     db: &DatabaseConnection,
     platform: ChannelPlatform,
