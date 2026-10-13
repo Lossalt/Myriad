@@ -88,7 +88,10 @@ export interface Anime25DPsdAnalysisRegion extends Anime25DPsdDefectRegion {
 }
 
 export interface Anime25DPsdAnalysis {
+  /** The whole portrait, where art may be missing. */
   bounds: ContentBounds
+  /** The figure: its layers with a margin, and every region found; what the overview shows. */
+  view: ContentBounds
   status: Anime25DPsdReconciliation['status']
   agreement: number
   compared: number
@@ -216,6 +219,7 @@ export function analyzeAnime25DPsd(
       : []
   return {
     bounds,
+    view: viewOf(layerBounds(layers, reference) ?? bounds, regions),
     status,
     agreement,
     compared,
@@ -250,7 +254,7 @@ export function reportAnime25DPsdAnalysis(
       .map(({ members: _members, ...region }) => region),
     repairs,
     heatmap: reconciled
-      ? renderHeatmap(analysis.classes, analysis.bounds, reference, repaired)
+      ? renderHeatmap(analysis.classes, analysis.bounds, analysis.view, reference, repaired)
       : null,
   }
 }
@@ -266,6 +270,18 @@ function contentBounds(
   layers: readonly RasterLayer[],
   reference: Readonly<Anime25DSourceReference>,
 ): ContentBounds | null {
+  // The whole portrait: missing art can lie anywhere, just past every layer
+  // (a dropped earring) or far below them (a skirt dropped whole, its hem
+  // under the last layer that was drawn).
+  if (layers.length === 0 || reference.width === 0 || reference.height === 0) return null
+  return { x0: 0, y0: 0, width: reference.width, height: reference.height }
+}
+
+/** The layers' box with a margin: the figure as drawn. */
+function layerBounds(
+  layers: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): ContentBounds | null {
   let left = reference.width
   let top = reference.height
   let right = 0
@@ -276,13 +292,27 @@ function contentBounds(
     right = Math.max(right, layer.left + layer.width)
     bottom = Math.max(bottom, layer.top + layer.height)
   }
-  // Missing art can lie just outside every layer, e.g. a dropped earring.
   const margin = Math.round(Math.max(right - left, bottom - top) * 0.04)
   const x0 = Math.max(0, Math.floor(left - margin))
   const y0 = Math.max(0, Math.floor(top - margin))
   const x1 = Math.min(reference.width, Math.ceil(right + margin))
   const y1 = Math.min(reference.height, Math.ceil(bottom + margin))
   return x1 > x0 && y1 > y0 ? { x0, y0, width: x1 - x0, height: y1 - y0 } : null
+}
+
+/** The figure's box grown to take in every region found. */
+function viewOf(figure: ContentBounds, regions: readonly Anime25DPsdAnalysisRegion[]): ContentBounds {
+  let x0 = figure.x0
+  let y0 = figure.y0
+  let x1 = figure.x0 + figure.width
+  let y1 = figure.y0 + figure.height
+  for (const { box } of regions) {
+    x0 = Math.min(x0, box.x)
+    y0 = Math.min(y0, box.y)
+    x1 = Math.max(x1, box.x + box.width)
+    y1 = Math.max(y1, box.y + box.height)
+  }
+  return { x0, y0, width: x1 - x0, height: y1 - y0 }
 }
 
 /** Flat studio backgrounds only; a scenic one cannot separate art from backdrop. */
@@ -479,16 +509,22 @@ function collectRegions(
 function renderHeatmap(
   classes: Uint8Array,
   bounds: ContentBounds,
+  view: ContentBounds,
   reference: Readonly<Anime25DSourceReference>,
   repaired: Uint8Array | null,
 ): Anime25DPsdReconciliation['heatmap'] {
-  // Show the illustration itself, not the square padding around it.
+  // Show the figure and what was found, of the illustration itself, not the
+  // square padding around it.
   let left = bounds.width
   let top = bounds.height
   let right = 0
   let bottom = 0
-  for (let y = 0; y < bounds.height; y += 1) {
-    for (let x = 0; x < bounds.width; x += 1) {
+  const fromY = Math.max(0, view.y0 - bounds.y0)
+  const toY = Math.min(bounds.height, view.y0 + view.height - bounds.y0)
+  const fromX = Math.max(0, view.x0 - bounds.x0)
+  const toX = Math.min(bounds.width, view.x0 + view.width - bounds.x0)
+  for (let y = fromY; y < toY; y += 1) {
+    for (let x = fromX; x < toX; x += 1) {
       const offset = ((bounds.y0 + y) * reference.width + (bounds.x0 + x)) * 4
       if (reference.data[offset + 3] < 250) continue
       left = Math.min(left, x)

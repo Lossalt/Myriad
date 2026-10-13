@@ -185,7 +185,7 @@ test('layers with expression variants are neither edited nor covered', () => {
     revealed: 0,
     recovered: 0,
   })
-  assert.equal(result.reconciliation?.regions[0]?.kind, 'buried')
+  assert.ok(result.reconciliation?.regions.some((region) => region.kind === 'buried'))
 })
 
 test('a covered layer that matches only by coincidence is recovered instead', () => {
@@ -410,7 +410,7 @@ test('a lower garment no layer drew is lifted as the bottomwear, over the top an
   assert.deepEqual(pixel(skirt, 115, 165), [...GEM, 255], 'under the lock it is filled')
 })
 
-test('a garment-sized gap is not taken for a lower garment the PSD already has', () => {
+test('the rest of a garment the decomposition drew only in part joins that layer', () => {
   const top: Box = [40, 100, 120, 50]
   const layers = [
     layer('face', FACE, SKIN, 'head'),
@@ -427,8 +427,66 @@ test('a garment-sized gap is not taken for a lower garment the PSD already has',
     }),
     2,
   )
-  assert.deepEqual(result.layers, layers)
-  assert.equal(result.reconciliation?.regions[0]?.kind, 'missing')
+  assert.deepEqual(result.layers.map((candidate) => candidate.role), ['face', 'topwear', 'bottomwear'])
+  const skirt = result.layers[2]
+  assert.ok(skirt.top + skirt.height >= 190, 'grown to the hem')
+  assert.deepEqual(pixel(skirt, 100, 185), [...GEM, 255])
+  assert.deepEqual(result.reconciliation?.regions, [])
+})
+
+test('legs hanging from a skirt are not taken for more of the skirt', () => {
+  const top: Box = [40, 100, 120, 50]
+  const result = repairAnime25DPsd(
+    [layer('face', FACE, SKIN, 'head'), layer('topwear', top, CLOTH), layer('bottomwear', [60, 150, 80, 20], GEM)],
+    allVisible,
+    reference((fill) => {
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      fill([60, 150, 80, 20], GEM)
+      fill([80, 170, 40, 30], SKIN)
+    }),
+    2,
+  )
+  const legs = result.layers.find((candidate) => candidate.role === 'legwear')
+  assert.ok(legs, 'the legs are a layer of their own')
+  assert.deepEqual(pixel(legs, 100, 190), [...SKIN, 255])
+  const skirt = result.layers.find((candidate) => candidate.role === 'bottomwear')!
+  assert.equal(skirt.top + skirt.height, 170, 'the skirt keeps its hem')
+})
+
+test('a skirt dropped in front of the back hair behind it is recovered', () => {
+  const hair: Box = [30, 60, 140, 140]
+  const top: Box = [40, 100, 120, 50]
+  const result = repairAnime25DPsd(
+    [layer('back-hair', hair, HAIR, 'head'), layer('face', FACE, SKIN, 'head'), layer('topwear', top, CLOTH)],
+    allVisible,
+    reference((fill) => {
+      fill(hair, HAIR)
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      fill([60, 150, 80, 40], GEM)
+    }),
+    2,
+  )
+  assert.deepEqual(result.layers.map((candidate) => candidate.role), ['back-hair', 'face', 'topwear', 'bottomwear'])
+  assert.deepEqual(pixel(result.layers[3], 100, 170), [...GEM, 255])
+})
+
+test('legs the decomposition drew under a dropped skirt go under it', () => {
+  const top: Box = [40, 100, 120, 50]
+  const result = repairAnime25DPsd(
+    [layer('face', FACE, SKIN, 'head'), layer('topwear', top, CLOTH), layer('legwear', [70, 150, 60, 50], SKIN)],
+    allVisible,
+    reference((fill) => {
+      fill(FACE, SKIN)
+      fill(top, CLOTH)
+      fill([70, 150, 60, 50], SKIN)
+      fill([60, 150, 80, 40], GEM)
+    }),
+    2,
+  )
+  assert.deepEqual(result.layers.map((candidate) => candidate.role), ['face', 'topwear', 'legwear', 'bottomwear'])
+  assert.deepEqual(pixel(result.layers[3], 100, 170), [...GEM, 255])
 })
 
 test('a PSD split from another illustration is left untouched', () => {

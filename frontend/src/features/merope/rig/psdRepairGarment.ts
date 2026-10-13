@@ -1,6 +1,120 @@
-import type { Anime25DSourceReference } from './anime25dImportTypes'
+import type { Anime25DSourceReference, RasterLayer } from './anime25dImportTypes'
 import type { Anime25DPsdAnalysis } from './psdReconciliation'
-import { closeMask } from './psdRepairMasks'
+import type { RecoveredPiece } from './psdRepairLayers'
+import { MATCH_DISTANCE, rgbDistance } from './psdReconciliation'
+import { closeMask, fringe } from './psdRepairMasks'
+
+type GarmentRole = 'bottomwear' | 'legwear'
+
+/**
+ * What a garment hides where it was dropped: drawn there by the
+ * decomposition (it paints what lies behind a garment too), shown in its
+ * place. Back hair falls behind a skirt; legs and shoes go under it.
+ */
+const HIDDEN_BY: Record<GarmentRole, ReadonlySet<string>> = {
+  bottomwear: new Set(['back-hair', 'legwear', 'footwear']),
+  legwear: new Set(['back-hair']),
+}
+
+/**
+ * A garment-sized part of the portrait no layer drew, below the head: the
+ * garment it is, or null when no garment explains it. Where it touches the
+ * lower garment or the legs and its colours carry on across the seam, it is
+ * the rest of that garment, drawn only in part, and joins that layer (legs
+ * hanging from a skirt touch it too, but change colour there). Otherwise,
+ * below the top's middle it is the lower garment, below the lower garment the
+ * legs'. Most of it must lie over nothing or over what that garment hides, so
+ * a print the top missed stays a reported mismatch.
+ */
+export function droppedGarment(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  shown: readonly number[],
+  visible: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): Pick<RecoveredPiece, 'group' | 'neighbour' | 'owner' | 'role'> | null {
+  const { bounds } = analysis
+  const top = spanOf(visible, 'topwear')
+  if (!top) return null
+  const middle =
+    bounds.y0 + shown.reduce((sum, target) => sum + Math.floor(target / bounds.width), 0) / shown.length
+  if (middle < (top.top + top.bottom) / 2) return null
+  const continued = continuedLayers(analysis, shown, visible, reference)
+  const lower = spanOf(visible, 'bottomwear')
+  const role: GarmentRole = continued.bottomwear >= 0
+    ? 'bottomwear'
+    : continued.legwear >= 0 || (lower && middle > lower.bottom)
+      ? 'legwear'
+      : 'bottomwear'
+  const hidden = HIDDEN_BY[role]
+  const over = shown.filter((target) => {
+    const index = analysis.top[target]
+    return index < 0 || hidden.has(visible[index].role)
+  }).length
+  if (over * 2 < shown.length) return null
+  const owner = continued[role]
+  return {
+    group: 'body',
+    neighbour: owner >= 0 ? owner : visible.findLastIndex((layer) => layer.role === 'topwear'),
+    owner,
+    role,
+  }
+}
+
+/** How far across the seam a dropped part is compared with the layer it may continue. */
+const GARMENT_TOUCH = 3
+
+/**
+ * Of each garment kind, the layer the part carries on: the one it touches
+ * most along its rim, where the portrait's colours either side of the seam
+ * match on average. -1 for none.
+ */
+function continuedLayers(
+  analysis: Readonly<Anime25DPsdAnalysis>,
+  shown: readonly number[],
+  visible: readonly RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+): Record<GarmentRole, number> {
+  const { bounds } = analysis
+  const pixel = (target: number) => {
+    const x = bounds.x0 + (target % bounds.width)
+    const y = bounds.y0 + Math.floor(target / bounds.width)
+    return (y * reference.width + x) * 4
+  }
+  const inside = new Set(shown)
+  const seams = new Map<number, { pairs: number; distance: number }>()
+  for (const [target, member] of fringe(shown, bounds.width, bounds.height, GARMENT_TOUCH)) {
+    const index = analysis.top[target]
+    if (inside.has(target) || index < 0 || !(visible[index].role in HIDDEN_BY)) continue
+    const from = pixel(member)
+    const color = [reference.data[from], reference.data[from + 1], reference.data[from + 2]] as const
+    const seam = seams.get(index) ?? { pairs: 0, distance: 0 }
+    seam.pairs += 1
+    seam.distance += rgbDistance(reference.data, pixel(target), color)
+    seams.set(index, seam)
+  }
+  const continued = (role: GarmentRole) => {
+    let best = -1
+    let pairs = 0
+    for (const [index, seam] of seams) {
+      if (visible[index].role !== role || seam.distance / seam.pairs > MATCH_DISTANCE) continue
+      if (seam.pairs > pairs) {
+        best = index
+        pairs = seam.pairs
+      }
+    }
+    return best
+  }
+  return { bottomwear: continued('bottomwear'), legwear: continued('legwear') }
+}
+
+function spanOf(visible: readonly RasterLayer[], role: string): { top: number; bottom: number } | null {
+  const layers = visible.filter((layer) => layer.role === role)
+  if (layers.length === 0) return null
+  return {
+    top: Math.min(...layers.map((layer) => layer.top)),
+    bottom: Math.max(...layers.map((layer) => layer.top + layer.height)),
+  }
+}
 
 /**
  * Hair hanging over a lifted garment leaves strand-shaped gaps in it, up to
