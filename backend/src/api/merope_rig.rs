@@ -52,7 +52,7 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
         .route("/full-body/{outfit_id}", get(full_body::get_full_body))
         .route(
             "/full-body/{outfit_id}/portrait",
-            post(full_body::generate_full_body_portrait),
+            post(full_body::generate_full_body_portrait).get(full_body::full_body_portrait_drawing),
         )
         .route(
             "/full-body/{outfit_id}/portrait/upload",
@@ -94,10 +94,6 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
         .route(
             "/see-through/space",
             patch(decompose::update_see_through_space),
-        )
-        .route(
-            "/see-through/decompose",
-            post(decompose::decompose_with_see_through),
         )
         .route(
             "/see-through/turn-keyforms",

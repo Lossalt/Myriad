@@ -282,53 +282,10 @@ export function seeThroughError(status: number, body: unknown, fallback: string)
   )
 }
 
+/** The master portrait a split is made of, as the server checks it is still current. */
 export interface SeeThroughDecomposeInput {
   sourceMasterAssetId: string
   sourceGenerationFingerprint?: string
-  resolution?: number
-  seed?: number
-  splitArmsAndLegs?: boolean
-}
-
-export async function decomposeSitePortraitWithSeeThrough(
-  input: SeeThroughDecomposeInput,
-): Promise<File> {
-  return decomposeWithSeeThrough('/see-through/decompose', input)
-}
-
-async function decomposeWithSeeThrough(
-  path: string,
-  input: SeeThroughDecomposeInput,
-): Promise<File> {
-  try {
-    const psd = await apiService.post<Blob>(
-      `${PREFIX}${path}`,
-      input,
-      {
-        responseType: 'blob',
-        timeout: SEE_THROUGH_TIMEOUT_MS,
-      },
-    )
-    if (!(psd instanceof Blob) || psd.size === 0) {
-      throw new MeropeApiError(
-        currentCopy().merope.motionSeeThroughUpstream,
-        502,
-      )
-    }
-    return new File([psd], 'see-through.psd', {
-      type: 'image/vnd.adobe.photoshop',
-    })
-  } catch (reason) {
-    if (reason instanceof MeropeApiError) throw reason
-    if (reason instanceof ApiError && reason.status > 0) {
-      throw seeThroughError(
-        reason.status,
-        reason.body,
-        currentCopy().merope.motionSeeThroughUpstream,
-      )
-    }
-    throw meropeError(reason, currentCopy().merope.motionSeeThroughUpstream)
-  }
 }
 
 /** The composite goes along: the moving parts are looked for from it after the import. */
@@ -566,13 +523,20 @@ export async function generateStickerAvatar(): Promise<{
 
 export type SiteExpressionUrls = Partial<Record<AuthoredExpressionKind, string>>
 
-/** Expression redraws of the current master portrait, cut into the rig at import. */
-export async function listSiteExpressions(): Promise<SiteExpressionUrls> {
+/**
+ * Expression redraws of the current master portrait, cut into the rig at
+ * import, and the ones being drawn now (begun before a reload, or in another tab).
+ */
+export async function listSiteExpressions(): Promise<{ urls: SiteExpressionUrls; drawing: AuthoredExpressionKind[] }> {
   try {
-    const data = await apiService.get<{ expressions?: Record<string, unknown> }>(
+    const data = await apiService.get<{ expressions?: Record<string, unknown>; drawing?: unknown }>(
       `${PREFIX}/expressions`,
     )
-    return readExpressionUrls(data.expressions)
+    const drawing = Array.isArray(data.drawing) ? data.drawing : []
+    return {
+      urls: readExpressionUrls(data.expressions),
+      drawing: AUTHORED_EXPRESSION_KINDS.filter((kind) => drawing.includes(kind)),
+    }
   } catch (reason) {
     throw meropeError(reason, currentCopy().merope.aiExpressionsFailed)
   }
@@ -633,6 +597,12 @@ export async function generateFullBodyPortrait(outfitId: string): Promise<{
     if (reason instanceof MeropeApiError) throw reason
     throw meropeError(reason, currentCopy().merope.fullBody.failed)
   }
+}
+
+/** Whether the server is drawing this full-body set's picture now (begun before a reload, or in another tab). */
+export async function fullBodyPortraitDrawing(outfitId: string): Promise<boolean> {
+  const data = await apiService.get<{ drawing?: unknown }>(`${PREFIX}${fullBodyPath(outfitId)}/portrait`)
+  return data.drawing === true
 }
 
 export async function generateSitePortrait(

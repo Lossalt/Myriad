@@ -23,7 +23,7 @@ export interface TurnKeyformsStatus {
    * figure's own or its head's, waiting on its body, a refit, a loaded archive.
    * Absent from a server before it was reported.
    */
-  phase?: 'bust' | 'figure' | 'head' | 'body' | 'refit' | 'load'
+  phase?: 'bust' | 'figure' | 'head' | 'body' | 'refit' | 'load' | 'plain'
   /** A standing figure's body keys, made alongside its head's: none until they start. */
   body?: {
     motion: 'turn' | 'weight'
@@ -82,6 +82,8 @@ export async function decomposeWithTurnKeyforms(
     parts?: { head: boolean; body: boolean }
     /** Pick up this job, already running, instead of starting one (runningTurnKeyformsFor). */
     resumeJobId?: string
+    /** The bust split once without keys: the base its redrawn expressions go on. */
+    plain?: boolean
     onStatus?: (status: TurnKeyformsStatus) => void
     signal?: AbortSignal
   } = {},
@@ -96,6 +98,7 @@ export async function decomposeWithTurnKeyforms(
       sourceMasterAssetId: input.sourceMasterAssetId,
       ...(input.sourceGenerationFingerprint ? { sourceGenerationFingerprint: input.sourceGenerationFingerprint } : {}),
       ...(options.outfitId && options.parts ? options.parts : {}),
+      ...(options.plain ? { plain: true } : {}),
     })
     return `${PREFIX}/see-through/turn-keyforms/${encodeURIComponent(jobId)}`
   }

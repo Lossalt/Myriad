@@ -21,7 +21,6 @@ import { agentService } from '../../../services/agent'
 import { siteMediaUrl } from '../../../utils/siteMediaUrl'
 import { isAnime25DPlayback } from '../anime25drig/types'
 import {
-  decomposeSitePortraitWithSeeThrough,
   saveFullBodyPoseCorrections,
   saveRigPoseCorrections,
   uploadFullBodyPortrait,
@@ -205,12 +204,13 @@ export default function SiteMotionWorkbench({
     resumeTurnKeyforms({ sourceMasterAssetId: portraitUrl ?? '', sourceGenerationFingerprint: generationFingerprint || undefined }, { onStatus, signal }),
   [generationFingerprint, portraitUrl])
 
-  const decomposePlainRigPsd = useCallback(async () => {
+  // Split once, as a job the page picks up again after a reload (resumeRigPsd).
+  const decomposePlainRigPsd = useCallback(async (signal: AbortSignal, onStatus: (status: TurnKeyformsStatus) => void) => {
     if (!portraitUrl) throw new Error(t.merope.assetNeedsPortrait)
-    return decomposeSitePortraitWithSeeThrough({
-      sourceMasterAssetId: portraitUrl,
-      sourceGenerationFingerprint: generationFingerprint || undefined,
-    })
+    return decomposeWithTurnKeyforms(
+      { sourceMasterAssetId: portraitUrl, sourceGenerationFingerprint: generationFingerprint || undefined },
+      { plain: true, onStatus, signal },
+    )
   }, [generationFingerprint, portraitUrl, t.merope.assetNeedsPortrait])
 
   const { reload } = persona
@@ -597,6 +597,8 @@ export default function SiteMotionWorkbench({
           aiExpressions={aiExpressions.ready}
           onGenerateAiExpressions={portraitUrl ? aiExpressions.generate : undefined}
           aiExpressionsReady={aiExpressions.ready.length > 0}
+          aiExpressionsDrawing={aiExpressions.drawing}
+          awaitAiExpressions={aiExpressions.settled}
           activeRigMode={activeRigMode(rigManifest, portraitUrl)}
           motionEnabled={motionEnabled}
           stageSwitch={

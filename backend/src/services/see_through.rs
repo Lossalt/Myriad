@@ -81,9 +81,6 @@ impl DecomposeOptions {
 #[derive(Debug)]
 pub struct DecomposeOutput {
     pub psd: Vec<u8>,
-    pub event_id: String,
-    /// Fitted on `CANVAS` rather than padded to a square.
-    pub canvas: bool,
 }
 
 /// A Hugging Face Space running See-through, by its `owner/name`.
@@ -359,11 +356,7 @@ impl SeeThroughClient {
         let event_id = self.start(endpoint, data).await?;
         let output_url = self.await_output(endpoint, &event_id).await?;
         let psd = self.download_psd(output_url).await?;
-        Ok(DecomposeOutput {
-            psd,
-            event_id,
-            canvas,
-        })
+        Ok(DecomposeOutput { psd })
     }
 
     /// The Space's `keyforms`: each part of the front decomposition fitted onto

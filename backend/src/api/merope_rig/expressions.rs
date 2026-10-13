@@ -132,7 +132,16 @@ pub async fn list_expressions(
         let url = latest_expression(&db, &portrait, kind).await?;
         expressions.insert(kind.to_string(), url.map_or(Value::Null, Value::String));
     }
-    Ok(Json(json!({ "expressions": expressions })))
+    // Being drawn now, begun before a reload or in another tab.
+    let drawing: Vec<&str> = IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .copied()
+        .collect();
+    Ok(Json(
+        json!({ "expressions": expressions, "drawing": drawing }),
+    ))
 }
 
 pub async fn generate_expression(
@@ -166,7 +175,7 @@ pub async fn generate_expression(
     let dynamic = crate::GLOBAL_DYNAMIC_CONFIG.read().await.clone();
     let config = image_generation::config_from_dynamic(&dynamic)
         .map_err(portrait_generation_config_error)?;
-    let Some(_running) = InFlight::claim(kind) else {
+    let Some(running) = InFlight::claim(kind) else {
         return Err((
             StatusCode::CONFLICT,
             Json(json!({
@@ -183,11 +192,49 @@ pub async fn generate_expression(
         height,
         "portrait expression redraw started"
     );
+    // Drawn and kept on its own: a page reloaded or closed meanwhile does not
+    // throw the drawing away, and sees it being drawn (`drawing` in the list).
+    tokio::spawn(async move {
+        let _running = running;
+        let drawn = Drawn {
+            kind,
+            portrait: &portrait,
+            width,
+            height,
+        };
+        draw_expression(&db, user_id, drawn, &config, &prompt, &reference).await
+    })
+    .await
+    .map_err(|error| internal_error(error.to_string()))?
+}
+
+/// The expression drawn: which, of which portrait, at its size.
+struct Drawn<'a> {
+    kind: &'static str,
+    portrait: &'a str,
+    width: u32,
+    height: u32,
+}
+
+async fn draw_expression(
+    db: &DatabaseConnection,
+    user_id: i32,
+    drawn: Drawn<'_>,
+    config: &image_generation::ImageGenerationConfig,
+    prompt: &str,
+    reference: &image_generation::ImageReference,
+) -> ApiResult<Json<Value>> {
+    let Drawn {
+        kind,
+        portrait,
+        width,
+        height,
+    } = drawn;
     let generated = crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,
         "merope",
         "expression",
-        image_generation::generate_image(&config, &prompt, width, height, Some(&reference)),
+        image_generation::generate_image(config, prompt, width, height, Some(reference)),
     )
     .await
     .map_err(portrait_generation_provider_error)?;
@@ -195,11 +242,11 @@ pub async fn generate_expression(
         .map_err(|error| internal_error(error.to_string()))?;
     let key = format!(
         "{}{}",
-        producer_prefix(&portrait, kind),
+        producer_prefix(portrait, kind),
         uuid::Uuid::new_v4().simple()
     );
     let persisted = image_generation::persist_generated_with_status(
-        &db,
+        db,
         crate::services::media::MediaContext::site(
             actor,
             crate::services::media::MediaSource::Generated,

@@ -80,3 +80,10 @@ test("a figure keyed by its head alone has no body step; by its body alone, its 
   // Three tiles, then the body's two decompositions in the same queue, then the stitch.
   assert.equal(body.remainingSeconds, 3 * S.decompose + 2 * S.decompose + S.stitch)
 })
+
+test("the bust split once has one step, the split, whose plan its status names", () => {
+  const plain = estimateEnhance('plain', status({ phase: 'plain', stage: 'decomposing', done: 0, total: 1 }))
+  assert.deepEqual(plain.steps.map((step) => [step.key, step.state]), [['plainDecompose', 'started']])
+  assert.equal(plain.remainingSeconds, S.decompose)
+  assert.equal(enhancePlanOf(status({ phase: 'plain' }), { head: false, body: false }), 'plain')
+})

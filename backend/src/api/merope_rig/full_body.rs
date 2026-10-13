@@ -40,6 +40,41 @@ use crate::{
 /// One full figure at a time: a second request would draw over the first.
 static FULL_BODY_SLOT: Semaphore = Semaphore::const_new(1);
 
+/// The set whose full figure is being drawn, while one is: a page opened or
+/// reloaded meanwhile shows it being drawn, and takes it up when done.
+static DRAWING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+struct Drawing;
+
+impl Drawing {
+    fn begin(outfit_id: &str) -> Self {
+        *DRAWING.lock().unwrap_or_else(|error| error.into_inner()) = Some(outfit_id.to_owned());
+        Self
+    }
+}
+
+impl Drop for Drawing {
+    fn drop(&mut self) {
+        *DRAWING.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    }
+}
+
+/// Whether this set's full figure is being drawn now.
+pub async fn full_body_portrait_drawing(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(outfit_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_merope_enabled().await?;
+    require_owner(&claims, &db).await?;
+    let drawing = DRAWING
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_deref()
+        == Some(outfit_id.as_str());
+    Ok(Json(json!({ "drawing": drawing })))
+}
+
 fn set_missing() -> (StatusCode, Json<Value>) {
     not_found("The full-body set is missing")
 }
@@ -121,16 +156,47 @@ pub async fn generate_full_body_portrait(
         from_bust = bust.is_some(),
         "full-body portrait generation started"
     );
+    // Drawn and stored on its own: a page reloaded or closed meanwhile does
+    // not throw the drawing away, and finds it being drawn (`DRAWING`).
+    let drawing = Drawing::begin(&outfit_id);
+    tokio::spawn(async move {
+        let _slot = _slot;
+        let _drawing = drawing;
+        draw_full_body(
+            &db,
+            user_id,
+            &outfit_id,
+            &config,
+            &prompt,
+            &reference,
+            fingerprint,
+        )
+        .await
+    })
+    .await
+    .map_err(|error| internal_error(error.to_string()))?
+}
+
+async fn draw_full_body(
+    db: &DatabaseConnection,
+    user_id: i32,
+    outfit_id: &str,
+    config: &image_generation::ImageGenerationConfig,
+    prompt: &str,
+    reference: &image_generation::ImageReference,
+    fingerprint: String,
+) -> ApiResult<Json<Value>> {
+    let full = CharacterAssetProfile::FullBody.contract();
     let generated = crate::services::ai_cost_ledger::with_site_ai_ledger(
         user_id,
         "merope",
         "full-body-portrait",
         image_generation::generate_image_with_background(
-            &config,
-            &prompt,
+            config,
+            prompt,
             full.generation_width,
             full.generation_height,
-            Some(&reference),
+            Some(reference),
             Some(image_generation::ImageBackground::Opaque),
         ),
     )
@@ -139,7 +205,7 @@ pub async fn generate_full_body_portrait(
     let actor = crate::services::media::MediaActor::admin(user_id)
         .map_err(|error| internal_error(error.to_string()))?;
     let persisted = image_generation::persist_generated_with_status(
-        &db,
+        db,
         crate::services::media::MediaContext::site(
             actor,
             crate::services::media::MediaSource::Generated,
@@ -152,13 +218,11 @@ pub async fn generate_full_body_portrait(
     .await
     .map_err(|error| bad_request(&error.to_string()))?;
     let stored =
-        store_full_body_portrait(&db, user_id, &outfit_id, &persisted.url, Some(&fingerprint))
-            .await;
+        store_full_body_portrait(db, user_id, outfit_id, &persisted.url, Some(&fingerprint)).await;
     let public_url = match stored {
         Ok(public_url) => public_url,
         Err(error) => {
-            if let Err(cleanup) =
-                image_generation::remove_persisted_generated(&db, &persisted).await
+            if let Err(cleanup) = image_generation::remove_persisted_generated(db, &persisted).await
             {
                 tracing::warn!(error = %cleanup, url = %persisted.url, "failed to remove uncommitted full-body portrait");
             }
@@ -375,4 +439,17 @@ pub async fn import_full_body_rig(
     Ok(Json(
         json!({ "manifest": imported.manifest, "assetId": imported.asset_id }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_set_shows_as_drawn_until_its_drawing_ends() {
+        let drawing = Drawing::begin("w-test");
+        assert_eq!(DRAWING.lock().unwrap().as_deref(), Some("w-test"));
+        drop(drawing);
+        assert_eq!(DRAWING.lock().unwrap().as_deref(), None);
+    }
 }

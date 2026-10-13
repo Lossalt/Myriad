@@ -135,6 +135,8 @@ enum Phase {
     Refit,
     /// A kept job handed over as it was.
     Load,
+    /// The worn bust split once, no keys: the base its redrawn expressions go on.
+    Plain,
 }
 
 impl Phase {
@@ -146,6 +148,7 @@ impl Phase {
             Self::Body => "body",
             Self::Refit => "refit",
             Self::Load => "load",
+            Self::Plain => "plain",
         }
     }
 }
@@ -322,6 +325,9 @@ pub struct TurnKeyformsRequest {
     /// A figure's body keyed for its turn and weight shift.
     #[serde(default = "keyed")]
     body: bool,
+    /// The bust split once without keys, as a job a reload picks up.
+    #[serde(default)]
+    plain: bool,
 }
 
 fn keyed() -> bool {
@@ -342,7 +348,7 @@ pub async fn start_turn_keyforms(
     Extension(claims): Extension<Claims>,
     Json(payload): Json<TurnKeyformsRequest>,
 ) -> ApiResult<Json<Value>> {
-    if !payload.head {
+    if !payload.head && !payload.plain {
         return Err(bad_request("A bust's enhancement keys its head"));
     }
     start(db, &claims, None, payload).await
@@ -356,6 +362,9 @@ pub async fn start_full_body_turn_keyforms(
 ) -> ApiResult<Json<Value>> {
     if !payload.head && !payload.body {
         return Err(bad_request("Choose the head, the body or both to key"));
+    }
+    if payload.plain {
+        return Err(bad_request("A set is split plain by keying neither part"));
     }
     start(db, &claims, Some(outfit_id), payload).await
 }
@@ -443,14 +452,20 @@ async fn start(
         see_through::DecomposeOptions::default(),
     );
 
+    let plain = outfit_id.is_none() && payload.plain;
     let (stage, total) = if outfit_id.is_some() {
         (Stage::Upscaling, 1)
+    } else if plain {
+        (Stage::Decomposing, 1)
     } else {
         (Stage::Generating, 4)
     };
     let (id, new) = claim_job(&outfit_id, &master.asset_id, stage, total)?;
     if !new {
         return Ok(Json(json!({ "jobId": id })));
+    }
+    if plain {
+        update(&id, |job| job.phase = Phase::Plain);
     }
     tracing::info!(job = %id, outfit = ?outfit_id, "turn keyforms started");
     let meta = ArchiveMeta {
@@ -485,6 +500,8 @@ async fn start(
                 keys,
             )
             .await
+        } else if plain {
+            run_plain(&task_id, reference, &client, &cache).await
         } else {
             run(&task_id, user_id, &generation, reference, &client, &cache).await
         };
@@ -492,6 +509,29 @@ async fn start(
         finish(&db, &task_id, result, meta).await;
     });
     Ok(Json(json!({ "jobId": id })))
+}
+
+/// The bust split once, no keys, nothing kept: the front decomposition a
+/// keyed job of the same portrait would make (and reuse) first.
+async fn run_plain(
+    id: &str,
+    reference: image_generation::ImageReference,
+    client: &see_through::SeeThroughClient,
+    cache: &TurnCache,
+) -> ApiResult<Made> {
+    cache.touch().await;
+    let options = see_through::DecomposeOptions::default();
+    let psd = decomposition(
+        client,
+        cache,
+        0,
+        &reference.bytes,
+        &reference.media_type,
+        options,
+    )
+    .await?;
+    update(id, |job| job.done = 1);
+    Ok(plain(psd, reference.media_type))
 }
 
 /// Four turned drawings, five decompositions, one fit.
@@ -1666,6 +1706,20 @@ fn missing_job() -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bust_can_ask_for_a_plain_split() {
+        let asked: TurnKeyformsRequest = serde_json::from_value(json!({
+            "sourceMasterAssetId": "/media/assets/m/portrait.png",
+            "plain": true
+        }))
+        .expect("plain is a known field");
+        assert!(asked.plain);
+        let keyed: TurnKeyformsRequest =
+            serde_json::from_value(json!({ "sourceMasterAssetId": "m" })).unwrap();
+        assert!(!keyed.plain && keyed.head);
+        assert_eq!(Phase::Plain.as_str(), "plain");
+    }
 
     fn made() -> Made {
         plain(Vec::new(), "image/png".to_string())

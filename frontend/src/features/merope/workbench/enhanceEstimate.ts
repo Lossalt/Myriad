@@ -6,7 +6,7 @@ import type { TurnKeyformsStatus } from '../turnKeyformsApi'
  * (`phase`: a figure's decomposing and its head's are both `decomposing`);
  * the steps and their usual lengths are known here.
  */
-export type EnhancePlan = 'bust' | 'figure' | 'figureHead' | 'figureBody' | 'refit'
+export type EnhancePlan = 'bust' | 'figure' | 'figureHead' | 'figureBody' | 'refit' | 'plain'
 
 export type EnhanceStepKey =
   | 'upscale'
@@ -84,6 +84,8 @@ const PLANS: Record<EnhancePlan, StepModel[]> = {
   // The head not keyed, its tile is decomposed with the others.
   figureBody: [UPSCALE, { key: 'plainDecompose', unit: ENHANCE_SECONDS.decompose, units: 4 }, STITCH],
   refit: [{ key: 'refit', unit: ENHANCE_SECONDS.fit, units: 1 }],
+  // The bust split once, for its redrawn expressions.
+  plain: [{ key: 'plainDecompose', unit: ENHANCE_SECONDS.decompose, units: 1 }],
 }
 
 function withBody(plan: EnhancePlan): boolean {
@@ -95,6 +97,7 @@ function currentStep(plan: EnhancePlan, status: TurnKeyformsStatus): EnhanceStep
   const { phase, stage } = status
   if (stage === 'done' || stage === 'failed') return null
   if (plan === 'refit') return 'refit'
+  if (plan === 'plain') return 'plainDecompose'
   if (plan === 'bust') {
     return stage === 'generating' ? 'headGenerate' : stage === 'decomposing' ? 'headDecompose' : 'headFit'
   }
@@ -215,6 +218,7 @@ export function enhancePlanOf(status: TurnKeyformsStatus, parts: { head: boolean
   if (!status.phase) return null
   if (status.phase === 'refit') return 'refit'
   if (status.phase === 'load') return null
+  if (status.phase === 'plain') return 'plain'
   if (status.phase === 'bust') return 'bust'
   if (parts.head && parts.body) return 'figure'
   if (parts.head) return 'figureHead'

@@ -10,6 +10,7 @@ import { useI18n } from '../../../contexts/I18nContext'
 import { siteMediaUrl } from '../../../utils/siteMediaUrl'
 import { userFacingError } from '../../../utils/userFacingError'
 import {
+  fullBodyPortraitDrawing,
   generateFullBodyPortrait,
   getFullBodyFace,
   saveFullBodyStance,
@@ -21,6 +22,7 @@ import { FaceTabs } from './FaceTabs'
 import { RigImportPanel, RigModeTags } from './RigImportPanel'
 import { activeRigMode } from './rigMode'
 import { useRigImport } from './useRigImport'
+import { useServerGeneration } from './useServerGeneration'
 
 interface Props {
   /** The full-body set in the wardrobe. */
@@ -75,6 +77,20 @@ export function FullBodyPanel({
     setError(null)
     reload().catch(() => setFace(null))
   }, [reload])
+
+  // A picture the server is still drawing for this set (begun before a
+  // reload, or in another tab) shows as being drawn, and is taken up when done.
+  const [drawnElsewhere, setDrawnElsewhere] = useState(false)
+  const recheckDrawing = useCallback(async () => {
+    setDrawnElsewhere(await fullBodyPortraitDrawing(outfitId))
+  }, [outfitId])
+  useEffect(() => {
+    setDrawnElsewhere(false)
+    recheckDrawing().catch(() => {})
+  }, [recheckDrawing])
+  const drawing = useServerGeneration(operation === null && drawnElsewhere, recheckDrawing, () => {
+    void reload().then(() => onChanged?.()).catch(() => {})
+  })
 
   const portrait = face?.portraitUrl ?? null
   const fingerprint = face?.generationFingerprint ?? undefined
@@ -194,12 +210,12 @@ export function FullBodyPanel({
       <SettingsButton
         type="button"
         size="sm"
-        disabled={operation !== null}
-        loading={operation === 'generate'}
+        disabled={operation !== null || drawing}
+        loading={operation === 'generate' || drawing}
         confirm={portrait ? copy.generateConfirm : undefined}
         onClick={() => void generate()}
       >
-        {operation === 'generate'
+        {operation === 'generate' || drawing
           ? copy.generating
           : portrait
             ? copy.regenerate
@@ -208,7 +224,7 @@ export function FullBodyPanel({
       <SettingsButton
         type="button"
         size="sm"
-        disabled={operation !== null}
+        disabled={operation !== null || drawing}
         loading={operation === 'upload'}
         confirm={portrait ? copy.generateConfirm : undefined}
         onClick={() => uploadRef.current?.click()}

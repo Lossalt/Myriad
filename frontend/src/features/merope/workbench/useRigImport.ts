@@ -79,6 +79,10 @@ export interface RigImportSource {
   onGenerateAiExpressions?: () => Promise<void>
   /** Whether redrawn expressions exist for the current portrait already. */
   aiExpressionsReady?: boolean
+  /** Expressions being drawn on the server, begun before a reload or in another tab. */
+  aiExpressionsDrawing?: boolean
+  /** Resolves once the server draws none of the expressions any more. */
+  awaitAiExpressions?: () => Promise<void>
 }
 
 /**
@@ -98,6 +102,8 @@ export function useRigImport({
   onCommitRigPsd,
   onGenerateAiExpressions,
   aiExpressionsReady = false,
+  aiExpressionsDrawing = false,
+  awaitAiExpressions,
 }: RigImportSource) {
   const { t } = useI18n()
   const labels = t.merope
@@ -126,6 +132,9 @@ export function useRigImport({
   >(null)
   const importing = operation !== null
   const [aiExpressionsBusy, setAiExpressionsBusy] = useState(false)
+  // A resumed split reads it once the expressions drawn meanwhile are in.
+  const aiExpressionsReadyRef = useRef(aiExpressionsReady)
+  aiExpressionsReadyRef.current = aiExpressionsReady
   const [aiExpressionsError, setAiExpressionsError] = useState<string | null>(
     null,
   )
@@ -303,7 +312,10 @@ export function useRigImport({
         }, controller.signal)
         if (!file || controller.signal.aborted) return
         pick()
-        await preflightSplit(file, expressionsOffered && enhanceExpressions && aiExpressionsReady, controller)
+        // Expressions still being drawn (begun before the reload) go in once done.
+        await awaitAiExpressions?.()
+        if (controller.signal.aborted) return
+        await preflightSplit(file, expressionsOffered && enhanceExpressions && aiExpressionsReadyRef.current, controller)
       } catch (reason) {
         if (controller.signal.aborted || !picked) return
         failSplit(reason)
@@ -454,7 +466,7 @@ export function useRigImport({
     decomposePsd,
     cancelPreflight,
     commitPsd,
-    aiExpressionsBusy,
+    aiExpressionsBusy: aiExpressionsBusy || aiExpressionsDrawing,
     aiExpressionsError,
     generateAiExpressions,
   }
