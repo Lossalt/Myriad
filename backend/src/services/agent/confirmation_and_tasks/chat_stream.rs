@@ -535,6 +535,9 @@ impl Agent {
             {
                 blocks.push(crate::services::agent::delegate::section(chat));
                 blocks.push(myriad_merope::speaking::chat_app_section().to_string());
+                if let Some(away) = &chat.came_while_away {
+                    blocks.push(format!("## While you were away\n{away}"));
+                }
                 // How they type to her, once there is enough of it.
                 if let Some(room) = request
                     .context

@@ -261,9 +261,15 @@ async fn answer(
     session_key: &str,
     saw: u64,
 ) {
+    let platform = sink.platform();
+    // She left the site while this waited for her (asleep, about to read
+    // it): held for when she is back, not started and refused (D3).
+    if super::held::away() {
+        super::held::hold(&db, platform, session_key, user_id, input, images).await;
+        return;
+    }
     sink.send_typing().await;
     let began = Instant::now();
-    let platform = sink.platform();
     let Some(chat_session_id) = chat_session(&db, platform, user_id, session_key).await else {
         let _ = sink.send_text("无法保存通道会话，请稍后重试。").await;
         return;
@@ -295,6 +301,7 @@ async fn answer(
                 channel_chat: Some(ChannelChat {
                     handed_off: handed_off(&db, &work_session_id, busy).await,
                     busy,
+                    came_while_away: super::held::note_for(session_key),
                 }),
                 ..Default::default()
             }),
@@ -305,6 +312,11 @@ async fn answer(
         Ok(run) => run,
         Err(error) => {
             let body = error.to_json();
+            // A move began as she was about to answer: held, not refused.
+            if super::held::is_away_refusal(&body) {
+                super::held::hold(&db, platform, session_key, user_id, input, images).await;
+                return;
+            }
             let message = body
                 .get("message")
                 .and_then(Value::as_str)

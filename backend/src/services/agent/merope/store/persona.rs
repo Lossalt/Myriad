@@ -311,10 +311,11 @@ where
         .exec(db)
         .await?;
     // How her affect toward each of them moved, and where its replay starts;
-    // and what her persona's fields held before.
+    // what her persona's fields held before; and what came by chat app while
+    // she was away, which was for her (D3).
     db.execute_unprepared(
         "DELETE FROM agent_affect_events; DELETE FROM agent_affect_anchor; \
-         DELETE FROM agent_persona_field_history;",
+         DELETE FROM agent_persona_field_history; DELETE FROM agent_channel_held;",
     )
     .await?;
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)

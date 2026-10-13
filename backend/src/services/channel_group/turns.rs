@@ -52,6 +52,16 @@ pub(super) fn end_turn(venue: &str, replied: bool) {
 pub async fn handle(message: GroupLine, token: String) {
     use crate::services::agent::merope::group::timing;
     let venue = message.venue();
+    // She is not on the site: not in the group either (D3-2). The latest
+    // line that called her is the one she takes up when she is back.
+    if crate::services::channel_work::held::away() {
+        with_group(&venue, |group| {
+            group.reach = Some((message.clone(), token.clone()));
+            group.left_while_away = Some((message, token, chrono::Utc::now()));
+        });
+        info!(%venue, "[Group] she is not on the site; the line waits for her return");
+        return;
+    }
     // A line taken back up after a restart may also come in again (Telegram
     // hands back what it was not told was read): answered once.
     if !first_time(&venue, &message.message_id) {
@@ -193,6 +203,30 @@ pub(super) fn first_time(venue: &str, message_id: &str) -> bool {
         handled.clear();
     }
     handled.insert(format!("{venue}#{message_id}"))
+}
+
+/// She is back on the site: in each group, the latest line that called her
+/// while she was away, taken up as if it had just come in, if it is still
+/// recent enough to be talk (as after a restart, see `left_waiting`).
+pub fn back_from_away() {
+    let left: Vec<(GroupLine, String)> = GROUPS
+        .lock()
+        .map(|mut groups| {
+            groups
+                .values_mut()
+                .filter_map(|group| group.left_while_away.take())
+                .filter(|(_, _, at)| {
+                    chrono::Utc::now() - *at
+                        < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
+                })
+                .map(|(line, token, _)| (line, token))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (line, token) in left {
+        info!(venue = %line.venue(), "[Group] she is back: the line that called her is taken up");
+        tokio::spawn(handle(line, token));
+    }
 }
 
 /// Mark when this process first heard a group.

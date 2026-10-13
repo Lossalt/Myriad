@@ -694,6 +694,7 @@ fn mind_chat_prompt(case: &Case) -> String {
             super::delegate::section(&super::types::ChannelChat {
                 handed_off: channel["handedOff"].as_str().map(str::to_string),
                 busy: channel["busy"].as_bool().unwrap_or(false),
+                ..Default::default()
             })
         }),
         case.playing

@@ -125,6 +125,10 @@ pub(super) struct Group {
     /// She held back what she wrote because the talk moved on (see
     /// `deliver`): the turn answers again, from where the talk is now.
     pub(super) held_back: bool,
+    /// The latest line that called her while she was not on the site, with
+    /// its token and when it came: the one she takes up when she is back
+    /// (D3-2), as she would after a restart.
+    pub(super) left_while_away: Option<(GroupLine, String, chrono::DateTime<chrono::Utc>)>,
 }
 
 pub(super) enum Turn {

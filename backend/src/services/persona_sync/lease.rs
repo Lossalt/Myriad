@@ -606,6 +606,15 @@ pub fn adopt(lease: Option<Lease>) {
                 paused.clear();
             }
             tracing::info!("[host] she is here again: her own life goes on");
+            // What came by chat app while she was away is read now, in the
+            // process that runs the chat apps (D3).
+            if crate::runtime_role::PERSONA_RUNTIME_LOCAL.load(std::sync::atomic::Ordering::Acquire)
+                && let Ok(db) = crate::services::process_db::database()
+                && tokio::runtime::Handle::try_current().is_ok()
+            {
+                crate::services::channel_group::back_from_away();
+                tokio::spawn(crate::services::channel_work::held::replay(db));
+            }
         }
     }
 }

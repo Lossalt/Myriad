@@ -93,6 +93,7 @@ mod tests {
         let busy = super::section(&ChannelChat {
             busy: true,
             handed_off: Some("You handed off: 查天气".into()),
+            ..Default::default()
         });
         assert!(busy.contains("still being done"));
         assert!(busy.contains("handed_off"));

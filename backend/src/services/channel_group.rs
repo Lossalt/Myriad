@@ -92,7 +92,7 @@ pub use reaching_out::{come_back, share_first};
 pub use speaking_up::notice;
 pub use title::title;
 pub use transcript::names_here;
-pub use turns::handle;
+pub use turns::{back_from_away, handle};
 
 /// Lines of a group she keeps in mind, and for how long.
 const TRANSCRIPT_LINES: usize = 30;

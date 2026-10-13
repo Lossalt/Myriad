@@ -680,6 +680,13 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
             )),
         )
         .route(
+            "/host/held",
+            delete(super::devices::clear_held).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
             "/host/export",
             post(super::devices::export_her).route_layer(from_fn_with_state(
                 app_state.clone(),

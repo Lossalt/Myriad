@@ -38,9 +38,14 @@ async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpE
     let list = devices::list(db, owner).await.map_err(store_failed)?;
     let host = lease::shown(db).await.map_err(store_failed)?;
     let now = Utc::now();
+    // What came by chat app while she was away, held until she is back (D3).
+    let held = crate::services::channel_work::held::count(db)
+        .await
+        .map_err(store_failed)?;
     Ok(json!({
         "devices": list.iter().map(|device| device_json(device, now)).collect::<Vec<_>>(),
         "host": host,
+        "held": held,
         "limit": devices::MAX_DEVICES,
     }))
 }
@@ -183,6 +188,19 @@ pub async fn add_device(
         Json(json!({ "device": device_json(&device, Utc::now()), "token": token })),
     )
         .into_response())
+}
+
+/// DELETE /api/agent/host/held: the owner lets go of what came by chat app
+/// while she was away; she will not read it (D3-4).
+pub async fn clear_held(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    let cleared = crate::services::channel_work::held::clear(&db)
+        .await
+        .map_err(store_failed)?;
+    Ok(Json(json!({ "cleared": cleared, "held": 0 })))
 }
 
 #[derive(Deserialize)]

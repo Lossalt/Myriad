@@ -69,18 +69,14 @@ pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
     // Gateways replay messages after a reconnect. Claim each one before
     // pairing state is read: once the first delivery of a pairing code has
     // bound the sender, a replay would otherwise start Work with the code.
-    let already_seen = !inbound.msg_id.is_empty()
-        && !crate::services::channel_work::claim_inbound(
-            &db,
-            platform,
-            None,
-            &format!(
-                "{}:{}",
-                session_key(platform.slug(), &chat_id),
-                inbound.msg_id
-            ),
-        )
-        .await;
+    let claimed = format!(
+        "{}:{}",
+        session_key(platform.slug(), &chat_id),
+        inbound.msg_id
+    );
+    let has_id = !inbound.msg_id.is_empty();
+    let already_seen = has_id
+        && !crate::services::channel_work::claim_inbound(&db, platform, None, &claimed).await;
     let pairing = if already_seen {
         // Not consulted: a duplicate is dropped before pairing matters.
         PairingLookup::Unpaired
@@ -112,7 +108,13 @@ pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
             input,
             session_key,
             ..
-        } => text.start_work(&db, user_id, &input, &session_key).await,
+        } => {
+            // Held by this id while she is not on the site (D3).
+            let held_as = if has_id { claimed } else { String::new() };
+            crate::services::channel_work::held::INBOUND
+                .scope(held_as, text.start_work(&db, user_id, &input, &session_key))
+                .await
+        }
     }
 }
 

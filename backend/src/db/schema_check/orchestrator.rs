@@ -46,7 +46,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 2026.10.13.3：她的主机租约 `agent_host_lease`（随 004 与 `ensure_persona_sync_tables`
 /// 一起建，带只增的 epoch 与变化通知）；设备的旧母端标记 `agent_sync_devices.role` 和
 /// 「最多一个母端」索引退场（同一份文件删掉）。
-pub const SCHEMA_VERSION: &str = "2026.10.13.3";
+/// 2026.10.13.4：她不在站点时聊天应用的来信存进 `agent_channel_held`（D3，随 004 与
+/// `ensure_persona_sync_tables` 一起建），回来后按到达顺序读。
+pub const SCHEMA_VERSION: &str = "2026.10.13.4";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

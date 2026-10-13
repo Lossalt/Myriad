@@ -311,6 +311,8 @@ pub(crate) async fn run_recovery_worker() {
         if !waiting_taken_back {
             waiting_taken_back = true;
             super::chat_waiting::take_back_waiting(&db).await;
+            // And what was held while she was away, if she is here now (D3).
+            tokio::spawn(super::held::replay(db.clone()));
         }
         for platform in ChannelPlatform::ALL {
             let Ok(rows) = shared_registry::list(&db, platform.session_ns(), None, None).await

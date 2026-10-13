@@ -148,6 +148,18 @@ export function AgentDevicesGroup() {
     }
   }, [again, c.agentHostExportFailed, fail, passphrase])
 
+  const clearHeld = useCallback(async () => {
+    setWorking(true)
+    try {
+      await agentService.clearHeld()
+      await load()
+    } catch (error) {
+      fail(error, c.agentHostHeldClearFailed)
+    } finally {
+      setWorking(false)
+    }
+  }, [c.agentHostHeldClearFailed, fail, load])
+
   const when = useCallback(
     (at: string) => new Date(at).toLocaleString(locale || undefined),
     [locale],
@@ -344,6 +356,24 @@ export function AgentDevicesGroup() {
               ),
             })}
           </p>
+        </InfoActionCard>
+      ) : null}
+      {list?.held ? (
+        <InfoActionCard
+          title={format(c.agentHostHeldTitle, { n: list.held })}
+          tone="info"
+          actions={[
+            {
+              key: 'clear',
+              label: c.agentHostHeldClear,
+              onClick: () => void clearHeld(),
+              disabled: working,
+              variant: 'secondary',
+              confirm: c.agentHostHeldClearConfirm,
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">{c.agentHostHeldBody}</p>
         </InfoActionCard>
       ) : null}
       {exportable ? (

@@ -129,3 +129,24 @@ CREATE TABLE IF NOT EXISTS agent_persona_field_history (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_persona_field_history_field
     ON agent_persona_field_history (field, replaced_at DESC);
+
+-- What came by chat app while she was not on the site (moving, or living on
+-- another end), held in the order it came until she is back (D3): nobody
+-- is answered meanwhile, not even with a refusal. `inbound_id` is the
+-- platform message as the channel claimed it, so one message is held once.
+-- No expiry: a row goes when she reads it, when its pairing is gone, or
+-- when the owner clears what is held.
+CREATE TABLE IF NOT EXISTS agent_channel_held (
+    id BIGSERIAL PRIMARY KEY,
+    platform VARCHAR(16) NOT NULL,
+    session_key VARCHAR(255) NOT NULL,
+    inbound_id VARCHAR(255) NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    images JSONB NOT NULL DEFAULT '[]'::jsonb,
+    arrived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_channel_held_inbound
+    ON agent_channel_held (platform, inbound_id);
+CREATE INDEX IF NOT EXISTS idx_agent_channel_held_session
+    ON agent_channel_held (session_key, id);

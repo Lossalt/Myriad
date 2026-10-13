@@ -966,6 +966,23 @@ pub(crate) fn tables() -> Vec<TableDef> {
             ],
         },
         TableDef {
+            name: "agent_channel_held".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "bigint").not_null(),
+                ColumnDef::new("platform", "character varying").not_null(),
+                ColumnDef::new("session_key", "character varying").not_null(),
+                ColumnDef::new("inbound_id", "character varying").not_null(),
+                ColumnDef::new("user_id", "integer").not_null(),
+                ColumnDef::new("text", "text").not_null(),
+                ColumnDef::new("images", "jsonb")
+                    .not_null()
+                    .default_value("'[]'::jsonb"),
+                ColumnDef::new("arrived_at", "timestamp with time zone")
+                    .not_null()
+                    .default_value("now()"),
+            ],
+        },
+        TableDef {
             name: "agent_affect_events".to_string(),
             columns: vec![
                 ColumnDef::new("id", "character varying").not_null(),

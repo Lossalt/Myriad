@@ -9,6 +9,10 @@ use super::*;
 /// whether to say something (see `merope::joining`). Nothing is held while
 /// she waits.
 pub fn notice(message: GroupLine, token: String) {
+    // She is not on the site: she does not glance at the group (D3-2).
+    if crate::services::channel_work::held::away() {
+        return;
+    }
     let venue = message.venue();
     let id = message.message_id.clone();
     let wake = with_group(&venue, |group| {

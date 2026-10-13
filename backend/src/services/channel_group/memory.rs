@@ -350,8 +350,13 @@ pub async fn record(message: &GroupLine) -> bool {
     if note_said(&venue, typed, None, Some(&message.text)) {
         keep_ledger(&venue).await;
     }
+    // Not on the site, she hears nothing there (D3-2): the line is kept as
+    // the group's talk, not taken in as hers.
+    let away = crate::services::channel_work::held::away();
     // Words she watches there as maybe the group's own count as they come up.
-    crate::services::agent::merope::group::jargon::heard(&venue, &message.text);
+    if !away {
+        crate::services::agent::merope::group::jargon::heard(&venue, &message.text);
+    }
     take_in(&venue);
     with_group(&venue, |group| {
         if group.pictures.len() > PICTURES_KEPT {
@@ -368,6 +373,13 @@ pub async fn record(message: &GroupLine) -> bool {
 /// it about things, on the site owner's account: she keeps it as her own,
 /// with no name and no group on it.
 pub(super) fn take_in(venue: &str) {
+    // What was said while she was not on the site she never heard.
+    if crate::services::channel_work::held::away() {
+        with_group(venue, |group| {
+            group.heard_upto = group.lines.back().map(|line| line.at).or(group.heard_upto);
+        });
+        return;
+    }
     let stretch = with_group(venue, |group| {
         let upto = group.heard_upto;
         let fresh: Vec<&Line> = group

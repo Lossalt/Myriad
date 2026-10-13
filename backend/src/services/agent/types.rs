@@ -127,6 +127,9 @@ pub struct ChannelChat {
     pub handed_off: Option<String>,
     /// Work she handed off is still being done.
     pub busy: bool,
+    /// What they wrote came while she was not on the site (D3): when, as a
+    /// fact she reads with it.
+    pub came_while_away: Option<String>,
 }
 
 /// 对话消息

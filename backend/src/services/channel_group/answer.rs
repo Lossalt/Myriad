@@ -100,6 +100,11 @@ pub(super) fn answered(message: &GroupLine) {
 }
 
 pub(super) async fn answer(message: &GroupLine, token: &str, chime: Option<String>) -> bool {
+    // Not on the site, she answers nobody there, a stranger included, and
+    // the line is not claimed: it can be taken up when she is back.
+    if crate::services::channel_work::held::away() {
+        return false;
+    }
     let Ok(db) = crate::services::process_db::database() else {
         return false;
     };

@@ -101,6 +101,8 @@ export interface SyncDeviceList {
   devices: SyncDevice[]
   /** Null while the site has no her. */
   host: HostLease | null
+  /** Messages that came by chat app while she was away, held until she is back. */
+  held?: number
   limit: number
 }
 
@@ -498,6 +500,11 @@ class AgentService {
     return apiService.post(
       `${this.baseUrl}/host/moves/${encodeURIComponent(id)}/cancel`,
     )
+  }
+
+  /** Lets go of what came by chat app while she was away: she will not read it. */
+  async clearHeld(): Promise<{ cleared: number; held: number }> {
+    return apiService.delete(`${this.baseUrl}/host/held`)
   }
 
   /**

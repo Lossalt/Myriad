@@ -104,27 +104,7 @@ pub(crate) async fn take_back_waiting(db: &DatabaseConnection) {
             forget_waiting(db, &session_key).await;
             continue;
         };
-        let mut sink = None;
-        for platform in ChannelPlatform::ALL {
-            let Some(stored) = super::load_session(db, platform, &session_key).await else {
-                continue;
-            };
-            let (Some(binding), Some(address)) = (stored.binding, stored.address) else {
-                continue;
-            };
-            if binding.user_id != waiting.user_id || !binding.is_current(db).await {
-                continue;
-            }
-            if let Some(transport) = address.connect(db).await {
-                sink = Some(ChannelSink {
-                    transport,
-                    binding,
-                    db: db.clone(),
-                });
-            }
-            break;
-        }
-        let Some(sink) = sink else {
+        let Some(sink) = sink_for(db, waiting.user_id, &session_key).await else {
             forget_waiting(db, &session_key).await;
             continue;
         };
@@ -140,6 +120,13 @@ pub(crate) async fn take_back_waiting(db: &DatabaseConnection) {
             .collect();
         let texts = waiting.texts.join("\n");
         let (db, user_id, work_session_id) = (db.clone(), waiting.user_id, waiting.work_session_id);
+        // She is not on the site: what was waiting is held for when she is
+        // back, never started and refused (D3).
+        if super::held::away() {
+            super::held::hold(&db, sink.platform(), &session_key, user_id, &texts, &images).await;
+            forget_waiting(&db, &session_key).await;
+            continue;
+        }
         tracing::info!("[Channel] what she had not answered, waited on again after a restart");
         tokio::spawn(async move {
             start_chat_turn(
@@ -153,6 +140,49 @@ pub(crate) async fn take_back_waiting(db: &DatabaseConnection) {
             )
             .await;
         });
+    }
+}
+
+/// A sink to answer `user_id` in `session_key` with, from the session the
+/// channel stored: None when the pairing is gone or the bot is not there.
+pub(super) async fn sink_for(
+    db: &DatabaseConnection,
+    user_id: i32,
+    session_key: &str,
+) -> Option<ChannelSink> {
+    for platform in ChannelPlatform::ALL {
+        let Some(stored) = super::load_session(db, platform, session_key).await else {
+            continue;
+        };
+        let (Some(binding), Some(address)) = (stored.binding, stored.address) else {
+            continue;
+        };
+        if binding.user_id != user_id || !binding.is_current(db).await {
+            continue;
+        }
+        let transport = address.connect(db).await?;
+        return Some(ChannelSink {
+            transport,
+            binding,
+            db: db.clone(),
+        });
+    }
+    None
+}
+
+/// The chat is still paired with `user_id` on `platform`.
+pub(super) async fn paired(
+    db: &DatabaseConnection,
+    platform: ChannelPlatform,
+    user_id: i32,
+    session_key: &str,
+) -> bool {
+    let Some(stored) = super::load_session(db, platform, session_key).await else {
+        return false;
+    };
+    match stored.binding {
+        Some(binding) => binding.user_id == user_id && binding.is_current(db).await,
+        None => false,
     }
 }
 

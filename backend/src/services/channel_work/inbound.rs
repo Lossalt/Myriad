@@ -106,14 +106,8 @@ pub async fn handle_callback(
     let db = db.clone();
     let lock_key = session_key.clone();
     with_chat_lock(&lock_key, async move {
-        if !sink.authorized().await
-            || !claim_inbound(
-                &db,
-                platform,
-                Some(user_id),
-                &format!("{session_key}:{inbound_id}"),
-            )
-            .await
+        let claimed = format!("{session_key}:{inbound_id}");
+        if !sink.authorized().await || !claim_inbound(&db, platform, Some(user_id), &claimed).await
         {
             return;
         }
@@ -125,7 +119,12 @@ pub async fn handle_callback(
                 let _ = sink.send_force_reply(&pending.prompt.question).await;
             }
             TelegramCallbackAction::Resume(answer) => {
-                continue_text(&db, user_id, &chat_id, &answer, &[], &session_key, sink).await;
+                super::held::INBOUND
+                    .scope(
+                        claimed,
+                        continue_text(&db, user_id, &chat_id, &answer, &[], &session_key, sink),
+                    )
+                    .await;
             }
             TelegramCallbackAction::Stale => {
                 let _ = sink.send_text(PENDING_STALE_REPLY).await;
@@ -186,6 +185,29 @@ pub(super) async fn continue_text(
         .await;
         return;
     }
+
+    // She is not on the site: held for when she is back, and nobody is
+    // answered, not even with a refusal (D3).
+    if super::held::away() {
+        super::held::hold(db, platform, session_key, user_id, input, images).await;
+        return;
+    }
+    // Back: what was held in this chat is read with what came now.
+    let taken = super::held::take(db, session_key).await;
+    let (input, images) = match &taken {
+        Some(held) => {
+            let mut all = held.images.clone();
+            all.extend_from_slice(images);
+            let text = [held.text.trim(), input.trim()]
+                .into_iter()
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (text, all)
+        }
+        None => (input.to_string(), images.to_vec()),
+    };
+    let (input, images) = (input.as_str(), images.as_slice());
 
     if runtime::recover_session(db, session_key, Some(sink.clone())).await {
         let _ = sink.send_text("正在恢复上一件事的回复，请稍后再试。").await;
