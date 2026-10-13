@@ -60,6 +60,14 @@ pub(super) fn compare(raw: &[u8]) -> Result<Value, Failure> {
     serde_json::to_value(comparison).map_err(refused)
 }
 
+/// Two of her brought together (`myriad_persona_sync::merge::plan`): what
+/// the end she will live on writes, and what the owner is shown first.
+pub(super) fn merge_plan(raw: &[u8]) -> Result<Value, Failure> {
+    let req: myriad_persona_sync::merge::MergeInput = input(raw)?;
+    let plan = myriad_persona_sync::merge::plan(req).map_err(refused)?;
+    serde_json::to_value(plan).map_err(refused)
+}
+
 pub(super) fn is_empty(raw: &[u8]) -> Result<Value, Failure> {
     let holdings: Holdings = input(raw)?;
     Ok(json!({ "empty": holds_nothing(&holdings) }))

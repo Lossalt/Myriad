@@ -334,7 +334,7 @@ fn compared_digest(entity: &EntityVersion) -> Result<String, SyncError> {
 
 /// A persona field's value as a comparison sees it: her sticker avatar by
 /// content id alone, everything else as it is.
-fn compared_value(field: &str, value: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn compared_value(field: &str, value: &serde_json::Value) -> serde_json::Value {
     if field == "stickerAvatar"
         && let Ok(mut picture) = serde_json::from_value::<Picture>(value.clone())
     {

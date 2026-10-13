@@ -18,6 +18,7 @@ pub(super) const TESTED: &[&str] = &[
     "sync.hlc_observe",
     "sync.is_empty",
     "sync.legacy_rev",
+    "sync.merge_plan",
     "sync.persona_diff",
     "sync.rig_package_id",
 ];
@@ -114,6 +115,29 @@ fn the_golden_comparison_comes_back_the_same() {
     .unwrap();
     assert_eq!(out, serde_json::to_value(direct).unwrap());
     assert_eq!(out["needsSubject"], true);
+}
+
+/// The merge's golden plans, as a platform asks for them.
+#[test]
+fn the_golden_merges_come_back_the_same() {
+    let host: Value = serde_json::from_slice(fixture!("merge/host.json")).unwrap();
+    let other: Value = serde_json::from_slice(fixture!("merge/other.json")).unwrap();
+    let out = ok(
+        "sync.merge_plan",
+        json!({
+            "host": host,
+            "other": other,
+            "subject": "other",
+            "rev": "001760001000000-000000-site",
+            "otherEnd": "local",
+            "otherEndOnHost": "app:dev_mac1",
+            "hostEnd": "site",
+            "otherDevice": {"id": "dev_mac1", "name": "书房的 Mac"},
+        }),
+    );
+    let want: Value = serde_json::from_slice(fixture!("merge/names_differ.json")).unwrap();
+    assert_eq!(out, want);
+    assert_eq!(out["subject"], "other");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Her data across the site and the other platforms: the format it crosses
 //! in, its one byte form, the clock its revisions come from, and the
-//! comparison of two of her before they first merge.
+//! comparison of two of her before they first merge, and the merge.
 //!
 //! The Rust types here are the only definition of the format. A platform
 //! turns its own records into rough entities and hands them to
@@ -18,6 +18,7 @@ pub mod canonical;
 pub mod compare;
 pub mod entity;
 pub mod hlc;
+pub mod merge;
 pub mod persona;
 mod rig;
 
