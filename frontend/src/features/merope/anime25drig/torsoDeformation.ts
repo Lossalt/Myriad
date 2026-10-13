@@ -154,6 +154,7 @@ export function deformAnime25DTorsoShellPoint(
   chestShape: Readonly<Anime25DTorsoChestShape> | null = null,
   chestSkinWeight = 1,
   chestVolumeScale = 1,
+  depthScale = 1,
 ): void {
   point.x += torsoShellOffsetX(
     point.x,
@@ -164,6 +165,7 @@ export function deformAnime25DTorsoShellPoint(
     chestShape,
     chestSkinWeight,
     chestVolumeScale,
+    depthScale,
   )
 }
 
@@ -192,7 +194,25 @@ export function anime25DTorsoNeckOffsetX(
   rotation: Readonly<Anime25DTorsoShellRotation>,
   blend: number,
 ): number {
-  return torsoShellOffsetX(neckX, 0, profile, rotation, blend, null) * (profile.neckDepth ?? 1)
+  return torsoShellOffsetX(neckX, 0, profile, rotation, blend, null, 1, 1, profile.neckDepth ?? 1)
+}
+
+/**
+ * How far out a standing figure's front stands at `restY`, as a share of its
+ * trunk's depth: at the neck's foot, only as far as the neck (neckDepth), so
+ * the neck, the choker on it and the collar round it turn together; down to
+ * the chest's middle it comes out to the whole depth, where the chest turns
+ * out the most. 1 for a bust, whose front is all the same depth.
+ */
+export function figureFrontDepth(
+  profile: Readonly<Anime25DTorsoShellProfile>,
+  restY: number,
+  neckBottom: number,
+  chestY: number,
+): number {
+  const neck = profile.neckDepth
+  if (neck === undefined) return 1
+  return neck + (1 - neck) * smoothstep((restY - neckBottom) / Math.max(1, chestY - neckBottom))
 }
 
 /**
@@ -207,10 +227,11 @@ export function figureSleeveOffsetX(
   profile: Readonly<Anime25DTorsoShellProfile>,
   rotation: Readonly<Anime25DTorsoShellRotation>,
   blend: number,
+  depthScale = 1,
 ): number {
   const out = Math.abs(restX - profile.centerX) / Math.max(1, profile.radiusX)
   const clear = clamp((out - (FIGURE_BODY_EDGE - FIGURE_BODY_EDGE_FADE)) / FIGURE_BODY_EDGE_FADE, 0, 1)
-  const onBody = torsoShellOffsetX(restX, 0, profile, rotation, blend, null)
+  const onBody = torsoShellOffsetX(restX, 0, profile, rotation, blend, null, 1, 1, depthScale)
   const hanging = torsoShellOffsetX(anime25DSleeveAnchorX(anchorX, profile), 0, profile, rotation,
     blend * SLEEVE_TORSO_TRANSMISSION * FIGURE_SLEEVE_HANG, null)
   return onBody + (hanging - onBody) * clear
@@ -256,13 +277,14 @@ function torsoShellOffsetX(
   chestShape: Readonly<Anime25DTorsoChestShape> | null,
   chestSkinWeight = 1,
   chestVolumeScale = 1,
+  depthScale = 1,
 ): number {
   if (!profile.enabled || blend <= 0 || !rotation.active) return 0
   const x = pointX - profile.centerX
   const normalizedX = x / profile.radiusX
   let z =
     Math.sqrt(Math.max(0, 1 - Math.min(1, normalizedX * normalizedX))) *
-    profile.radiusZ
+    profile.radiusZ * depthScale
   let silhouetteOffset = 0
   if (chestShape) {
     const normalizedChestX = (pointX - chestShape.centerX) / chestShape.radiusX

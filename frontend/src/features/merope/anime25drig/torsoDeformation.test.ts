@@ -9,6 +9,7 @@ import {
   anime25DTorsoShellOffsetX,
   anime25DTorsoYawFollow,
   deformAnime25DTorsoShellPoint,
+  figureFrontDepth,
   figureShellProfile,
   figureSleeveOffsetX,
   resolveAnime25DTorsoChestShape,
@@ -479,4 +480,25 @@ test("a figure's trunk turns deep while its neck and its hanging sleeves stay ne
     assert.ok(Math.abs(offset - previous) < front * 0.05, `step at ${k.toFixed(4)}`)
     previous = offset
   }
+})
+
+test("a figure's front comes out from the neck's depth at the neck's foot to the whole trunk's at the chest", () => {
+  const shell = { version: 1, source: 'anchor-derived', enabled: true, blend: 0.5, torso: profile } as never
+  const figure = figureShellProfile(shell).torso
+  const neckBottom = 700
+  const chest = 900
+  const turned = { active: true, yawCosine: Math.cos(0.45), yawSine: Math.sin(0.45) }
+  const at = (y: number) => figureFrontDepth(figure, y, neckBottom, chest)
+  assert.equal(at(600), figure.neckDepth)
+  assert.equal(at(neckBottom), figure.neckDepth)
+  assert.equal(at(chest), 1)
+  assert.equal(at(1400), 1)
+  assert.ok(at(750) > at(neckBottom) && at(750) < at(850) && at(850) < 1)
+  // At its foot the collar round the neck goes with the neck, and the head on it.
+  const point = { x: figure.centerX, y: neckBottom }
+  deformAnime25DTorsoShellPoint(point, figure, turned, 1, null, 1, 1, at(neckBottom))
+  const neck = anime25DTorsoNeckOffsetX(figure.centerX, figure, turned, 1)
+  assert.ok(Math.abs(point.x - figure.centerX - neck) < 1e-6, `${point.x - figure.centerX} vs ${neck}`)
+  // A bust's front is the same depth all the way down.
+  assert.equal(figureFrontDepth(profile, neckBottom, neckBottom, chest), 1)
 })

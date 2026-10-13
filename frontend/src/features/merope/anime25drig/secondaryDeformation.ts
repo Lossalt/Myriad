@@ -45,6 +45,7 @@ import {
   anime25DSleeveAnchorX,
   anime25DTorsoShellOffsetX,
   deformAnime25DTorsoShellPoint,
+  figureFrontDepth,
   figureSleeveOffsetX,
   SLEEVE_TORSO_TRANSMISSION,
 } from './torsoDeformation'
@@ -469,6 +470,7 @@ export function deformAnime25DSecondaryPoint(
   }
   // The neck and collar take the body's share of the torso's turn.
   const torsoWeight = binding.torsoShellMode === 'collar' || binding.torsoShellMode === 'neck' ? collarBodyWeight : 1
+  const frontDepth = binding.torsoShellMode ? figureFrontDepth(frame.torsoProfile, restY, frame.neckBottom, frame.chestRegionCenterY) : 1
   if (binding.bodyTurnKeyform) {
     // Measured, not projected.
     addBodyTurn(point, binding.bodyTurnKeyform, vertex, (frame.bodyTurn ?? 0) * torsoWeight)
@@ -476,13 +478,13 @@ export function deformAnime25DSecondaryPoint(
     // A bust's sleeve is one rigid drawing hanging beside the cylinder, not a
     // patch of its surface; a figure's hangs at the side but lies on the body it covers.
     point.x += frame.figure
-      ? figureSleeveOffsetX(restX, binding.handwearAnchorX, frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend)
+      ? figureSleeveOffsetX(restX, binding.handwearAnchorX, frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend, frontDepth)
       : anime25DTorsoShellOffsetX(anime25DSleeveAnchorX(binding.handwearAnchorX, frame.torsoProfile),
         frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend * SLEEVE_TORSO_TRANSMISSION)
   } else if (binding.torsoShellMode) {
     deformAnime25DTorsoShellPoint(point, frame.torsoProfile, frame.torsoShellRotation, frame.torsoShellBlend * torsoWeight,
       binding.topwear ? frame.torsoChestShape : null, binding.topwear ? (binding.chestWeights?.[vertex] ?? 1) : 1,
-      frame.chestVolumeScale)
+      frame.chestVolumeScale, frontDepth)
   }
   if (binding.handwear) {
     // Lifting rolls the shoulder up a little; the rest of the lift is rotation.
