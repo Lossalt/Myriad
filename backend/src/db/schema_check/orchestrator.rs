@@ -48,7 +48,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 「最多一个母端」索引退场（同一份文件删掉）。
 /// 2026.10.13.4：她不在站点时聊天应用的来信存进 `agent_channel_held`（D3，随 004 与
 /// `ensure_persona_sync_tables` 一起建），回来后按到达顺序读。
-pub const SCHEMA_VERSION: &str = "2026.10.13.4";
+/// 2026.10.13.5：把她搬进空站点的导入会话 `agent_host_import` 和它收到的内容
+/// `agent_host_import_staging`（H3c，随 004 与 `ensure_persona_sync_tables` 一起建）。
+pub const SCHEMA_VERSION: &str = "2026.10.13.5";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

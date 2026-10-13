@@ -701,6 +701,53 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        // 把她搬进还没有她的站点（H3c）：站长确认设备的请求、取消，或从导出文件导入
+        .route(
+            "/host/imports/{import_id}/confirm",
+            post(super::devices::confirm_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/imports/{import_id}/cancel",
+            post(super::devices::cancel_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/imports/file",
+            post(super::devices::begin_file_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/imports/{import_id}",
+            get(super::devices::file_import_status).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/imports/{import_id}/file",
+            put(super::devices::file_import_piece)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::persona_sync::import::PIECE_MAX_BYTES + 4096,
+                ))
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::auth::auth_middleware,
+                )),
+        )
+        .route(
+            "/host/imports/{import_id}/open",
+            post(super::devices::open_file_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
         .route(
             "/host/moves/{move_id}/cancel",
             post(super::devices::cancel_move).route_layer(from_fn_with_state(
@@ -747,6 +794,57 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
         .route(
             "/sync/moves/{move_id}/cancel",
             post(super::sync::sync_cancel_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        // 设备把它上面的她搬进还没有她的站点（H3c）：提出、续传、提交、取消
+        .route(
+            "/sync/imports",
+            post(super::sync::sync_propose_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/imports/{import_id}",
+            get(super::sync::sync_import_status).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/imports/{import_id}/pages",
+            post(super::sync::sync_import_page)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::persona_sync::import::PAGE_MAX_BYTES,
+                ))
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::sync_device::sync_device_auth,
+                )),
+        )
+        .route(
+            "/sync/imports/{import_id}/assets/{asset_id}",
+            put(super::sync::sync_import_asset)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::persona_sync::ASSET_MAX_BYTES as usize + 4096,
+                ))
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::sync_device::sync_device_auth,
+                )),
+        )
+        .route(
+            "/sync/imports/{import_id}/commit",
+            post(super::sync::sync_commit_import).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/imports/{import_id}/cancel",
+            post(super::sync::sync_cancel_import).route_layer(from_fn_with_state(
                 app_state.clone(),
                 middleware::sync_device::sync_device_auth,
             )),

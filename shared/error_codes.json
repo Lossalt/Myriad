@@ -29,6 +29,15 @@
     "An export is sealed with a passphrase": "passphrase_required",
     "The site has no her to export": "her_absent",
     "She could not be exported": "export_failed",
+    "The site has her already; bringing two of her together is a merge": "import_not_empty",
+    "No such import now": "import_unknown",
+    "The import is not at a step this can be done at": "import_phase",
+    "Another import is under way": "import_busy",
+    "What arrived is not what was confirmed": "import_mismatch",
+    "The file does not open with this passphrase, or it is not whole": "archive_unreadable",
+    "Too large, or not where the upload stands": "import_size",
+    "The request does not read": "import_invalid",
+    "She could not be brought in": "import_failed",
     "Database error": "database_error",
     "Failed to update devices": "devices_update_failed",
     "Sync failed": "sync_failed",
@@ -1720,6 +1729,15 @@
     "turn_archive_missing",
     "passphrase_required",
     "her_absent",
-    "export_failed"
+    "export_failed",
+    "import_not_empty",
+    "import_unknown",
+    "import_phase",
+    "import_busy",
+    "import_mismatch",
+    "archive_unreadable",
+    "import_size",
+    "import_invalid",
+    "import_failed"
   ]
 }

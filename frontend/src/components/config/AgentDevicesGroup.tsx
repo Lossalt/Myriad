@@ -1,13 +1,14 @@
 import type {
+  HostImport,
   HostLease,
   HostMove,
   SyncDevice,
   SyncDeviceList,
 } from '../../services/agent/agentApi'
 import type { ManagedListItem, ManagedListStat } from '../settings/ManagedList'
-import { LuDownload, LuMonitor, LuPlus } from '@lib/icons'
+import { LuDownload, LuMonitor, LuPlus, LuUpload } from '@lib/icons'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigI18n as useI18n } from '../../contexts/I18nContext'
 import { agentService } from '../../services/agent'
 import { ApiError } from '../../services/api'
@@ -36,6 +37,12 @@ export function AgentDevicesGroup() {
   const [exportOpen, setExportOpen] = useState(false)
   const [passphrase, setPassphrase] = useState('')
   const [again, setAgain] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importPassphrase, setImportPassphrase] = useState('')
+  const [importProgress, setImportProgress] = useState<string | null>(null)
+  const [landedNote, setLandedNote] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   const fail = useCallback((error: unknown, fallback: string) => {
     showStickyToast({
@@ -148,6 +155,110 @@ export function AgentDevicesGroup() {
     }
   }, [again, c.agentHostExportFailed, fail, passphrase])
 
+  // Her coming into this site, which has none (H3c): a device's request is
+  // confirmed or turned down here, logged in; one under way can be called
+  // off, and the site is as it was.
+  const importAction = useCallback(
+    async (action: 'confirm' | 'cancel', pending: HostImport) => {
+      setWorking(true)
+      try {
+        setList(
+          action === 'confirm'
+            ? await agentService.confirmHostImport(pending.id)
+            : await agentService.cancelHostImport(pending.id),
+        )
+      } catch (error) {
+        fail(error, c.agentHostImportFailed)
+        await load()
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentHostImportFailed, fail, load],
+  )
+
+  const countsLine = useCallback(
+    (counts: Record<string, number>) =>
+      format(c.agentHostImportCounts, {
+        n: Object.values(counts).reduce((sum, n) => sum + n, 0),
+        memory: counts.memory ?? 0,
+        diary: counts.diary ?? 0,
+        conversation: counts.conversation ?? 0,
+        outfit: counts.outfit ?? 0,
+      }),
+    [c.agentHostImportCounts, format],
+  )
+
+  // From an export file: sent in pieces (an interrupted upload of the same
+  // file goes on where it stopped), then opened here once with the
+  // passphrase, which the site uses for the key and keeps nowhere.
+  const importFromFile = useCallback(async () => {
+    const file = importFile
+    if (!file || !importPassphrase) return
+    setWorking(true)
+    setLandedNote(null)
+    const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`
+    try {
+      const pending = list?.import
+      let session: HostImport
+      let piece = 8 * 1024 * 1024
+      if (
+        pending &&
+        pending.source === 'file' &&
+        pending.phase === 'uploading' &&
+        pending.total === file.size
+      ) {
+        session = pending
+      } else {
+        const begun = await agentService.beginFileImport(file.size)
+        session = begun.import
+        piece = begun.pieceBytes
+      }
+      let offset = session.received
+      while (offset < file.size) {
+        setImportProgress(
+          format(c.agentHostImportFileUploading, {
+            done: mb(offset),
+            total: mb(file.size),
+          }),
+        )
+        const sent = await agentService.sendFileImportPiece(
+          session.id,
+          offset,
+          file.slice(offset, Math.min(file.size, offset + piece)),
+        )
+        offset = sent.import.received
+      }
+      setImportProgress(c.agentHostImportFileOpening)
+      const landed = await agentService.openFileImport(
+        session.id,
+        importPassphrase,
+      )
+      setImportPassphrase('')
+      setImportFile(null)
+      setImportOpen(false)
+      setLandedNote(
+        format(c.agentHostImportDone, { counts: countsLine(landed.counts) }) +
+          (landed.herOn ? '' : ` ${c.agentHostImportHerOff}`),
+      )
+    } catch (error) {
+      fail(error, c.agentHostImportFailed)
+    } finally {
+      setImportProgress(null)
+      setWorking(false)
+      await load()
+    }
+  }, [
+    c,
+    countsLine,
+    fail,
+    format,
+    importFile,
+    importPassphrase,
+    list?.import,
+    load,
+  ])
+
   const clearHeld = useCallback(async () => {
     setWorking(true)
     try {
@@ -169,7 +280,9 @@ export function AgentDevicesGroup() {
   const live = devices.filter((device) => !device.revokedAt)
 
   const host: HostLease | null = list?.host ?? null
-  const move = host?.move ?? null
+  const pending: HostImport | null = list?.import ?? null
+  // A move that is an import has its own card below.
+  const move = host?.move && !host.move.id.startsWith('imp_') ? host.move : null
   const deviceName = (id: string, name: string | null) =>
     id === 'site' ? c.agentHostSite : (name ?? c.agentHostUnknownDevice)
   // Her copy here is her only while she lives here or is moving (H3b-5).
@@ -357,6 +470,137 @@ export function AgentDevicesGroup() {
             })}
           </p>
         </InfoActionCard>
+      ) : null}
+      {pending && pending.source === 'device' ? (
+        pending.phase === 'proposed' ? (
+          <InfoActionCard
+            title={format(c.agentHostImportProposedTitle, {
+              device: pending.deviceName ?? c.agentHostUnknownDevice,
+              name: pending.name ?? '—',
+            })}
+            tone="info"
+            actions={[
+              {
+                key: 'confirm',
+                label: c.agentHostImportConfirm,
+                onClick: () => void importAction('confirm', pending),
+                disabled: working,
+                variant: 'primary',
+                confirm: c.agentHostImportConfirmConfirm,
+              },
+              {
+                key: 'decline',
+                label: c.agentHostImportDecline,
+                onClick: () => void importAction('cancel', pending),
+                disabled: working,
+                variant: 'secondary',
+              },
+            ]}
+          >
+            <p className="info-action-card-lede">
+              {c.agentHostImportProposedBody}
+            </p>
+            <p className="setting-hint">{countsLine(pending.counts)}</p>
+          </InfoActionCard>
+        ) : (
+          <InfoActionCard
+            title={format(c.agentHostImportMovingTitle, {
+              device: pending.deviceName ?? c.agentHostUnknownDevice,
+            })}
+            tone="warn"
+            actions={[
+              {
+                key: 'cancel',
+                label: c.agentHostImportCancel,
+                onClick: () => void importAction('cancel', pending),
+                disabled: working,
+                variant: 'secondary',
+                confirm: c.agentHostImportCancelConfirm,
+              },
+            ]}
+          >
+            <p className="info-action-card-lede">
+              {c.agentHostImportMovingBody}
+            </p>
+            <p className="setting-hint">{countsLine(pending.counts)}</p>
+          </InfoActionCard>
+        )
+      ) : null}
+      {landedNote ? <p className="setting-hint">{landedNote}</p> : null}
+      {list?.empty && !(pending && pending.source === 'device') ? (
+        importOpen ? (
+          <InfoActionCard
+            title={c.agentHostImportFileTitle}
+            tone="info"
+            actions={[
+              {
+                key: 'import',
+                label: c.agentHostImportFileGo,
+                onClick: () => void importFromFile(),
+                disabled: working || !importFile || !importPassphrase,
+                variant: 'primary',
+              },
+              {
+                key: 'close',
+                label: t.common.cancel,
+                onClick: () => {
+                  setImportOpen(false)
+                  setImportFile(null)
+                  setImportPassphrase('')
+                },
+                disabled: working,
+                variant: 'secondary',
+              },
+            ]}
+          >
+            <p className="info-action-card-lede">{c.agentHostImportFileBody}</p>
+            <div className="agent-devices-form">
+              <SettingsButton
+                variant="secondary"
+                size="sm"
+                icon={<LuUpload size={14} />}
+                disabled={working}
+                onClick={() => fileInput.current?.click()}
+              >
+                {importFile ? importFile.name : c.agentHostImportFilePick}
+              </SettingsButton>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".her-archive"
+                className="hidden"
+                title={c.agentHostImportFilePick}
+                onChange={(event) =>
+                  setImportFile(event.target.files?.[0] ?? null)
+                }
+              />
+            </div>
+            <InputItem
+              itemKey="agent_import_passphrase"
+              label={c.agentHostImportFilePassphrase}
+              value={importPassphrase}
+              onChange={setImportPassphrase}
+              inputType="password"
+              autoComplete="off"
+              layout="vertical"
+            />
+            {importProgress ? (
+              <p className="setting-hint">{importProgress}</p>
+            ) : null}
+          </InfoActionCard>
+        ) : (
+          <div className="agent-devices-form">
+            <SettingsButton
+              variant="secondary"
+              size="sm"
+              icon={<LuUpload size={14} />}
+              disabled={working}
+              onClick={() => setImportOpen(true)}
+            >
+              {c.agentHostImportFile}
+            </SettingsButton>
+          </div>
+        )
       ) : null}
       {list?.held ? (
         <InfoActionCard

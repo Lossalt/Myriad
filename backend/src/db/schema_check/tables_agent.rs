@@ -966,6 +966,35 @@ pub(crate) fn tables() -> Vec<TableDef> {
             ],
         },
         TableDef {
+            name: "agent_host_import".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "character varying").not_null(),
+                ColumnDef::new("source", "character varying").not_null(),
+                ColumnDef::new("device_id", "character varying"),
+                ColumnDef::new("lineage", "character varying"),
+                ColumnDef::new("epoch", "bigint"),
+                ColumnDef::new("name", "text"),
+                ColumnDef::new("manifest", "jsonb"),
+                ColumnDef::new("phase", "character varying").not_null(),
+                ColumnDef::new("received", "bigint")
+                    .not_null()
+                    .default_value("0"),
+                ColumnDef::new("total", "bigint"),
+                ColumnDef::new("created_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("confirmed_at", "timestamp with time zone"),
+                ColumnDef::new("updated_at", "timestamp with time zone").not_null(),
+            ],
+        },
+        TableDef {
+            name: "agent_host_import_staging".to_string(),
+            columns: vec![
+                ColumnDef::new("import_id", "character varying").not_null(),
+                ColumnDef::new("kind", "character varying").not_null(),
+                ColumnDef::new("entity_id", "character varying").not_null(),
+                ColumnDef::new("canonical", "jsonb").not_null(),
+            ],
+        },
+        TableDef {
             name: "agent_channel_held".to_string(),
             columns: vec![
                 ColumnDef::new("id", "bigint").not_null(),

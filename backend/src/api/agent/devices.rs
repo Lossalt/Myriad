@@ -42,9 +42,20 @@ async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpE
     let held = crate::services::channel_work::held::count(db)
         .await
         .map_err(store_failed)?;
+    // Her on her way into this site, which has none (H3c).
+    let import = crate::services::persona_sync::import::shown(db)
+        .await
+        .map_err(store_failed)?;
+    // Whether the site could take her in from a file now.
+    let empty = crate::services::persona_sync::import::not_empty(db, owner)
+        .await
+        .map_err(store_failed)?
+        .is_none();
     Ok(json!({
         "devices": list.iter().map(|device| device_json(device, now)).collect::<Vec<_>>(),
         "host": host,
+        "import": import,
+        "empty": empty,
         "held": held,
         "limit": devices::MAX_DEVICES,
     }))
@@ -146,6 +157,127 @@ pub async fn cancel_move(
     Ok(Json(
         json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
     ))
+}
+
+/// POST /api/agent/host/imports/{import_id}/confirm: the owner, logged in,
+/// confirms that the her on one of their devices comes to live on this
+/// site, which has none. The site's first lease names that device, frozen,
+/// until she lands.
+pub async fn confirm_import(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(import_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    crate::services::persona_sync::import::confirm(&db, owner, &import_id)
+        .await
+        .map_err(super::sync::import_refused)?;
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+/// POST /api/agent/host/imports/{import_id}/cancel: the owner turns down or
+/// calls off an import; the site is as it was.
+pub async fn cancel_import(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(import_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    crate::services::persona_sync::import::cancel(&db, &import_id, None)
+        .await
+        .map_err(super::sync::import_refused)?;
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginFileRequest {
+    total: u64,
+}
+
+/// POST /api/agent/host/imports/file: the owner starts bringing her in from
+/// an export file of `total` bytes, sent in pieces next.
+pub async fn begin_file_import(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Json(request): Json<BeginFileRequest>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let session = crate::services::persona_sync::import::begin_file(&db, owner, request.total)
+        .await
+        .map_err(super::sync::import_refused)?;
+    Ok(Json(json!({
+        "import": session.json(None),
+        "pieceBytes": crate::services::persona_sync::import::PIECE_MAX_BYTES,
+    })))
+}
+
+/// GET /api/agent/host/imports/{import_id}: where a file's upload stands.
+pub async fn file_import_status(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(import_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    let session = crate::services::persona_sync::import::file_status(&db, &import_id)
+        .await
+        .map_err(super::sync::import_refused)?;
+    Ok(Json(json!({ "import": session.json(None) })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PieceQuery {
+    offset: u64,
+}
+
+/// PUT /api/agent/host/imports/{import_id}/file?offset=N: one piece of the
+/// file, at where the upload stands.
+pub async fn file_import_piece(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(import_id): Path<String>,
+    Query(query): Query<PieceQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    let session = crate::services::persona_sync::import::take_piece(
+        &db,
+        &import_id,
+        query.offset,
+        body.to_vec(),
+    )
+    .await
+    .map_err(super::sync::import_refused)?;
+    Ok(Json(json!({ "import": session.json(None) })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenFileRequest {
+    passphrase: String,
+}
+
+/// POST /api/agent/host/imports/{import_id}/open: the whole file is here;
+/// the owner's passphrase opens it, once, and she lands. The passphrase is
+/// used for the key and kept nowhere: this site is the one taking her in.
+pub async fn open_file_import(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(import_id): Path<String>,
+    Json(request): Json<OpenFileRequest>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let landed = crate::services::persona_sync::import::open_file(
+        &db,
+        owner,
+        &import_id,
+        request.passphrase,
+    )
+    .await
+    .map_err(super::sync::import_refused)?;
+    let host = lease::shown(&db).await.map_err(store_failed)?;
+    Ok(Json(super::sync::landed_json(&landed, host)))
 }
 
 #[derive(Debug, Deserialize)]

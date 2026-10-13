@@ -60,6 +60,10 @@ pub async fn sync_hello(
         "embeddingModel": embedding_model,
         // Where she lives (her host lease), null while the site has no her.
         "host": host,
+        // This device's import of her into an empty site, if it asked (H3c).
+        "import": persona_sync::import::shown_for_device(&db, &device.0.id)
+            .await
+            .map_err(sync_failed)?,
         // A Mac from before host leases reads this and needs it; it is all
         // a device ever is now.
         "role": "child",
@@ -145,6 +149,150 @@ pub async fn sync_cancel_move(
     Ok(Json(
         json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
     ))
+}
+
+/// An import refused, with its code (and her name when the site has her).
+pub(crate) fn import_refused(error: persona_sync::import::ImportError) -> HttpError {
+    use persona_sync::import::ImportError;
+    match &error {
+        ImportError::Failed(what) => tracing::error!(what, "[import] failed"),
+        ImportError::Mismatch(what) => {
+            tracing::warn!(what, "[import] refused: not what was confirmed")
+        }
+        ImportError::Invalid(what) => {
+            tracing::warn!(what, "[import] refused: a request that does not read")
+        }
+        _ => {}
+    }
+    let (status, code, message) = error.refusal();
+    let mut body = json!({ "error": message, "code": code });
+    match &error {
+        ImportError::NotEmpty(name) => body["name"] = json!(name),
+        ImportError::Phase(phase) => body["phase"] = json!(phase),
+        _ => {}
+    }
+    HttpError::from((status, Json(body)))
+}
+
+/// POST /api/agent/sync/imports: the device asks to bring the her it holds
+/// into this site, which has none (H3c). The owner confirms it on the site,
+/// logged in; nothing happens before.
+pub async fn sync_propose_import(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Json(proposal): Json<persona_sync::import::Proposal>,
+) -> Result<Json<Value>, HttpError> {
+    let session = persona_sync::import::propose(&db, owner_of(&device), &device.0.id, proposal)
+        .await
+        .map_err(import_refused)?;
+    Ok(Json(json!({ "import": session.json(None) })))
+}
+
+/// GET /api/agent/sync/imports/{import_id}: where this device's import
+/// stands, and what has arrived (to go on after an interruption).
+pub async fn sync_import_status(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(import_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let mut answer = persona_sync::import::received(&db, &import_id, &device.0.id)
+        .await
+        .map_err(import_refused)?;
+    answer["host"] = lease::shown(&db).await.map_err(sync_failed)?;
+    Ok(Json(answer))
+}
+
+/// POST /api/agent/sync/imports/{import_id}/pages: one page of her.
+pub async fn sync_import_page(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(import_id): Path<String>,
+    Json(envelope): Json<myriad_persona_sync::Envelope>,
+) -> Result<Json<Value>, HttpError> {
+    let staged = persona_sync::import::take_page(&db, &import_id, &device.0.id, envelope)
+        .await
+        .map_err(import_refused)?;
+    Ok(Json(json!({ "staged": staged })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportAssetQuery {
+    #[serde(default)]
+    file: Option<String>,
+}
+
+/// PUT /api/agent/sync/imports/{import_id}/assets/{asset_id}: one file of
+/// her, as itself (`?file=manifest.json|atlas.png` for a rig's two).
+pub async fn sync_import_asset(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path((import_id, asset_id)): Path<(String, String)>,
+    Query(query): Query<ImportAssetQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, HttpError> {
+    persona_sync::import::take_asset(
+        &db,
+        &import_id,
+        &device.0.id,
+        &asset_id,
+        query.file.as_deref(),
+        body.to_vec(),
+    )
+    .await
+    .map_err(import_refused)?;
+    Ok(Json(json!({ "kept": true })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommitImportRequest {
+    digest: String,
+}
+
+/// The answer once she landed: where she lives now, what came, and her
+/// switch (which the import leaves as it was).
+pub(crate) fn landed_json(landed: &persona_sync::import::Landed, host: Value) -> Value {
+    json!({
+        "host": host,
+        "counts": landed.counts,
+        "vectors": landed.vectors,
+        "herOn": landed.her_on,
+    })
+}
+
+/// POST /api/agent/sync/imports/{import_id}/commit: all of her is sent;
+/// checked against what the owner confirmed, she lands in one transaction.
+pub async fn sync_commit_import(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(import_id): Path<String>,
+    Json(request): Json<CommitImportRequest>,
+) -> Result<Json<Value>, HttpError> {
+    let landed = persona_sync::import::commit(
+        &db,
+        owner_of(&device),
+        &import_id,
+        &device.0.id,
+        &request.digest,
+    )
+    .await
+    .map_err(import_refused)?;
+    let host = lease::shown(&db).await.map_err(sync_failed)?;
+    Ok(Json(landed_json(&landed, host)))
+}
+
+/// POST /api/agent/sync/imports/{import_id}/cancel: the device calls its
+/// import off before she landed; the site is as it was.
+pub async fn sync_cancel_import(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(import_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    persona_sync::import::cancel(&db, &import_id, Some(&device.0.id))
+        .await
+        .map_err(import_refused)?;
+    Ok(Json(json!({ "cancelled": true })))
 }
 
 #[derive(Debug, Deserialize)]

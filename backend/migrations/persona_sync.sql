@@ -150,3 +150,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_channel_held_inbound
     ON agent_channel_held (platform, inbound_id);
 CREATE INDEX IF NOT EXISTS idx_agent_channel_held_session
     ON agent_channel_held (session_key, id);
+
+-- Bringing her into a site that has none (services/persona_sync/import.rs):
+-- from a device that holds her, or from an export file the owner uploads.
+-- One session at a time. A device's session waits for the owner to confirm
+-- it on the site (`proposed`), then takes her page by page (`confirmed`,
+-- `transferring`), checked against the manifest the owner was shown; she
+-- lands in one transaction and the session is `committed`. A file's
+-- session takes the sealed file in pieces (`uploading`) and opens it with
+-- the passphrase given once. Nothing secret is kept here: no token, no
+-- passphrase, no key.
+CREATE TABLE IF NOT EXISTS agent_host_import (
+    id VARCHAR(40) PRIMARY KEY,
+    source VARCHAR(8) NOT NULL CHECK (source IN ('device', 'file')),
+    device_id VARCHAR(40),
+    lineage VARCHAR(36),
+    epoch BIGINT,
+    name TEXT,
+    manifest JSONB,
+    phase VARCHAR(16) NOT NULL,
+    received BIGINT NOT NULL DEFAULT 0,
+    total BIGINT,
+    created_at TIMESTAMPTZ NOT NULL,
+    confirmed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+-- What a device has sent of her so far, each entity in its canonical form
+-- (`kind` = `embedding` for a vector, by memory id), until she lands.
+CREATE TABLE IF NOT EXISTS agent_host_import_staging (
+    import_id VARCHAR(40) NOT NULL REFERENCES agent_host_import(id) ON DELETE CASCADE,
+    kind VARCHAR(24) NOT NULL,
+    entity_id VARCHAR(160) NOT NULL,
+    canonical JSONB NOT NULL,
+    PRIMARY KEY (import_id, kind, entity_id)
+);

@@ -97,10 +97,45 @@ export interface HostLease {
   updatedAt: string
 }
 
+/** Her on her way into this site, which has none (H3c): from a device, or a file. */
+export interface HostImport {
+  id: string
+  source: 'device' | 'file'
+  deviceId: string | null
+  deviceName: string | null
+  /** Her name as the device says it. */
+  name: string | null
+  lineage: string | null
+  epoch: number | null
+  /** `proposed` waits for the owner here; a file is `uploading` until it is opened. */
+  phase: 'proposed' | 'confirmed' | 'transferring' | 'uploading' | 'committed'
+  /** Entities by kind, as the device stated them. */
+  counts: Record<string, number>
+  embeddings: number | null
+  files: number | null
+  received: number
+  total: number | null
+  createdAt: string
+  confirmedAt: string | null
+}
+
+/** What landed when she came in. */
+export interface HostImportLanded {
+  host: HostLease | null
+  counts: Record<string, number>
+  vectors: number
+  /** Her switch on the site, which an import does not touch. */
+  herOn: boolean
+}
+
 export interface SyncDeviceList {
   devices: SyncDevice[]
   /** Null while the site has no her. */
   host: HostLease | null
+  /** Her on her way in, if any. */
+  import?: HostImport | null
+  /** The site has no her and could take her in from a file. */
+  empty?: boolean
   /** Messages that came by chat app while she was away, held until she is back. */
   held?: number
   limit: number
@@ -501,6 +536,62 @@ class AgentService {
   async cancelHostMove(id: string): Promise<{ host: HostLease | null }> {
     return apiService.post(
       `${this.baseUrl}/host/moves/${encodeURIComponent(id)}/cancel`,
+    )
+  }
+
+  /** Confirms, logged in, that the her on a device comes to live here (the site has none). */
+  async confirmHostImport(id: string): Promise<SyncDeviceList> {
+    return apiService.post(
+      `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/confirm`,
+    )
+  }
+
+  /** Turns down or calls off an import: the site is as it was. */
+  async cancelHostImport(id: string): Promise<SyncDeviceList> {
+    return apiService.post(
+      `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/cancel`,
+    )
+  }
+
+  /** Starts bringing her in from an export file of `total` bytes. */
+  async beginFileImport(
+    total: number,
+  ): Promise<{ import: HostImport; pieceBytes: number }> {
+    return apiService.post(`${this.baseUrl}/host/imports/file`, { total })
+  }
+
+  /** One piece of the file, at where the upload stands. */
+  async sendFileImportPiece(
+    id: string,
+    offset: number,
+    piece: Blob,
+  ): Promise<{ import: HostImport }> {
+    return apiService.request(
+      `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/file`,
+      {
+        method: 'PUT',
+        body: piece,
+        params: { offset },
+        timeout: 300000,
+      },
+    )
+  }
+
+  /**
+   * Opens the whole file with the passphrase and brings her in. The site
+   * uses the passphrase once, for the key, and keeps it nowhere.
+   */
+  async openFileImport(
+    id: string,
+    passphrase: string,
+  ): Promise<HostImportLanded> {
+    return apiService.request(
+      `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/open`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ passphrase }),
+        timeout: 600000,
+      },
     )
   }
 
@@ -1348,12 +1439,17 @@ class AgentService {
   }
 
   /** The run still writing a reply in this session, for a page opened or reloaded meanwhile; null when none. */
-  async getLiveSessionRun(sessionId: string, signal = authSubject.signal): Promise<string | null> {
+  async getLiveSessionRun(
+    sessionId: string,
+    signal = authSubject.signal,
+  ): Promise<string | null> {
     const response = await apiService.get<{ runId?: unknown }>(
       `${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/live-run`,
       { signal },
     )
-    return typeof response.runId === 'string' && response.runId ? response.runId : null
+    return typeof response.runId === 'string' && response.runId
+      ? response.runId
+      : null
   }
 
   async archiveSession(sessionId: string): Promise<{ success: boolean }> {

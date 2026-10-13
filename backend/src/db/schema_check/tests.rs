@@ -50,6 +50,8 @@ fn test_folded_extension_tables_in_expected_schema() {
         "agent_memory_cues",
         "agent_sync_devices",
         "agent_host_lease",
+        "agent_host_import",
+        "agent_host_import_staging",
         "agent_affect_events",
         "agent_affect_anchor",
         "agent_persona_field_history",

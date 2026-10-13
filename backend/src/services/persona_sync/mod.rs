@@ -10,6 +10,7 @@ pub mod assets;
 pub mod devices;
 pub mod export;
 pub mod fields;
+pub mod import;
 pub mod lease;
 mod outside;
 pub mod snapshot;

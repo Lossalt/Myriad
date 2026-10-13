@@ -509,11 +509,13 @@ pub async fn confirm(db: &DatabaseConnection, id: &str) -> Result<Lease, MoveErr
 
 /// The move `id` is called off before its commit: she is where she was, as
 /// she was. `device`, when a device asks, must be the one the move is with.
+/// A her on her way into a site that had none (an import) is not here yet:
+/// calling that off leaves the site with no her and no lease (None).
 pub async fn cancel(
     db: &DatabaseConnection,
     id: &str,
     device: Option<&str>,
-) -> Result<Lease, MoveError> {
+) -> Result<Option<Lease>, MoveError> {
     let txn = db.begin().await?;
     let lease = locked(&txn).await?.ok_or(MoveError::Unknown)?;
     let moving = lease
@@ -524,6 +526,13 @@ pub async fn cancel(
     if !moving.phase.cancellable() {
         return Err(MoveError::Phase(moving.phase));
     }
+    if super::import::is_import(id) {
+        super::import::called_off_on(&txn, id).await?;
+        txn.commit().await?;
+        super::import::forget_files(id).await;
+        tracing::info!(move_id = %id, by_device = device.is_some(), "[host] her way into the site was called off: no her here");
+        return Ok(None);
+    }
     let lease = write(&txn, State::Live, None).await?;
     txn.commit().await?;
     tracing::info!(
@@ -533,7 +542,121 @@ pub async fn cancel(
         epoch = lease.epoch,
         "[host] a move was cancelled: she is back as she was"
     );
-    Ok(lease)
+    Ok(Some(lease))
+}
+
+/// A her on her way into a site that had none, from the device `device`
+/// that holds her at `lineage` and `epoch`: the site writes its first lease
+/// when the owner confirms, naming that device as where she still is and
+/// frozen (no end has her) until she lands here or the import is called off
+/// (H3c-1). Nothing else of the site changes before she lands.
+pub(super) async fn arriving(
+    txn: &sea_orm::DatabaseTransaction,
+    import_id: &str,
+    device: &str,
+    lineage: &str,
+    epoch: i64,
+    digest: &str,
+) -> Result<Lease, DbErr> {
+    let now = Utc::now();
+    let moving = Move {
+        id: import_id.to_string(),
+        kind: Kind::Move,
+        from: device.to_string(),
+        to: SITE.to_string(),
+        phase: Phase::Frozen,
+        by: Starter::Device,
+        digest: Some(digest.to_string()),
+        started_at: now,
+        confirmed_at: Some(now),
+    };
+    let moving = serde_json::to_value(&moving).map_err(|error| DbErr::Custom(error.to_string()))?;
+    let row = txn
+        .query_one_raw(statement(
+            &format!(
+                "INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, move, updated_at) \
+                 VALUES ('her', $1, $2, $3, 'frozen', $4, NOW()) RETURNING {COLUMNS}"
+            ),
+            vec![
+                device.into(),
+                lineage.into(),
+                epoch.max(1).into(),
+                moving.into(),
+            ],
+        ))
+        .await?
+        .ok_or(DbErr::RecordNotInserted)?;
+    Lease::from_row(&row)
+}
+
+/// The import `import_id` took a step (it is being sent, or all of it is
+/// here and checked).
+pub(super) async fn import_step(
+    txn: &sea_orm::DatabaseTransaction,
+    import_id: &str,
+    phase: Phase,
+) -> Result<(), DbErr> {
+    let Some(lease) = locked(txn).await? else {
+        return Ok(());
+    };
+    let Some(mut moving) = lease.moving.filter(|moving| moving.id == import_id) else {
+        return Ok(());
+    };
+    if moving.phase.step() >= phase.step() {
+        return Ok(());
+    }
+    moving.phase = phase;
+    write(txn, State::Frozen, Some(&moving)).await?;
+    Ok(())
+}
+
+/// She landed on the site, in the transaction that wrote her: the lease the
+/// import wrote now names the site, one epoch on; from a file, the site's
+/// first lease is written here, one epoch on from the file's (H3c-3). Her
+/// lineage is the one she came with: a move is not a new birth.
+pub(super) async fn landed(
+    txn: &sea_orm::DatabaseTransaction,
+    lineage: &str,
+    came_at: i64,
+) -> Result<Lease, DbErr> {
+    let row = match txn
+        .query_one_raw(statement(
+            &format!(
+                "UPDATE agent_host_lease SET holder = $1, epoch = epoch + 1, state = 'live', \
+                 move = NULL, updated_at = NOW() WHERE id = 'her' AND lineage = $2 \
+                 RETURNING {COLUMNS}"
+            ),
+            vec![SITE.into(), lineage.into()],
+        ))
+        .await?
+    {
+        Some(row) => row,
+        None => txn
+            .query_one_raw(statement(
+                &format!(
+                    "INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, updated_at) \
+                     VALUES ('her', $1, $2, $3, 'live', NOW()) RETURNING {COLUMNS}"
+                ),
+                vec![SITE.into(), lineage.into(), (came_at.max(0) + 1).into()],
+            ))
+            .await?
+            .ok_or(DbErr::RecordNotInserted)?,
+    };
+    Lease::from_row(&row)
+}
+
+/// The import `import_id` was called off: the lease it wrote goes, and the
+/// site is as it was, with no her.
+pub(super) async fn forget_arrival<C: ConnectionTrait>(
+    db: &C,
+    import_id: &str,
+) -> Result<(), DbErr> {
+    db.execute_raw(statement(
+        "DELETE FROM agent_host_lease WHERE id = 'her' AND holder <> $1 AND move->>'id' = $2",
+        vec![SITE.into(), import_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// The lease this process last read; None before the first read or while
@@ -927,7 +1050,10 @@ mod tests {
             cancel(db, &moving.id, Some("dev_2")).await,
             Err(MoveError::Unknown)
         ));
-        let back = cancel(db, &moving.id, Some("dev_1")).await.unwrap();
+        let back = cancel(db, &moving.id, Some("dev_1"))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (
                 back.state,
