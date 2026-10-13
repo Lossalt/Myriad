@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::*;
 
+mod archive;
 mod books;
 mod games;
 mod habits;
@@ -98,6 +99,7 @@ fn every_call_is_tested_and_version_lists_them() {
         "vitals.leaned_on",
     ]
     .into_iter()
+    .chain(archive::TESTED.iter().copied())
     .chain(books::TESTED.iter().copied())
     .chain(games::TESTED.iter().copied())
     .chain(habits::TESTED.iter().copied())

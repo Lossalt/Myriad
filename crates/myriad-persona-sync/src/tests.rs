@@ -524,3 +524,174 @@ fn a_rig_package_id_is_golden_and_ignores_where_the_atlas_is_served() {
     assert_eq!(rig_package_id(SAMPLE_ATLAS, &served).unwrap(), id);
     assert_ne!(rig_package_id(b"other", &manifest).unwrap(), id);
 }
+
+/// The golden export file: a small her (a memory, a diary entry, a sticker
+/// with its picture, an outfit with its rig, one vector) sealed with fixed
+/// salt and nonces, in 1 KiB chunks so it spans several.
+pub(crate) struct ArchiveSample {
+    pub passphrase: &'static str,
+    pub header: archive::ArchiveHeader,
+    pub parts: Vec<(archive::Part, Vec<u8>)>,
+}
+
+pub(crate) const SAMPLE_PASSPHRASE: &str = "雨天的伞 umbrella 7";
+/// The sticker's picture: its bytes are these.
+pub(crate) const SAMPLE_PICTURE: &[u8] = b"sticker-pixels";
+
+pub(crate) fn archive_sample() -> ArchiveSample {
+    use archive::{ArchiveHeader, HeaderFields, Manifest, Part};
+    let picture = AssetRef {
+        id: crate::canonical::sha256_hex(SAMPLE_PICTURE),
+        kind: AssetType::Image,
+        bytes: SAMPLE_PICTURE.len() as u64,
+        media_type: "image/png".into(),
+    };
+    let rig_manifest = canonical_bytes(&serde_json::to_value(sample_manifest()).unwrap());
+    let rig = AssetRef {
+        id: rig_package_id(SAMPLE_ATLAS, &sample_manifest()).unwrap(),
+        kind: AssetType::Rig,
+        bytes: (SAMPLE_ATLAS.len() + rig_manifest.len()) as u64,
+        media_type: "multipart/mixed".into(),
+    };
+    let mut sticker = entity_fixture(Kind::Sticker);
+    sticker.body["image"] = serde_json::to_value(&picture).unwrap();
+    sticker.digest.clear();
+    let mut outfit = entity_fixture(Kind::Outfit);
+    outfit.body["rig"] = serde_json::to_value(&rig).unwrap();
+    outfit.body["portrait"] = json!({"unreadable": true});
+    outfit.digest.clear();
+    let lineage = "1f0c2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b";
+    let envelope = entity::canonicalize_envelope(Envelope {
+        format: FORMAT.into(),
+        format_version: FORMAT_VERSION,
+        lineage: Some(lineage.into()),
+        origin: "site".into(),
+        embedding_model: Some(entity::EmbeddingModel {
+            model: "perplexity/pplx-embed-v1-0.6b".into(),
+            dims: 2,
+        }),
+        entities: vec![
+            entity_fixture(Kind::Memory),
+            entity_fixture(Kind::Diary),
+            sticker,
+            outfit,
+        ],
+        embeddings: vec![entity::Embedding {
+            memory_id: "mem_3b1f9a2c".into(),
+            digest: "00112233445566778899aabbccddeeff".into(),
+            vector: "AACAPwAAAL8=".into(),
+        }],
+        assets: vec![picture.clone(), rig.clone()],
+    })
+    .unwrap();
+    let manifest = Manifest::of_envelopes(std::slice::from_ref(&envelope)).unwrap();
+    let page = canonical_bytes(&serde_json::to_value(&envelope).unwrap());
+    let mut header = ArchiveHeader::new(
+        &[0x11; archive::SALT_BYTES],
+        &[0x22; archive::NONCE_PREFIX_BYTES],
+        HeaderFields {
+            lineage: Some(lineage.into()),
+            epoch: Some(3),
+            origin: "site".into(),
+            created_at: 1_760_000_000_123_456,
+            digest: manifest.digest.clone(),
+        },
+    )
+    .unwrap();
+    header.chunk_bytes = 1024;
+    let asset = |asset: &AssetRef, file: Option<&str>, bytes: &[u8]| Part::Asset {
+        id: asset.id.clone(),
+        kind: asset.kind,
+        media_type: match file {
+            Some(archive::RIG_MANIFEST_FILE) => "application/json".into(),
+            Some(_) => "image/png".into(),
+            None => asset.media_type.clone(),
+        },
+        file: file.map(str::to_string),
+        bytes: bytes.len() as u64,
+    };
+    let parts = vec![
+        (
+            Part::Envelope {
+                bytes: page.len() as u64,
+            },
+            page,
+        ),
+        (
+            asset(&picture, None, SAMPLE_PICTURE),
+            SAMPLE_PICTURE.to_vec(),
+        ),
+        (
+            asset(&rig, Some(archive::RIG_MANIFEST_FILE), &rig_manifest),
+            rig_manifest.clone(),
+        ),
+        (
+            asset(&rig, Some(archive::RIG_ATLAS_FILE), SAMPLE_ATLAS),
+            SAMPLE_ATLAS.to_vec(),
+        ),
+        (Part::End { manifest }, Vec::new()),
+    ];
+    ArchiveSample {
+        passphrase: SAMPLE_PASSPHRASE,
+        header,
+        parts,
+    }
+}
+
+impl ArchiveSample {
+    pub(crate) fn seal(&self) -> Vec<u8> {
+        let key = archive::derive_key(self.passphrase, &self.header.kdf).unwrap();
+        let parts: Vec<(archive::Part, &[u8])> = self
+            .parts
+            .iter()
+            .map(|(part, payload)| (part.clone(), payload.as_slice()))
+            .collect();
+        archive::seal(key, self.header.clone(), &parts).unwrap()
+    }
+}
+
+/// The golden archive is what the crate seals from its inputs, and opens
+/// back to them: another platform seals the same inputs through the core
+/// and must write the same bytes.
+#[test]
+fn the_golden_archive_is_what_its_inputs_seal_to() {
+    let sample = archive_sample();
+    let file = sample.seal();
+    let inputs = json!({
+        "passphrase": sample.passphrase,
+        "salt": sample.header.kdf.salt,
+        "noncePrefix": sample.header.nonce_prefix,
+        "chunkBytes": sample.header.chunk_bytes,
+        "fields": {
+            "lineage": sample.header.lineage,
+            "epoch": sample.header.epoch,
+            "origin": sample.header.origin,
+            "createdAt": sample.header.created_at,
+            "digest": sample.header.digest,
+        },
+        "parts": sample.parts.iter().map(|(part, payload)| json!({
+            "part": part,
+            "payload": crate::canonical::hex(payload),
+        })).collect::<Vec<_>>(),
+    });
+    golden("archive/inputs.json", &canonical_bytes(&inputs));
+    let path = fixtures().join("archive/her.her-archive");
+    if blessing() {
+        std::fs::write(&path, &file).unwrap();
+    } else {
+        let stored = std::fs::read(&path).unwrap();
+        assert!(
+            stored == file,
+            "{} differs from what the crate seals",
+            path.display()
+        );
+    }
+    let opened = archive::open(sample.passphrase, &file).unwrap();
+    assert_eq!(opened.header, sample.header);
+    golden(
+        "archive/manifest.json",
+        &canonical_bytes(&serde_json::to_value(&opened.manifest).unwrap()),
+    );
+    assert_eq!(opened.envelopes.len(), 1);
+    assert_eq!(opened.assets.len(), 2);
+}

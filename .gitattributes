@@ -44,3 +44,4 @@ docker-compose*.yml text eol=lf
 *.woff2 binary
 *.ttf binary
 *.otf binary
+*.her-archive binary

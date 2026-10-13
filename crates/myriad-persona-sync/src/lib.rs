@@ -13,6 +13,7 @@
 use std::fmt;
 
 pub mod affect;
+pub mod archive;
 pub mod canonical;
 pub mod compare;
 pub mod entity;

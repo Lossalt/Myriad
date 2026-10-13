@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use crate::Failure;
 
 mod affect;
+mod archive;
 mod chat;
 mod memory;
 mod outfit;
@@ -164,6 +165,10 @@ const CALLS: &[(&str, Call)] = &[
     ("style.unlike", style::unlike),
     ("sync.affect_fold", sync::affect_fold),
     ("sync.affect_replay", sync::affect_replay),
+    ("sync.archive_key", archive::archive_key),
+    ("sync.archive_open", archive::archive_open),
+    ("sync.archive_part", archive::archive_part),
+    ("sync.archive_seal", archive::archive_seal),
     ("sync.canonicalize", sync::canonicalize),
     ("sync.check_rev", sync::check_rev),
     ("sync.compare", sync::compare),
@@ -171,6 +176,7 @@ const CALLS: &[(&str, Call)] = &[
     ("sync.hlc_observe", sync::hlc_observe),
     ("sync.is_empty", sync::is_empty),
     ("sync.legacy_rev", sync::legacy_rev),
+    ("sync.manifest", archive::manifest),
     ("sync.persona_diff", sync::persona_diff),
     ("sync.rig_package_id", sync::rig_package_id),
     ("threads.section", own::threads_section),
