@@ -228,6 +228,19 @@ export function AgentDevicesGroup() {
     [c.agentDevicesLoadFailed, fail],
   )
 
+  // A persona field by name, as the owner reads it: her visual keys under
+  // her look, a key only some end knows as it is.
+  const mergeFieldLabel = useCallback(
+    (field: string) => {
+      const labels = c as unknown as Record<string, string | undefined>
+      if (field.startsWith('visual.')) {
+        return `${labels.agentHostMergeField_visual ?? 'visual'} · ${field.slice(7)}`
+      }
+      return labels[`agentHostMergeField_${field}`] ?? field
+    },
+    [c],
+  )
+
   const countsLine = useCallback(
     (counts: Record<string, number>) =>
       format(c.agentHostImportCounts, {
@@ -571,7 +584,7 @@ export function AgentDevicesGroup() {
                 <ul className="setting-hint">
                   {pending.merge.fields.map((outcome) => (
                     <li key={outcome.field}>
-                      {outcome.field}：
+                      {mergeFieldLabel(outcome.field)}：
                       {outcome.both
                         ? c.agentHostMergeFromBoth
                         : outcome.from === 'host'
