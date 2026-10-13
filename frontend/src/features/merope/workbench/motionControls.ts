@@ -1,8 +1,9 @@
 import type { TranslationKeys } from '../../../i18n'
-import type { BodyControl } from '../../../services/agent/types'
+import type { BodyControl, ScoreMoveKind } from '../../../services/agent/types'
 import type { Anime25DDriver } from '../anime25drig/driver'
 import type { Anime25DMotionEnvelopeProbeId } from '../anime25drig/motionEnvelope'
 import type { Anime25DDebugSnapshot } from '../anime25drig/player'
+import type { ResolvedScore } from '../motion/scoreTimeline'
 import { formatMessage, getDefaultLocale } from '../../../i18n'
 import { mappedControlValue } from '../anime25drig/actingField'
 import { BODY_CONTROL_DRIVERS } from '../anime25drig/directedPose'
@@ -204,6 +205,25 @@ export const FACE_SHIFT_BUTTONS = [
   ['slow', 'faceShiftSlow'],
   ['pause', 'faceShiftPause'],
 ] as const satisfies ReadonlyArray<readonly [string, StringLabel]>
+
+/** The director's there-and-back moves (scoreMoves), each played once as a beat; blinking has its own button. */
+export const SCORE_MOVE_BUTTONS = [
+  ['nod', 'scoreMoveNod'],
+  ['shake', 'scoreMoveShake'],
+  ['glance', 'scoreMoveGlance'],
+  ['wink', 'scoreMoveWink'],
+  ['beat', 'scoreMoveBeat'],
+  ['shrug', 'scoreMoveShrug'],
+  ['sigh', 'scoreMoveSigh'],
+  ['bounce', 'scoreMoveBounce'],
+  ['startle', 'scoreMoveStartle'],
+] as const satisfies ReadonlyArray<readonly [ScoreMoveKind, StringLabel]>
+
+/** A move played now, as one beat of a score the way the director's are (twice for a nod or a shake). */
+export function scoreMoveNow(kind: ScoreMoveKind, nowMs: number): ResolvedScore {
+  const count = kind === 'nod' || kind === 'shake' ? 2 : 1
+  return { id: Math.round(nowMs), beats: [{ id: `workbench:${kind}:${Math.round(nowMs)}`, atMs: nowMs, move: { kind, amount: 1, count, tempo: 1 } }] }
+}
 
 /** Looks the workbench can pass through on the way to the next, as the director's via: none, her ordinary face, or a look. */
 export const FACE_VIA_CHOICES = ['none', 'plain', 'surprised', 'worried'] as const

@@ -23,6 +23,8 @@ import {
   FACE_VIA_CHOICES,
   faceViaLabel,
   inspectFields,
+  SCORE_MOVE_BUTTONS,
+  scoreMoveNow,
 } from './motionControls'
 import { MovingPartsPanel } from './MovingPartsPanel'
 import { PoseCorrectionEditor } from './PoseCorrectionEditor'
@@ -146,6 +148,22 @@ export function MotionPanel({
                 onClick={() => setVia(id)}
               >
                 {faceViaLabel(labels, id)}
+              </SettingsButton>
+            ))}
+          </div>
+        </div>
+        <div className="merope-motion-home__chips">
+          <strong>{labels.scoreMovesTitle}</strong>
+          <div>
+            {SCORE_MOVE_BUTTONS.map(([kind, label]) => (
+              <SettingsButton
+                key={kind}
+                type="button"
+                size="sm"
+                disabled={!motionEnabled}
+                onClick={() => characterRef.current?.setScore?.(scoreMoveNow(kind, performance.now()))}
+              >
+                {labels[label]}
               </SettingsButton>
             ))}
           </div>

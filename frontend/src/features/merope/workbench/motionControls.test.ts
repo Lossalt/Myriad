@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import zh from '../../../i18n/merope.zh-CN.json' with { type: 'json' }
-import { FACE_PRESETS, PLAIN_FACE } from '../events/performanceContract'
-import { EXPRESSION_GROUPS, FACE_PRESET_BUTTONS, FACE_VIA_CHOICES, facePresetDriver, facePresetLabel, faceViaLabel, PRESETS } from './motionControls'
+import { FACE_PRESETS, PLAIN_FACE, SCORE_MOVES } from '../events/performanceContract'
+import { EXPRESSION_GROUPS, FACE_PRESET_BUTTONS, FACE_VIA_CHOICES, facePresetDriver, facePresetLabel, faceViaLabel, PRESETS, SCORE_MOVE_BUTTONS, scoreMoveNow } from './motionControls'
 
 test('every look the director can pick is a named button in the workbench', () => {
   assert.deepEqual(FACE_PRESET_BUTTONS.map((preset) => preset.id), Object.keys(FACE_PRESETS))
@@ -38,4 +38,13 @@ test('the looks passed on the way are the ones the director can pass, each named
     if (id !== 'none') assert.ok(id === PLAIN_FACE || id in FACE_PRESETS, id)
     assert.notEqual(faceViaLabel(zh as never, id), id, id)
   }
+})
+
+test('every move but the blink is a button, played now as one beat the way a score plays it', () => {
+  assert.deepEqual(new Set(SCORE_MOVE_BUTTONS.map(([kind]) => kind)), new Set(Object.keys(SCORE_MOVES).filter((kind) => kind !== 'blink')))
+  for (const [, label] of SCORE_MOVE_BUTTONS) assert.ok(zh[label], label)
+  const nod = scoreMoveNow('nod', 1234.5)
+  assert.equal(nod.beats[0].atMs, 1234.5)
+  assert.deepEqual(nod.beats[0].move, { kind: 'nod', amount: 1, count: 2, tempo: 1 })
+  assert.equal(scoreMoveNow('shrug', 0).beats[0].move?.count, 1)
 })
