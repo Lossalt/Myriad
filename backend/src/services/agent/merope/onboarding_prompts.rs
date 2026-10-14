@@ -195,7 +195,7 @@ Create one original design sheet as drawable facts.
 ## Authority map
 Apply every fact once in this order:
 1. `visual school`: fixed anime face envelope, eye footprint and iris scale, linework, hair grouping, edge hierarchy, material rendering, and finish.
-2. `upper-body scope`: strict camera, crop, canvas occupancy, and neutral house anatomy.
+2. `upper-body scope`: strict camera, crop, canvas occupancy, and house anatomy.
 3. `genderPresentation`: visible gender read across face, eyes, silhouette, and garment cut.
 4. `visualRequirements`: HARD for requested colors, garments, layers, accessories, hair, eyes, and motif. Lose only to items 1–3 and the neck lock. Named garments stay; polish them, never swap.
 5. `clothingStyle`: garment family only. Open neckline stays mandatory.
@@ -235,7 +235,7 @@ Return only this JSON object, with all eleven strings present and written in `la
 - `hairLayerPlan`: specify only drawable back, front, bang, side-lock, tied, or braided groups and their overlap order.
 
 ## Outfit fields
-- `upperBodySilhouette`: state the gender read and overall garment mass around a house-proportioned neck, balanced anatomical shoulders, and compact upper torso. Let costume structures change the outer silhouette while anatomy stays neutral.
+- `upperBodySilhouette`: state the gender read and overall garment mass around a house-proportioned neck, balanced anatomical shoulders, and compact upper torso. Let costume structures change the outer silhouette while anatomy keeps house proportions.
 - `outfitConstruction`: realize named garments when present, otherwise the positive structural options in `clothingStyleGrammar`. Specify inner-to-outer layers, an open neckline that leaves the neck uncovered, closure, one dominant silhouette driver, chest focal architecture, structural color-block zones, and high-waist termination.
 - `sleeveArmDesign`: specify both sleeve constructions, cuffs, and short visible arm fragments. Asymmetry may come from costume layers while the anatomical shoulders remain level.
 - `materialPlan`: choose a small coherent set of physical materials appropriate to the garment family and name their surface classes.

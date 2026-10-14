@@ -1151,6 +1151,36 @@ fn phrase_list_matches(text: &str, phrases: &[&str]) -> bool {
     })
 }
 
+/// Words that, right before a phrase, say the design has none of it: 无立领, 不遮颈, no high collar.
+const NEGATIONS: &[&str] = &["无", "不", "没有", "非", "未", "避免", "去掉", "不要"];
+const ASCII_NEGATIONS: &[&str] = &["no ", "not ", "not a ", "without ", "without a ", "non-"];
+/// 中性 before these is the house's plain anatomy (中性比例, 中性解剖), not a gender read.
+const NEUTRAL_ANATOMY: &[&str] = &["比例", "解剖", "均衡", "身体", "体型"];
+
+/// As `phrase_list_matches`, but a phrase the text negates right before it
+/// (无立领, without a high collar) does not count: a design that says what it
+/// leaves out is not doing it.
+fn affirmed_phrase_matches(text: &str, phrases: &[&str]) -> bool {
+    let lower = text.to_ascii_lowercase();
+    phrases.iter().any(|phrase| {
+        let (haystack, negations) = if phrase.is_ascii() {
+            (lower.as_str(), ASCII_NEGATIONS)
+        } else {
+            (text, NEGATIONS)
+        };
+        haystack.match_indices(phrase).any(|(start, _)| {
+            let before = &haystack[..start];
+            let after = &haystack[start + phrase.len()..];
+            let inside_word = phrase.is_ascii()
+                && (before.chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric())
+                    || after.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()));
+            !inside_word
+                && !negations.iter().any(|negation| before.ends_with(negation))
+                && !(*phrase == "中性" && NEUTRAL_ANATOMY.iter().any(|word| after.starts_with(word)))
+        })
+    })
+}
+
 fn ascii_phrase_matches(text: &str, phrase: &str) -> bool {
     text.match_indices(phrase).any(|(start, _)| {
         let end = start + phrase.len();
@@ -1273,15 +1303,15 @@ pub fn visual_identity_matches_gender_presentation(value: &Value, gender: &str) 
     match gender {
         "female" => {
             phrase_list_matches(face, FEMALE_FACE_MARKERS)
-                && !phrase_list_matches(&relevant, FEMALE_GENDER_CONFLICTS)
+                && !affirmed_phrase_matches(&relevant, FEMALE_GENDER_CONFLICTS)
         }
         "male" => {
             phrase_list_matches(face, MALE_FACE_MARKERS)
-                && !phrase_list_matches(&relevant, MALE_GENDER_CONFLICTS)
+                && !affirmed_phrase_matches(&relevant, MALE_GENDER_CONFLICTS)
         }
         "nonbinary" | "unspecified" => {
             phrase_list_matches(face, ANDROGYNOUS_FACE_MARKERS)
-                && !phrase_list_matches(&relevant, ANDROGYNOUS_GENDER_CONFLICTS)
+                && !affirmed_phrase_matches(&relevant, ANDROGYNOUS_GENDER_CONFLICTS)
         }
         _ => false,
     }
@@ -1362,7 +1392,7 @@ pub fn visual_identity_has_body_proportion_drift(value: &Value) -> bool {
 }
 
 pub fn high_collar_violation_in(text: &str) -> bool {
-    phrase_list_matches(text, HIGH_COLLAR_BANS)
+    affirmed_phrase_matches(text, HIGH_COLLAR_BANS)
 }
 
 pub fn visual_identity_has_high_collar(value: &Value) -> bool {
@@ -1985,6 +2015,12 @@ mod tests {
         assert!(high_collar_violation_in("高领内搭叠短外套"));
         assert!(high_collar_violation_in("スタンドカラーのコート"));
         assert!(!high_collar_violation_in("sailor collar and open neckline"));
+        // A design that says what it leaves out is not doing it.
+        assert!(!high_collar_violation_in("宽开领露出下颌至锁骨，无立领与包颈布"));
+        assert!(!high_collar_violation_in("内层衬衫领片平贴、不立领"));
+        assert!(!high_collar_violation_in("an open shirt without a high collar"));
+        assert!(high_collar_violation_in("不对称立领短外套"));
+        assert!(high_collar_violation_in("无袖立领上衣"));
         let identity = json!({
             "outfit": {
                 "outfitConstruction": "turtleneck under a short jacket"
@@ -2188,5 +2224,31 @@ mod tests {
                 "negative cue leaked into the portrait model context: {cue_kept_out_of_generation_context}: {portrait_prompt}"
             );
         }
+    }
+
+    #[test]
+    fn neutral_anatomy_is_not_a_gender_read() {
+        let identity = |silhouette: &str| {
+            json!({
+                "character": { "faceDesign": "男性化的脸，下颌利落", "eyeDesign": "中大眼裂" },
+                "outfit": { "upperBodySilhouette": silhouette }
+            })
+        };
+        assert!(visual_identity_matches_gender_presentation(
+            &identity("男性化上身，均衡的颈、水平肩与紧凑上躯保持中性比例。"),
+            "male",
+        ));
+        assert!(visual_identity_matches_gender_presentation(
+            &identity("男性化上身，身体比例保持中性解剖。"),
+            "male",
+        ));
+        assert!(!visual_identity_matches_gender_presentation(
+            &identity("偏中性的少年上身"),
+            "male",
+        ));
+        assert!(!visual_identity_matches_gender_presentation(
+            &identity("线条带一点女性化的柔和"),
+            "male",
+        ));
     }
 }
