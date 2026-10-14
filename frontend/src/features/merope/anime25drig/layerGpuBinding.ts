@@ -29,6 +29,7 @@ import { buildFrontCollarContactModel } from './collarContact'
 import { createCollarClipMesh, disposeCollarClipMesh } from './collarRuntime'
 
 import { headSilhouetteFromFace, headTurnFeatures } from './headTurn'
+import { plainHiddenCollars } from './hiddenCollar'
 import { shadeHiddenBackHair } from './hiddenHair'
 import { trimHiddenNeck } from './hiddenNeck'
 import { fillHiddenSkin } from './hiddenSkin'
@@ -259,6 +260,28 @@ export function compileAnime25DGpuLayers(
         neck,
         clipCollar[0],
       )
+    }
+    // What the garments have behind the neck is the inside of their collar: plain cloth, read
+    // around the neck from them and from the front collar. Through a collar the neck shows only
+    // within the clip.
+    const neckImage = neckLayer ? bindingPixels.get(neckLayer) ?? neckPixels : null
+    if (neckLayer && neckImage) {
+      const neckAt = playback.layers.indexOf(neckLayer)
+      const collarLayers = playback.layers.filter((layer, index) =>
+        layer.role === 'collar-front' || ((layer.role === 'topwear' || layer.role === 'collar-back') && index < neckAt))
+      const garments = collarLayers.flatMap((layer) => {
+        const image = readBindingPixels(layer)
+        return image ? [{ source: layer, layer, image, inFront: layer.role === 'collar-front' }] : []
+      })
+      for (const [index, plain] of plainHiddenCollars(garments, neckLayer, neckImage, collarClip?.rest)) {
+        const garment = garments[index].source
+        bindingPixels.set(garment, plain)
+        atlasPatches.push({
+          ...plain,
+          x: Math.round(garment.atlas.x * atlasImage.width),
+          y: Math.round(garment.atlas.y * atlasImage.height),
+        })
+      }
     }
 
     const bindings = new Map<Anime25DPlayback['layers'][number], Anime25DLayerBinding>()
