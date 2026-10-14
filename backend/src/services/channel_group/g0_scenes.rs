@@ -60,12 +60,17 @@ fn done(name: &str) {
 #[tokio::test(start_paused = true)]
 async fn g0_a_member_calls_her() {
     let chat = -77_001;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(&mut world, "a_member_calls_her") else {
+        return;
+    };
+    world.members.insert("11".into(), 70011);
+    site_member(&schema.db, 70011, "u70011", "阿明").await;
     // Not a multiple of the typing mark's 4 s: a tie there has no order.
-    world
-        .turns
-        .push_back((4.5, "去老地方吧，便宜又好吃".into(), None));
+    her_turn(&mut world, 4.5, "去老地方吧，便宜又好吃");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "周五聚餐吗", false)).await;
     wait(2.0).await;
@@ -74,6 +79,7 @@ async fn g0_a_member_calls_her() {
     hear(line(chat, 3, 11, "阿明", "@bot 你推荐哪家", true)).await;
     wait(600.0).await;
     done("a_member_calls_her");
+    schema.drop_schema();
 }
 
 /// Called while she is answering: the line waits, and the same person's
@@ -81,11 +87,19 @@ async fn g0_a_member_calls_her() {
 #[tokio::test(start_paused = true)]
 async fn g0_lines_wait_while_she_is_busy() {
     let chat = -77_002;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.3);
-    world.members.insert("11".into(), 101);
-    world.members.insert("12".into(), 102);
-    world.turns.push_back((20.5, "我先看看".into(), None));
-    world.turns.push_back((3.0, "火锅可以".into(), None));
+    let Some(schema) = database(&mut world, "lines_wait_while_she_is_busy") else {
+        return;
+    };
+    world.members.insert("11".into(), 70021);
+    world.members.insert("12".into(), 70022);
+    site_member(&schema.db, 70021, "u70021", "阿明").await;
+    site_member(&schema.db, 70022, "u70022", "小红").await;
+    her_turn(&mut world, 20.5, "我先看看");
+    her_turn(&mut world, 3.0, "火锅可以");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 周五去哪", true)).await;
     wait(15.0).await;
@@ -94,6 +108,7 @@ async fn g0_lines_wait_while_she_is_busy() {
     hear(line(chat, 3, 12, "小红", "要辣的", false)).await;
     wait(900.0).await;
     done("lines_wait_while_she_is_busy");
+    schema.drop_schema();
 }
 
 /// Nobody calls her: she glances when she is free, judges as herself, and
@@ -101,8 +116,15 @@ async fn g0_lines_wait_while_she_is_busy() {
 #[tokio::test(start_paused = true)]
 async fn g0_she_speaks_up_unasked() {
     let chat = -77_003;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(&mut world, "she_speaks_up_unasked") else {
+        return;
+    };
+    world.members.insert("11".into(), 70031);
+    site_member(&schema.db, 70031, "u70031", "阿明").await;
     answer(
         &mut world,
         "group_chime",
@@ -113,23 +135,29 @@ async fn g0_she_speaks_up_unasked() {
         "group_making_sense",
         r#"{"goingOn":"在约周五吃饭","theyMean":"在问去哪家","aboutYou":null}"#,
     );
-    world
-        .turns
-        .push_back((3.0, "周五那家人多，早点去".into(), None));
+    her_turn(&mut world, 3.0, "周五那家人多，早点去");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧", false)).await;
     wait(1.0).await;
     hear(line(chat, 2, 11, "阿明", "大家觉得呢", false)).await;
     wait(1200.0).await;
     done("she_speaks_up_unasked");
+    schema.drop_schema();
 }
 
 /// No words, only a reaction on the line.
 #[tokio::test(start_paused = true)]
 async fn g0_she_reacts_without_words() {
     let chat = -77_004;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(&mut world, "she_reacts_without_words") else {
+        return;
+    };
+    world.members.insert("11".into(), 70041);
+    site_member(&schema.db, 70041, "u70041", "阿明").await;
     answer(
         &mut world,
         "group_chime",
@@ -139,6 +167,7 @@ async fn g0_she_reacts_without_words() {
     hear(line(chat, 1, 11, "阿明", "我今天把锅烧糊了哈哈哈", false)).await;
     wait(600.0).await;
     done("she_reacts_without_words");
+    schema.drop_schema();
 }
 
 /// Someone from outside the community calls her: answered lightly, on the
@@ -174,13 +203,19 @@ async fn g0_an_outsider_calls_her() {
 #[tokio::test(start_paused = true)]
 async fn g0_she_keeps_back_what_no_longer_fits() {
     let chat = -77_006;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world.members.insert("12".into(), 102);
-    world
-        .turns
-        .push_back((10.0, "九点吧\n老地方见".into(), None));
-    world.turns.push_back((2.0, "那就十点".into(), None));
+    let Some(schema) = database(&mut world, "she_keeps_back_what_no_longer_fits") else {
+        return;
+    };
+    world.members.insert("11".into(), 70061);
+    world.members.insert("12".into(), 70062);
+    site_member(&schema.db, 70061, "u70061", "阿明").await;
+    site_member(&schema.db, 70062, "u70062", "小红").await;
+    her_turn(&mut world, 10.0, "九点吧\n老地方见");
+    her_turn(&mut world, 2.0, "那就十点");
     answer(&mut world, "draft_still", r#"{"send":false}"#);
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 周六几点集合", true)).await;
@@ -188,21 +223,28 @@ async fn g0_she_keeps_back_what_no_longer_fits() {
     hear(line(chat, 2, 12, "小红", "刚说了十点", false)).await;
     wait(600.0).await;
     done("she_keeps_back_what_no_longer_fits");
+    schema.drop_schema();
 }
 
 /// Several lines in one reply, the rest typed one after another.
 #[tokio::test(start_paused = true)]
 async fn g0_a_reply_goes_out_as_several_messages() {
     let chat = -77_007;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.8);
-    world.members.insert("11".into(), 101);
-    world
-        .turns
-        .push_back((2.0, "好耶\n我也想去\n带我一个\n@阿明 几点".into(), None));
+    let Some(schema) = database(&mut world, "a_reply_goes_out_as_several_messages") else {
+        return;
+    };
+    world.members.insert("11".into(), 70071);
+    site_member(&schema.db, 70071, "u70071", "阿明").await;
+    her_turn(&mut world, 2.0, "好耶\n我也想去\n带我一个\n@阿明 几点");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 周六去爬山", true)).await;
     wait(600.0).await;
     done("a_reply_goes_out_as_several_messages");
+    schema.drop_schema();
 }
 
 /// Muted, she knows it and says nothing there until it lifts.
@@ -210,9 +252,16 @@ async fn g0_a_reply_goes_out_as_several_messages() {
 async fn g0_muted_she_says_nothing() {
     let chat = -77_008;
     let venue = format!("telegram:{chat}");
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world.turns.push_back((2.0, "我又能说话啦".into(), None));
+    let Some(schema) = database(&mut world, "muted_she_says_nothing") else {
+        return;
+    };
+    world.members.insert("11".into(), 70081);
+    site_member(&schema.db, 70081, "u70081", "阿明").await;
+    her_turn(&mut world, 2.0, "我又能说话啦");
     g0::enter(world);
     hear(line(chat, 1, 12, "管理员", "安静点", false)).await;
     muted(&venue, "12", Muted::For(600), false).await;
@@ -221,6 +270,7 @@ async fn g0_muted_she_says_nothing() {
     hear(line(chat, 3, 11, "阿明", "@bot 现在呢", true)).await;
     wait(600.0).await;
     done("muted_she_says_nothing");
+    schema.drop_schema();
 }
 
 /// One who answers her nonstop, as a bot would: after enough rounds she
@@ -254,10 +304,17 @@ async fn g0_she_stops_answering_one_who_never_stops() {
 #[tokio::test(start_paused = true)]
 async fn g0_away_and_back() {
     let chat = -77_010;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "away_and_back") else {
+        return;
+    };
     world.away = true;
-    world.members.insert("11".into(), 101);
-    world.turns.push_back((2.0, "回来了回来了".into(), None));
+    world.members.insert("11".into(), 70101);
+    site_member(&schema.db, 70101, "u70101", "阿明").await;
+    her_turn(&mut world, 2.0, "回来了回来了");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 在吗", true)).await;
     wait(5.0).await;
@@ -269,6 +326,7 @@ async fn g0_away_and_back() {
     back_from_away();
     wait(600.0).await;
     done("away_and_back");
+    schema.drop_schema();
 }
 
 /// After a restart the group is read back as a person scrolls up, and the
@@ -277,9 +335,16 @@ async fn g0_away_and_back() {
 async fn g0_read_back_after_a_restart() {
     let chat = -77_011;
     let venue = format!("telegram:{chat}");
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world.turns.push_back((2.0, "抱歉刚看到".into(), None));
+    let Some(schema) = database(&mut world, "read_back_after_a_restart") else {
+        return;
+    };
+    world.members.insert("11".into(), 70111);
+    site_member(&schema.db, 70111, "u70111", "阿明").await;
+    her_turn(&mut world, 2.0, "抱歉刚看到");
     let base = world.base;
     world.up_since = Some(base - chrono::Duration::minutes(5));
     g0::enter(world);
@@ -305,6 +370,7 @@ async fn g0_read_back_after_a_restart() {
     .await;
     wait(600.0).await;
     done("read_back_after_a_restart");
+    schema.drop_schema();
 }
 
 /// Pictures in the talk: looked at when she reads it, said as she saw
@@ -312,8 +378,15 @@ async fn g0_read_back_after_a_restart() {
 #[tokio::test(start_paused = true)]
 async fn g0_pictures_as_she_saw_them() {
     let chat = -77_012;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(&mut world, "pictures_as_she_saw_them") else {
+        return;
+    };
+    world.members.insert("11".into(), 70121);
+    site_member(&schema.db, 70121, "u70121", "阿明").await;
     world.seen.insert(
         "telegram:cat".into(),
         myriad_merope::seeing::Seen {
@@ -323,7 +396,7 @@ async fn g0_pictures_as_she_saw_them() {
             only_there: false,
         },
     );
-    world.turns.push_back((2.0, "这猫好懂你".into(), None));
+    her_turn(&mut world, 2.0, "这猫好懂你");
     g0::enter(world);
     let picture = |id: i64| {
         let mut line = line(chat, id, 11, "阿明", "", false);
@@ -346,6 +419,7 @@ async fn g0_pictures_as_she_saw_them() {
     hear(line(chat, 4, 11, "阿明", "@bot 你看这个", true)).await;
     wait(600.0).await;
     done("pictures_as_she_saw_them");
+    schema.drop_schema();
 }
 
 /// Enough of the group's talk goes by: what she heard in it is taken in.
@@ -377,12 +451,18 @@ async fn g0_what_she_heard_is_taken_in() {
 async fn g0_she_brings_something_up_first() {
     let chat = -77_014;
     let venue = format!("telegram:{chat}");
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(&mut world, "she_brings_something_up_first") else {
+        return;
+    };
+    world.members.insert("11".into(), 70141);
+    site_member(&schema.db, 70141, "u70141", "阿明").await;
+    site_member(&schema.db, 1, "owner", "站长").await;
     world.sendable.insert(chat.to_string());
-    world
-        .turns
-        .push_back((2.0, "今天听到一首好歌，分享给你们".into(), None));
+    her_turn(&mut world, 2.0, "今天听到一首好歌，分享给你们");
     answer(
         &mut world,
         "share_first",
@@ -394,37 +474,64 @@ async fn g0_she_brings_something_up_first() {
     share_first(1, "一首叫《夜航》的歌".into()).await;
     wait(600.0).await;
     done("she_brings_something_up_first");
+    schema.drop_schema();
 }
 
 /// Only a sticker: it goes, and she and the group see she sent it.
 #[tokio::test(start_paused = true)]
 async fn g0_only_a_sticker() {
     let chat = -77_015;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world.turns.push_back((
-        2.0,
-        String::new(),
-        Some(json!({ "number": 2, "meaning": "开心" })),
-    ));
+    let Some(schema) = database(&mut world, "only_a_sticker") else {
+        return;
+    };
+    world.members.insert("11".into(), 70151);
+    site_member(&schema.db, 70151, "u70151", "阿明").await;
+    // Two stickers she kept from what people sent; she sends the second.
+    {
+        use sea_orm::ConnectionTrait;
+        schema
+            .db
+            .execute_raw(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Postgres,
+                "INSERT INTO merope_stickers (id, picture, meaning, venue, asset_id, identity, sent, kept_from) VALUES \
+                 ('sticker-15a', '一只发呆的猫', '无聊', NULL, 'asset-15a', '', 3, 'telegram:-77199'), \
+                 ('sticker-15b', '一只跳起来的猫', '开心', NULL, 'asset-15b', '', 1, 'telegram:-77199')",
+            ))
+            .await
+            .unwrap();
+    }
+    her_turn(&mut world, 2.0, "[[sticker:2]]");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 发个表情", true)).await;
     wait(600.0).await;
     done("only_a_sticker");
+    schema.drop_schema();
 }
 
 /// The platform refuses a send: what went out is what she said there.
 #[tokio::test(start_paused = true)]
 async fn g0_a_send_is_refused() {
     let chat = -77_016;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world.turns.push_back((2.0, "第一句\n第二句".into(), None));
+    let Some(schema) = database(&mut world, "a_send_is_refused") else {
+        return;
+    };
+    world.members.insert("11".into(), 70161);
+    site_member(&schema.db, 70161, "u70161", "阿明").await;
+    her_turn(&mut world, 2.0, "第一句\n第二句");
     world.refused.insert(1);
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 说两句", true)).await;
     wait(600.0).await;
     done("a_send_is_refused");
+    schema.drop_schema();
 }
 
 /// The database is down when the first line after a restart comes: what
@@ -434,12 +541,18 @@ async fn g0_a_send_is_refused() {
 async fn g0_her_line_brings_back_what_a_failed_read_missed() {
     let chat = -77_017;
     let venue = format!("telegram:{chat}");
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
-    world
-        .turns
-        .push_back((2.0, "记得，你说要来点歌".into(), None));
-    world.turns.push_back((2.0, "那就放这首".into(), None));
+    let Some(schema) = database(&mut world, "her_line_brings_back_what_a_failed_read_missed")
+    else {
+        return;
+    };
+    world.members.insert("11".into(), 70171);
+    site_member(&schema.db, 70171, "u70171", "阿明").await;
+    her_turn(&mut world, 2.0, "记得，你说要来点歌");
+    her_turn(&mut world, 2.0, "那就放这首");
     let base = world.base;
     let before = |minutes: i64| (base - chrono::Duration::minutes(minutes)).to_rfc3339();
     world.registry.insert(
@@ -462,6 +575,7 @@ async fn g0_her_line_brings_back_what_a_failed_read_missed() {
     hear(line(chat, 4, 11, "阿明", "@bot 那放哪首", true)).await;
     wait(600.0).await;
     done("her_line_brings_back_what_a_failed_read_missed");
+    schema.drop_schema();
 }
 
 // ------------------------------------------------------------ with a database
@@ -1030,17 +1144,25 @@ async fn g0_an_outsider_she_keeps_a_note_on() {
 #[tokio::test(start_paused = true)]
 async fn g0_she_says_nothing_when_what_she_has_cannot_be_read() {
     let chat = -77_106;
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = World::new(0.5);
-    world.members.insert("11".into(), 101);
+    let Some(schema) = database(
+        &mut world,
+        "she_says_nothing_when_what_she_has_cannot_be_read",
+    ) else {
+        return;
+    };
+    world.members.insert("11".into(), 71061);
+    site_member(&schema.db, 71061, "u71061", "阿明").await;
     world.failing.insert(("down".into(), "database".into()), 1);
     answer(
         &mut world,
         "group_chime",
         r#"{"speak":"know","about":"那家店周五人多","basis":null}"#,
     );
-    world
-        .turns
-        .push_back((3.0, "周五那家人多，早点去".into(), None));
+    her_turn(&mut world, 3.0, "周五那家人多，早点去");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧", false)).await;
     wait(1.0).await;
@@ -1049,6 +1171,7 @@ async fn g0_she_says_nothing_when_what_she_has_cannot_be_read() {
     hear(line(chat, 3, 11, "阿明", "我也想去那家", false)).await;
     wait(1200.0).await;
     done("she_says_nothing_when_what_she_has_cannot_be_read");
+    schema.drop_schema();
 }
 
 /// Someone in a group says, as she would answer them from outside.
