@@ -696,6 +696,15 @@
     "title": "Rapports"
   },
   "agentPanel": {
+    "away": {
+      "toWork": "Passer en mode travail",
+      "elsewhere": "Elle vit sur « {name} » ; parlez-lui sur ce Mac. Le mode travail fonctionne toujours ici : c'est l'assistant simple, sans elle.",
+      "elsewhereUnknown": "Elle vit sur un autre appareil ; parlez-lui là-bas. Le mode travail fonctionne toujours ici : c'est l'assistant simple, sans elle.",
+      "moving": "Elle déménage : aucun bout ne l'a avant la fin ou l'annulation.",
+      "vacant": "Elle n'est pas sur ce site maintenant.",
+      "movedOut": "Elle a déménagé de ce site.",
+      "member": "Elle n'est pas sur ce site maintenant."
+    },
     "status": {
       "idle": "En attente",
       "listening": "À l'écoute",

@@ -44,6 +44,8 @@ export function AgentDevicesGroup() {
   const [landedNote, setLandedNote] = useState<string | null>(null)
   const [mergePass, setMergePass] = useState('')
   const [mergeAgain, setMergeAgain] = useState('')
+  const [movePass, setMovePass] = useState('')
+  const [moveAgain, setMoveAgain] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
   const fail = useCallback((error: unknown, fallback: string) => {
@@ -111,11 +113,36 @@ export function AgentDevicesGroup() {
     async (action: 'confirm' | 'cancel', move: HostMove) => {
       setWorking(true)
       try {
+        const toDevice = move.kind === 'move' && move.from === 'site'
         const { host } =
           action === 'confirm'
-            ? await agentService.confirmHostMove(move.id)
+            ? await agentService.confirmHostMove(
+                move.id,
+                toDevice ? movePass : undefined,
+              )
             : await agentService.cancelHostMove(move.id)
         setList((current) => (current ? { ...current, host } : current))
+        setMovePass('')
+        setMoveAgain('')
+        await load()
+      } catch (error) {
+        fail(error, c.agentHostActionFailed)
+        await load()
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentHostActionFailed, fail, load, movePass],
+  )
+
+  // 选主机 (D10): she goes to live on a device (the device agrees, then the
+  // owner confirms here; Q8: open with H4, the acceptance entry before), or
+  // comes back from the device she lives on.
+  const startMove = useCallback(
+    async (kind: 'move' | 'back', device: string) => {
+      setWorking(true)
+      try {
+        await agentService.startHostMove(kind, device)
         await load()
       } catch (error) {
         fail(error, c.agentHostActionFailed)
@@ -125,6 +152,86 @@ export function AgentDevicesGroup() {
       }
     },
     [c.agentHostActionFailed, fail, load],
+  )
+
+  // 「导出并搬走」 on the site (Q7): the file, and she moves out of the site
+  // until the owner lets this copy go or undoes it.
+  const moveOut = useCallback(async () => {
+    if (!passphrase || passphrase !== again) return
+    setWorking(true)
+    try {
+      const blob = await agentService.moveHerOut(passphrase)
+      const stamp = new Date()
+        .toISOString()
+        .slice(0, 16)
+        .replace(/[-:]/g, '')
+        .replace('T', '-')
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `her-${stamp}.her-archive`
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      URL.revokeObjectURL(url)
+      setPassphrase('')
+      setAgain('')
+      setExportOpen(false)
+    } catch (error) {
+      fail(error, c.agentHostExportFailed)
+    } finally {
+      setWorking(false)
+      await load()
+    }
+  }, [again, c.agentHostExportFailed, fail, load, passphrase])
+
+  // What became of the site she moved out of, and what is left of others
+  // while she is away (Q2): undone, let go, or cleared, here only.
+  const leaveAction = useCallback(
+    async (action: 'undo' | 'letGo' | 'clearSealed') => {
+      setWorking(true)
+      try {
+        setList(
+          action === 'undo'
+            ? await agentService.undoMoveOut()
+            : action === 'letGo'
+              ? await agentService.letHerGo()
+              : await agentService.clearSealed(),
+        )
+      } catch (error) {
+        fail(error, c.agentHostActionFailed)
+        await load()
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentHostActionFailed, fail, load],
+  )
+
+  const backupAction = useCallback(
+    async (action: 'download' | 'delete', id: string, day: string) => {
+      setWorking(true)
+      try {
+        if (action === 'delete') {
+          setList(await agentService.deleteBackup(id))
+          return
+        }
+        const blob = await agentService.downloadBackup(id)
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = `her-backup-${day}.her-archive`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+      } catch (error) {
+        fail(error, c.agentDevicesLoadFailed)
+      } finally {
+        setWorking(false)
+      }
+    },
+    [c.agentDevicesLoadFailed, fail],
   )
 
   // 「导出她」: always sealed with the passphrase typed here, used once by
@@ -164,11 +271,26 @@ export function AgentDevicesGroup() {
     async (action: 'confirm' | 'cancel', pending: HostImport) => {
       setWorking(true)
       try {
-        setList(
-          action === 'confirm'
-            ? await agentService.confirmHostImport(pending.id)
-            : await agentService.cancelHostImport(pending.id),
-        )
+        if (action === 'cancel') {
+          setList(await agentService.cancelHostImport(pending.id))
+          return
+        }
+        try {
+          setList(await agentService.confirmHostImport(pending.id))
+        } catch (error) {
+          // A site she left keeps what was left of another her (H3e-15).
+          if (
+            error instanceof ApiError &&
+            error.code === 'import_replaces_sealed' &&
+            window.confirm(c.agentHostImportReplaceConfirm)
+          ) {
+            setList(
+              await agentService.confirmHostImport(pending.id, undefined, true),
+            )
+            return
+          }
+          throw error
+        }
       } catch (error) {
         fail(error, c.agentHostImportFailed)
         await load()
@@ -176,7 +298,7 @@ export function AgentDevicesGroup() {
         setWorking(false)
       }
     },
-    [c.agentHostImportFailed, fail, load],
+    [c.agentHostImportFailed, c.agentHostImportReplaceConfirm, fail, load],
   )
 
   // A device's her merged into the site's (H3d): confirmed here, logged in,
@@ -294,10 +416,25 @@ export function AgentDevicesGroup() {
         offset = sent.import.received
       }
       setImportProgress(c.agentHostImportFileOpening)
-      const landed = await agentService.openFileImport(
-        session.id,
-        importPassphrase,
-      )
+      let landed
+      try {
+        landed = await agentService.openFileImport(session.id, importPassphrase)
+      } catch (error) {
+        // A site she left keeps what was left of another her (H3e-15).
+        if (
+          error instanceof ApiError &&
+          error.code === 'import_replaces_sealed' &&
+          window.confirm(c.agentHostImportReplaceConfirm)
+        ) {
+          landed = await agentService.openFileImport(
+            session.id,
+            importPassphrase,
+            true,
+          )
+        } else {
+          throw error
+        }
+      }
       setImportPassphrase('')
       setImportFile(null)
       setImportOpen(false)
@@ -345,17 +482,27 @@ export function AgentDevicesGroup() {
 
   const host: HostLease | null = list?.host ?? null
   const pending: HostImport | null = list?.import ?? null
-  // A move that is an import has its own card below.
-  const move = host?.move && !host.move.id.startsWith('imp_') ? host.move : null
+  // A move that is an import (or a reclaim) has its own card below.
+  const move =
+    host?.move &&
+    !host.move.id.startsWith('imp_') &&
+    host.move.kind !== 'recover'
+      ? host.move
+      : null
+  const moveToDevice = move !== null && move.kind === 'move' && move.from === 'site'
+  const moveBack = move !== null && move.kind === 'move' && move.to === 'site'
   const deviceName = (id: string, name: string | null) =>
     id === 'site' ? c.agentHostSite : (name ?? c.agentHostUnknownDevice)
   // Her copy here is her only while she lives here or is moving (H3b-5).
   const exportable =
     host !== null &&
     (host.state === 'frozen' ||
+      host.state === 'moved_out' ||
       (host.state === 'live' && host.holder === 'site'))
   const livesElsewhere =
     host !== null && host.state === 'live' && host.holder !== 'site'
+  // She lives here and nothing is under way: she can be given another host.
+  const choosable = host !== null && host.state === 'live' && host.holder === 'site' && !host.move
 
   // Choosing a host here comes later (H4); for now this says where she
   // lives, and a move a device asked for is confirmed or turned down here.
@@ -420,9 +567,13 @@ export function AgentDevicesGroup() {
               onClick: () => void remove(device),
               disabled: working,
               variant: 'danger' as const,
-              confirm: format(c.agentDevicesRemoveConfirm, {
-                name: device.name,
-              }),
+              // She lives on it: removing it leaves her there, on her own (H3e-14).
+              confirm: format(
+                host?.holder === device.id && host.state !== 'vacant'
+                  ? c.agentDevicesRemoveHostConfirm
+                  : c.agentDevicesRemoveConfirm,
+                { name: device.name },
+              ),
             },
           ],
     }
@@ -469,7 +620,103 @@ export function AgentDevicesGroup() {
               })}
         </p>
       ) : null}
-      {move && move.phase === 'proposed' ? (
+      {move && move.phase === 'proposed' && moveToDevice ? (
+        <InfoActionCard
+          title={format(c.agentHostToDeviceTitle, {
+            name: deviceName(move.to, move.toName),
+          })}
+          tone="info"
+          actions={[
+            ...(move.agreed
+              ? [
+                  {
+                    key: 'confirm',
+                    label: c.agentHostConfirm,
+                    onClick: () => void moveAction('confirm', move),
+                    disabled:
+                      working ||
+                      !list?.deviceHostOpen ||
+                      !movePass ||
+                      movePass !== moveAgain,
+                    variant: 'primary' as const,
+                    confirm: c.agentHostToDeviceConfirmConfirm,
+                  },
+                ]
+              : []),
+            {
+              key: 'decline',
+              label: c.agentHostDecline,
+              onClick: () => void moveAction('cancel', move),
+              disabled: working,
+              variant: 'secondary',
+            },
+          ]}
+        >
+          {move.agreed ? (
+            <>
+              <p className="info-action-card-lede">
+                {format(c.agentHostToDeviceBody, {
+                  name: deviceName(move.to, move.toName),
+                })}
+              </p>
+              <InputItem
+                itemKey="agent_move_passphrase"
+                label={c.agentHostToDevicePassphrase}
+                value={movePass}
+                onChange={setMovePass}
+                inputType="password"
+                autoComplete="new-password"
+                layout="vertical"
+              />
+              <InputItem
+                itemKey="agent_move_again"
+                label={c.agentHostExportAgain}
+                value={moveAgain}
+                onChange={setMoveAgain}
+                inputType="password"
+                autoComplete="new-password"
+                layout="vertical"
+              />
+              {moveAgain && movePass !== moveAgain ? (
+                <p className="setting-hint">{c.agentHostExportMismatch}</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="info-action-card-lede">
+              {format(c.agentHostToDeviceWaiting, {
+                name: deviceName(move.to, move.toName),
+              })}
+            </p>
+          )}
+        </InfoActionCard>
+      ) : move && move.phase === 'proposed' && moveBack ? (
+        <InfoActionCard
+          title={format(c.agentHostBackTitle, {
+            name: deviceName(move.from, move.fromName),
+          })}
+          tone="info"
+          actions={[
+            {
+              key: 'confirm',
+              label: c.agentHostConfirm,
+              onClick: () => void moveAction('confirm', move),
+              disabled: working,
+              variant: 'primary',
+              confirm: c.agentHostConfirmConfirm,
+            },
+            {
+              key: 'decline',
+              label: c.agentHostDecline,
+              onClick: () => void moveAction('cancel', move),
+              disabled: working,
+              variant: 'secondary',
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">{c.agentHostBackBody}</p>
+        </InfoActionCard>
+      ) : null}
+      {move && move.phase === 'proposed' && !moveToDevice && !moveBack ? (
         <InfoActionCard
           title={format(c.agentHostProposedTitle, {
             name: deviceName(
@@ -528,11 +775,176 @@ export function AgentDevicesGroup() {
                   ? c.agentHostKindMerge
                   : c.agentHostKindMove,
               name: deviceName(
-                move.kind === 'merge' ? move.from : move.to,
-                move.kind === 'merge' ? move.fromName : move.toName,
+                move.kind === 'merge' || moveBack ? move.from : move.to,
+                move.kind === 'merge' || moveBack ? move.fromName : move.toName,
               ),
             })}
           </p>
+        </InfoActionCard>
+      ) : null}
+      {pending && pending.source === 'device' && pending.kind === 'recover' ? (
+        <InfoActionCard
+          title={format(
+            pending.phase === 'proposed'
+              ? c.agentHostRecoverTitle
+              : c.agentHostRecoveringTitle,
+            { device: pending.deviceName ?? c.agentHostUnknownDevice },
+          )}
+          tone="warn"
+          actions={[
+            ...(pending.phase === 'proposed'
+              ? [
+                  {
+                    key: 'confirm',
+                    label: c.agentHostRecoverConfirm,
+                    onClick: () => void importAction('confirm', pending),
+                    disabled: working,
+                    variant: 'primary' as const,
+                    confirm: c.agentHostRecoverConfirmConfirm,
+                  },
+                ]
+              : []),
+            {
+              key: 'decline',
+              label:
+                pending.phase === 'proposed'
+                  ? c.agentHostRecoverDecline
+                  : c.agentHostCancel,
+              onClick: () => void importAction('cancel', pending),
+              disabled: working,
+              variant: 'secondary',
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">
+            {format(c.agentHostRecoverBody, {
+              device: pending.deviceName ?? c.agentHostUnknownDevice,
+              from: host ? deviceName(host.holder, host.holderName) : '—',
+            })}
+          </p>
+          <p className="setting-hint">{countsLine(pending.counts)}</p>
+        </InfoActionCard>
+      ) : null}
+      {host && host.state === 'moved_out' ? (
+        <InfoActionCard
+          title={c.agentHostMovedOutTitle}
+          tone="warn"
+          actions={[
+            {
+              key: 'undo',
+              label: c.agentHostMovedOutUndo,
+              onClick: () => void leaveAction('undo'),
+              disabled: working,
+              variant: 'secondary',
+            },
+            {
+              key: 'letGo',
+              label: c.agentHostMovedOutLetGo,
+              onClick: () => void leaveAction('letGo'),
+              disabled: working,
+              variant: 'danger',
+              confirm: c.agentHostMovedOutLetGoConfirm,
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">{c.agentHostMovedOutBody}</p>
+        </InfoActionCard>
+      ) : null}
+      {choosable || livesElsewhere ? (
+        <InfoActionCard
+          title={c.agentHostChooseTitle}
+          tone="info"
+          actions={
+            livesElsewhere && host
+              ? [
+                  {
+                    key: 'back',
+                    label: c.agentHostChooseBack,
+                    onClick: () => void startMove('back', host.holder),
+                    disabled: working,
+                    variant: 'secondary',
+                    confirm: format(c.agentHostChooseBackConfirm, {
+                      name: deviceName(host.holder, host.holderName),
+                    }),
+                  },
+                ]
+              : live.map((device) => ({
+                  key: device.id,
+                  label: format(c.agentHostChooseDevice, { name: device.name }),
+                  onClick: () => void startMove('move', device.id),
+                  disabled: working || !list?.deviceHostOpen,
+                  variant: 'secondary' as const,
+                }))
+          }
+        >
+          <p className="info-action-card-lede">
+            {list?.deviceHostOpen
+              ? c.agentHostChooseOpenBody
+              : c.agentHostChooseBody}
+          </p>
+        </InfoActionCard>
+      ) : null}
+      {list?.sealed != null ? (
+        <InfoActionCard
+          title={format(c.agentHostSealedTitle, { n: list.sealed })}
+          tone="info"
+          actions={[
+            {
+              key: 'clear',
+              label: c.agentHostSealedClear,
+              onClick: () => void leaveAction('clearSealed'),
+              disabled: working,
+              variant: 'secondary',
+              confirm: c.agentHostSealedClearConfirm,
+            },
+          ]}
+        >
+          <p className="info-action-card-lede">
+            {host?.state === 'vacant'
+              ? c.agentHostSealedVacantBody
+              : c.agentHostSealedBody}
+          </p>
+        </InfoActionCard>
+      ) : null}
+      {(list?.backups ?? []).length > 0 ? (
+        <InfoActionCard
+          title={c.agentHostBackupsTitle}
+          tone="info"
+        >
+          <p className="info-action-card-lede">{c.agentHostBackupsBody}</p>
+          {(list?.backups ?? []).map((backup) => (
+            <div className="agent-devices-form" key={backup.id}>
+              <span className="setting-hint">
+                {format(c.agentHostBackupLine, {
+                  day: backup.day,
+                  device: backup.deviceName ?? c.agentHostUnknownDevice,
+                  epoch: backup.epoch,
+                  size: `${(backup.bytes / 1048576).toFixed(1)} MB`,
+                })}
+              </span>
+              <SettingsButton
+                variant="secondary"
+                size="sm"
+                icon={<LuDownload size={14} />}
+                disabled={working}
+                onClick={() => void backupAction('download', backup.id, backup.day)}
+              >
+                {c.agentHostBackupDownload}
+              </SettingsButton>
+              <SettingsButton
+                variant="secondary"
+                size="sm"
+                disabled={working}
+                onClick={() => {
+                  if (window.confirm(c.agentHostBackupDeleteConfirm)) {
+                    void backupAction('delete', backup.id, backup.day)
+                  }
+                }}
+              >
+                {c.agentHostBackupDelete}
+              </SettingsButton>
+            </div>
+          ))}
         </InfoActionCard>
       ) : null}
       {pending && pending.source === 'device' && pending.kind === 'merge' ? (
@@ -696,7 +1108,9 @@ export function AgentDevicesGroup() {
           </p>
         </InfoActionCard>
       ))}
-      {pending && pending.source === 'device' && pending.kind !== 'merge' ? (
+      {pending &&
+      pending.source === 'device' &&
+      (pending.kind ?? 'import') === 'import' ? (
         pending.phase === 'proposed' ? (
           <InfoActionCard
             title={format(c.agentHostImportProposedTitle, {
@@ -858,6 +1272,18 @@ export function AgentDevicesGroup() {
                 disabled: working || !passphrase || passphrase !== again,
                 variant: 'primary',
               },
+              ...(host && host.state === 'live' && host.holder === 'site'
+                ? [
+                    {
+                      key: 'moveOut',
+                      label: c.agentHostExportMoveOut,
+                      onClick: () => void moveOut(),
+                      disabled: working || !passphrase || passphrase !== again,
+                      variant: 'secondary' as const,
+                      confirm: c.agentHostExportMoveOutConfirm,
+                    },
+                  ]
+                : []),
               {
                 key: 'close',
                 label: t.common.cancel,

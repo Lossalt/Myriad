@@ -696,6 +696,15 @@
     "title": "Datenberichte"
   },
   "agentPanel": {
+    "away": {
+      "toWork": "Zum Arbeitsmodus",
+      "elsewhere": "Sie wohnt auf „{name}“; sprich auf diesem Mac mit ihr. Der Arbeitsmodus hier funktioniert weiter: Das ist der einfache Assistent, ohne sie.",
+      "elsewhereUnknown": "Sie wohnt auf einem anderen Gerät; sprich dort mit ihr. Der Arbeitsmodus hier funktioniert weiter: Das ist der einfache Assistent, ohne sie.",
+      "moving": "Sie zieht gerade um: Bis der Umzug fertig oder abgebrochen ist, hat sie kein Ende.",
+      "vacant": "Sie ist jetzt nicht auf dieser Website.",
+      "movedOut": "Sie ist von dieser Website ausgezogen.",
+      "member": "Sie ist jetzt nicht auf dieser Website."
+    },
     "status": {
       "idle": "Bereit",
       "listening": "Hört zu",

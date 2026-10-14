@@ -16,7 +16,10 @@ import {
 import SiteMotionWorkbench from '../../features/merope/workbench/SiteMotionWorkbench'
 import { agentService } from '../../services/agent'
 import { emitAppEvent } from '../../utils/appEvents'
-import { invalidatePublicConfigCache } from '../../utils/requestDedup'
+import {
+  getPublicConfigDeduped,
+  invalidatePublicConfigCache,
+} from '../../utils/requestDedup'
 import { siteMediaUrl } from '../../utils/siteMediaUrl'
 import { showStickyToast } from '../../utils/toastManager'
 import { userFacingError } from '../../utils/userFacingError'
@@ -189,6 +192,20 @@ export const AgentConfigSection: React.FC<AgentConfigSectionProps> = ({
   const meropeOn = agentPersonaEnabled && proEnabled
   const [savedPersonaName, setSavedPersonaName] = useState('')
   const [hasSavedPersona, setHasSavedPersona] = useState(false)
+  // She is not on this site (moving, on another end, gone): her settings
+  // here are read only and no new her is made (D5, H3e-9).
+  const [herAway, setHerAway] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void getPublicConfigDeduped()
+      .then((config) => {
+        if (alive) setHerAway(typeof config?.herAway === 'string')
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
   const [mood, setMood] = useState(70)
   const [arousal, setArousal] = useState(48)
   const [activity, setActivity] = useState('idle')
@@ -426,9 +443,11 @@ export const AgentConfigSection: React.FC<AgentConfigSectionProps> = ({
             copyable={false}
             tone={!liteEnabled ? 'info' : 'default'}
             title={
-              hasSavedPersona
-                ? savedPersonaName || 'Arael'
-                : t.config.agentPersonaEmpty
+              herAway
+                ? t.config.agentPersonaAwayTitle
+                : hasSavedPersona
+                  ? savedPersonaName || 'Arael'
+                  : t.config.agentPersonaEmpty
             }
             preview={
               portraitUrl && hasSavedPersona ? (
@@ -443,7 +462,9 @@ export const AgentConfigSection: React.FC<AgentConfigSectionProps> = ({
               )
             }
             actions={
-              hasSavedPersona
+              herAway
+                ? []
+                : hasSavedPersona
                 ? [
                     {
                       key: 'face',
@@ -470,7 +491,12 @@ export const AgentConfigSection: React.FC<AgentConfigSectionProps> = ({
                   ]
             }
           >
-            {personaCardCopy ? (
+            {herAway ? (
+              <p className="info-action-card-lede">
+                {t.config.agentPersonaAwayBody}
+              </p>
+            ) : null}
+            {!herAway && personaCardCopy ? (
               <>
                 {personaCardCopy.summary ? (
                   <p className="info-action-card-lede">{personaCardCopy.summary}</p>

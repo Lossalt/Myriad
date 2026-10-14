@@ -29,6 +29,7 @@ import {
   dispatchAgentPanelSubmit,
 } from './agentPanelEvents'
 import { AgentPanelFull, AgentPanelSessionChrome } from './AgentPanelFull'
+import { AgentPanelHerAway, useHerAway } from './AgentPanelHerAway'
 import { AgentPanelHerTime } from './AgentPanelHerTime'
 import { AgentPanelIntention } from './AgentPanelIntention'
 import {
@@ -132,6 +133,9 @@ export const AgentPanel: React.FC = () => {
     if (!showsFull) setFullView('messages')
   }, [showsFull])
 
+  // She is not on this site (H3e-9): no chat with her here; Work stays.
+  const { away, device: awayOn } = useHerAway(open)
+  const awayFromChat = away !== null && mode === 'chat'
   const showsComposer = !(showsFull && fullView === 'manage')
 
   useEffect(() => {
@@ -308,7 +312,10 @@ export const AgentPanel: React.FC = () => {
               />
             ) : null}
 
-            {showsComposer && (
+            {showsComposer && awayFromChat && away ? (
+              <AgentPanelHerAway away={away} device={awayOn} mode={mode} />
+            ) : null}
+            {showsComposer && !awayFromChat && (
               <AgentPanelComposer
                 onSubmit={submit}
                 autoFocus={fullView !== 'sessions' && stage.phase === 'settled'}

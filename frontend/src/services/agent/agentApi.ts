@@ -66,8 +66,13 @@ export interface SyncDevice {
 /** A move of her between ends, in progress (her host lease). */
 export interface HostMove {
   id: string
-  /** `move`: she goes to live on `to`; `merge`: the her on `from` joins the site's. */
-  kind: 'move' | 'merge'
+  /**
+   * `move`: she goes to live on `to` (from `site`), or back to the site from
+   * the device she lives on (`from`); `merge`: the her on `from` joins the
+   * site's; `recover`: she is taken back onto the site from a daily backup
+   * of `from` by another device (`via`).
+   */
+  kind: 'move' | 'merge' | 'recover'
   /** `site` or a device id; the names are the devices' as the owner gave them. */
   from: string
   fromName: string | null
@@ -81,6 +86,13 @@ export interface HostMove {
   by: 'owner' | 'device'
   startedAt: string
   confirmedAt: string | null
+  /** A move to a device: the device agreed (the owner said yes there). */
+  agreed?: boolean | null
+  /** A reclaim: the device sending her. */
+  via?: string | null
+  viaName?: string | null
+  /** The import that carries her back. */
+  import?: string | null
 }
 
 /** Where she lives (`agent_host_lease`): one end, her lineage and how many times she moved. */
@@ -91,8 +103,12 @@ export interface HostLease {
   lineage: string
   /** Goes up by one each time she changes host; never down. */
   epoch: number
-  /** `frozen`: a move is under way and no end has her. */
-  state: 'live' | 'frozen' | 'vacant'
+  /**
+   * `frozen`: a move is under way and no end has her; `vacant`: she is not
+   * here and the site does not know where; `moved_out`: exported to be
+   * brought in elsewhere, stopped here until let go or undone.
+   */
+  state: 'live' | 'frozen' | 'vacant' | 'moved_out'
   move: HostMove | null
   updatedAt: string
 }
@@ -117,8 +133,12 @@ export interface HostImport {
   total: number | null
   createdAt: string
   confirmedAt: string | null
-  /** `merge`: a device's her into the site's, the first time they meet (H3d). */
-  kind?: 'import' | 'merge'
+  /**
+   * `merge`: a device's her into the site's, the first time they meet (H3d);
+   * `return`: back from the device she lives on; `recover`: taken back from
+   * a daily backup by another device (H3e).
+   */
+  kind?: 'import' | 'merge' | 'return' | 'recover'
   /** Who she is when her names differ, as chosen on the device. */
   subject?: 'site' | 'device' | null
   /** The file the site sealed of its her when the owner confirmed a merge. */
@@ -170,9 +190,26 @@ export interface SyncDeviceList {
   empty?: boolean
   /** Messages that came by chat app while she was away, held until she is back. */
   held?: number
-  /** What the site sealed of its her before a merge. */
+  /** What the site sealed of its her before a merge or a move. */
   retired?: HostRetired[]
+  /** Her daily backups the site keeps and cannot open (D4). */
+  backups?: HostBackup[]
+  /** While she is away: how much is left here of others (sealed, Q2). */
+  sealed?: number | null
+  /** Her living on a device is open here (only the acceptance entry before H4, Q8). */
+  deviceHostOpen?: boolean
   limit: number
+}
+
+/** One daily backup a device she lives on pushed. */
+export interface HostBackup {
+  id: string
+  deviceId: string
+  deviceName: string | null
+  day: string
+  epoch: number
+  bytes: number
+  at: string
 }
 
 export interface AgentWorkProposal {
@@ -559,11 +596,76 @@ class AgentService {
     )
   }
 
-  /** Confirms, logged in, a move of her a device asked for: she is frozen until it is done or called off. */
-  async confirmHostMove(id: string): Promise<{ host: HostLease | null }> {
+  /**
+   * Confirms, logged in, a move of her a device asked for: she is frozen
+   * until it is done or called off. A move to a device takes the passphrase
+   * the site seals the copy it keeps with (used once, kept nowhere).
+   */
+  async confirmHostMove(
+    id: string,
+    passphrase?: string,
+  ): Promise<{ host: HostLease | null }> {
     return apiService.post(
       `${this.baseUrl}/host/moves/${encodeURIComponent(id)}/confirm`,
+      passphrase === undefined ? undefined : { passphrase },
+      { timeout: 600000 },
     )
+  }
+
+  /**
+   * Starts a move of her with a device: `move` (选主机: she goes to live on
+   * it; the device agrees, then the owner confirms) or `back` (she comes
+   * back from the device she lives on: frozen there at once).
+   */
+  async startHostMove(
+    kind: 'move' | 'back',
+    device: string,
+  ): Promise<{ host: HostLease | null }> {
+    return apiService.post(`${this.baseUrl}/host/moves`, { kind, device })
+  }
+
+  /** 「导出并搬走」: her as one sealed file; she moves out of the site. */
+  async moveHerOut(passphrase: string): Promise<Blob> {
+    return apiService.request<Blob>(`${this.baseUrl}/host/move-out`, {
+      method: 'POST',
+      body: JSON.stringify({ passphrase }),
+      responseType: 'blob',
+      timeout: 300000,
+    })
+  }
+
+  /** Undoes her moving out: she lives here again, as she was. */
+  async undoMoveOut(): Promise<SyncDeviceList> {
+    return apiService.post(`${this.baseUrl}/host/move-out/undo`)
+  }
+
+  /** She moved out and is in her new place: the site lets its copy go. */
+  async letHerGo(): Promise<SyncDeviceList> {
+    return apiService.post(`${this.baseUrl}/host/move-out/let-go`)
+  }
+
+  /** Lets go of what is left here of others while she is away. */
+  async clearSealed(): Promise<SyncDeviceList> {
+    return apiService.delete(`${this.baseUrl}/host/sealed`)
+  }
+
+  /** One daily backup, as it was pushed (only the app that made it opens it). */
+  async downloadBackup(id: string): Promise<Blob> {
+    return apiService.request<Blob>(
+      `${this.baseUrl}/host/backups/${encodeURIComponent(id)}`,
+      { method: 'GET', responseType: 'blob', timeout: 300000 },
+    )
+  }
+
+  async deleteBackup(id: string): Promise<SyncDeviceList> {
+    return apiService.delete(
+      `${this.baseUrl}/host/backups/${encodeURIComponent(id)}`,
+    )
+  }
+
+  /** Where she lives (owner only). */
+  async getHost(): Promise<{ host: HostLease | null }> {
+    return apiService.get(`${this.baseUrl}/host`)
   }
 
   /** Calls a move off before its commit (or turns down one a device asked for): she is back as she was. */
@@ -577,10 +679,18 @@ class AgentService {
   async confirmHostImport(
     id: string,
     passphrase?: string,
+    replace?: boolean,
   ): Promise<SyncDeviceList> {
+    const body =
+      passphrase === undefined && !replace
+        ? undefined
+        : {
+            ...(passphrase === undefined ? {} : { passphrase }),
+            ...(replace ? { replace: true } : {}),
+          }
     return apiService.post(
       `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/confirm`,
-      passphrase === undefined ? undefined : { passphrase },
+      body,
       { timeout: 300000 },
     )
   }
@@ -638,12 +748,13 @@ class AgentService {
   async openFileImport(
     id: string,
     passphrase: string,
+    replace?: boolean,
   ): Promise<HostImportLanded> {
     return apiService.request(
       `${this.baseUrl}/host/imports/${encodeURIComponent(id)}/open`,
       {
         method: 'POST',
-        body: JSON.stringify({ passphrase }),
+        body: JSON.stringify(replace ? { passphrase, replace: true } : { passphrase }),
         timeout: 600000,
       },
     )

@@ -3820,3 +3820,22 @@ html.dark .agent-panel-aurora[data-status='error']::after {
 .agent-panel-work-plan li[data-status='in_progress'] {
   font-weight: 600;
 }
+
+/* She is not on this site (H3e-9): said in place of the chat composer. */
+.agent-panel-away {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface, #fff) 82%, transparent);
+  color: var(--text-secondary, inherit);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.agent-panel-away p {
+  margin: 0;
+  flex: 1 1 220px;
+}
