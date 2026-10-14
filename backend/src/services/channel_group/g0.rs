@@ -48,6 +48,11 @@ pub(crate) struct World {
     /// Reads and writes of the runtime registry that fail, by namespace:
     /// how many more of each (the database is down for them).
     pub failing: HashMap<(String, String), u32>,
+    /// The scene's own database (a schema in a throwaway one), when it has
+    /// one; else nothing reaches a database.
+    pub db: Option<sea_orm::DatabaseConnection>,
+    /// The vector of each text, as an embedding model would give it.
+    pub vectors: HashMap<String, Vec<f32>>,
     pub log: Vec<Value>,
 }
 
@@ -77,6 +82,8 @@ impl World {
             spoke_up: HashMap::new(),
             sendable: HashSet::new(),
             failing: HashMap::new(),
+            db: None,
+            vectors: HashMap::new(),
             log: Vec::new(),
         }
     }
@@ -395,4 +402,206 @@ pub(crate) fn fails(what: &str, namespace: &str, key: &str) -> bool {
         );
     }
     failed
+}
+
+/// The scene's database, if it has one.
+pub(crate) fn database() -> Option<sea_orm::DatabaseConnection> {
+    with(|world| world.db.clone()).flatten()
+}
+
+/// Whether the scene has a database of its own.
+pub(crate) fn has_db() -> bool {
+    database().is_some()
+}
+
+/// What the embedding model gives for `text`, in the scene.
+pub(crate) fn vector(text: &str) -> Option<Vec<f32>> {
+    with(|world| world.vectors.get(text).cloned()).flatten()
+}
+
+/// A throwaway database for a scene: a fresh schema in the database `url`
+/// names, migrated, worked by a thread of its own on a runtime of its own.
+/// The scene's connection asks it and waits, holding its thread: a paused
+/// clock never moves while the scene waits on the database (it would jump
+/// to the next timer, and the database's own timeouts with it).
+pub(crate) struct Throwaway {
+    jobs: std::sync::mpsc::Sender<Job>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    pub db: sea_orm::DatabaseConnection,
+}
+
+enum Job {
+    Query(
+        sea_orm::Statement,
+        std::sync::mpsc::Sender<Result<Vec<sea_orm::ProxyRow>, sea_orm::DbErr>>,
+    ),
+    Execute(
+        sea_orm::Statement,
+        std::sync::mpsc::Sender<Result<sea_orm::ProxyExecResult, sea_orm::DbErr>>,
+    ),
+    Plain(String),
+    Drop(std::sync::mpsc::Sender<()>),
+}
+
+#[derive(Debug)]
+struct Asking(std::sync::Mutex<std::sync::mpsc::Sender<Job>>);
+
+impl Asking {
+    fn send(&self, job: Job) {
+        if let Ok(jobs) = self.0.lock() {
+            let _ = jobs.send(job);
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl sea_orm::ProxyDatabaseTrait for Asking {
+    async fn query(
+        &self,
+        statement: sea_orm::Statement,
+    ) -> Result<Vec<sea_orm::ProxyRow>, sea_orm::DbErr> {
+        let (answer, answered) = std::sync::mpsc::channel();
+        self.send(Job::Query(statement, answer));
+        answered.recv().unwrap_or_else(|_| {
+            Err(sea_orm::DbErr::Custom(
+                "the scene's database went away".into(),
+            ))
+        })
+    }
+
+    async fn execute(
+        &self,
+        statement: sea_orm::Statement,
+    ) -> Result<sea_orm::ProxyExecResult, sea_orm::DbErr> {
+        let (answer, answered) = std::sync::mpsc::channel();
+        self.send(Job::Execute(statement, answer));
+        answered.recv().unwrap_or_else(|_| {
+            Err(sea_orm::DbErr::Custom(
+                "the scene's database went away".into(),
+            ))
+        })
+    }
+
+    async fn begin(&self) {
+        self.send(Job::Plain("BEGIN".into()));
+    }
+
+    async fn commit(&self) {
+        self.send(Job::Plain("COMMIT".into()));
+    }
+
+    async fn rollback(&self) {
+        self.send(Job::Plain("ROLLBACK".into()));
+    }
+
+    fn start_rollback(&self) {
+        self.send(Job::Plain("ROLLBACK".into()));
+    }
+}
+
+impl Throwaway {
+    pub(crate) fn open(url: &str) -> Self {
+        use sea_orm::ConnectionTrait;
+        let (jobs, inbox) = std::sync::mpsc::channel::<Job>();
+        let (ready, readied) = std::sync::mpsc::channel();
+        let url = url.to_string();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let schema = format!("g0_{}", uuid::Uuid::new_v4().simple());
+                let admin = sea_orm::Database::connect(&url).await.unwrap();
+                admin
+                    .execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+                    .await
+                    .unwrap();
+                let mut options = sea_orm::ConnectOptions::new(url.clone());
+                options
+                    .set_schema_search_path(&schema)
+                    .max_connections(1)
+                    .sqlx_logging(false);
+                let db = sea_orm::Database::connect(options).await.unwrap();
+                crate::db::Migrator::up(&db, None).await.unwrap();
+                let _ = ready.send(());
+                while let Ok(job) = inbox.recv() {
+                    match job {
+                        Job::Query(statement, answer) => {
+                            let rows = db.query_all_raw(statement).await.map(|rows| {
+                                rows.iter()
+                                    .map(sea_orm::from_query_result_to_proxy_row)
+                                    .map(with_offsets)
+                                    .collect()
+                            });
+                            let _ = answer.send(rows);
+                        }
+                        Job::Execute(statement, answer) => {
+                            let done = db.execute_raw(statement).await.map(|done| {
+                                sea_orm::ProxyExecResult {
+                                    last_insert_id: 0,
+                                    rows_affected: done.rows_affected(),
+                                }
+                            });
+                            let _ = answer.send(done);
+                        }
+                        Job::Plain(sql) => {
+                            let _ = db.execute_unprepared(&sql).await;
+                        }
+                        Job::Drop(done) => {
+                            db.close().await.ok();
+                            admin
+                                .execute_unprepared(&format!("DROP SCHEMA {schema} CASCADE"))
+                                .await
+                                .unwrap();
+                            admin.close().await.ok();
+                            let _ = done.send(());
+                            return;
+                        }
+                    }
+                }
+            });
+        });
+        readied.recv().expect("the scene's database is ready");
+        let asking = Asking(std::sync::Mutex::new(jobs.clone()));
+        let db = futures::executor::block_on(sea_orm::Database::connect_proxy(
+            sea_orm::DbBackend::Postgres,
+            std::sync::Arc::new(Box::new(asking)),
+        ))
+        .unwrap();
+        Self {
+            jobs,
+            thread: Some(thread),
+            db,
+        }
+    }
+
+    /// Drop the scene's schema, and the thread with it.
+    pub(crate) fn drop_schema(mut self) {
+        let (done, dropped) = std::sync::mpsc::channel();
+        let _ = self.jobs.send(Job::Drop(done));
+        let _ = dropped.recv();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The proxy reads a `timestamptz` as UTC; every entity here reads it with
+/// its offset.
+fn with_offsets(row: sea_orm::ProxyRow) -> sea_orm::ProxyRow {
+    use sea_orm::sea_query::Value;
+    sea_orm::ProxyRow {
+        values: row
+            .values
+            .into_iter()
+            .map(|(column, value)| match value {
+                Value::ChronoDateTimeUtc(at) => (
+                    column,
+                    Value::ChronoDateTimeWithTimeZone(at.map(|at| at.fixed_offset())),
+                ),
+                other => (column, other),
+            })
+            .collect(),
+    }
 }

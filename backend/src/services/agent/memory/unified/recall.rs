@@ -298,7 +298,7 @@ pub(super) fn rank_marked(
         (named, strongest)
     };
     let residual: Vec<f64> = rows.iter().map(|row| priming.of(&row.id)).collect();
-    let now = Utc::now().fixed_offset();
+    let now = super::super::utc_now().fixed_offset();
     let ready: Vec<f64> = rows.iter().map(|row| readiness(row, now)).collect();
     // By weak evidence, then how readily each comes to mind, then recency
     // (stable: newest-first from the query).

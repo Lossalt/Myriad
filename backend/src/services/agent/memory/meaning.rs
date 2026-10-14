@@ -320,6 +320,28 @@ async fn closeness_within<C: ConnectionTrait>(
     if query.is_empty() || rows.is_empty() {
         return HashMap::new();
     }
+    // A recording: the vectors are the scene's (what the end would have).
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        let Some(asked) = crate::services::channel_group::g0::vector(query) else {
+            return HashMap::new();
+        };
+        let vectors: Vec<(String, Vec<f32>)> = rows
+            .iter()
+            .filter_map(|row| {
+                let vector = crate::services::channel_group::g0::vector(row.content.trim())?;
+                Some((row.id.clone(), vector))
+            })
+            .collect();
+        if vectors.len() < AT_LEAST {
+            return HashMap::new();
+        }
+        let _ = (fill, within, how);
+        return vectors
+            .into_iter()
+            .map(|(id, vector)| (id, cosine(&asked, &vector)))
+            .collect();
+    }
     let Some(meaning) = Meaning::current().await else {
         return HashMap::new();
     };

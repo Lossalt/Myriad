@@ -36,6 +36,10 @@ pub fn set_process_database(db: DatabaseConnection) {
 /// `AppState::from_shared`). Prefer passing an explicit `DatabaseConnection` on
 /// request paths (grant / rate limit / ws ticket).
 pub fn database() -> Result<DatabaseConnection, DbErr> {
+    #[cfg(test)]
+    if let Some(db) = crate::services::channel_group::g0::database() {
+        return Ok(db);
+    }
     shared_database_slot()
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

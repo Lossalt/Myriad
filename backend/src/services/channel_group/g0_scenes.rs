@@ -449,3 +449,153 @@ async fn g0_her_line_brings_back_what_a_failed_read_missed() {
     wait(600.0).await;
     done("her_line_brings_back_what_a_failed_read_missed");
 }
+
+// ------------------------------------------------------------ with a database
+
+/// A scene's own database: a fresh schema in the throwaway database
+/// `MYRIAD_G0_DATABASE_URL` names (never a shared one's default schema).
+/// None, and the scene is skipped, when it names none.
+fn database(world: &mut World, name: &str) -> Option<g0::Throwaway> {
+    let Ok(url) = std::env::var("MYRIAD_G0_DATABASE_URL") else {
+        eprintln!("{name}: skipped, MYRIAD_G0_DATABASE_URL names no throwaway database");
+        return None;
+    };
+    let throwaway = g0::Throwaway::open(&url);
+    world.db = Some(throwaway.db.clone());
+    Some(throwaway)
+}
+
+/// Keep `content` in the group `venue` as `source`, said `days` before the
+/// scene's start (and last read then).
+async fn kept_in_venue(
+    db: &sea_orm::DatabaseConnection,
+    venue: &str,
+    source: &'static str,
+    content: &str,
+    days: i64,
+    base: chrono::DateTime<chrono::Utc>,
+) {
+    use sea_orm::ConnectionTrait;
+    let id = crate::services::agent::memory::unified::remember_in_venue(
+        db,
+        &format!("group:{venue}"),
+        content,
+        "{}",
+        source,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let at = (base - chrono::Duration::days(days)).fixed_offset();
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE agent_memories SET created_at = $1, updated_at = $1, valid_from = $1 WHERE id = $2",
+        [at.into(), id.into()],
+    ))
+    .await
+    .unwrap();
+}
+
+/// What the group told her about herself: kept once when told again on the
+/// screen, the latest three always with her, and an older one the talk
+/// comes back to by its words.
+#[tokio::test(start_paused = true)]
+async fn g0_what_the_group_told_her_comes_with_her() {
+    let chat = -77_101;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "what_the_group_told_her_comes_with_her") else {
+        return;
+    };
+    let base = world.base;
+    world.members.insert("11".into(), 101);
+    for (days, told) in [
+        (5, "说她说话像一只猫"),
+        (4, "说她很会接梗"),
+        (3, "说她挺毒舌的"),
+        (2, "说她唱歌跑调"),
+        (1, "说她爱吃火锅"),
+    ] {
+        kept_in_venue(&schema.db, &venue, "about_me", told, days, base).await;
+    }
+    for _ in 0..2 {
+        answer(
+            &mut world,
+            "group_making_sense",
+            r#"{"goingOn":"在逗她","theyMean":"问她记不记得","aboutYou":"说她像猫"}"#,
+        );
+    }
+    world.turns.push_back((2.0, "我才不像猫".into(), None));
+    world.turns.push_back((2.0, "喵".into(), None));
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", "@bot 你说话像一只猫吗", true)).await;
+    wait(120.0).await;
+    hear(line(chat, 2, 11, "阿明", "@bot 真的像猫", true)).await;
+    wait(120.0).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("what_the_group_told_her_comes_with_her", &world.log);
+    schema.drop_schema();
+}
+
+/// An older telling the talk comes back to by its meaning, sharing no word
+/// with it.
+#[tokio::test(start_paused = true)]
+async fn g0_what_the_group_told_her_comes_back_by_meaning() {
+    let chat = -77_102;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "what_the_group_told_her_comes_back_by_meaning") else {
+        return;
+    };
+    let base = world.base;
+    world.members.insert("11".into(), 101);
+    let told = [
+        "说她总在半夜发歌",
+        "说她字写得好看",
+        "说她打游戏很菜",
+        "说她数学不行",
+        "说她起床很晚",
+        "说她爱看恐怖片",
+        "说她讲冷笑话",
+        "说她手机没电",
+        "说她喜欢蓝色",
+        "说她跑步很慢",
+        "说她画画不错",
+        "说她最近很忙",
+    ];
+    for (index, told) in told.iter().enumerate() {
+        kept_in_venue(
+            &schema.db,
+            &venue,
+            "about_me",
+            told,
+            20 - index as i64,
+            base,
+        )
+        .await;
+        // One older telling is about what the question means; the rest are
+        // not.
+        let vector = if index == 0 {
+            vec![0.0, 1.0, 0.0]
+        } else {
+            vec![1.0, 0.1 * index as f32, 0.0]
+        };
+        world.vectors.insert(told.to_string(), vector);
+    }
+    let asked = "@bot 你是不是夜猫子";
+    world
+        .vectors
+        .insert(asked.to_string(), vec![0.05, 1.0, 0.0]);
+    answer(
+        &mut world,
+        "group_making_sense",
+        r#"{"goingOn":"在问她作息","theyMean":"觉得她熬夜","aboutYou":null}"#,
+    );
+    world.turns.push_back((2.0, "有时候吧".into(), None));
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", asked, true)).await;
+    wait(120.0).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("what_the_group_told_her_comes_back_by_meaning", &world.log);
+    schema.drop_schema();
+}

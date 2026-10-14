@@ -15,7 +15,12 @@ pub async fn remember_in_venue<C: ConnectionTrait>(
     if content.is_empty() || !venue.starts_with("group:") {
         return Ok(None);
     }
-    let now = Utc::now().fixed_offset();
+    #[cfg(test)]
+    crate::services::channel_group::g0::note(
+        "remember",
+        serde_json::json!({ "venue": venue, "content": content, "evidence": evidence, "source": source }),
+    );
+    let now = super::super::utc_now().fixed_offset();
     let id = format!("grp_{}", uuid::Uuid::new_v4().simple());
     let row = agent_memories::ActiveModel {
         id: Set(id.clone()),

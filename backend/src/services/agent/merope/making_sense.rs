@@ -54,7 +54,10 @@ pub async fn remember_told(db: &DatabaseConnection, venue: &str, told: &str, lin
         .await
         .unwrap_or_default()
         .into_iter()
-        .any(|row| chrono::Utc::now().fixed_offset() - row.created_at < TOLD_ONCE_WITHIN);
+        .any(|row| {
+            crate::services::agent::memory::utc_now().fixed_offset() - row.created_at
+                < TOLD_ONCE_WITHIN
+        });
     if lately {
         return;
     }
@@ -80,7 +83,7 @@ pub async fn told_section(db: &DatabaseConnection, venue: &str, said: &str) -> O
         TOLD_BROUGHT_BACK,
     )
     .await;
-    let now = chrono::Utc::now();
+    let now = crate::services::agent::memory::utc_now();
     let told: Vec<(String, String)> = rows
         .into_iter()
         .map(|row| {

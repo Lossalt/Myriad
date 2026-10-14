@@ -13,5 +13,15 @@ pub mod manage;
 pub mod meaning;
 pub use myriad_agent_rules::memory::strength;
 pub mod unified;
+
+/// Now, for what memory stores and how readily it comes to mind (a
+/// recording of group talk runs on its own clock, see `channel_group::g0`).
+pub(crate) fn utc_now() -> chrono::DateTime<chrono::Utc> {
+    #[cfg(test)]
+    if let Some(at) = crate::services::channel_group::g0::now() {
+        return at;
+    }
+    chrono::Utc::now()
+}
 pub(crate) mod work_memory;
 

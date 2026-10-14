@@ -29,7 +29,7 @@ pub(super) fn away() -> bool {
 pub(super) fn db() -> Result<DatabaseConnection, DbErr> {
     #[cfg(test)]
     if g0::on() {
-        return Ok(DatabaseConnection::default());
+        return Ok(g0::database().unwrap_or_default());
     }
     crate::services::process_db::database()
 }

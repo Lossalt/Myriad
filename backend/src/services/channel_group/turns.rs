@@ -156,14 +156,14 @@ pub(super) async fn make_sense(
     let sense = making_sense::read(owner, venue, conversation).await;
     if let Some(told) = sense.as_ref().and_then(|sense| sense.about_you.as_deref()) {
         #[cfg(test)]
-        if g0::on() {
+        if g0::on() && !g0::has_db() {
             g0::note(
                 "told",
                 serde_json::json!({ "venue": stored, "told": told, "line": said }),
             );
         }
         #[cfg(test)]
-        let skip = g0::on();
+        let skip = g0::on() && !g0::has_db();
         #[cfg(not(test))]
         let skip = false;
         if !skip {
@@ -171,7 +171,7 @@ pub(super) async fn make_sense(
         }
     }
     #[cfg(test)]
-    let told = if g0::on() {
+    let told = if g0::on() && !g0::has_db() {
         None
     } else {
         making_sense::told_section(db, &stored, said).await
