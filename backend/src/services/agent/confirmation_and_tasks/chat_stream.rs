@@ -320,6 +320,48 @@ struct HerVoice {
     heard: Option<String>,
 }
 
+/// The analyzer a streamed Chat reply is asked of; none in a recorded scene,
+/// whose world answers instead.
+async fn streamed_analyzer() -> Result<Option<crate::services::analyzer::AiAnalyzer>, String> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return Ok(None);
+    }
+    chat_analyzer().await.map(Some)
+}
+
+/// What she says to `prompt` in a recorded scene, streamed as one piece.
+#[cfg(test)]
+async fn said_in_scene<F, Fut>(prompt: &str, mut on_delta: F) -> anyhow::Result<String>
+where
+    F: FnMut(crate::services::analyzer::StreamDelta) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    match crate::services::channel_group::g0::say("chat", prompt).await {
+        Some(Ok(text)) => {
+            if !text.is_empty() {
+                on_delta(crate::services::analyzer::StreamDelta::Text(text.clone())).await;
+            }
+            Ok(text)
+        }
+        Some(Err("cut")) => Err(anyhow::Error::new(
+            crate::services::analyzer::StreamCut {
+                partial: String::new(),
+            },
+        )),
+        _ => Err(anyhow::anyhow!("unavailable")),
+    }
+}
+
+#[cfg(not(test))]
+async fn said_in_scene<F, Fut>(_: &str, _: F) -> anyhow::Result<String>
+where
+    F: FnMut(crate::services::analyzer::StreamDelta) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    Err(anyhow::anyhow!("unavailable"))
+}
+
 async fn chat_analyzer() -> Result<crate::services::analyzer::AiAnalyzer, String> {
     crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(None)
         .await
@@ -345,7 +387,7 @@ impl Agent {
         progress_tx: &tokio::sync::mpsc::Sender<AgentProgressEvent>,
         speech_delivery: Option<ChatDelivery>,
     ) -> Result<String, String> {
-        let analyzer = chat_analyzer().await?;
+        let analyzer = streamed_analyzer().await?;
         // Put together once: asking again is the same turn, and putting it
         // together judges soups and reads everything a second time.
         let prompt = self.chat_response_prompt(request).await;
@@ -373,7 +415,7 @@ impl Agent {
             error = first.as_ref().err().map(String::as_str).unwrap_or(""),
             "[Chat] no whole reply; asking once more"
         );
-        let analyzer = chat_analyzer().await?;
+        let analyzer = streamed_analyzer().await?;
         self.stream_chat_response_with_analyzer(
             request,
             &prompt,
@@ -816,7 +858,7 @@ impl Agent {
         request: &UserRequest,
         prompt: &str,
         progress_tx: &tokio::sync::mpsc::Sender<AgentProgressEvent>,
-        analyzer: crate::services::analyzer::AiAnalyzer,
+        analyzer: Option<crate::services::analyzer::AiAnalyzer>,
         speech_delivery: Option<ChatDelivery>,
         voice: Option<HerVoice>,
     ) -> Result<String, String> {
@@ -924,11 +966,14 @@ impl Agent {
         drop(voice);
         let streamed = match streamed {
             Some(streamed) => streamed,
-            None => {
-                analyzer
-                    .analyze_stream_parts_with_images(&prompt, images_of(request), on_delta)
-                    .await
-            }
+            None => match analyzer {
+                Some(analyzer) => {
+                    analyzer
+                        .analyze_stream_parts_with_images(&prompt, images_of(request), on_delta)
+                        .await
+                }
+                None => said_in_scene(prompt, on_delta).await,
+            },
         };
         // The provider dropped the reply halfway. Sent whole, nothing reached
         // anyone yet: ask again. On the panel they already saw it being

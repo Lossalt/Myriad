@@ -616,6 +616,14 @@ async fn reserve_buckets(
             .signed_duration_since(last_call_at)
             .num_seconds()
             .max(0);
+        // A recorded scene's turns are apart on its own clock, not the
+        // wall's: the cooldown has passed between them.
+        #[cfg(test)]
+        let cooldown_elapsed = if crate::services::channel_group::g0::on() {
+            i64::MAX
+        } else {
+            cooldown_elapsed
+        };
         if let Some(remaining_seconds) = cooldown_remaining(
             limits.enforce_cooldown && !options.skip_cooldown,
             calls_used,

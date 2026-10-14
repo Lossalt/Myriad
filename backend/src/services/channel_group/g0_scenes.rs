@@ -515,6 +515,9 @@ async fn kept_in_venue(
 /// comes back to by its words.
 #[tokio::test(start_paused = true)]
 async fn g0_what_the_group_told_her_comes_with_her() {
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let chat = -77_101;
     let venue = format!("telegram:{chat}");
     let mut world = World::new(0.5);
@@ -522,7 +525,8 @@ async fn g0_what_the_group_told_her_comes_with_her() {
         return;
     };
     let base = world.base;
-    world.members.insert("11".into(), 101);
+    world.members.insert("11".into(), 111);
+    site_member(&schema.db, 111, "aming", "阿明").await;
     for (days, told) in [
         (5, "说她说话像一只猫"),
         (4, "说她很会接梗"),
@@ -539,8 +543,8 @@ async fn g0_what_the_group_told_her_comes_with_her() {
             r#"{"goingOn":"在逗她","theyMean":"问她记不记得","aboutYou":"说她像猫"}"#,
         );
     }
-    world.turns.push_back((2.0, "我才不像猫".into(), None));
-    world.turns.push_back((2.0, "喵".into(), None));
+    her_turn(&mut world, 2.0, "我才不像猫");
+    her_turn(&mut world, 2.0, "喵");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "@bot 你说话像一只猫吗", true)).await;
     wait(120.0).await;
@@ -555,6 +559,9 @@ async fn g0_what_the_group_told_her_comes_with_her() {
 /// with it.
 #[tokio::test(start_paused = true)]
 async fn g0_what_the_group_told_her_comes_back_by_meaning() {
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let chat = -77_102;
     let venue = format!("telegram:{chat}");
     let mut world = World::new(0.5);
@@ -562,7 +569,8 @@ async fn g0_what_the_group_told_her_comes_back_by_meaning() {
         return;
     };
     let base = world.base;
-    world.members.insert("11".into(), 101);
+    world.members.insert("11".into(), 112);
+    site_member(&schema.db, 112, "aming", "阿明").await;
     let told = [
         "说她总在半夜发歌",
         "说她字写得好看",
@@ -605,7 +613,7 @@ async fn g0_what_the_group_told_her_comes_back_by_meaning() {
         "group_making_sense",
         r#"{"goingOn":"在问她作息","theyMean":"觉得她熬夜","aboutYou":null}"#,
     );
-    world.turns.push_back((2.0, "有时候吧".into(), None));
+    her_turn(&mut world, 2.0, "有时候吧");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", asked, true)).await;
     wait(120.0).await;
@@ -650,13 +658,17 @@ async fn kept_as_hers(
 /// someone about) is what her judgment of speaking up draws on.
 #[tokio::test(start_paused = true)]
 async fn g0_she_speaks_up_from_what_she_has() {
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let chat = -77_103;
     let mut world = World::new(0.5);
     let Some(schema) = database(&mut world, "she_speaks_up_from_what_she_has") else {
         return;
     };
     let base = world.base;
-    world.members.insert("11".into(), 101);
+    world.members.insert("11".into(), 113);
+    site_member(&schema.db, 113, "aming", "阿明").await;
     let db = &schema.db;
     kept_as_hers(
         db,
@@ -698,9 +710,7 @@ async fn g0_she_speaks_up_from_what_she_has() {
         "group_making_sense",
         r#"{"goingOn":"在聊火锅和歌","theyMean":"推荐晴天","aboutYou":null}"#,
     );
-    world
-        .turns
-        .push_back((2.0, "晴天我最近也在循环".into(), None));
+    her_turn(&mut world, 2.0, "晴天我最近也在循环");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧 yyds", false)).await;
     wait(1.0).await;
@@ -1184,5 +1194,175 @@ async fn g0_a_soup_she_makes_up_is_left_then_given_up() {
     soup_kept(&schema.db, &venue).await;
     let world = g0::leave().expect("the world of the scene");
     g0::check("a_soup_she_makes_up_is_left_then_given_up", &world.log);
+    schema.drop_schema();
+}
+
+/// What her turns with a member kept in their group session: who said what.
+async fn session_kept(db: &sea_orm::DatabaseConnection, user_id: i32) {
+    use sea_orm::ConnectionTrait;
+    let rows = db
+        .query_all_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT m.role, m.content FROM agent_messages m JOIN agent_sessions s ON s.id = m.session_id \
+             WHERE s.user_id = $1 ORDER BY m.created_at, m.id",
+            [user_id.into()],
+        ))
+        .await
+        .unwrap();
+    let kept: Vec<(String, String)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.try_get::<String>("", "role").unwrap_or_default(),
+                row.try_get::<String>("", "content").unwrap_or_default(),
+            )
+        })
+        .collect();
+    g0::note("session", json!(kept));
+    // And what her memory work has waiting from them.
+    let jobs = db
+        .query_all_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT payload->'data' AS data FROM runtime_registry WHERE namespace = 'merope_memory_jobs' ORDER BY record_id",
+        ))
+        .await
+        .unwrap();
+    let jobs: Vec<serde_json::Value> = jobs
+        .iter()
+        .filter_map(|row| row.try_get::<serde_json::Value>("", "data").ok())
+        .collect();
+    g0::note("memoryJobs", json!(jobs));
+}
+
+/// Her turns with members run on the site's own run lanes, which every
+/// scene in the process shares: scenes with such turns take them one at a
+/// time, so one scene's turn never waits on another's (on the wall clock,
+/// while the scene's clock runs on).
+static WHOLE_TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// What she says in her turn with a member, after the time it takes.
+fn her_turn(world: &mut World, seconds: f64, text: &str) {
+    world
+        .says
+        .entry("chat".into())
+        .or_default()
+        .push_back((seconds, Ok(text.to_string())));
+}
+
+/// A member of the site, who may talk to her (the site's permission policy).
+async fn site_member(db: &sea_orm::DatabaseConnection, user_id: i32, username: &str, name: &str) {
+    use sea_orm::ConnectionTrait;
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "INSERT INTO users (id, username, display_name) VALUES ($1, $2, $3)",
+        [user_id.into(), username.into(), name.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(sea_orm::Statement::from_string(
+        sea_orm::DatabaseBackend::Postgres,
+        "INSERT INTO configurations (key, value) VALUES ('user_perm_ai_chat', 'true'::jsonb) \
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    ))
+    .await
+    .unwrap();
+}
+
+/// A member calls her, in a group with a database of its own: her turn runs
+/// as the site runs it (the member's own session in the group, what she
+/// knows of them and how she is, the group's own), and what she said is kept
+/// in their session.
+#[tokio::test(start_paused = true)]
+async fn g0_a_member_calls_her_and_her_turn_runs_whole() {
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let chat = -77_109;
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "a_member_calls_her_and_her_turn_runs_whole") else {
+        return;
+    };
+    world.members.insert("11".into(), 101);
+    site_member(&schema.db, 101, "aming", "阿明").await;
+    answer(
+        &mut world,
+        "group_making_sense",
+        r#"{"goingOn":"约周五吃饭","theyMean":"问她推荐哪家","aboutYou":null}"#,
+    );
+    world
+        .says
+        .entry("chat".into())
+        .or_default()
+        .push_back((2.5, Ok("去老地方吧\n便宜又好吃".into())));
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", "周五聚餐吗", false)).await;
+    wait(1.0).await;
+    hear(line(chat, 2, 11, "阿明", "@bot 你推荐哪家", true)).await;
+    wait(600.0).await;
+    session_kept(&schema.db, 101).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("a_member_calls_her_and_her_turn_runs_whole", &world.log);
+    schema.drop_schema();
+}
+
+/// A member asks her for a turtle soup in a group: her turn starts one, each
+/// question of theirs is judged, a sticker she kept goes with a reply, and
+/// when they give up the group remembers the game.
+#[tokio::test(start_paused = true)]
+async fn g0_a_member_plays_a_soup_and_she_sends_a_sticker() {
+    let _turns = WHOLE_TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    use sea_orm::ConnectionTrait;
+    let chat = -77_110;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.4);
+    let Some(schema) = database(&mut world, "a_member_plays_a_soup_and_she_sends_a_sticker") else {
+        return;
+    };
+    world.members.insert("12".into(), 102);
+    site_member(&schema.db, 102, "xiaohong", "小红").await;
+    schema
+        .db
+        .execute_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "INSERT INTO merope_stickers (id, picture, meaning, venue, asset_id, identity, sent, kept_from) \
+             VALUES ('sticker-9', '一只摊手的猫', '没办法', NULL, 'asset-9', '', 0, 'telegram:-77199')",
+        ))
+        .await
+        .unwrap();
+    world
+        .titles
+        .insert("telegram:-77199".into(), "隔壁群".into());
+    answer(
+        &mut world,
+        "soup_start",
+        r#"{"surface":"他把灯关了，然后很多人死了。","truth":"他是灯塔看守，关了灯，船撞上礁石。","keys":["他是灯塔看守","船撞礁"],"presentation":"汤面：他把灯关了，然后很多人死了。问吧。"}"#,
+    );
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"no","found":[],"solved":false,"gave_up":false}"#,
+    );
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"not_a_question","found":[],"solved":false,"gave_up":true}"#,
+    );
+    let says = world.says.entry("chat".into()).or_default();
+    says.push_back((2.5, Ok("好呀\n[[game:soup]]".into())));
+    says.push_back((2.5, Ok("不是哦\n[[sticker:1]]".into())));
+    says.push_back((2.5, Ok("好吧，告诉你".into())));
+    g0::enter(world);
+    hear(line(chat, 1, 12, "小红", "@bot 来玩海龟汤", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 2, 12, "小红", "@bot 他是杀手吗", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 3, 12, "小红", "@bot 放弃了 答案是啥", true)).await;
+    wait(300.0).await;
+    session_kept(&schema.db, 102).await;
+    soup_kept(&schema.db, &venue).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("a_member_plays_a_soup_and_she_sends_a_sticker", &world.log);
     schema.drop_schema();
 }

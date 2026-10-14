@@ -81,8 +81,9 @@ pub(super) async fn identify(venue: &str, from: &str) -> Answer {
 
 /// Whether `user_id` may talk to her now, with their session in this group.
 pub(super) async fn prepare(venue: &str, user_id: i32) -> bool {
+    // A recording without a database of its own has no sessions to keep.
     #[cfg(test)]
-    if g0::on() {
+    if g0::on() && g0::database().is_none() {
         return true;
     }
     let Ok(db) = db() else {
@@ -208,8 +209,9 @@ pub(super) async fn run_member_turn(
     token: &str,
     turn: &MemberTurn,
 ) -> Option<(String, Option<serde_json::Value>)> {
+    // A recording with a database of its own runs her turn as the site does.
     #[cfg(test)]
-    if g0::on() {
+    if g0::on() && g0::database().is_none() {
         let given = serde_json::json!({
             "userId": turn.user_id,
             "input": turn.input,

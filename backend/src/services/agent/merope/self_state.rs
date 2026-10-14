@@ -208,7 +208,13 @@ static CACHE: LazyLock<Mutex<Option<(Instant, SelfState)>>> = LazyLock::new(|| M
 
 /// Her state now. Recomputed at most every half minute.
 pub async fn current(db: &DatabaseConnection) -> SelfState {
-    if let Some(state) = CACHE
+    // A recorded scene has its own world and clock: nothing from another.
+    #[cfg(test)]
+    let cached = !crate::services::channel_group::g0::on();
+    #[cfg(not(test))]
+    let cached = true;
+    if cached
+        && let Some(state) = CACHE
         .lock()
         .ok()
         .and_then(|cached| *cached)
@@ -236,7 +242,9 @@ pub async fn current(db: &DatabaseConnection) -> SelfState {
         .with_last_learned(learned)
         .with_feeling(myriad_merope::elsewhere::own_feeling(&pushes, now));
     state.facts.local_minute = local.minute();
-    if let Ok(mut cached) = CACHE.lock() {
+    if cached
+        && let Ok(mut cached) = CACHE.lock()
+    {
         *cached = Some((Instant::now(), state));
     }
     state
