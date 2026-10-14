@@ -1,7 +1,7 @@
 import type { RasterLayer } from './anime25dImportTypes'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference } from './importerLayerSplits'
+import { stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, tuckBackHairBehindNeck } from './importerLayerSplits'
 
 const SIZE = 20
 
@@ -157,4 +157,21 @@ test('a hat brim the portrait shows under the bangs stays under them', () => {
   }
   const stacked = stackHeadwearByReference([brim, bangs], portrait)
   assert.deepEqual(stacked.map((layer) => layer.id), ['brim', 'bangs'])
+})
+
+test('back hair put over a neck drawn over the top goes just behind the neck, still over the top', () => {
+  const box = { left: 0, top: 0, width: 4, height: 4 }
+  const topwear = solid('topwear', 'topwear', [40, 40, 90], box)
+  const collarBack = solid('collar-back', 'collar-back', [40, 40, 90], box)
+  const neck = solid('neck', 'neck', [240, 210, 200], box)
+  const collarFront = solid('collar-front', 'collar-front', [40, 40, 90], box)
+  const hair = solid('back-hair', 'back-hair', [30, 30, 60], box)
+  const face = solid('face', 'face', [250, 225, 215], box)
+  const out = tuckBackHairBehindNeck([topwear, collarBack, neck, collarFront, hair, face])
+  assert.deepEqual(out.map((l) => l.id), ['topwear', 'collar-back', 'back-hair', 'neck', 'collar-front', 'face'])
+  // Already behind the neck, or a neck under the top (the runtime lifts it): as it was.
+  const behind = [hair, topwear, neck, face]
+  assert.equal(tuckBackHairBehindNeck(behind), behind)
+  const under = [neck, topwear, hair, face]
+  assert.equal(tuckBackHairBehindNeck(under), under)
 })

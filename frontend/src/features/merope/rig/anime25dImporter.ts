@@ -27,7 +27,7 @@ import { raiseEarwearOverFrontHair } from './earwearOrder'
 import { synthesizeMissingExpressionAccents } from './expressionAccentLayers'
 import { formatTemplate } from './formatTemplate'
 import { contentFrame, deriveAnchors, semanticAnchors, standingStance } from './importerAnchors'
-import { assignCrossfadeSlots, hasStaticSeeThroughMouth, mirrorLostEyeWhite, preserveStaticMouthAsClosed, splitHandwearIfNeeded, splitLowerLimbsIfNeeded, splitVariantEyesIfNeeded, stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, stackOpenEyesInOrder } from './importerLayerSplits'
+import { assignCrossfadeSlots, hasStaticSeeThroughMouth, mirrorLostEyeWhite, preserveStaticMouthAsClosed, splitHandwearIfNeeded, splitLowerLimbsIfNeeded, splitVariantEyesIfNeeded, stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, stackOpenEyesInOrder, tuckBackHairBehindNeck } from './importerLayerSplits'
 import { addHiddenArmFragments, anime25DShoulderSeeds } from './linkedHandwear'
 import { findMotionExposure } from './motionExposure'
 import { inferOutfitProfileFromPartIds } from './outfit'
@@ -136,6 +136,7 @@ export async function prepareAnime25DRigPsd(
     ? { ...layer, data: keepClosedEyeLines(layer.data) }
     : layer)
   layers = splitHighCollarOcclusion(layers, rig.anchors, sourceReference)
+  layers = tuckBackHairBehindNeck(layers)
   layers.forEach((layer, index) => {
     layer.order = index
   })

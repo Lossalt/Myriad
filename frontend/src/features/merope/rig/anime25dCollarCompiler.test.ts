@@ -233,6 +233,38 @@ test('what the face hides at rest stays under the neck, so a raised chin shows n
   assert.ok(output.some((layer) => layer.role === 'collar-front' && at(layer, 12, 40) > 0))
 })
 
+test('an open collar the decomposition drew over the neck: only cloth reaching in from outside goes in front', () => {
+  const skin = [245, 205, 190, 255] as const
+  const chest = [240, 212, 198, 255] as const     // the shirt painted with the open chest's skin
+  const portraitChest = [238, 214, 200, 255] as const
+  const shirt = [250, 250, 252, 255] as const
+  const band = [120, 30, 40, 255] as const
+  const chain = [140, 60, 70, 255] as const       // a dark chain the band's colour lies nearer than skin
+  const neck = raster('neck', 20, 20, 40, 50, () => skin)
+  const topwear = raster('topwear', 0, 0, 80, 100, (x, y) =>
+    y >= 20 && y < 32 ? band : (x < 28 || x >= 52) && y >= 40 ? shirt : chest,
+  )
+  const face = { ...raster('neck', 20, 0, 40, 20, () => skin), id: 'face', role: 'face' as const }
+  // The portrait: the neck bare where the band was drawn but for a chain on it, the open chest,
+  // the lapels over the neck's sides.
+  const reference = raster('topwear', 0, 0, 80, 100, (x, y) => {
+    if (x >= 20 && x < 60 && y >= 20 && y < 70) {
+      if (x >= 36 && x < 44 && y >= 24 && y < 28) return chain
+      if ((x < 28 || x >= 52) && y >= 40) return shirt
+      return y >= 40 ? portraitChest : skin
+    }
+    return y >= 40 ? shirt : skin
+  })
+  const output = splitHighCollarOcclusion([topwear, neck, face], anchors, reference)
+  const front = output.find((l) => l.role === 'collar-front')
+  const rear = output.find((l) => l.role === 'collar-back')!
+  assert.ok(front, 'the lapels are a front collar')
+  assert.equal(alphaAt(front!, 22, 55), 255, 'a lapel over the neck side, in front')
+  assert.equal(alphaAt(front!, 40, 55), 0, 'the chest skin the shirt was painted with is not cloth in front')
+  assert.equal(alphaAt(front!, 40, 26), 0, 'nor the chain, an island inside the neck')
+  assert.equal(alphaAt(rear, 40, 26), 255, 'the band under the chain goes behind the neck')
+})
+
 function raster(
   role: 'neck' | 'topwear',
   left: number,

@@ -6,6 +6,15 @@ const COLLAR_REFERENCE_REAR_CONFIDENCE = 0.08
 const COLLAR_REFERENCE_FRONT_CONFIDENCE = 0.15
 const COLLAR_REFERENCE_REAR_MATCH_DISTANCE = 32 * 32 * 7
 const COLLAR_REFERENCE_FRONT_MATCH_DISTANCE = 48 * 48 * 7
+/**
+ * A collar in front of the neck is cloth, not skin: where the garment is
+ * drawn in the neck's own colours (a decomposition paints the open chest
+ * into the shirt), the portrait matching it says nothing about which is in
+ * front, and the neck keeps it.
+ */
+const COLLAR_REFERENCE_FRONT_MATERIAL_DISTANCE = 24 * 24 * 7
+/** How near the neck's outline a front collar piece must reach: it comes in from outside the neck. */
+const COLLAR_FRONT_OUTLINE_REACH = 3
 
 export function buildCollarReferenceMask(
   reference: Anime25DSourceReference,
@@ -63,7 +72,9 @@ export function buildCollarReferenceMask(
       } else if (
         topwearDistance < neckDistance &&
         topwearDistance <= COLLAR_REFERENCE_FRONT_MATCH_DISTANCE &&
-        confidence >= COLLAR_REFERENCE_FRONT_CONFIDENCE
+        confidence >= COLLAR_REFERENCE_FRONT_CONFIDENCE &&
+        perceptualColorDistance(neck.data, neckPixel, topwear.data, topwearPixel) >
+          COLLAR_REFERENCE_FRONT_MATERIAL_DISTANCE
       ) {
         raw[pixel] = COLLAR_REFERENCE_FRONT
       }
@@ -110,7 +121,62 @@ export function buildCollarReferenceMask(
       }
     }
   }
+  dropInnerFrontPieces(filled, width, height, (x, y) => {
+    const pixel = rasterPixelIndex(neck, left + x, exposedTop + y)
+    return pixel >= 0 && neck.data[pixel + 3] >= ALPHA_COMPONENT_THRESHOLD
+  })
   return { left, top: exposedTop, width, height, data: filled }
+}
+
+/**
+ * Front pieces wholly inside the neck are not a collar in front of it: a
+ * collar comes in over the neck from its sides or its foot. A chain, a
+ * shading line or the shirt's skin the portrait happens to match there are
+ * islands, and go behind the neck (rear) instead of moving with the body
+ * in front of it.
+ */
+function dropInnerFrontPieces(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  isNeck: (x: number, y: number) => boolean,
+): void {
+  const reach = COLLAR_FRONT_OUTLINE_REACH
+  const nearOutline = (x: number, y: number) => {
+    if (y >= height - reach || x < reach || x >= width - reach) return true
+    for (let dy = -reach; dy <= reach; dy += 1) {
+      for (let dx = -reach; dx <= reach; dx += 1) {
+        if (!isNeck(x + dx, y + dy)) return true
+      }
+    }
+    return false
+  }
+  const seen = new Uint8Array(width * height)
+  const stack: number[] = []
+  for (let start = 0; start < data.length; start += 1) {
+    if (data[start] !== COLLAR_REFERENCE_FRONT || seen[start]) continue
+    const piece: number[] = []
+    let reaches = false
+    seen[start] = 1
+    stack.push(start)
+    while (stack.length > 0) {
+      const pixel = stack.pop()!
+      piece.push(pixel)
+      const x = pixel % width
+      const y = (pixel - x) / width
+      if (!reaches && nearOutline(x, y)) reaches = true
+      for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const next = ny * width + nx
+        if (seen[next] || data[next] !== COLLAR_REFERENCE_FRONT) continue
+        seen[next] = 1
+        stack.push(next)
+      }
+    }
+    if (!reaches) {
+      for (const pixel of piece) data[pixel] = COLLAR_REFERENCE_REAR
+    }
+  }
 }
 
 function collarReferenceNeighbourCounts(

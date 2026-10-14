@@ -154,6 +154,26 @@ export function stackLowerLimbsByReference(
 }
 
 /**
+ * The back hair hangs behind the neck. A decomposition can put it in front
+ * of the neck when locks fall over the top's collar; at rest the face hides
+ * what lies under the chin, but once the head nods the back hair shows there
+ * as a dark band where the neck should be. Where the neck is drawn over the
+ * top (a collar split into back and front), the back hair goes just behind
+ * the neck, still over the top and the back of the collar; what of it the
+ * portrait shows over the neck the import's repair reveals.
+ */
+export function tuckBackHairBehindNeck(layers: RasterLayer[]): RasterLayer[] {
+  const neck = layers.findIndex((layer) => layer.role === 'neck')
+  if (neck < 0) return layers
+  const topwear = layers.findIndex((layer) => layer.role === 'topwear')
+  if (topwear < 0 || topwear > neck) return layers
+  const hair = layers.findIndex((layer, index) => index > neck && layer.role === 'back-hair')
+  if (hair < 0) return layers
+  const output = layers.toSpliced(hair, 1)
+  return output.toSpliced(neck, 0, layers[hair])
+}
+
+/**
  * The same depth guess, on a small head in a full figure, can put a choker
  * and its pendant behind the neck and the top they lie on, leaving a faint
  * band where the choker was. The portrait shows which is in front.
