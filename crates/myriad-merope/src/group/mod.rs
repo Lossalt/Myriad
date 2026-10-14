@@ -568,6 +568,9 @@ pub enum Answer {
     MayLookUp {
         may: May,
     },
+    /// What was asked could not be read (the store is down): what needs it
+    /// is left, as when nothing could be asked.
+    Unread,
     Now {
         /// RFC 3339, in her zone.
         local: String,

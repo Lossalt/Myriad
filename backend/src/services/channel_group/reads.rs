@@ -21,6 +21,17 @@ fn row(model: crate::models::entities::agent_memories::Model) -> MemoryRow {
     }
 }
 
+/// Whether the database is down for her own things (in a recording, as the
+/// scene says).
+fn down(venue: &str) -> bool {
+    #[cfg(test)]
+    if g0::fails("down", "database", venue) {
+        return true;
+    }
+    let _ = venue;
+    db().is_err()
+}
+
 /// A recording without a database of its own reads nothing kept and keeps
 /// nothing (what it would have kept is written down instead).
 pub(super) fn no_database() -> bool {
@@ -32,7 +43,12 @@ pub(super) fn no_database() -> bool {
 }
 
 pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
-    let _ = venue;
+    // What she has of her own cannot be read with the database down: what
+    // needs it (whether she speaks up, her answer to someone from outside,
+    // looking up words) is left, as before it was the core's.
+    if matches!(what, ToRead::OwnRows { .. } | ToRead::Life { .. }) && down(venue) {
+        return Answer::Unread;
+    }
     if no_database() && !matches!(what, ToRead::Soul | ToRead::Now | ToRead::Titles { .. }) {
         return match what {
             ToRead::Cues { .. } => Answer::Cues {
@@ -80,7 +96,10 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
             }
         }
         ToRead::OwnRows { source, limit } => {
-            let (Ok(db), Some(source)) = (db(), own_source(&source)) else {
+            let Ok(db) = db() else {
+                return Answer::Unread;
+            };
+            let Some(source) = own_source(&source) else {
                 return Answer::Rows { rows: Vec::new() };
             };
             Answer::Rows {
@@ -97,11 +116,7 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
         ToRead::Life { talk, related } => {
             use crate::services::agent::merope::group::doing;
             let Ok(db) = db() else {
-                return Answer::Life {
-                    did: Vec::new(),
-                    would_tell: Vec::new(),
-                    now: None,
-                };
+                return Answer::Unread;
             };
             Answer::Life {
                 did: doing::recalled(&db, Some(&talk), 0, related).await,

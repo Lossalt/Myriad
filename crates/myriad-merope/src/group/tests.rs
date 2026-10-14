@@ -1283,6 +1283,37 @@ fn g1_lines_wait_while_she_is_busy() {
     end.check("lines_wait_while_she_is_busy");
 }
 
+/// What she has to draw on cannot be read: she leaves that glance, saying
+/// nothing; the next goes as ever.
+#[test]
+fn g1_she_says_nothing_when_what_she_has_cannot_be_read() {
+    let mut end = End::new();
+    end.answer("own:view", 0.5, Answer::Unread);
+    end.answer(
+        "ask:group_chime",
+        1.0,
+        Answer::Asked {
+            raw: Some(
+                r#"{"speak":"know","about":"那家店周五人多","basis":null,"unsure":[]}"#.into(),
+            ),
+            failure: None,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "周五吃那家火锅吧", false),
+    );
+    heard(&mut end, 1.0, message(2, 11, "阿明", "大家觉得呢", false));
+    heard(
+        &mut end,
+        701.0,
+        message(3, 11, "阿明", "我也想去那家", false),
+    );
+    end.run(BASE + secs(2400.0));
+    end.check("she_says_nothing_when_what_she_has_cannot_be_read");
+}
+
 #[test]
 fn g1_she_speaks_up_unasked_and_reacts() {
     let mut end = End::new();

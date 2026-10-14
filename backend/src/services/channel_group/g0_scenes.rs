@@ -1013,3 +1013,30 @@ async fn g0_an_outsider_she_keeps_a_note_on() {
     g0::check("an_outsider_she_keeps_a_note_on", &world.log);
     schema.drop_schema();
 }
+
+/// Nobody calls her, and what she has to draw on cannot be read (the
+/// database is down for it): she leaves that glance, saying nothing. Back,
+/// the next glance goes as ever.
+#[tokio::test(start_paused = true)]
+async fn g0_she_says_nothing_when_what_she_has_cannot_be_read() {
+    let chat = -77_106;
+    let mut world = World::new(0.5);
+    world.members.insert("11".into(), 101);
+    world.failing.insert(("down".into(), "database".into()), 1);
+    answer(
+        &mut world,
+        "group_chime",
+        r#"{"speak":"know","about":"那家店周五人多","basis":null}"#,
+    );
+    world
+        .turns
+        .push_back((3.0, "周五那家人多，早点去".into(), None));
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧", false)).await;
+    wait(1.0).await;
+    hear(line(chat, 2, 11, "阿明", "大家觉得呢", false)).await;
+    wait(700.0).await;
+    hear(line(chat, 3, 11, "阿明", "我也想去那家", false)).await;
+    wait(1200.0).await;
+    done("she_says_nothing_when_what_she_has_cannot_be_read");
+}

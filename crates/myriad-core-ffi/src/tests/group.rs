@@ -38,6 +38,7 @@ const TRAJECTORIES: &[(&str, &[u8])] = &[
     trajectory!("read_back_after_a_restart"),
     trajectory!("she_brings_something_up_first_and_a_send_is_refused"),
     trajectory!("she_keeps_back_what_no_longer_fits"),
+    trajectory!("she_says_nothing_when_what_she_has_cannot_be_read"),
     trajectory!("she_speaks_up_unasked_and_reacts"),
 ];
 
