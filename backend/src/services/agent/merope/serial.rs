@@ -122,15 +122,26 @@ async fn past(db: &DatabaseConnection) -> Past {
         .unwrap_or_default()
 }
 
-/// The work under this id: as it was when she was shown it, or one of the
-/// books picked by hand.
+/// The work under this id: as it was when she was shown it, as it is on her
+/// shelf, or one of the books picked by hand. What is kept under each work
+/// is a cache and does not move with her; her shelf does, books and all, so
+/// a book on it still opens after she moves.
 pub async fn known(db: &DatabaseConnection, id: &str) -> Option<Work> {
     let kept: Option<Work> =
         crate::services::runtime_registry::get(db, NAMESPACE, &format!("{WORK}{id}"))
             .await
             .ok()
             .flatten();
-    kept.or_else(|| work(id).cloned())
+    if kept.is_some() {
+        return kept;
+    }
+    let shelf: Option<Shelf> = crate::services::runtime_registry::get(db, NAMESPACE, SHELF)
+        .await
+        .ok()
+        .flatten();
+    shelf
+        .and_then(|shelf| shelf.books.into_iter().find(|book| book.id == id))
+        .or_else(|| work(id).cloned())
 }
 
 async fn remember(db: &DatabaseConnection, work: &Work) {
@@ -590,6 +601,57 @@ mod tests {
             Some(Held::Partly)
         );
         assert_eq!(parse_judged(r#"{"held":"maybe","happened":""}"#), None);
+    }
+
+    /// Back from a Mac, her shelf comes with her but what was kept under
+    /// each work does not (a Mac sends only the works she follows): a book
+    /// on the shelf still reads as it was put out, and a kept work still
+    /// wins. On a real database (an isolated schema; skipped without a test
+    /// database).
+    #[tokio::test]
+    async fn a_book_on_her_shelf_is_known_without_its_kept_work() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        let book = |id: &str, about: &str| Work {
+            id: id.into(),
+            title: format!("{id} title"),
+            author: "someone".into(),
+            lang: "zh".into(),
+            about: about.into(),
+            source: Source::Gutenberg {
+                path: format!("cache/epub/{id}.txt"),
+            },
+        };
+        let shelf = Shelf {
+            day: "2026-10-14".into(),
+            books: vec![
+                book("pg-900001", "on the shelf"),
+                book("pg-900002", "on the shelf"),
+            ],
+            shown: vec!["pg-900001".into(), "pg-900002".into()],
+        };
+        assert!(work("pg-900001").is_none(), "not one picked by hand");
+        assert_eq!(known(db, "pg-900001").await, None);
+        put(db, SHELF, &shelf).await;
+        assert_eq!(known(db, "pg-900001").await, Some(shelf.books[0].clone()));
+        assert_eq!(
+            view(db, "pg-900001", 0, 0).await.get("about"),
+            Some(&json!("on the shelf"))
+        );
+        remember(db, &book("pg-900002", "as she was shown it")).await;
+        assert_eq!(
+            known(db, "pg-900002").await.map(|work| work.about),
+            Some("as she was shown it".into())
+        );
+        assert_eq!(known(db, "pg-900003").await, None);
+        let picked_by_hand = &CATALOG[0];
+        assert_eq!(
+            known(db, &picked_by_hand.id).await.as_ref(),
+            Some(picked_by_hand)
+        );
+        fixture.close().await;
     }
 }
 
