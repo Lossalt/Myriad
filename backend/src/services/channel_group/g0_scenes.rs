@@ -147,20 +147,26 @@ async fn g0_she_reacts_without_words() {
 async fn g0_an_outsider_calls_her() {
     let chat = -77_005;
     let mut world = World::new(0.7);
+    let Some(schema) = database(&mut world, "an_outsider_calls_her") else {
+        return;
+    };
     answer(
         &mut world,
         "group_making_sense",
         r#"{"goingOn":"有人第一次来","theyMean":"问她是谁","aboutYou":"说她像机器人"}"#,
     );
     world
-        .strangers
-        .push_back((2.0, "我是这里的常客啦".into(), None));
+        .says
+        .entry("group_stranger".into())
+        .or_default()
+        .push_back((2.0, Ok("我是这里的常客啦".into())));
     g0::enter(world);
     hear(line(chat, 1, 31, "路人", "这个bot是谁", false)).await;
     wait(1.0).await;
     hear(line(chat, 2, 31, "路人", "@bot 你是机器人吗", true)).await;
     wait(600.0).await;
     done("an_outsider_calls_her");
+    schema.drop_schema();
 }
 
 /// The talk moved on while she wrote: she looks again, keeps it back, and
@@ -223,8 +229,15 @@ async fn g0_muted_she_says_nothing() {
 async fn g0_she_stops_answering_one_who_never_stops() {
     let chat = -77_009;
     let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "she_stops_answering_one_who_never_stops") else {
+        return;
+    };
     for _ in 0..myriad_merope::group::LOOP_ROUNDS + 2 {
-        world.strangers.push_back((1.0, "在".into(), None));
+        world
+            .says
+            .entry("group_stranger".into())
+            .or_default()
+            .push_back((1.0, Ok("在".into())));
     }
     g0::enter(world);
     for id in 1..=(myriad_merope::group::LOOP_ROUNDS as i64 + 2) {
@@ -233,6 +246,7 @@ async fn g0_she_stops_answering_one_who_never_stops() {
     }
     wait(600.0).await;
     done("she_stops_answering_one_who_never_stops");
+    schema.drop_schema();
 }
 
 /// Away from the site she is not in the group; back, she takes up the
