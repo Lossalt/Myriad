@@ -762,5 +762,5 @@ pub struct Offer {
 }
 
 pub fn offer(group: &Group, now: i64) -> Option<Offer> {
-    flows::offer(group, now)
+    flows::offer_view(group, now)
 }

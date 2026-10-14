@@ -1,0 +1,298 @@
+//! What she is in the middle of in a group, step by step: taking up a line
+//! that called her, glancing at talk that did not, saying something first,
+//! and the answer and its going out that each of them may come to. Each is
+//! an errand that waits for one thing at a time (a timer, or what it asked
+//! the end); everything else happens at once, as it would between two
+//! awaits.
+
+use serde::{Deserialize, Serialize};
+
+use super::ledger::{differs, keep_ledger, note_said};
+use super::lines::*;
+use super::*;
+use crate::joining::Why;
+
+mod answer;
+mod deliver;
+mod errands;
+mod first;
+mod glance;
+mod heard;
+mod state;
+
+pub(crate) use answer::*;
+pub(crate) use deliver::*;
+pub(crate) use errands::*;
+pub(crate) use first::*;
+pub(crate) use glance::*;
+pub(crate) use heard::*;
+pub(crate) use state::*;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Errand {
+    pub id: String,
+    /// The timer key or the id of what it asked: what it waits for.
+    pub awaiting: String,
+    pub kind: Kind,
+    pub doing: Doing,
+}
+
+/// What the errand is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum Kind {
+    /// A line that called her: seen, taken up, answered, then whoever
+    /// waited meanwhile.
+    TakeUp {
+        #[serde(default)]
+        waiter: Option<String>,
+        message: Message,
+        /// Whether a reply held back may still be said again.
+        again: bool,
+    },
+    /// A glance at talk that did not call her, settled on line `id`.
+    Look {
+        id: String,
+        #[serde(default)]
+        message: Option<Message>,
+        #[serde(default)]
+        why: Option<Why>,
+        /// The answer it is on is the one she chose to say, not one that
+        /// waited.
+        #[serde(default)]
+        spoke: bool,
+    },
+    /// Five minutes on, whether anyone took up her speaking up.
+    SpokeUp { at: i64, line: String },
+    /// Saying something first.
+    First {
+        waiter: String,
+        reason: String,
+        #[serde(default)]
+        owner: Option<i32>,
+        #[serde(default)]
+        spoke: Option<bool>,
+    },
+}
+
+/// Where the errand is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "at")]
+pub enum Doing {
+    /// Until she sees the line.
+    Seeing,
+    /// The group just had her reply: a moment before the turn.
+    Beginning,
+    Answering(Box<Answering>),
+    /// Done with one: a pause before the next that waited.
+    Pausing,
+    /// Before the next that waited, still resting.
+    Resting,
+    Glancing,
+    Settling,
+    Judging(Box<Judging>),
+    Reacting {
+        emoji: String,
+    },
+    Timing,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Judging {
+    pub message: Message,
+    pub stage: JudgeStage,
+    #[serde(default)]
+    pub owner: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JudgeStage {
+    Identifying,
+    Looking,
+    Judging,
+}
+
+/// One answer: from the gates to what went out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Answering {
+    pub message: Message,
+    #[serde(default)]
+    pub chime: Option<String>,
+    /// Saying something first: nobody's line behind it.
+    #[serde(default)]
+    pub first: bool,
+    pub stage: AnswerStage,
+    #[serde(default)]
+    pub user_id: Option<i32>,
+    #[serde(default)]
+    pub owner: Option<i32>,
+    #[serde(default)]
+    pub stranger: Option<Stranger>,
+    #[serde(default)]
+    pub began: i64,
+    #[serde(default)]
+    pub transcript: Vec<Spoken>,
+    #[serde(default)]
+    pub said: String,
+    #[serde(default)]
+    pub making_sense: Option<String>,
+    #[serde(default)]
+    pub room: Option<crate::talk_shape::Shape>,
+    #[serde(default)]
+    pub noted: Pieces,
+    #[serde(default)]
+    pub sections: Vec<String>,
+    #[serde(default)]
+    pub reply: String,
+    #[serde(default)]
+    pub sticker: Option<Value>,
+    #[serde(default)]
+    pub deliver: Option<Deliver>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnswerStage {
+    Claiming,
+    Looking,
+    Identifying,
+    Preparing,
+    Sensing,
+    LedgerForTurn,
+    Turning,
+    StrangerLedger,
+    StrangerSensing,
+    StrangerTyping,
+    StrangerTurning,
+    Delivering,
+}
+
+/// Her reply going out, message by message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Deliver {
+    pub people: Vec<(String, String)>,
+    pub messages: Vec<String>,
+    pub index: usize,
+    #[serde(default)]
+    pub chunks: Vec<String>,
+    #[serde(default)]
+    pub chunk: usize,
+    pub sent: bool,
+    pub went_out: Vec<String>,
+    pub since: i64,
+    pub looked: usize,
+    /// What was said to her (empty when nobody said anything).
+    pub said: String,
+    /// Her whole reply, as written, and who the look at it is billed to.
+    pub reply: String,
+    pub owner: i32,
+    #[serde(default)]
+    pub came: usize,
+    /// How long she still types, once the mark is shown.
+    #[serde(default)]
+    pub left: f64,
+    pub stage: DeliverStage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeliverStage {
+    TypingMark,
+    Typing,
+    Fitting,
+    Sending,
+}
+
+/// What a piece of an errand came to.
+pub(crate) enum Next {
+    /// Waiting on `awaiting`.
+    Wait(String),
+    Done(bool),
+}
+
+pub(crate) struct Cx<'a> {
+    group: &'a mut Group,
+    at: &'a mut At,
+    out: &'a mut Outcome,
+}
+
+impl Cx<'_> {
+    fn now(&self) -> i64 {
+        self.at.now
+    }
+
+    fn id(&mut self) -> String {
+        self.group.next += 1;
+        format!("g{}", self.group.next)
+    }
+
+    fn wake(&mut self, after: f64) -> String {
+        let key = self.id();
+        self.out.effects.push(Effect::Wake {
+            key: key.clone(),
+            after,
+        });
+        key
+    }
+
+    fn effect(&mut self, make: impl FnOnce(String) -> Effect) -> String {
+        let id = self.id();
+        self.out.effects.push(make(id.clone()));
+        id
+    }
+
+    fn settle(&mut self, waiter: &Option<String>, value: bool) {
+        if let Some(waiter) = waiter {
+            self.out.effects.push(Effect::Settled {
+                waiter: waiter.clone(),
+                value,
+            });
+        }
+    }
+}
+
+pub(crate) fn step(group: &mut Group, at: &mut At, event: Event, out: &mut Outcome) {
+    let mut cx = Cx { group, at, out };
+    match event {
+        Event::Restored { lines, spoke_up } => restored(&mut cx, lines, spoke_up),
+        Event::Reached { message, seen_at } => {
+            if cx.group.reach.is_none() {
+                cx.group.reach = Some(message);
+                cx.group.seen_before = Some(seen_at);
+            }
+        }
+        Event::Heard { message, restore } => {
+            let fresh = record(&mut cx, &message, restore);
+            cx.out.fresh = Some(fresh);
+        }
+        Event::Called { message, waiter } => handle(&mut cx, message, waiter),
+        Event::Noticed { message } => notice(&mut cx, message),
+        Event::Muted {
+            by,
+            mute,
+            everyone,
+            restore,
+        } => muted(&mut cx, &by, mute, everyone, restore),
+        Event::Resumed {
+            why,
+            past,
+            up_since,
+        } => resumed(&mut cx, why, past, up_since),
+        Event::SpeakFirst {
+            reason,
+            owner,
+            waiter,
+        } => speak_first(&mut cx, reason, owner, waiter),
+        Event::StickerSent { meaning } => {
+            let now = cx.now();
+            record_hers(cx.group, &format!("（表情包：{meaning}）"), now, cx.out);
+        }
+        Event::Woke { key } => resume(&mut cx, &key, None),
+        Event::Done { id, answer } => resume(&mut cx, &id, Some(answer)),
+    }
+}

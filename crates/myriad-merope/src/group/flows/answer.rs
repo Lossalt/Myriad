@@ -1,0 +1,364 @@
+//! One answer: the gates, who wrote the line, what she reads, the turn that
+//! says it, and what went out.
+
+use super::*;
+
+pub(crate) fn answer_start(cx: &mut Cx, answering: &mut Answering) -> Next {
+    let now = cx.now();
+    // Not on this end, she answers nobody there.
+    if cx.at.her.away {
+        return Next::Done(false);
+    }
+    if stopped_answering(cx.group, &answering.message, now)
+        || read_already(cx.group, &answering.message)
+    {
+        return Next::Done(false);
+    }
+    if muted_now(cx.group, now) {
+        return Next::Done(false);
+    }
+    let inbound_id = format!(
+        "group:{}:{}",
+        answering.message.chat, answering.message.message_id
+    );
+    answering.stage = AnswerStage::Claiming;
+    Next::Wait(cx.effect(|id| Effect::Claim { id, inbound_id }))
+}
+
+pub(crate) fn first_start(cx: &mut Cx, answering: &mut Answering, owner: Option<i32>) -> Next {
+    let now = cx.now();
+    let Some(seen) = cx.group.reach.clone() else {
+        return Next::Done(false);
+    };
+    let Some(owner) = owner else {
+        return Next::Done(false);
+    };
+    answering.owner = Some(owner);
+    answering.message = Message {
+        message_id: String::new(),
+        from: String::new(),
+        display_name: String::new(),
+        text: crate::sharing::NOBODY_SAID.to_string(),
+        addressed: false,
+        reply_to: None,
+        images: Vec::new(),
+        ..seen
+    };
+    let inbound_id = format!(
+        "group:{}:first:{}",
+        answering.message.chat,
+        time(now).timestamp_millis()
+    );
+    answering.stage = AnswerStage::Claiming;
+    Next::Wait(cx.effect(|id| Effect::Claim { id, inbound_id }))
+}
+
+pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>) -> Next {
+    let now = cx.now();
+    match (a.stage, answer) {
+        (AnswerStage::Claiming, Some(Answer::Claimed { ok })) => {
+            if !ok {
+                return Next::Done(false);
+            }
+            if a.first {
+                // Her own turn on the owner's budget: no one's line to read.
+                a.began = now;
+                a.stage = AnswerStage::Preparing;
+                let user_id = a.owner.unwrap_or_default();
+                return Next::Wait(cx.effect(|id| Effect::Prepare { id, user_id }));
+            }
+            let pictures = unseen(cx.group);
+            if pictures.is_empty() {
+                return identify(cx, a);
+            }
+            a.stage = AnswerStage::Looking;
+            Next::Wait(cx.effect(|id| Effect::Look { id, pictures }))
+        }
+        (AnswerStage::Looking, Some(Answer::Looked { seen })) => {
+            apply_seen(cx, seen);
+            identify(cx, a)
+        }
+        (AnswerStage::Identifying, Some(Answer::Identified { who, owner })) => match who {
+            Who::Member { user_id, bound } => {
+                if !bound {
+                    return Next::Done(false);
+                }
+                a.user_id = Some(user_id);
+                a.owner = Some(user_id);
+                a.began = now;
+                a.stage = AnswerStage::Preparing;
+                Next::Wait(cx.effect(|id| Effect::Prepare { id, user_id }))
+            }
+            Who::Stranger => {
+                let today = cx.at.her.today.clone();
+                if !count_today(
+                    &mut cx.group.stranger_replies,
+                    &today,
+                    STRANGER_REPLIES_PER_DAY,
+                ) {
+                    return Next::Done(false);
+                }
+                let Some(owner) = owner else {
+                    return Next::Done(false);
+                };
+                a.owner = Some(owner);
+                a.stranger = Some(Stranger {
+                    who: format!("{}:{}", a.message.platform, a.message.from),
+                    name: a.message.display_name.chars().take(40).collect(),
+                });
+                let read = reading(cx.group, &a.message, now);
+                a.transcript = read.transcript;
+                a.said = read.said;
+                a.room = room(cx.group, now);
+                a.noted = noted(cx.group);
+                a.stage = AnswerStage::StrangerLedger;
+                Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
+            }
+            Who::Unknown => Next::Done(false),
+        },
+        (AnswerStage::Preparing, Some(Answer::Prepared { ok })) => {
+            if !ok {
+                return Next::Done(false);
+            }
+            if a.first {
+                a.transcript = transcript(cx.group, None, now);
+                a.said = said_now(cx.group, &a.message);
+                a.room = room(cx.group, now);
+                a.noted = noted(cx.group);
+                a.stage = AnswerStage::LedgerForTurn;
+                return Next::Wait(cx.effect(|id| Effect::ReadLedger { id }));
+            }
+            let read = reading(cx.group, &a.message, now);
+            a.transcript = read.transcript;
+            a.said = read.said;
+            a.stage = AnswerStage::Sensing;
+            let conversation = conversation(&a.transcript);
+            let said = a.said.clone();
+            Next::Wait(cx.effect(|id| Effect::MakeSense {
+                id,
+                conversation,
+                said,
+            }))
+        }
+        (AnswerStage::Sensing, Some(Answer::Sense { section })) => {
+            a.making_sense = section;
+            a.room = room(cx.group, now);
+            a.noted = noted(cx.group);
+            a.stage = AnswerStage::LedgerForTurn;
+            Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
+        }
+        (AnswerStage::LedgerForTurn, Some(Answer::LedgerRead { stored })) => {
+            let differs = differs(cx.group, &a.noted, stored.as_ref());
+            let late = if a.first {
+                None
+            } else {
+                seen_late(cx.group, &a.message, now)
+            };
+            a.stage = AnswerStage::Turning;
+            let effect = |id| Effect::Turn {
+                id,
+                user_id: a.owner.unwrap_or_default(),
+                to: a.message.target(),
+                input: a.said.clone(),
+                transcript: a.transcript.clone(),
+                room: a.room.clone(),
+                differs,
+                making_sense: a.making_sense.clone(),
+                late,
+                chime: a.chime.clone(),
+                speaker: a.message.display_name.clone(),
+                first: a.first,
+            };
+            Next::Wait(cx.effect(effect))
+        }
+        (
+            AnswerStage::Turning,
+            Some(Answer::Turned {
+                text,
+                sticker,
+                bound,
+            }),
+        ) => {
+            let text = text.map(|text| text.trim().to_string()).unwrap_or_default();
+            if text.is_empty() && sticker.is_none() {
+                return Next::Done(false);
+            }
+            // Unpaired or switched off while she was thinking.
+            if !bound {
+                return Next::Done(false);
+            }
+            a.reply = without_reply_mark(&text);
+            a.sticker = sticker;
+            say(cx, a)
+        }
+        (AnswerStage::StrangerLedger, Some(Answer::LedgerRead { stored })) => {
+            let differs = differs(cx.group, &a.noted, stored.as_ref());
+            a.sections = [
+                a.room
+                    .as_ref()
+                    .map(|room| crate::talk_shape::describe(room, "How people type here")),
+                differs,
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            a.stage = AnswerStage::StrangerSensing;
+            let conversation = conversation(&a.transcript);
+            let said = a.said.clone();
+            Next::Wait(cx.effect(|id| Effect::MakeSense {
+                id,
+                conversation,
+                said,
+            }))
+        }
+        (AnswerStage::StrangerSensing, Some(Answer::Sense { section })) => {
+            a.sections.extend(section);
+            a.stage = AnswerStage::StrangerTyping;
+            let to = a.message.target();
+            Next::Wait(cx.effect(|id| Effect::Typing { id, to }))
+        }
+        (AnswerStage::StrangerTyping, Some(Answer::Typed)) => {
+            a.began = now;
+            a.stage = AnswerStage::StrangerTurning;
+            let effect = |id| Effect::StrangerTurn {
+                id,
+                owner: a.owner.unwrap_or_default(),
+                stranger: a.stranger.clone().unwrap_or(Stranger {
+                    who: String::new(),
+                    name: String::new(),
+                }),
+                transcript: a.transcript.clone(),
+                said: a.said.clone(),
+                why: a.chime.clone(),
+                sections: a.sections.clone(),
+            };
+            Next::Wait(cx.effect(effect))
+        }
+        (AnswerStage::StrangerTurning, Some(Answer::Turned { text, sticker, .. })) => {
+            let text = text.map(|text| text.trim().to_string()).unwrap_or_default();
+            if text.is_empty() && sticker.is_none() {
+                return Next::Done(false);
+            }
+            a.reply = without_reply_mark(&text);
+            a.sticker = sticker;
+            say(cx, a)
+        }
+        (AnswerStage::Delivering, answer) => {
+            let Some(mut deliver) = a.deliver.take() else {
+                return Next::Done(false);
+            };
+            match deliver_step(cx, &a.message, &mut deliver, answer) {
+                Next::Wait(awaiting) => {
+                    a.deliver = Some(deliver);
+                    Next::Wait(awaiting)
+                }
+                Next::Done(_) => after_saying(cx, a, deliver.went_out.join("\n")),
+            }
+        }
+        _ => Next::Done(false),
+    }
+}
+
+pub(crate) fn identify(cx: &mut Cx, a: &mut Answering) -> Next {
+    a.stage = AnswerStage::Identifying;
+    let from = a.message.from.clone();
+    Next::Wait(cx.effect(|id| Effect::Identify { id, from }))
+}
+
+/// What was noted for the ledger and not yet written, as she asks for it.
+pub(crate) fn noted(group: &Group) -> Pieces {
+    Pieces {
+        theirs: group.ledger_theirs.clone(),
+        hers: group.ledger_hers.clone(),
+    }
+}
+
+/// Her reply without a （回复 …） mark she copied from the transcript.
+pub(crate) fn without_reply_mark(reply: &str) -> String {
+    let trimmed = reply.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("（回复")
+        && let Some(end) = rest
+            .find('）')
+            .filter(|end| rest[..*end].chars().count() <= 200)
+    {
+        return rest[end + '）'.len_utf8()..].trim_start().to_string();
+    }
+    reply.to_string()
+}
+
+/// Her words, if any, then the sticker she chose.
+pub(crate) fn say(cx: &mut Cx, a: &mut Answering) -> Next {
+    if a.reply.trim().is_empty() {
+        return after_saying(cx, a, String::new());
+    }
+    let now = cx.now();
+    let people = people(cx.group, now);
+    let room = room(cx.group, now);
+    let lines = myriad_agent_rules::channel::as_messages(&a.reply);
+    let most = crate::talk_shape::messages_this_turn(lines.len(), cx.at.rolls.roll());
+    let messages = crate::talk_shape::goes_out_as(&lines, most, room.as_ref());
+    let said = if a.message.text == crate::sharing::NOBODY_SAID {
+        String::new()
+    } else {
+        a.message.text.clone()
+    };
+    let mut deliver = Deliver {
+        people,
+        messages,
+        index: 0,
+        chunks: Vec::new(),
+        chunk: 0,
+        sent: false,
+        went_out: Vec::new(),
+        since: a.began,
+        looked: 0,
+        said,
+        reply: a.reply.clone(),
+        owner: a.owner.unwrap_or_default(),
+        came: 0,
+        left: 0.0,
+        stage: DeliverStage::TypingMark,
+    };
+    a.stage = AnswerStage::Delivering;
+    match next_message(cx, &a.message, &mut deliver, a.began) {
+        Next::Wait(awaiting) => {
+            a.deliver = Some(deliver);
+            Next::Wait(awaiting)
+        }
+        Next::Done(_) => after_saying(cx, a, deliver.went_out.join("\n")),
+    }
+}
+
+/// What went out of her words: kept as hers; then the sticker.
+pub(crate) fn after_saying(cx: &mut Cx, a: &mut Answering, went_out: String) -> Next {
+    let now = cx.now();
+    let mut sent = false;
+    if !a.reply.trim().is_empty() {
+        sent = !went_out.is_empty();
+        if sent {
+            record_hers(cx.group, &went_out, now, cx.out);
+        }
+    }
+    // Held back, the sticker she chose for it is too.
+    let held = !a.reply.trim().is_empty() && !sent;
+    if let Some(chosen) = a.sticker.take().filter(|_| !held) {
+        cx.out.effects.push(Effect::Sticker {
+            to: a.message.target(),
+            chosen,
+        });
+        sent = true;
+    }
+    if sent && !a.first {
+        answered(cx.group, &a.message, now);
+        if let (Some(stranger), Some(owner)) = (&a.stranger, a.owner) {
+            cx.out.effects.push(Effect::StrangerAfter {
+                owner,
+                stranger: stranger.clone(),
+                said: a.said.clone(),
+                reply: a.reply.clone(),
+                message_id: a.message.message_id.clone(),
+            });
+        }
+    }
+    Next::Done(sent)
+}
