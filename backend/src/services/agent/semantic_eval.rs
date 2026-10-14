@@ -188,7 +188,8 @@ struct Case {
     /// Things at hand on her own time (`doing_choice`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     options: Option<Value>,
-    /// What she did on her own lately, one line each.
+    /// What she did on her own lately, one line each; for `settle`, the
+    /// short notes taken from the stretch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     lately: Vec<String>,
     /// What she has looked at so far on a trip (`explore_step`), or all of
@@ -391,6 +392,16 @@ fn eval_threads(case: &Case) -> Vec<super::merope::threads::Thread> {
 static HERS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
 
 /// A group case's lines as the heard judgment reads them.
+/// A stretch of talk to go over (`settle`): the history, then the input as
+/// their last line; `true` on theirs.
+fn settle_lines(case: &Case) -> Vec<(bool, String)> {
+    case.history
+        .iter()
+        .map(|line| (line.role == "user", line.text.clone()))
+        .chain((!case.input.is_empty()).then(|| (true, case.input.clone())))
+        .collect()
+}
+
 fn heard_lines(case: &Case) -> Vec<myriad_merope::heard::Said> {
     case.history
         .iter()
@@ -779,6 +790,7 @@ fn cases() -> Vec<Case> {
                 | "wonder"
                 | "heard"
                 | "already"
+                | "settle"
                 | "sense"
                 | "joke_sticker"
                 | "meme_sticker"
@@ -1132,6 +1144,12 @@ fn request(case: &Case) -> Value {
             json!({"system":already_system(),"schema":already_schema(),
                 "schemaName":ALREADY_SCHEMA_NAME,"input":already_input(&[(case.input.as_str(), known)])})
         }
+        "settle" => {
+            let (system, schema, input) =
+                memory::settle_probe(&settle_lines(case), &case.lately, &case.remembered);
+            json!({"system":system,"schema":schema,
+                "schemaName":myriad_merope::chat_remember::SETTLE_SCHEMA_NAME,"input":input})
+        }
         "heard" => {
             let lines = heard_lines(case);
             json!({"system":myriad_merope::heard::system(),"schema":myriad_merope::heard::schema(),
@@ -1306,7 +1324,7 @@ fn request(case: &Case) -> Value {
 fn is_judgment(case: &Case) -> bool {
     match case.kind.as_str() {
         "memory" | "touch" | "wonder" | "doing_choice" | "soup_judge" | "serial_guess"
-        | "explore_step" | "explore_compare" | "sense" | "already" => true,
+        | "explore_step" | "explore_compare" | "sense" | "already" | "settle" => true,
         "event" => case.event_kind != "agent.merope.touch",
         _ => false,
     }
@@ -1519,6 +1537,7 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
             let verdict = match myriad_merope::chat_remember::parse_already(output, 1)[0] {
                 myriad_merope::chat_remember::Already::Same => "same",
                 myriad_merope::chat_remember::Already::Replaces => "replaces",
+                myriad_merope::chat_remember::Already::Unclear(_) => "unclear",
                 myriad_merope::chat_remember::Already::Different => "different",
             };
             if !read {
@@ -1527,6 +1546,33 @@ fn grade(case: &Case, outcome: &str, output: &str) -> &'static str {
                 "pass"
             } else {
                 "behavior_failure"
+            }
+        }
+        // What lasts is judged by the reviewer; what it replaces is exact.
+        "settle" => {
+            let theirs = settle_lines(case)
+                .into_iter()
+                .filter(|(theirs, _)| *theirs)
+                .map(|(_, text)| text.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let Some((lasting, mut replaces)) = myriad_merope::chat_remember::parse_settle(
+                output,
+                &theirs,
+                &case.remembered,
+                case.lately.len(),
+            ) else {
+                return "output_invalid";
+            };
+            let mut expected = case.supersedes.clone();
+            replaces.sort();
+            expected.sort();
+            if lasting.is_empty() == case.fact_present || replaces != expected {
+                "behavior_failure"
+            } else if case.fact_present {
+                "needs_review"
+            } else {
+                "pass"
             }
         }
         "sense" => match myriad_merope::making_sense::parse(output) {
@@ -2478,7 +2524,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 132;
+const MIND_CASES: usize = 135;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -2599,7 +2645,7 @@ fn cases_use_production_contracts_and_replay_hashes_include_rubrics() {
     let cases = cases();
     assert_eq!(
         cases.iter().filter(|c| c.kind != "touch").count(),
-        54 + MIND_CASES
+        62 + MIND_CASES
     );
     for mut case in cases {
         let request = request(&case);

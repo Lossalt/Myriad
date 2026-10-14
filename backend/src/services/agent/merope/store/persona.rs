@@ -253,8 +253,9 @@ where
 }
 
 /// Memory sources that belong to the persona, not to Work.
-pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 24] = [
+pub(crate) const PERSONA_MEMORY_SOURCES: [&str; 25] = [
     "chat",
+    crate::services::agent::memory::unified::SHORT_NOTE_SOURCE,
     "event",
     "narrative",
     "lookup",
@@ -465,6 +466,12 @@ pub(super) mod persona_sources_tests {
                 "persona source {source:?} would survive deleting her"
             );
         }
+        // Short notes are written by `Keep::source`, not a literal.
+        assert!(
+            PERSONA_MEMORY_SOURCES
+                .contains(&crate::services::agent::memory::unified::SHORT_NOTE_SOURCE),
+            "short notes would survive deleting her"
+        );
         assert!(
             !PERSONA_MEMORY_SOURCES.contains(&"work"),
             "Work lessons stay"

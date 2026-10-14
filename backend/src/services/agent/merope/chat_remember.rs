@@ -561,8 +561,12 @@ fn alike_unshown(updates: &[ChatMemoryUpdate], unshown: &[String]) -> Vec<(usize
 }
 
 /// Apply the judgment: a new fact she already had is not kept again; one
-/// that is how it is now replaces what she had. A fact both already had and
-/// replacing something is already had: nothing is replaced on its account.
+/// that is how it is now replaces what she had; one that cannot be true
+/// with what she had, with nothing to say which is, is kept as the fact
+/// holding both, in place of the one she had (the first such pair says it).
+/// A fact both already had and replacing something is already had: nothing
+/// is replaced on its account. A short note takes the place only of short
+/// notes; what she knows for good waits for the stretch to be gone over.
 fn settle_already(
     updates: &mut Vec<ChatMemoryUpdate>,
     pairs: &[(usize, String)],
@@ -575,12 +579,22 @@ fn settle_already(
         .filter(|(_, verdict)| **verdict == Already::Same)
         .map(|((index, _), _)| *index)
         .collect();
+    let mut held_both = std::collections::HashSet::new();
     for ((index, known), verdict) in pairs.iter().zip(verdicts) {
-        if *verdict == Already::Replaces
-            && !had.contains(index)
-            && let Some(update) = updates.get_mut(*index)
-            && !update.supersedes.contains(known)
-        {
+        if had.contains(index) {
+            continue;
+        }
+        let Some(update) = updates.get_mut(*index) else {
+            continue;
+        };
+        match verdict {
+            Already::Replaces => {}
+            Already::Unclear(together) if held_both.insert(*index) => {
+                update.fact = Some(together.clone());
+            }
+            _ => continue,
+        }
+        if !update.supersedes.contains(known) {
             update.supersedes.push(known.clone());
         }
     }
@@ -606,6 +620,22 @@ pub(crate) fn probe_input(user_text: &str, reply: &str, turn: &super::TurnContex
         .single()
         .expect("fixed date");
     extract_input(user_text, reply, turn, now)
+}
+
+/// Going over a stretch as production asks it, on a fixed date: `lines`
+/// oldest first (`true` on theirs), the short notes taken from it, and what
+/// she knows of them for good.
+#[cfg(test)]
+pub(crate) fn settle_probe(
+    lines: &[(bool, String)],
+    lately: &[String],
+    known: &[String],
+) -> (String, serde_json::Value, String) {
+    (
+        myriad_merope::chat_remember::settle_system_prompt(known),
+        myriad_merope::chat_remember::settle_schema(),
+        settle::input(lines, lately, "2026-09-25 (Thursday)"),
+    )
 }
 
 #[cfg(test)]
@@ -675,6 +705,36 @@ mod tests {
         assert_eq!(updates[0].supersedes, vec!["周五要考试".to_string()]);
         assert_eq!(updates[1].fact.as_deref(), Some("也喜欢茶"));
         assert!(updates[1].supersedes.is_empty());
+    }
+
+    /// Two that cannot both be true, with nothing to say which: what she
+    /// keeps is one fact holding both, in place of the one she had, so
+    /// neither comes to mind without the other. A second such pair for the
+    /// same fact stays apart.
+    #[test]
+    fn two_that_do_not_agree_become_one_holding_both() {
+        let mut updates = vec![new_fact("是独生子", "兄弟姐妹")];
+        let together = "说过有个姐姐，又说自己是独生子，不清楚哪个对";
+        let pairs = vec![
+            (0, "有一个姐姐".to_string()),
+            (0, "有个弟弟在读高中".to_string()),
+        ];
+        settle_already(
+            &mut updates,
+            &pairs,
+            &[
+                Already::Unclear(together.into()),
+                Already::Unclear("说过有个弟弟，又说自己是独生子".into()),
+            ],
+        );
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].fact.as_deref(), Some(together));
+        assert_eq!(updates[0].supersedes, vec!["有一个姐姐".to_string()]);
+        assert_eq!(
+            updates[0].evidence.as_deref(),
+            Some("是独生子"),
+            "still what they said"
+        );
     }
 
     #[test]

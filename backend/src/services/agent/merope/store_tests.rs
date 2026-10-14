@@ -22,6 +22,11 @@ fn what_they_said_is_plain_and_the_rest_says_how_she_knows() {
         super::as_known(&note("chat", "user")),
         format!("[{today}] 养了一只猫叫年糕")
     );
+    // A short note of what they said lately is just as much theirs.
+    assert_eq!(
+        super::as_known(&note("chat_note", "user")),
+        format!("[{today}] 养了一只猫叫年糕")
+    );
     assert!(super::as_known(&note("said", "agent")).ends_with("(what you told them)"));
     assert!(super::as_known(&note("event", "agent")).ends_with("not from them)"));
     assert!(super::as_known(&note("work", "agent")).contains("doing a task for them"));

@@ -338,7 +338,11 @@ pub(crate) fn as_known(note: &crate::services::agent::memory::unified::MemoryRec
     };
     let evidence = note.evidence.as_deref().unwrap_or("");
     let how = match (note.source.as_str(), note.speaker.as_str()) {
-        ("chat", "user") => return format!("[{when}] {content}"),
+        // Kept for good or a short note of what they said lately: both are
+        // what they told her.
+        ("chat" | crate::services::agent::memory::unified::SHORT_NOTE_SOURCE, "user") => {
+            return format!("[{when}] {content}");
+        }
         // A sore she let go stays among what she knows of them.
         ("chat", "agent") if evidence.contains("\"letGo\"") => "it happened between you",
         // Noted in a group before they were someone she knew by name.

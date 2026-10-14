@@ -88,18 +88,13 @@ pub(in crate::services::agent::merope) async fn settle(
         .iter()
         .map(|row| compact_summary(&row.content))
         .collect();
-    let input = json!({
-        "conversation": conversation
-            .iter()
-            .map(|(theirs, text)| json!({
-                "who": if *theirs { "them" } else { "you" },
-                "text": text.chars().take(600).collect::<String>(),
-            }))
-            .collect::<Vec<_>>(),
-        "lately": lately,
-        "today": super::super::clock::local_now().format("%Y-%m-%d (%A)").to_string(),
-    })
-    .to_string();
+    let input = input(
+        &conversation,
+        &lately,
+        &super::super::clock::local_now()
+            .format("%Y-%m-%d (%A)")
+            .to_string(),
+    );
     let raw =
         super::super::call::Ask::new(super::super::call::Voice::Judge, user_id, "chat_settle")
             .within(EXTRACT_TIMEOUT)
@@ -138,4 +133,21 @@ pub(in crate::services::agent::merope) async fn settle(
     settled.sort();
     settled.dedup();
     Ok(Effect::Settle { updates, settled })
+}
+
+/// What going over a stretch is given: the stretch as it was said (`true`
+/// on their lines), the short notes taken from it, and today.
+pub(super) fn input(conversation: &[(bool, String)], lately: &[String], today: &str) -> String {
+    json!({
+        "conversation": conversation
+            .iter()
+            .map(|(theirs, text)| json!({
+                "who": if *theirs { "them" } else { "you" },
+                "text": text.chars().take(600).collect::<String>(),
+            }))
+            .collect::<Vec<_>>(),
+        "lately": lately,
+        "today": today,
+    })
+    .to_string()
 }
