@@ -108,13 +108,17 @@ test('uniform pale and dark real collars retain geometric front/rear partitionin
     )
     assert.equal(output[2], neck)
     assert.deepEqual(topwear.data, before, 'original artwork is immutable')
-    // Every garment pixel is allocated, rather than erased or duplicated.
+    // Every garment pixel is allocated, never erased; only the collar beside
+    // the neck is also kept in the top, under the front collar.
+    const [rest, , , front] = output
     for (let y = 0; y < 100; y++) {
       for (let x = 0; x < 80; x++) {
         const alpha = output
           .filter((l) => l !== neck)
           .reduce((sum, l) => sum + alphaAt(l, x, y), 0)
-        assert.ok(Math.abs(alpha - 255) <= 1)
+        const beside = alphaAt(neck, x, y) === 0 && alphaAt(front, x, y) > 0
+        if (beside) assert.equal(alphaAt(rest, x, y), alphaAt(front, x, y))
+        else assert.ok(Math.abs(alpha - 255) <= 1)
       }
     }
   }
@@ -203,9 +207,10 @@ test('the high collar beside the neck joins the front collar, so a neck sliding 
     if (lx < 0 || ly < 0 || lx >= layer.width || ly >= layer.height) return 0
     return layer.data[(ly * layer.width + lx) * 4 + 3]
   }
-  // Half the neck's width (20 px) out on either side, within the collar's height.
+  // Half the neck's width (20 px) out on either side, within the collar's height;
+  // the top keeps it under the front collar.
   assert.equal(alpha(front, 12, 40), 255)
-  assert.equal(alpha(rest, 12, 40), 0)
+  assert.equal(alpha(rest, 12, 40), 255)
   assert.equal(alpha(front, 68, 40), 255)
   // Below the collar the garment stays where it was.
   assert.equal(alpha(front, 12, 85), 0)

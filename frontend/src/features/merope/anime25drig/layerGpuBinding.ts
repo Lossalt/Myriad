@@ -271,7 +271,7 @@ export function compileAnime25DGpuLayers(
         layer.role === 'collar-front' || ((layer.role === 'topwear' || layer.role === 'collar-back') && index < neckAt))
       const garments = collarLayers.flatMap((layer) => {
         const image = readBindingPixels(layer)
-        return image ? [{ source: layer, layer, image, inFront: layer.role === 'collar-front' }] : []
+        return image ? [{ source: layer, layer, image, inFront: layer.role === 'collar-front', backing: layer.role === 'collar-back' }] : []
       })
       for (const [index, plain] of plainHiddenCollars(garments, neckLayer, neckImage, collarClip?.rest)) {
         const garment = garments[index].source

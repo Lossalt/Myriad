@@ -9,10 +9,19 @@ export interface CollarGarment {
   image: CroppedLayerPixels
   /** In front of the neck (the front collar): its cloth is read, but what of it lies over the neck shows. */
   inFront?: boolean
+  /**
+   * The back of a collar split from the top: all of what is hidden becomes
+   * cloth, drawn or not. The split shares the top's pixels out between it,
+   * the front collar and the top, so on its own it is full of holes, which
+   * show through once the front collar and the neck move off them.
+   */
+  backing?: boolean
 }
 
 /** Covered: the neck hides it. */
 const COVERED = 128
+/** The front collar hides what is behind it at rest. */
+const OPAQUE_FRONT = 230
 /** Drawn: a garment pixel the neck hides, not empty. */
 const DRAWN = 64
 /** The cloth is read in a ring this share of the neck's width around what the neck hides. */
@@ -33,11 +42,13 @@ const FEATHER = 1.5
  * behind it (the top and the back of a collar split from it) take the cloth
  * the garment shows right around the neck instead, the front collar's too, as
  * one smooth colour field, blended into what was there at the edge; small
- * holes close. Nothing that shows at rest changes.
+ * holes close. The same goes for what the front collar hides over the neck,
+ * which a front collar carried along with the neck uncovers. Nothing that
+ * shows at rest changes.
  * Returns the garments' new pixels by index; empty when the neck hides none
  * of them or too little cloth shows near. Through a collar the neck is drawn
- * only within its clip (rows of left and right edges at rest), so only what
- * lies there is hidden.
+ * only within its clip (rows of left and right edges at rest): outside it,
+ * only what the front collar covers over the neck is hidden.
  */
 export function plainHiddenCollars(
   garments: readonly CollarGarment[],
@@ -47,17 +58,30 @@ export function plainHiddenCollars(
 ): Map<number, CroppedLayerPixels> {
   const out = new Map<number, CroppedLayerPixels>()
   if (neckImage.pixels.length !== neckImage.width * neckImage.height * 4) return out
-  const neckAlpha = (canvasX: number, canvasY: number) => {
-    if (clip && !insideClip(clip, canvasX, canvasY)) return 0
-    const nx = Math.floor(((canvasX - neck.x) / neck.w) * neckImage.width)
-    const ny = Math.floor(((canvasY - neck.y) / neck.h) * neckImage.height)
-    if (nx < 0 || ny < 0 || nx >= neckImage.width || ny >= neckImage.height) return 0
-    return neckImage.pixels[(ny * neckImage.width + nx) * 4 + 3]
+  const alphaOf = (box: Box, image: CroppedLayerPixels, canvasX: number, canvasY: number) => {
+    const ix = Math.floor(((canvasX - box.x) / box.w) * image.width)
+    const iy = Math.floor(((canvasY - box.y) / box.h) * image.height)
+    if (ix < 0 || iy < 0 || ix >= image.width || iy >= image.height) return 0
+    return image.pixels[(iy * image.width + ix) * 4 + 3]
   }
+  const fronts = garments.filter((garment) => garment.inFront && garment.image.pixels.length === garment.image.width * garment.image.height * 4)
+  // Hidden: where the neck is drawn over it, or the front collar over the neck. A
+  // turning head carries both off it.
+  const frontAlpha = (canvasX: number, canvasY: number) =>
+    Math.max(0, ...fronts.map((front) => alphaOf(front.layer, front.image, canvasX, canvasY)))
+  const neckAlpha = (canvasX: number, canvasY: number) => {
+    const own = alphaOf(neck, neckImage, canvasX, canvasY)
+    if (!clip || insideClip(clip, canvasX, canvasY)) return own
+    if (own < COVERED) return 0
+    return frontAlpha(canvasX, canvasY)
+  }
+  // A backing is hidden wherever the front collar covers it all but completely.
+  const backingCovered = (canvasX: number, canvasY: number) =>
+    neckAlpha(canvasX, canvasY) >= COVERED || frontAlpha(canvasX, canvasY) >= OPAQUE_FRONT
   const hiddenOf: Array<Uint8Array | null> = []
   // The cloth right around the neck, from every garment that shows there: x, y (as shares of the neck's box), rgb.
   const samples: number[][] = []
-  for (const { layer, image, inFront } of garments) {
+  for (const { layer, image, inFront, backing } of garments) {
     const { width, height, pixels } = image
     if (width < 4 || height < 4 || pixels.length !== width * height * 4) {
       hiddenOf.push(null)
@@ -68,11 +92,13 @@ export function plainHiddenCollars(
     const covered = new Uint8Array(width * height)
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        if (neckAlpha(layer.x + (x + 0.5) * pixelX, layer.y + (y + 0.5) * pixelY) >= COVERED) covered[y * width + x] = 1
+        const canvasX = layer.x + (x + 0.5) * pixelX
+        const canvasY = layer.y + (y + 0.5) * pixelY
+        if (backing ? backingCovered(canvasX, canvasY) : neckAlpha(canvasX, canvasY) >= COVERED) covered[y * width + x] = 1
       }
     }
     const drawn = new Uint8Array(width * height)
-    for (let p = 0; p < width * height; p++) drawn[p] = covered[p] && pixels[p * 4 + 3] > DRAWN ? 1 : 0
+    for (let p = 0; p < width * height; p++) drawn[p] = covered[p] && (backing || pixels[p * 4 + 3] > DRAWN) ? 1 : 0
     const hole = Math.max(1, Math.round((HOLE * neck.w) / pixelX))
     const closed = erode(dilate(drawn, width, height, hole), width, height, hole)
     const hidden = new Uint8Array(width * height)
