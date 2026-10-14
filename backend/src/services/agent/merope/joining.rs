@@ -21,8 +21,12 @@ const PER_KIND: usize = 3;
 /// brings up, what she heard about it elsewhere, and what of hers she would
 /// want to tell someone.
 pub async fn material(db: &DatabaseConnection, talk: &str) -> Vec<Material> {
+    // A recording without a database of its own has nothing of hers to
+    // read.
     #[cfg(test)]
-    if crate::services::channel_group::g0::on() {
+    if crate::services::channel_group::g0::on()
+        && crate::services::channel_group::g0::database().is_none()
+    {
         return Vec::new();
     }
     let mut material: Vec<Material> = super::views::touched(db, talk, PER_KIND)

@@ -599,3 +599,100 @@ async fn g0_what_the_group_told_her_comes_back_by_meaning() {
     g0::check("what_the_group_told_her_comes_back_by_meaning", &world.log);
     schema.drop_schema();
 }
+
+/// Keep `content` as hers (`source`), with `evidence`, `hours` before the
+/// scene's start.
+async fn kept_as_hers(
+    db: &sea_orm::DatabaseConnection,
+    source: &'static str,
+    content: &str,
+    evidence: &str,
+    hours: i64,
+    base: chrono::DateTime<chrono::Utc>,
+) {
+    use sea_orm::ConnectionTrait;
+    let id = crate::services::agent::memory::unified::remember_own(
+        db,
+        content,
+        evidence,
+        Vec::new(),
+        source,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let at = (base - chrono::Duration::hours(hours)).fixed_offset();
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE agent_memories SET created_at = $1, updated_at = $1, valid_from = $1 WHERE id = $2",
+        [at.into(), id.into()],
+    ))
+    .await
+    .unwrap();
+}
+
+/// Nobody calls her: what she has that the talk touches (a view of hers,
+/// something she heard, a word she knows, a song she played and would tell
+/// someone about) is what her judgment of speaking up draws on.
+#[tokio::test(start_paused = true)]
+async fn g0_she_speaks_up_from_what_she_has() {
+    let chat = -77_103;
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "she_speaks_up_from_what_she_has") else {
+        return;
+    };
+    let base = world.base;
+    world.members.insert("11".into(), 101);
+    let db = &schema.db;
+    kept_as_hers(
+        db,
+        "view",
+        "很辣但是很香，值得排队",
+        r#"{"about":"那家火锅"}"#,
+        30,
+        base,
+    )
+    .await;
+    kept_as_hers(
+        db,
+        "view",
+        "周杰伦的晴天越听越好",
+        r#"{"about":"晴天","was":"一般般"}"#,
+        60,
+        base,
+    )
+    .await;
+    kept_as_hers(db, "heard", "听说那家火锅周末要排队两小时", "{}", 20, base).await;
+    kept_as_hers(
+        db,
+        "meme",
+        &myriad_merope::memes::kept_line("yyds", "形容东西特别好"),
+        "{}",
+        40,
+        base,
+    )
+    .await;
+    let song = r#"{"key":"song:netease:1","thing":{"kind":"song","id":"1","source":"netease","name":"晴天","artist":"周杰伦","album":"","cover":"","durationMs":1},"heard":"Length 4:29.","reaction":"liked","tell":true}"#;
+    kept_as_hers(db, "doing", "副歌一出来就想跟着唱", song, 2, base).await;
+    answer(
+        &mut world,
+        "group_chime",
+        r#"{"speak":"share","about":"她也爱听晴天","basis":1}"#,
+    );
+    answer(
+        &mut world,
+        "group_making_sense",
+        r#"{"goingOn":"在聊火锅和歌","theyMean":"推荐晴天","aboutYou":null}"#,
+    );
+    world
+        .turns
+        .push_back((2.0, "晴天我最近也在循环".into(), None));
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧 yyds", false)).await;
+    wait(1.0).await;
+    hear(line(chat, 2, 11, "阿明", "吃完去唱晴天", false)).await;
+    wait(900.0).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("she_speaks_up_from_what_she_has", &world.log);
+    schema.drop_schema();
+}

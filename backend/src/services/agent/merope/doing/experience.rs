@@ -108,7 +108,7 @@ pub async fn recalled(
     let Ok(rows) = unified::own_experiences(db, 120).await else {
         return Vec::new();
     };
-    let now = Utc::now();
+    let now = crate::services::agent::memory::utc_now();
     let mut picked: Vec<usize> = rows
         .iter()
         .enumerate()
@@ -226,7 +226,7 @@ pub(super) fn ago(now: DateTime<Utc>, at: DateTime<Utc>) -> String {
 pub async fn would_tell(db: &DatabaseConnection, since: Option<DateTime<Utc>>) -> Vec<String> {
     const WITHIN: chrono::Duration = chrono::Duration::hours(24);
     const AT_MOST: usize = 3;
-    let now = Utc::now();
+    let now = crate::services::agent::memory::utc_now();
     unified::own_experiences(db, 60)
         .await
         .unwrap_or_default()
