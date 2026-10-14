@@ -18,6 +18,7 @@ mod errands;
 mod first;
 mod glance;
 mod heard;
+mod learn;
 mod sense;
 mod state;
 
@@ -27,6 +28,7 @@ pub(crate) use errands::*;
 pub(crate) use first::*;
 pub(crate) use glance::*;
 pub(crate) use heard::*;
+pub(crate) use learn::*;
 pub(crate) use sense::*;
 pub(crate) use state::*;
 
@@ -67,6 +69,8 @@ pub enum Kind {
     },
     /// Five minutes on, whether anyone took up her speaking up.
     SpokeUp { at: i64, line: String },
+    /// Looking up words she is not sure of, beside whatever else she does.
+    Learn,
     /// Saying something first.
     First {
         waiter: String,
@@ -102,6 +106,7 @@ pub enum Doing {
     ReactedRestoring {
         text: String,
     },
+    Learning(Box<Learning>),
     Timing,
 }
 

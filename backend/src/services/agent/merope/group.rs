@@ -25,11 +25,16 @@ pub mod heard {
 }
 
 pub mod jargon {
-    pub(crate) use crate::services::agent::merope::jargon::{heard, section_for};
+    pub(crate) use crate::services::agent::merope::jargon::{heard, nominate, section_for};
 }
 
 pub mod memes {
-    pub(crate) use crate::services::agent::merope::memes::{learn, section_for};
+    pub(crate) use crate::services::agent::merope::memes::{may_look_up, section_for};
+}
+
+pub mod senses {
+    pub(crate) use crate::services::agent::merope::curiosity::look_up;
+    pub(crate) use crate::services::agent::merope::senses::define;
 }
 
 pub mod others {

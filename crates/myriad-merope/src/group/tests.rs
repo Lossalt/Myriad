@@ -1039,12 +1039,16 @@ impl End {
             Effect::Turn { id, .. } => (id, "turn"),
             Effect::StrangerTurn { id, .. } => (id, "stranger"),
             Effect::React { id, .. } => (id, "react"),
+            Effect::MayLookUp { id, .. } => (id, "may"),
+            Effect::Define { id, .. } => (id, "define"),
+            Effect::Search { id, .. } => (id, "search"),
             Effect::Typing { id, .. } => (id, "typing"),
             Effect::Ask { id, operation, .. } => (
                 id,
                 match operation.as_str() {
                     "group_making_sense" => "ask:group_making_sense",
                     "group_chime" => "ask:group_chime",
+                    "meme" => "ask:meme",
                     _ => "ask",
                 },
             ),
@@ -1129,8 +1133,11 @@ fn default_answer(kind: &str) -> Answer {
             bound: true,
         },
         "react" => Answer::Reacted { ok: true },
+        "may" => Answer::MayLookUp { may: May::Tried },
+        "define" => Answer::Defined { entry: None },
+        "search" => Answer::Found { found: None },
         "typing" => Answer::Typed,
-        "ask" | "ask:group_making_sense" | "ask:group_chime" => Answer::Asked {
+        "ask" | "ask:group_making_sense" | "ask:group_chime" | "ask:meme" => Answer::Asked {
             raw: None,
             failure: Some("unavailable".into()),
         },
@@ -1303,7 +1310,8 @@ fn g1_she_speaks_up_unasked_and_reacts() {
         1.0,
         Answer::Asked {
             raw: Some(
-                r#"{"speak":"know","about":"那家店周五人多","basis":2,"unsure":["烧糊"]}"#.into(),
+                r#"{"speak":"know","about":"那家店周五人多","basis":2,"unsure":["烧糊","那家","查无"]}"#
+                    .into(),
             ),
             failure: None,
         },
@@ -1312,7 +1320,63 @@ fn g1_she_speaks_up_unasked_and_reacts() {
         "ask:group_chime",
         1.0,
         Answer::Asked {
-            raw: Some(r#"{"speak":"react","about":"😁","basis":null,"unsure":[]}"#.into()),
+            raw: Some(r#"{"speak":"react","about":"😁","basis":null,"unsure":["锅巴"]}"#.into()),
+            failure: None,
+        },
+    );
+    // The words she was not sure of: one she knows, one the dictionaries
+    // have, one only a search turns up and that does not say what it means
+    // there; and later one with nothing left of the day's allowance.
+    end.answer(
+        "own:meme",
+        0.5,
+        Answer::Rows {
+            rows: vec![MemoryRow {
+                id: "meme-1".into(),
+                content: "「那家」：大家常去的那家店".into(),
+                concepts: Vec::new(),
+                source: "meme".into(),
+                evidence: None,
+                created_at: BASE - secs(3_600.0),
+                access_count: 0,
+                last_accessed_at: None,
+            }],
+        },
+    );
+    end.answer("may", 0.5, Answer::MayLookUp { may: May::Yes });
+    end.answer("may", 0.5, Answer::MayLookUp { may: May::Yes });
+    end.answer("may", 0.5, Answer::MayLookUp { may: May::NoneLeft });
+    end.answer(
+        "define",
+        0.5,
+        Answer::Defined {
+            entry: Some(Entry {
+                title: "烧糊".into(),
+                text: "东西烧焦了".into(),
+                url: "https://dictionary.example/烧糊".into(),
+            }),
+        },
+    );
+    end.answer(
+        "search",
+        0.5,
+        Answer::Found {
+            found: Some(("查无：一个地名".into(), "https://search.example/1".into())),
+        },
+    );
+    end.answer(
+        "ask:meme",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"meaning":"东西烧焦了"}"#.into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:meme",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"meaning":null}"#.into()),
             failure: None,
         },
     );

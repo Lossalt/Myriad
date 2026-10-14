@@ -101,6 +101,12 @@ pub(crate) fn advance(cx: &mut Cx, mut errand: Errand, answer: Option<Answer>) {
             record_hers(cx.group, &text, now, cx.out);
             chain_end(cx, errand);
         }
+        Doing::Learning(mut learning) => {
+            if let Some(awaiting) = learn_step(cx, &mut learning, answer) {
+                errand.doing = Doing::Learning(learning);
+                park_errand(cx, errand, awaiting);
+            }
+        }
         Doing::Timing => {
             if let Kind::SpokeUp { at, line } = errand.kind {
                 let taken = cx
@@ -220,7 +226,7 @@ pub(crate) fn answered_then(cx: &mut Cx, mut errand: Errand, replied: bool) {
                 }
             }
         }
-        Kind::SpokeUp { .. } => return,
+        Kind::SpokeUp { .. } | Kind::Learn => return,
     }
     finish(cx, errand, replied);
 }
@@ -299,6 +305,6 @@ pub(crate) fn chain_end(cx: &mut Cx, mut errand: Errand) {
             let (waiter, spoke) = (Some(waiter.clone()), spoke.unwrap_or(false));
             cx.settle(&waiter, spoke);
         }
-        Kind::SpokeUp { .. } => {}
+        Kind::SpokeUp { .. } | Kind::Learn => {}
     }
 }

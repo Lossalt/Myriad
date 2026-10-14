@@ -386,7 +386,7 @@ async fn closeness_within<C: ConnectionTrait>(
         .collect();
     // The memories still without a vector go behind the reply; a bench
     // filling its store embeds them beside the question.
-    let missing = match how {
+    let missing: Vec<agent_memories::Model> = match how {
         Fill::Behind => {
             fill_behind(missing);
             Vec::new()

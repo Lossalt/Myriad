@@ -83,7 +83,7 @@ pub async fn forget_watched<C: sea_orm::ConnectionTrait>(db: &C) -> Result<u64, 
 /// Watch `term` in the group `venue` (as sessions keep it): she was unsure
 /// of it and could not look it up. `used` are lines of the talk using it;
 /// hers (`you：…`) do not count.
-pub(super) async fn nominate(db: &DatabaseConnection, venue: &str, term: &str, used: &[String]) {
+pub(crate) async fn nominate(db: &DatabaseConnection, venue: &str, term: &str, used: &[String]) {
     let theirs: Vec<String> = used
         .iter()
         .filter(|line| !line.starts_with("you："))

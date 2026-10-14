@@ -145,13 +145,13 @@ pub(crate) fn sense_step(cx: &mut Cx, s: &mut Sensing, answer: Option<Answer>) -
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
                 .map(|value| crate::memes::unsure_terms(&value))
                 .unwrap_or_default();
-            if !terms.is_empty() {
-                cx.out.effects.push(Effect::Learn {
-                    owner: s.owner.unwrap_or_default(),
-                    terms,
-                    conversation: s.conversation.clone(),
-                });
-            }
+            learn(
+                cx,
+                s.owner.unwrap_or_default(),
+                s.venue.clone(),
+                terms,
+                &s.conversation,
+            );
             s.sense = rules::parse(&raw);
             if s.sense
                 .as_ref()

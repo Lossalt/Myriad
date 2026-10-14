@@ -182,6 +182,7 @@ pub(super) fn rank_primed(
     (chosen.into_iter().map(|(row, _)| row).collect(), next)
 }
 
+#[cfg(test)]
 pub(super) use myriad_agent_rules::memory::rank::named_by_words_or_meaning;
 
 /// [`rank_primed`], marking each row that came to mind by association with

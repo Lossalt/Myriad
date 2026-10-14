@@ -1,26 +1,22 @@
 //! Words and memes she learns from the talk around her (the rules are
 //! `myriad_merope::memes`): when a judgment of a group's talk names one she
-//! is not sure of, she looks it up in the slang and meme dictionaries (or
-//! searches), keeps what it means as her own, and from then on knows it
-//! wherever it comes up. Looking up is billed to the site's owner, who
-//! hosts her in the groups, within the day's allowance for it.
+//! is not sure of, her group mind (`myriad_merope::group`) looks it up in the
+//! slang and meme dictionaries (or searches) and keeps what it means as her
+//! own, and from then on she knows it wherever it comes up. Here: what she
+//! knows, read back, and whether she may look one up now (once a day, within
+//! the day's allowance for it).
 
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
 
 use chrono::NaiveDate;
 use sea_orm::DatabaseConnection;
-use serde_json::json;
 
-use super::call::{self, Voice};
 use crate::services::agent::memory::unified;
-use myriad_merope::memes::{
-    DIGEST_SCHEMA, Known, SOURCE, digest_input, digest_schema, digest_system, kept_line, known_in,
-    parse_digest, read_kept, search_query, section, used_in,
-};
+use myriad_merope::memes::{Known, SOURCE, known_in, read_kept, section};
 
-const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// What she knows, read back: the latest this many.
 const READ_BACK: u64 = 500;
 
@@ -69,70 +65,30 @@ pub async fn section_for(db: &DatabaseConnection, text: &str) -> Option<String> 
     section(&known_in(text, &known))
 }
 
-/// Look up the words a judgment of the talk (`conversation`, in the group
-/// `venue` as sessions keep it) said she is not sure of, in the background:
-/// each she does not know yet and has not tried today, within the day's
-/// allowance, held to how it was used there. One she could not look up, or
-/// whose meaning did not fit, she watches as maybe the group's own (see
-/// `jargon`).
-pub(crate) fn learn(owner: i32, venue: &str, terms: Vec<String>, conversation: &[String]) {
-    let terms: Vec<(String, Vec<String>)> = terms
-        .into_iter()
-        .map(|term| {
-            let used = used_in(&term, conversation);
-            (term, used)
-        })
-        .collect();
-    if terms.is_empty() {
-        return;
+/// Whether she may look `term` up now (her group mind asks, for a word a
+/// judgment of the talk said she is not sure of): not tried today, found or
+/// not, and within the day's allowance for words and memes.
+pub(crate) async fn may_look_up(db: &DatabaseConnection, term: &str) -> myriad_merope::group::May {
+    use myriad_merope::group::May;
+    let today = super::clock::local_now().date_naive();
+    if !first_try_today(term, today) {
+        return May::Tried;
     }
-    let venue = venue.to_string();
-    super::background::spawn("words and memes", async move {
-        let Ok(db) = crate::services::process_db::database() else {
-            return;
-        };
-        let held = known(&db).await;
-        let today = super::clock::local_now().date_naive();
-        for (term, used) in terms {
-            if held
-                .iter()
-                .any(|known| known.term.to_lowercase() == term.to_lowercase())
-                || !first_try_today(&term, today)
-            {
-                continue;
-            }
-            if !super::store::curiosity::claim(&db, super::store::curiosity::WORDS, &term, today)
-                .await
-                .unwrap_or(false)
-            {
-                tracing::info!("[Merope] no lookups left today for words and memes");
-                super::jargon::nominate(&db, &venue, &term, &used).await;
-                continue;
-            }
-            if !learn_one(&db, owner, &term, &used).await {
-                super::jargon::nominate(&db, &venue, &term, &used).await;
-            }
-        }
-    });
-}
-
-/// Whether she learned what it means.
-async fn learn_one(db: &DatabaseConnection, owner: i32, term: &str, used: &[String]) -> bool {
-    // The dictionaries people keep for slang and memes first; else a search
-    // for it as a word people use online.
-    let found = match super::senses::define(term).await {
-        Ok(entry) => Some((format!("{}\n{}", entry.title, entry.text), entry.url)),
-        Err(_) => super::curiosity::look_up(&search_query(term), false).await,
-    };
-    let Some((found, url)) = found else {
-        tracing::info!("[Merope] looked up a word and found nothing");
-        return false;
-    };
-    keep(db, owner, term, used, &found, &url).await.is_some()
+    if !super::store::curiosity::claim(db, super::store::curiosity::WORDS, term, today)
+        .await
+        .unwrap_or(false)
+    {
+        tracing::info!("[Merope] no lookups left today for words and memes");
+        return May::NoneLeft;
+    }
+    May::Yes
 }
 
 /// What was found about `term`, made into what it means and kept, if it
 /// says what it means as `used` shows it used; what it means, when kept.
+/// Her group mind does this itself (`myriad_merope::group`); this is the
+/// same, for the memory bench.
+#[cfg(test)]
 pub(super) async fn keep(
     db: &DatabaseConnection,
     owner: i32,
@@ -141,6 +97,11 @@ pub(super) async fn keep(
     found: &str,
     url: &str,
 ) -> Option<String> {
+    use super::call::{self, Voice};
+    use myriad_merope::memes::{
+        DIGEST_SCHEMA, digest_input, digest_schema, digest_system, kept_line, parse_digest,
+    };
+    use serde_json::json;
     let raw = call::Ask::new(Voice::Judge, owner, "meme")
         .within(CALL_TIMEOUT)
         .json_raw(

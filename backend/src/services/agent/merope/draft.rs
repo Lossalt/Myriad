@@ -25,6 +25,7 @@ pub async fn ask(
         "draft_still" => "draft_still",
         "group_making_sense" => "group_making_sense",
         "group_chime" => "group_chime",
+        "meme" => "meme",
         _ => "group_mind",
     };
     let voice = match voice {

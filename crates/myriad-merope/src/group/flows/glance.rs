@@ -282,13 +282,13 @@ pub(crate) fn judge_step(
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
                 .map(|value| crate::memes::unsure_terms(&value))
                 .unwrap_or_default();
-            if !terms.is_empty() {
-                cx.out.effects.push(Effect::Learn {
-                    owner: judging.owner.unwrap_or_default(),
-                    terms,
-                    conversation: judging.conversation.clone(),
-                });
-            }
+            learn(
+                cx,
+                judging.owner.unwrap_or_default(),
+                judging.message.venue(),
+                terms,
+                &judging.conversation,
+            );
             let material = material(&judging.had);
             let decision = crate::joining::parse(&raw, material.len())
                 .flatten()

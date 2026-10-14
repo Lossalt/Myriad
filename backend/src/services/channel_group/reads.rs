@@ -2,7 +2,7 @@
 //! memories (which rows, newest first, how many), their cues and vectors;
 //! what comes to mind of them is worked out in the core.
 
-use myriad_merope::group::{Answer, MemoryRow, Newest, ToRead, ToWrite};
+use myriad_merope::group::{Answer, May, MemoryRow, Newest, ToRead, ToWrite};
 
 use super::*;
 use crate::services::agent::memory::unified;
@@ -22,7 +22,7 @@ fn row(model: crate::models::entities::agent_memories::Model) -> MemoryRow {
 
 /// A recording without a database of its own reads nothing kept and keeps
 /// nothing (what it would have kept is written down instead).
-fn no_database() -> bool {
+pub(super) fn no_database() -> bool {
     #[cfg(test)]
     if g0::on() && g0::database().is_none() {
         return true;
@@ -152,6 +152,18 @@ fn source(source: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether she may look a word up now: without a database to keep the
+/// day's allowance in, she leaves it.
+pub(super) async fn may_look_up(term: &str) -> May {
+    if no_database() {
+        return May::Tried;
+    }
+    match db() {
+        Ok(db) => crate::services::agent::merope::group::memes::may_look_up(&db, term).await,
+        Err(_) => May::Tried,
+    }
+}
+
 pub(super) async fn write(what: ToWrite) {
     #[cfg(test)]
     if no_database() {
@@ -160,7 +172,10 @@ pub(super) async fn write(what: ToWrite) {
             content,
             evidence,
             ..
-        } = what;
+        } = what
+        else {
+            return;
+        };
         let line = serde_json::from_str::<serde_json::Value>(&evidence)
             .ok()
             .and_then(|evidence| evidence["line"].as_str().map(str::to_string))
@@ -188,6 +203,28 @@ pub(super) async fn write(what: ToWrite) {
                 Ok(None) => {}
                 Err(error) => warn!(%error, "[Merope] could not keep what she was told"),
             }
+        }
+        ToWrite::RememberOwn {
+            content,
+            evidence,
+            concepts,
+            source: kept_as,
+        } => {
+            let (Ok(db), Some(kept_as)) = (db(), own_source(&kept_as)) else {
+                return;
+            };
+            match unified::remember_own(&db, &content, &evidence, concepts, kept_as).await {
+                Ok(Some(_)) => info!("[Merope] learned a word or meme"),
+                Ok(None) => {}
+                Err(error) => warn!(%error, "[Merope] could not keep a word she learned"),
+            }
+        }
+        ToWrite::Watch { venue, term, used } => {
+            let Ok(db) = db() else {
+                return;
+            };
+            crate::services::agent::merope::group::jargon::nominate(&db, &venue, &term, &used)
+                .await;
         }
     }
 }

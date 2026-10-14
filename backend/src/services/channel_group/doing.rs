@@ -223,17 +223,31 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             });
         }
         Effect::Write { what, .. } => write(what).await,
-        Effect::Learn {
-            owner,
-            terms,
-            conversation,
-        } => {
-            crate::services::agent::merope::group::memes::learn(
-                owner,
-                &venue,
-                terms,
-                &conversation,
-            );
+        Effect::MayLookUp { id, term } => {
+            tokio::spawn(async move {
+                let may = may_look_up(&term).await;
+                answered(venue, id, Answer::MayLookUp { may }).await;
+            });
+        }
+        Effect::Define { id, term } => {
+            tokio::spawn(async move {
+                let entry = crate::services::agent::merope::group::senses::define(&term)
+                    .await
+                    .ok()
+                    .map(|taken| core::Entry {
+                        title: taken.title,
+                        text: taken.text,
+                        url: taken.url,
+                    });
+                answered(venue, id, Answer::Defined { entry }).await;
+            });
+        }
+        Effect::Search { id, query } => {
+            tokio::spawn(async move {
+                let found =
+                    crate::services::agent::merope::group::senses::look_up(&query, false).await;
+                answered(venue, id, Answer::Found { found }).await;
+            });
         }
         Effect::ReadKept { id } => {
             tokio::spawn(async move {

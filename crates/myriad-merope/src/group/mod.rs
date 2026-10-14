@@ -16,8 +16,9 @@
 //! restart; what she makes of the talk, and whether she speaks up, from what
 //! she has that the talk touches (her views, what she heard, the words she
 //! knows, read as rows; what she did, would tell and is doing, as facts her
-//! host's life gives). What she says is still asked of the end as whole
-//! steps (`turn`, `stranger`); it moves here later.
+//! host's life gives); looking up the words she is not sure of. What she
+//! says is still asked of the end as whole steps (`turn`, `stranger`); it
+//! moves here later.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -558,6 +559,19 @@ pub enum Answer {
         #[serde(default)]
         now: Option<String>,
     },
+    MayLookUp {
+        may: May,
+    },
+    /// The dictionaries' entry, if they have one.
+    Defined {
+        #[serde(default)]
+        entry: Option<Entry>,
+    },
+    /// What the search turned up, and where: none when nothing.
+    Found {
+        #[serde(default)]
+        found: Option<(String, String)>,
+    },
     Reacted {
         ok: bool,
     },
@@ -719,13 +733,14 @@ pub enum Effect {
     Embed { id: String, text: String },
     /// Keep something: hers or others'.
     Write { of: Of, what: ToWrite },
-    /// Words or memes in the talk she is not sure of: hers to look up,
-    /// billed to `owner`.
-    Learn {
-        owner: i32,
-        terms: Vec<String>,
-        conversation: Vec<String>,
-    },
+    /// Whether she may look `term` up now: not tried today, and within the
+    /// day's allowance for words and memes (hers: on a host with no
+    /// allowance, only whether she tried it today).
+    MayLookUp { id: String, term: String },
+    /// What the slang and meme dictionaries have for `term`.
+    Define { id: String, term: String },
+    /// A search for `query` and what its first result says.
+    Search { id: String, query: String },
     /// What the group's ledger has kept of its pieces.
     ReadLedger { id: String },
     /// What was kept of the group before a restart, read again: her own
@@ -865,6 +880,40 @@ pub enum ToWrite {
         evidence: String,
         source: String,
     },
+    /// Something of hers, about no account (a word she learned).
+    RememberOwn {
+        content: String,
+        evidence: String,
+        concepts: Vec<myriad_agent_rules::Concept>,
+        source: String,
+    },
+    /// A word in the group `venue` she could not learn: watched as maybe
+    /// the group's own, with the lines of the talk that used it.
+    Watch {
+        venue: String,
+        term: String,
+        used: Vec<String>,
+    },
+}
+
+/// Whether she may look a word up now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum May {
+    Yes,
+    /// Tried already today, found or not: left.
+    Tried,
+    /// Nothing left of the day's allowance: watched instead.
+    NoneLeft,
+}
+
+/// A dictionary entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Entry {
+    pub title: String,
+    pub text: String,
+    pub url: String,
 }
 
 /// A memory as it is read.
