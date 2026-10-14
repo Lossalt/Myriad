@@ -759,11 +759,8 @@
     "referenceGone": "Le buste de référence a disparu ou n’a pas de portrait ; elle sera dessinée d’après le design.",
     "referenceNoneNote": "Sans buste de référence ; dessinée d’après le design."
   },
-  "uprightReadFailed": "Le portrait n’a pas pu être vérifié.",
   "uprightFailed": "Le portrait n’a pas pu être redessiné.",
   "upright": {
-    "reading": "Vérification : ce portrait convient-il à une figure animée…",
-    "readFailed": "Le portrait n’a pas pu être vérifié.",
     "title": "Ce portrait ne convient pas tout à fait à une figure animée",
     "reason": {
       "turned": "Le visage ou le corps est tourné de côté",
@@ -776,7 +773,6 @@
     "drawingShort": "Redessin en cours…",
     "drawing": "Redessin en cours, une à deux minutes environ…",
     "keep": "Garder l’original",
-    "dismiss": "Fermer",
     "original": "Original",
     "redrawn": "Redessiné",
     "sameCharacter": "Même personnage",

@@ -1,14 +1,9 @@
 import { currentCopy } from '../../i18n/localeCopy'
 import { apiService } from '../../services/api'
-import { MeropeApiError, meropeError, PREFIX, RIG_MUTATION_TIMEOUT_MS } from './api'
+import { MeropeApiError, meropeError, PREFIX } from './api'
 
 /** A redraw takes as long as a portrait drawn from scratch. */
 const UPRIGHT_TIMEOUT_MS = 15 * 60 * 1000
-
-/** What a redraw square to the camera would put right in an uploaded picture. */
-export type UprightReason = 'turned' | 'backdrop' | 'held' | 'arms'
-
-const UPRIGHT_REASONS: readonly UprightReason[] = ['turned', 'backdrop', 'held', 'arms']
 
 /** What a redraw kept of the picture it was redrawn from. */
 export interface UprightCheck {
@@ -16,27 +11,6 @@ export interface UprightCheck {
   sameStyle: boolean
   upright: boolean
   differences: string[]
-}
-
-/**
- * How a set's picture is framed: what of it the rig cannot take. No outfit
- * is the worn bust (the master portrait).
- */
-export async function readPortraitFraming(outfitId?: string): Promise<UprightReason[]> {
-  try {
-    const data = await apiService.post<{ reasons?: unknown }>(
-      `${PREFIX}/portrait/framing`,
-      { outfitId },
-      { timeout: RIG_MUTATION_TIMEOUT_MS },
-    )
-    return Array.isArray(data.reasons)
-      ? data.reasons.filter((reason): reason is UprightReason =>
-          UPRIGHT_REASONS.includes(reason as UprightReason),
-        )
-      : []
-  } catch (reason) {
-    throw meropeError(reason, currentCopy().merope.uprightReadFailed)
-  }
 }
 
 /**

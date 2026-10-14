@@ -314,6 +314,7 @@ export function OutfitDetail({
               key={picture}
               slot={uprightSlot}
               outfitId={wearing ? undefined : outfit.id}
+              reasons={uprightAsked}
               originalUrl={siteMediaUrl(picture)}
               upload={onTakeUpright}
             />

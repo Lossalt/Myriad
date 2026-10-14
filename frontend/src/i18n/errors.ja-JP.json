@@ -740,6 +740,8 @@
     "preset_history_too_long": "会話履歴が長すぎて保存できません。",
     "channel_not_ready": "相手がまだ承認していないため、今は送れません。",
     "invite_invalid_status": "この招待はもう受け取れません。",
-    "visitor_stats_unavailable": "読み込みに失敗しました"
+    "visitor_stats_unavailable": "読み込みに失敗しました",
+    "portrait_not_illustration": "この画像はカラーイラストではないようです（写真、3D レンダリング、ドット絵、白黒漫画など）。動く姿にはできないので、カラーイラストを選んでください。",
+    "upright_in_progress": "別の立ち絵を描き直しています。しばらくしてからもう一度お試しください。"
   }
 }

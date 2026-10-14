@@ -759,11 +759,8 @@
     "referenceGone": "The reference bust is gone or has no portrait; it will be drawn from the design.",
     "referenceNoneNote": "No bust reference; drawn from the design."
   },
-  "uprightReadFailed": "The portrait could not be checked.",
   "uprightFailed": "The portrait could not be redrawn.",
   "upright": {
-    "reading": "Checking whether this portrait suits a moving figure…",
-    "readFailed": "The portrait could not be checked.",
     "title": "This portrait does not quite suit a moving figure",
     "reason": {
       "turned": "The face or body is turned to the side",
@@ -776,7 +773,6 @@
     "drawingShort": "Redrawing…",
     "drawing": "Redrawing, about one to two minutes…",
     "keep": "Keep the original",
-    "dismiss": "Close",
     "original": "Original",
     "redrawn": "Redrawn",
     "sameCharacter": "Same character",

@@ -759,11 +759,8 @@
     "referenceGone": "參考的半身已刪除或沒有立繪，會按設計畫。",
     "referenceNoneNote": "不參考半身，按設計畫。"
   },
-  "uprightReadFailed": "沒能檢查這張立繪。",
   "uprightFailed": "沒能重畫這張立繪。",
   "upright": {
-    "reading": "正在檢查這張立繪適不適合做成會動的形象…",
-    "readFailed": "沒能檢查這張立繪。",
     "title": "這張立繪不太適合直接做成會動的形象",
     "reason": {
       "turned": "臉或身體側著",
@@ -776,7 +773,6 @@
     "drawingShort": "正在重畫…",
     "drawing": "正在重畫，大約一到兩分鐘…",
     "keep": "就用原圖",
-    "dismiss": "關閉",
     "original": "原圖",
     "redrawn": "重畫",
     "sameCharacter": "是同一個人",

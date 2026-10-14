@@ -740,6 +740,8 @@
     "preset_history_too_long": "对话历史太长，请缩短后再收藏。",
     "channel_not_ready": "对方还没接受，暂时发不了消息。",
     "invite_invalid_status": "这个邀请已经不能接受了。",
-    "visitor_stats_unavailable": "加载失败"
+    "visitor_stats_unavailable": "加载失败",
+    "portrait_not_illustration": "这张图看起来不是彩色插画（像照片、3D 渲染、像素画或黑白漫画），做不成会动的形象。请换一张彩色插画。",
+    "upright_in_progress": "正在重画另一张立绘，请稍后再试。"
   }
 }

@@ -740,6 +740,8 @@
     "preset_history_too_long": "대화 기록이 너무 길어 저장할 수 없습니다.",
     "channel_not_ready": "이 대화는 아직 메시지를 보낼 준비가 되지 않았어요.",
     "invite_invalid_status": "이 초대는 더 이상 받을 수 없어요.",
-    "visitor_stats_unavailable": "불러오지 못했습니다"
+    "visitor_stats_unavailable": "불러오지 못했습니다",
+    "portrait_not_illustration": "이 이미지는 컬러 일러스트가 아닌 것 같습니다(사진, 3D 렌더링, 픽셀 아트, 흑백 만화 등). 움직이는 모습으로 만들 수 없으니 컬러 일러스트를 골라 주세요.",
+    "upright_in_progress": "다른 일러스트를 다시 그리는 중입니다. 잠시 후 다시 시도해 주세요."
   }
 }

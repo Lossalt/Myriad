@@ -15,6 +15,7 @@ use super::{
     internal_error, not_found,
     portrait::bind_worn_portrait,
     require_merope_enabled, require_owner,
+    upright::screen_upload,
 };
 use crate::{
     middleware::auth::Claims,
@@ -129,6 +130,7 @@ pub async fn upload_portrait(
     require_merope_enabled().await?;
     let user_id = require_owner(&claims, &db).await?;
     let reference = read_portrait_upload(multipart).await?;
+    let upright = screen_upload(&reference).await?;
     let stored = crate::services::image_cache::StoredImage {
         url: persist_uploaded_portrait(&db, user_id, reference).await?,
         created: true,
@@ -214,6 +216,7 @@ pub async fn upload_portrait(
     Ok(Json(json!({
         "portraitUrl": public_url,
         "portraitAssetId": public_url,
+        "uprightReasons": upright,
     })))
 }
 
@@ -229,6 +232,7 @@ pub async fn upload_outfit_portrait(
     require_merope_enabled().await?;
     let user_id = require_owner(&claims, &db).await?;
     let reference = read_portrait_upload(multipart).await?;
+    let upright = screen_upload(&reference).await?;
     let url = persist_uploaded_portrait(&db, user_id, reference).await?;
     let transaction = db.begin().await.map_err(internal_error)?;
     let written = async {
@@ -268,7 +272,7 @@ pub async fn upload_outfit_portrait(
     }
     .await;
     let public_url = finish(transaction, written).await?;
-    Ok(Json(json!({ "portraitUrl": public_url })))
+    Ok(Json(json!({ "portraitUrl": public_url, "uprightReasons": upright })))
 }
 
 #[cfg(test)]

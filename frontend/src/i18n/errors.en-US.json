@@ -740,6 +740,8 @@
     "preset_history_too_long": "The conversation history is too long to save.",
     "channel_not_ready": "This conversation is not ready to send messages yet.",
     "invite_invalid_status": "This invite can no longer be accepted.",
-    "visitor_stats_unavailable": "Failed to load"
+    "visitor_stats_unavailable": "Failed to load",
+    "portrait_not_illustration": "This picture does not look like a color illustration (it looks like a photo, a 3D render, pixel art or a black-and-white comic), so it cannot become a moving figure. Please choose a color illustration.",
+    "upright_in_progress": "Another portrait is being redrawn; try again in a moment."
   }
 }

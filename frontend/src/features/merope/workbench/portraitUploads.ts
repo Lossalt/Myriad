@@ -2,7 +2,7 @@ import type { WardrobeItem } from '../persona/wardrobe'
 import { uploadFullBodyPortrait, uploadOutfitPortrait, uploadSitePortrait } from '../api'
 import { notifyFaceUpdated } from '../events/updates'
 import { isFullBodyItem } from '../persona/wardrobe'
-import { MASTER_SLOT, requestUprightCheck } from './uprightRequests'
+import { requestUprightCheck } from './uprightRequests'
 import { reportMeropeError } from './workbenchShared'
 
 interface Workbench {
@@ -15,8 +15,8 @@ interface Workbench {
 }
 
 /**
- * The owner's own pictures put in place. Each upload is then read once for
- * whether to redraw it upright; a redraw taken goes where its upload went.
+ * The owner's own pictures put in place, each with what it was seen to need
+ * redrawn upright; a redraw taken goes where its upload went.
  */
 export function portraitUploads(workbench: Workbench) {
   /** A new master portrait for the worn outfit is in. */
@@ -35,10 +35,7 @@ export function portraitUploads(workbench: Workbench) {
 
   return {
     /** The owner uploaded a new master portrait for the worn outfit. */
-    adoptUploadedPortrait: async (url: string) => {
-      await adoptPortrait(url)
-      requestUprightCheck(MASTER_SLOT)
-    },
+    adoptUploadedPortrait: adoptPortrait,
     /** A bust set's picture redrawn upright, taken. */
     takeUprightBust: async (outfit: WardrobeItem, worn: boolean, file: File) => {
       if (worn) {
@@ -53,10 +50,11 @@ export function portraitUploads(workbench: Workbench) {
     createOutfitFromUpload: async (item: WardrobeItem, file: File) => {
       // Added without being worn: a bust keeps the master portrait it has.
       await workbench.addOutfit(item, { wear: false })
-      if (isFullBodyItem(item)) await uploadFullBodyPortrait(item.id, file)
-      else await uploadOutfitPortrait(item.id, file)
+      const { uprightReasons } = isFullBodyItem(item)
+        ? await uploadFullBodyPortrait(item.id, file)
+        : await uploadOutfitPortrait(item.id, file)
       await workbench.reload()
-      requestUprightCheck(item.id)
+      requestUprightCheck(item.id, uprightReasons)
       workbench.manage(item.id)
     },
   }

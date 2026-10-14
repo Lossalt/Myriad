@@ -1,6 +1,6 @@
-//! 上传的立绘扶正：看一眼它侧没侧、有没有背景、手里拿没拿东西；需要时照它
-//! 用它自己的画风重画一张正面的，连同「像不像」的检查交给站长定。重画的图不
-//! 落库，站长选用时由页面照上传那样传回原来的位置。
+//! 上传的立绘扶正：存下之前看一眼它是不是插画（不是就拒收）、侧没侧、有没有
+//! 背景、手里拿没拿东西；需要时照它用它自己的画风重画一张正面的，连同「像不像」
+//! 的检查交给站长定。重画的图不落库，站长选用时由页面照上传那样传回原来的位置。
 
 use axum::{Extension, Json, extract::State, http::StatusCode};
 use base64::Engine;
@@ -8,6 +8,7 @@ use myriad_merope::{CharacterAssetProfile, build_upright_portrait_prompt};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use super::{
@@ -26,6 +27,9 @@ use crate::{
 /// One redraw at a time: each is paid for.
 static UPRIGHT_SLOT: Semaphore = Semaphore::const_new(1);
 
+/// How long an upload waits to be looked at before it is let through unlooked.
+const SCREEN_TIMEOUT: Duration = Duration::from_secs(90);
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UprightRequest {
@@ -37,30 +41,37 @@ pub struct UprightRequest {
     language: Option<String>,
 }
 
-/// POST /api/merope/rig/portrait/framing
-pub async fn read_portrait_framing(
-    State(db): State<DatabaseConnection>,
-    Extension(claims): Extension<Claims>,
-    Json(request): Json<UprightRequest>,
-) -> ApiResult<Json<Value>> {
-    require_merope_enabled().await?;
-    require_owner(&claims, &db).await?;
-    let (url, profile) = slot_portrait(&db, request.outfit_id.as_deref()).await?;
-    let image = image_generation::load_local_reference(&url)
-        .await
-        .map_err(portrait_generation_provider_error)?;
-    let framing = onboarding_ai::read_portrait_framing(&image)
-        .await
-        .map_err(vision_error)?;
-    Ok(Json(json!({
-        "portraitUrl": url,
-        "profile": profile_name(profile),
-        "facing": framing.facing,
-        "backdrop": framing.backdrop,
-        "arms": framing.arms,
-        "holding": framing.holding,
-        "reasons": framing.reasons,
-    })))
+/// An upload looked at before it is stored. A picture that is not an
+/// illustration (a photo, a 3D render, pixel art, a black-and-white comic)
+/// cannot become her figure and is refused; for one that is, what a redraw
+/// square to the camera would put right. A look that fails or takes too long
+/// lets the upload through with nothing to suggest.
+pub(super) async fn screen_upload(
+    reference: &image_generation::ImageReference,
+) -> ApiResult<Vec<&'static str>> {
+    let look = tokio::time::timeout(
+        SCREEN_TIMEOUT,
+        onboarding_ai::read_portrait_framing(reference),
+    );
+    match look.await {
+        Ok(Ok(framing)) if framing.medium != "illustration" => Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "error": "This picture is not an illustration",
+                "code": "portrait_not_illustration",
+                "medium": framing.medium,
+            })),
+        )),
+        Ok(Ok(framing)) => Ok(framing.reasons),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "uploaded portrait was not looked at");
+            Ok(Vec::new())
+        }
+        Err(_) => {
+            tracing::warn!("uploaded portrait was not looked at in time");
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// POST /api/merope/rig/portrait/upright
@@ -167,22 +178,5 @@ fn profile_name(profile: CharacterAssetProfile) -> &'static str {
     match profile {
         CharacterAssetProfile::Bust => "bust",
         CharacterAssetProfile::FullBody => "fullBody",
-    }
-}
-
-fn vision_error(error: onboarding_ai::OnboardingAiError) -> super::ApiError {
-    tracing::error!(%error, "portrait framing read failed");
-    match error {
-        onboarding_ai::OnboardingAiError::AnalyzerUnavailable => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "Pro model is unavailable", "code": "pro_unavailable" })),
-        ),
-        other => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "error": other.public_detail().unwrap_or("The portrait could not be read"),
-                "code": "portrait_framing_failed"
-            })),
-        ),
     }
 }

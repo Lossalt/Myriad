@@ -759,11 +759,8 @@
     "referenceGone": "参考の半身が削除されたか立ち絵がないため、デザインから描きます。",
     "referenceNoneNote": "半身の参考なし。デザインから描きます。"
   },
-  "uprightReadFailed": "立ち絵を確認できませんでした。",
   "uprightFailed": "立ち絵を描き直せませんでした。",
   "upright": {
-    "reading": "この立ち絵が動く姿に向いているか確認しています…",
-    "readFailed": "立ち絵を確認できませんでした。",
     "title": "この立ち絵はそのままでは動く姿に向いていません",
     "reason": {
       "turned": "顔や体が横を向いている",
@@ -776,7 +773,6 @@
     "drawingShort": "描き直し中…",
     "drawing": "描き直しています。1〜2分ほどかかります…",
     "keep": "元の絵を使う",
-    "dismiss": "閉じる",
     "original": "元の絵",
     "redrawn": "描き直し",
     "sameCharacter": "同じキャラクター",

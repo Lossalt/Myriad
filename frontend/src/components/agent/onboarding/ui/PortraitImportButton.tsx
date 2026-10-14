@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { useI18n } from '../../../../contexts/I18nContext'
 import { uploadSitePortrait } from '../../../../features/merope/api'
 import { notifyFaceUpdated } from '../../../../features/merope/events/updates'
+import { MASTER_SLOT, requestUprightCheck } from '../../../../features/merope/workbench/uprightRequests'
 import { siteMediaUrl } from '../../../../utils/siteMediaUrl'
 import { userFacingError } from '../../../../utils/userFacingError'
 import { SettingsButton } from '../../../settings'
@@ -50,6 +51,8 @@ export default function PortraitImportButton({
       const uploaded = await uploadSitePortrait(file)
       notifyFaceUpdated()
       await onUploaded(uploaded.portraitUrl)
+      // What the upload was seen to need, offered once it is in place.
+      requestUprightCheck(MASTER_SLOT, uploaded.uprightReasons)
     } catch (reason) {
       onError?.(userFacingError(reason, o.importPortraitFailed))
     } finally {

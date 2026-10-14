@@ -1,9 +1,10 @@
-import type { UprightCheck, UprightReason } from '../uprightApi'
+import type { UprightReason } from '../api'
+import type { UprightCheck } from '../uprightApi'
 import { useEffect, useRef, useState } from 'react'
 import { SettingsButton } from '../../../components/settings'
 import { useI18n } from '../../../contexts/I18nContext'
 import { userFacingError } from '../../../utils/userFacingError'
-import { drawUprightPortrait, readPortraitFraming } from '../uprightApi'
+import { drawUprightPortrait } from '../uprightApi'
 import { settleUprightCheck } from './uprightRequests'
 import './uprightSuggestion.css'
 
@@ -12,6 +13,8 @@ interface Props {
   slot: string
   /** The wardrobe set, for the server; none for the worn bust. */
   outfitId?: string
+  /** What the upload was seen to need put right. */
+  reasons: readonly UprightReason[]
   /** The picture as uploaded, shown beside its redraw. */
   originalUrl: string | null
   /** Puts the taken redraw where the picture is, as an upload would. */
@@ -20,52 +23,29 @@ interface Props {
 }
 
 type Phase =
-  | { kind: 'reading' }
-  | { kind: 'failed'; message: string }
   | { kind: 'suggest' }
   | { kind: 'drawing' }
   | { kind: 'review'; image: Blob; url: string; check: UprightCheck | null }
   | { kind: 'adopting'; image: Blob; url: string; check: UprightCheck | null }
 
 /**
- * After an upload: whether the picture is square to the camera, arms down,
- * nothing held, on a plain backdrop, as the rig needs. When it is not, it
- * can be redrawn that way in its own style; the owner sees both pictures and
+ * After an upload that is not square to the camera, arms down, nothing held,
+ * on a plain backdrop, as the rig needs: it can be redrawn that way in its
+ * own style; the owner sees both pictures and
  * what changed, and takes the redraw or keeps the original.
  */
-export function UprightSuggestion({ slot, outfitId, originalUrl, upload, onBusyChange }: Props) {
+export function UprightSuggestion({ slot, outfitId, reasons, originalUrl, upload, onBusyChange }: Props) {
   const { t, locale } = useI18n()
   const labels = t.merope.upright
-  const [phase, setPhase] = useState<Phase>({ kind: 'reading' })
-  const [reasons, setReasons] = useState<UprightReason[]>([])
+  const [phase, setPhase] = useState<Phase>({ kind: 'suggest' })
   const [error, setError] = useState('')
   const objectUrl = useRef<string | null>(null)
 
-  const busy = phase.kind === 'reading' || phase.kind === 'drawing' || phase.kind === 'adopting'
+  const busy = phase.kind === 'drawing' || phase.kind === 'adopting'
   useEffect(() => {
     onBusyChange?.(busy)
   }, [busy, onBusyChange])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
-
-  useEffect(() => {
-    let live = true
-    void readPortraitFraming(outfitId)
-      .then((found) => {
-        if (!live) return
-        if (!found.length) {
-          settleUprightCheck(slot)
-          return
-        }
-        setReasons(found)
-        setPhase({ kind: 'suggest' })
-      })
-      .catch((reason) => {
-        if (live) setPhase({ kind: 'failed', message: userFacingError(reason, labels.readFailed) })
-      })
-    return () => {
-      live = false
-    }
-  }, [slot, outfitId, labels.readFailed])
 
   useEffect(
     () => () => {
@@ -102,22 +82,6 @@ export function UprightSuggestion({ slot, outfitId, originalUrl, upload, onBusyC
       setError(userFacingError(reason, labels.useFailed))
       setPhase({ ...phase, kind: 'review' })
     }
-  }
-
-  if (phase.kind === 'reading') {
-    return <p className="merope-upright__status">{labels.reading}</p>
-  }
-  if (phase.kind === 'failed') {
-    return (
-      <section className="merope-upright" aria-live="polite">
-        <p className="merope-upright__note">{phase.message}</p>
-        <div className="merope-upright__actions">
-          <SettingsButton type="button" size="sm" onClick={keep}>
-            {labels.dismiss}
-          </SettingsButton>
-        </div>
-      </section>
-    )
   }
 
   const shown = phase.kind === 'review' || phase.kind === 'adopting' ? phase : null

@@ -759,11 +759,8 @@
     "referenceGone": "Die Büsten-Vorlage fehlt oder hat kein Porträt; es wird nach dem Design gezeichnet.",
     "referenceNoneNote": "Keine Büsten-Vorlage; nach dem Design gezeichnet."
   },
-  "uprightReadFailed": "Das Porträt konnte nicht geprüft werden.",
   "uprightFailed": "Das Porträt konnte nicht neu gezeichnet werden.",
   "upright": {
-    "reading": "Es wird geprüft, ob sich dieses Porträt für eine bewegte Figur eignet…",
-    "readFailed": "Das Porträt konnte nicht geprüft werden.",
     "title": "Dieses Porträt eignet sich nicht ganz für eine bewegte Figur",
     "reason": {
       "turned": "Gesicht oder Körper sind seitlich gedreht",
@@ -776,7 +773,6 @@
     "drawingShort": "Wird neu gezeichnet…",
     "drawing": "Wird neu gezeichnet, etwa ein bis zwei Minuten…",
     "keep": "Original behalten",
-    "dismiss": "Schließen",
     "original": "Original",
     "redrawn": "Neu gezeichnet",
     "sameCharacter": "Dieselbe Figur",

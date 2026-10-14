@@ -10,6 +10,8 @@ use super::*;
 /// How an uploaded portrait is framed, and what of it the rig cannot take.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortraitFraming {
+    /// What kind of picture it is: only an `illustration` becomes a figure.
+    pub medium: &'static str,
     pub facing: &'static str,
     pub backdrop: &'static str,
     pub arms: &'static str,
@@ -28,6 +30,14 @@ pub struct UprightCheck {
     pub differences: Vec<String>,
 }
 
+const MEDIA: [&str; 6] = [
+    "illustration",
+    "photo",
+    "3d_render",
+    "pixel_art",
+    "monochrome_comic",
+    "other",
+];
 const FACINGS: [&str; 5] = [
     "front",
     "slightly_turned",
@@ -43,12 +53,14 @@ const MAX_DIFFERENCE_CHARS: usize = 60;
 const COMPARE_HEIGHT: u32 = 1024;
 const COMPARE_GAP: u32 = 24;
 
-const FRAMING_PROMPT: &str = r#"Look at this character illustration and report how it is framed. Answer with JSON only:
-{"facing": "front" | "slightly_turned" | "three_quarter" | "profile" | "back",
+const FRAMING_PROMPT: &str = r#"Look at this character picture and report what kind of picture it is and how it is framed. Answer with JSON only:
+{"medium": "illustration" | "photo" | "3d_render" | "pixel_art" | "monochrome_comic" | "other",
+ "facing": "front" | "slightly_turned" | "three_quarter" | "profile" | "back",
  "backdrop": "plain" | "gradient" | "pattern" | "scene",
  "arms": "down" | "raised" | "near_face" | "crossed" | "out_of_frame",
  "holding": true | false}
 
+medium — illustration: a finished drawing or painting in color, whatever its style (anime, cel shading, painterly, watercolor, semi-realistic painting). photo: a photograph, or anything photorealistic. 3d_render: a render of a 3D model or a game screenshot of one. pixel_art: drawn in visible pixels. monochrome_comic: a black-and-white or grayscale comic, sketch or line drawing without color. other: none of these.
 facing — where the face and upper body point. front: square to the viewer (a slight head tilt is still front). slightly_turned: turned a little, both eyes and both cheeks still clearly visible. three_quarter: one cheek clearly foreshortened, the far eye partly hidden or at the face's edge. profile: a side view. back: seen from behind.
 backdrop — what is behind the character. plain: one flat color, light or dark, or transparent. gradient: only a smooth change of color. pattern: repeated shapes, frames, text or decoration. scene: a place, furniture, objects, sky, light effects or anything else drawn behind the character.
 arms — down: hanging or resting at the sides, or cut off below the crop. raised: a hand above the shoulder. near_face: a hand at the face, hair or chin. crossed: arms folded, or hands held together in front of the chest. out_of_frame: no arm is visible.
@@ -74,7 +86,8 @@ pub(super) fn parse_portrait_framing(raw: &str) -> Result<PortraitFraming, Onboa
             .to_ascii_lowercase();
         options.iter().copied().find(|option| *option == value)
     };
-    let (Some(facing), Some(backdrop), Some(arms)) = (
+    let (Some(medium), Some(facing), Some(backdrop), Some(arms)) = (
+        pick("medium", &MEDIA),
         pick("facing", &FACINGS),
         pick("backdrop", &BACKDROPS),
         pick("arms", &ARMS),
@@ -103,6 +116,7 @@ pub(super) fn parse_portrait_framing(raw: &str) -> Result<PortraitFraming, Onboa
         reasons.push("arms");
     }
     Ok(PortraitFraming {
+        medium,
         facing,
         backdrop,
         arms,
@@ -224,15 +238,20 @@ mod tests {
     #[test]
     fn a_turned_or_busy_picture_names_what_a_redraw_puts_right() {
         let framing = parse_portrait_framing(
-            r#"{"facing":"three_quarter","backdrop":"scene","arms":"near_face","holding":true}"#,
+            r#"{"medium":"illustration","facing":"three_quarter","backdrop":"scene","arms":"near_face","holding":true}"#,
         )
         .unwrap();
         assert_eq!(framing.reasons, vec!["turned", "backdrop", "held", "arms"]);
         let ready = parse_portrait_framing(
-            "```json\n{\"facing\":\"slightly_turned\",\"backdrop\":\"plain\",\"arms\":\"down\",\"holding\":false}\n```",
+            "```json\n{\"medium\":\"illustration\",\"facing\":\"slightly_turned\",\"backdrop\":\"plain\",\"arms\":\"down\",\"holding\":false}\n```",
         )
         .unwrap();
         assert!(ready.reasons.is_empty(), "{ready:?}");
+        let photo = parse_portrait_framing(
+            r#"{"medium":"photo","facing":"front","backdrop":"plain","arms":"down","holding":false}"#,
+        )
+        .unwrap();
+        assert_eq!(photo.medium, "photo");
         assert!(
             parse_portrait_framing(r#"{"facing":"sideways","backdrop":"plain","arms":"down"}"#)
                 .is_err()

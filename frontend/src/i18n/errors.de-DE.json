@@ -740,6 +740,8 @@
     "preset_history_too_long": "Der Gesprächsverlauf ist zu lang zum Speichern.",
     "channel_not_ready": "Dieses Gespräch ist noch nicht bereit zum Senden.",
     "invite_invalid_status": "Diese Einladung kann nicht mehr angenommen werden.",
-    "visitor_stats_unavailable": "Laden fehlgeschlagen"
+    "visitor_stats_unavailable": "Laden fehlgeschlagen",
+    "portrait_not_illustration": "Dieses Bild sieht nicht nach einer farbigen Illustration aus (eher nach Foto, 3D-Rendering, Pixel-Art oder Schwarz-Weiß-Comic) und kann keine bewegte Figur werden. Bitte wähle eine farbige Illustration.",
+    "upright_in_progress": "Ein anderes Porträt wird gerade neu gezeichnet; versuche es gleich noch einmal."
   }
 }

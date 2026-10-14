@@ -1,22 +1,25 @@
+import type { UprightReason } from '../api'
 import { useSyncExternalStore } from 'react'
 
 /** The worn bust's picture: the master portrait. */
 export const MASTER_SLOT = 'master'
 
 /**
- * The pictures just uploaded, by set (or `MASTER_SLOT`): each is read once
- * for whether it should be redrawn square to the camera. Only an upload asks;
- * a page opened later on the same picture does not read it again.
+ * The pictures just uploaded that should be redrawn upright, by set (or
+ * `MASTER_SLOT`), with what a redraw would put right. Only an upload asks:
+ * a page opened later on the same picture does not suggest it again.
  */
-const pending = new Set<string>()
+const pending = new Map<string, UprightReason[]>()
 const listeners = new Set<() => void>()
 
 function changed(): void {
   for (const listener of listeners) listener()
 }
 
-export function requestUprightCheck(slot: string): void {
-  pending.add(slot)
+/** An upload was looked at; nothing to suggest when nothing is to be put right. */
+export function requestUprightCheck(slot: string, reasons: readonly UprightReason[]): void {
+  if (reasons.length) pending.set(slot, [...reasons])
+  else if (!pending.delete(slot)) return
   changed()
 }
 
@@ -29,11 +32,11 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-/** Whether this set's picture was just uploaded and is still to be read. */
-export function useUprightRequested(slot: string): boolean {
+/** What of this set's just uploaded picture a redraw would put right, if it should be offered. */
+export function useUprightRequested(slot: string): UprightReason[] | null {
   return useSyncExternalStore(
     subscribe,
-    () => pending.has(slot),
-    () => false,
+    () => pending.get(slot) ?? null,
+    () => null,
   )
 }

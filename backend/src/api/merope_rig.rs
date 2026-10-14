@@ -84,7 +84,6 @@ pub fn create_routes(app_state: AppState) -> Router<AppState> {
             "/portrait/upload",
             post(portrait_upload::upload_portrait).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
-        .route("/portrait/framing", post(upright::read_portrait_framing))
         .route("/portrait/upright", post(upright::draw_upright_portrait))
         .route(
             "/see-through/status",

@@ -79,6 +79,17 @@ function readPortraitUrl(data: { portraitUrl?: unknown }): string | null {
     : null
 }
 
+/** What a redraw square to the camera would put right in an uploaded picture. */
+export type UprightReason = 'turned' | 'backdrop' | 'held' | 'arms'
+const UPRIGHT_REASONS: readonly unknown[] = ['turned', 'backdrop', 'held', 'arms']
+
+/** An upload is looked at before it is stored; this is what of it the rig cannot take. */
+function readUprightReasons(data: { uprightReasons?: unknown }): UprightReason[] {
+  return Array.isArray(data.uprightReasons)
+    ? data.uprightReasons.filter((reason): reason is UprightReason => UPRIGHT_REASONS.includes(reason))
+    : []
+}
+
 export function meropeError(
   reason: unknown,
   fallback: string,
@@ -413,6 +424,7 @@ async function submitMeropeRigImport(
 
 export async function uploadSitePortrait(image: Blob): Promise<{
   portraitUrl: string
+  uprightReasons: UprightReason[]
 }> {
   const body = new FormData()
   body.append(
@@ -421,7 +433,7 @@ export async function uploadSitePortrait(image: Blob): Promise<{
     image instanceof File ? image.name : 'uploaded-portrait.png',
   )
   try {
-    const data = await apiService.post<{ portraitUrl?: unknown }>(
+    const data = await apiService.post<{ portraitUrl?: unknown; uprightReasons?: unknown }>(
       `${PREFIX}/portrait/upload`,
       body,
       {
@@ -432,7 +444,7 @@ export async function uploadSitePortrait(image: Blob): Promise<{
     if (!portraitUrl) {
       throw new MeropeApiError(currentCopy().merope.portraitUploadFailed, 502)
     }
-    return { portraitUrl }
+    return { portraitUrl, uprightReasons: readUprightReasons(data) }
   } catch (reason) {
     if (reason instanceof MeropeApiError) throw reason
     throw meropeError(reason, currentCopy().merope.portraitUploadFailed)
@@ -445,6 +457,7 @@ export async function uploadOutfitPortrait(
   image: Blob,
 ): Promise<{
   portraitUrl: string
+  uprightReasons: UprightReason[]
 }> {
   const body = new FormData()
   body.append(
@@ -453,7 +466,7 @@ export async function uploadOutfitPortrait(
     image instanceof File ? image.name : 'uploaded-portrait.png',
   )
   try {
-    const data = await apiService.post<{ portraitUrl?: unknown }>(
+    const data = await apiService.post<{ portraitUrl?: unknown; uprightReasons?: unknown }>(
       `${PREFIX}/outfits/${encodeURIComponent(outfitId)}/portrait/upload`,
       body,
       { timeout: RIG_MUTATION_TIMEOUT_MS },
@@ -462,7 +475,7 @@ export async function uploadOutfitPortrait(
     if (!portraitUrl) {
       throw new MeropeApiError(currentCopy().merope.portraitUploadFailed, 502)
     }
-    return { portraitUrl }
+    return { portraitUrl, uprightReasons: readUprightReasons(data) }
   } catch (reason) {
     if (reason instanceof MeropeApiError) throw reason
     throw meropeError(reason, currentCopy().merope.portraitUploadFailed)
@@ -475,6 +488,7 @@ export async function uploadFullBodyPortrait(
   image: Blob,
 ): Promise<{
   portraitUrl: string
+  uprightReasons: UprightReason[]
 }> {
   const body = new FormData()
   body.append(
@@ -483,7 +497,7 @@ export async function uploadFullBodyPortrait(
     image instanceof File ? image.name : 'uploaded-full-body.png',
   )
   try {
-    const data = await apiService.post<{ portraitUrl?: unknown }>(
+    const data = await apiService.post<{ portraitUrl?: unknown; uprightReasons?: unknown }>(
       `${PREFIX}${fullBodyPath(outfitId)}/portrait/upload`,
       body,
       { timeout: RIG_MUTATION_TIMEOUT_MS },
@@ -492,7 +506,7 @@ export async function uploadFullBodyPortrait(
     if (!portraitUrl) {
       throw new MeropeApiError(currentCopy().merope.portraitUploadFailed, 502)
     }
-    return { portraitUrl }
+    return { portraitUrl, uprightReasons: readUprightReasons(data) }
   } catch (reason) {
     if (reason instanceof MeropeApiError) throw reason
     throw meropeError(reason, currentCopy().merope.portraitUploadFailed)

@@ -740,6 +740,8 @@
     "preset_history_too_long": "對話歷史太長，請縮短後再收藏。",
     "channel_not_ready": "對方還沒接受，暫時發不了訊息。",
     "invite_invalid_status": "這個邀請已經不能接受了。",
-    "visitor_stats_unavailable": "載入失敗"
+    "visitor_stats_unavailable": "載入失敗",
+    "portrait_not_illustration": "這張圖看起來不是彩色插畫（像照片、3D 算圖、像素畫或黑白漫畫），做不成會動的形象。請換一張彩色插畫。",
+    "upright_in_progress": "正在重畫另一張立繪，請稍後再試。"
   }
 }

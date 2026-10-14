@@ -759,11 +759,8 @@
     "referenceGone": "참고한 반신이 삭제되었거나 일러스트가 없어 디자인으로 그립니다.",
     "referenceNoneNote": "반신 참고 없음. 디자인으로 그립니다."
   },
-  "uprightReadFailed": "일러스트를 확인하지 못했습니다.",
   "uprightFailed": "일러스트를 다시 그리지 못했습니다.",
   "upright": {
-    "reading": "이 일러스트가 움직이는 모습에 맞는지 확인하는 중…",
-    "readFailed": "일러스트를 확인하지 못했습니다.",
     "title": "이 일러스트는 그대로 움직이는 모습으로 만들기에 적합하지 않습니다",
     "reason": {
       "turned": "얼굴이나 몸이 옆을 향함",
@@ -776,7 +773,6 @@
     "drawingShort": "다시 그리는 중…",
     "drawing": "다시 그리는 중입니다. 1~2분 정도 걸립니다…",
     "keep": "원본 사용",
-    "dismiss": "닫기",
     "original": "원본",
     "redrawn": "다시 그린 그림",
     "sameCharacter": "같은 캐릭터",

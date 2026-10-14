@@ -185,20 +185,19 @@ export function FullBodyPanel({
     }, copy.stanceFailed)
   }
 
-  /** The picture put in place; nothing more read of it. */
+  /** The picture put in place, with what it was seen to need redrawn upright. */
   const replacePortrait = async (file: File) => {
-    await uploadFullBodyPortrait(outfitId, file)
+    const { uprightReasons } = await uploadFullBodyPortrait(outfitId, file)
     await reload()
     onChanged?.()
+    return uprightReasons
   }
 
   const upload = (file: File) =>
     run(
       'upload',
       async () => {
-        await replacePortrait(file)
-        // An upload is read for whether to redraw it upright.
-        requestUprightCheck(outfitId)
+        requestUprightCheck(outfitId, await replacePortrait(file))
       },
       labels.portraitUploadFailed,
     )
@@ -270,8 +269,11 @@ export function FullBodyPanel({
           key={portrait}
           slot={outfitId}
           outfitId={outfitId}
+          reasons={uprightAsked}
           originalUrl={siteMediaUrl(portrait)}
-          upload={replacePortrait}
+          upload={async (file) => {
+            await replacePortrait(file)
+          }}
         />
       ) : null}
       {children}

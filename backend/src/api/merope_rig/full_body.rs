@@ -249,10 +249,12 @@ pub async fn upload_full_body_portrait(
     let persona = merope::get_persona(&db).await.map_err(internal_error)?;
     full_body_set(persona.as_ref(), &outfit_id)?;
     let reference = read_portrait_upload(multipart).await?;
+    let upright = super::upright::screen_upload(&reference).await?;
     let url = persist_uploaded_portrait(&db, user_id, reference).await?;
     let public_url = store_full_body_portrait(&db, user_id, &outfit_id, &url, None).await?;
     Ok(Json(json!({
         "portraitUrl": public_url,
+        "uprightReasons": upright,
         "generationFingerprint": Value::Null,
         "characterAssetContractVersion": CharacterAssetProfile::FullBody.contract().contract_version,
     })))

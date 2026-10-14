@@ -740,6 +740,8 @@
     "preset_history_too_long": "L'historique est trop long pour être enregistré.",
     "channel_not_ready": "Cette conversation n’est pas encore prête à envoyer des messages.",
     "invite_invalid_status": "Cette invitation ne peut plus être acceptée.",
-    "visitor_stats_unavailable": "Chargement échoué"
+    "visitor_stats_unavailable": "Chargement échoué",
+    "portrait_not_illustration": "Cette image ne ressemble pas à une illustration en couleur (on dirait une photo, un rendu 3D, du pixel art ou une bande dessinée en noir et blanc) ; elle ne peut pas devenir une figure animée. Choisissez une illustration en couleur.",
+    "upright_in_progress": "Un autre portrait est en cours de redessin ; réessayez dans un instant."
   }
 }
