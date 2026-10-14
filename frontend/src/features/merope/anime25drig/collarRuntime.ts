@@ -3,6 +3,7 @@ import type { HeadTurn } from './headTurn'
 import type { Anime25DTorsoShellRotation } from './torsoDeformation'
 import type { Anime25DPlaybackLayer, Anime25DTorsoShellProfile } from './types'
 import { localToAtlasUv } from './atlasUv'
+import { carryOnFigure } from './figureSkeleton'
 import { headTurnNeckMove } from './headTurn'
 import { anime25DTorsoShellOffsetX } from './torsoDeformation'
 import {
@@ -248,6 +249,28 @@ export function deformCollarClipMesh(
       pose.torsoShellBlend * (1 - headBlend),
     )
     clip.deformed[index] += pose.torsoNeckOffsetX * headBlend
+  }
+}
+
+/**
+ * A standing figure's bones carry every layer (figureSkeleton), the neck
+ * the clip draws through too: the clip goes where they carry the neck, or
+ * the neck stays drawn where it stood while the figure sways away from it.
+ * A bust has no figure, and nothing changes.
+ */
+export function carryCollarClipOnFigure(
+  clip: CollarClipMesh,
+  binding: Parameters<typeof carryOnFigure>[1] | undefined,
+  frame: Parameters<typeof carryOnFigure>[4],
+): void {
+  if (!frame.figure || !binding) return
+  const point = { x: 0, y: 0 }
+  for (let index = 0; index < clip.rest.length; index += 2) {
+    point.x = clip.deformed[index]
+    point.y = clip.deformed[index + 1]
+    carryOnFigure(point, binding, clip.rest[index], clip.rest[index + 1], frame)
+    clip.deformed[index] = point.x
+    clip.deformed[index + 1] = point.y
   }
 }
 

@@ -39,6 +39,7 @@ import { Anime25DBodyFrames } from './bodyFrames'
 import { ClosedEyePresentation } from './closedEyePresentation'
 
 import {
+  carryCollarClipOnFigure,
   deformCollarClipMesh,
   uploadCollarClipMesh,
 } from './collarRuntime'
@@ -584,6 +585,8 @@ export class Anime25DPlayer {
     const collarMotion = body.prepareCollarMotion()
     if (this.collarClip) {
       deformCollarClipMesh(this.collarClip, collarMotion, body.neckDepth)
+      const neck = this.layers.find((layer) => layer.source.role === 'neck')
+      carryCollarClipOnFigure(this.collarClip, neck?.secondaryDeformation, body.secondaryDeformationFrame)
       if (work) {
         work.deformedLayers += 1
         work.deformedVertices += this.collarClip.rest.length / 2

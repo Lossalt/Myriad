@@ -124,3 +124,25 @@ test('layers ride the bones they hang from', () => {
   assert.deepEqual(bindFigureSkin('objects', { x: 520, y: 1100, w: 30, h: 30, group: 'body' }, rest), { kind: 'leg', side: 'R' })
   assert.equal(bindFigureSkin('topwear', top, null), null)
 })
+
+test('the collar clip a neck is drawn through goes where the bones carry the neck', async () => {
+  const { carryCollarClipOnFigure } = await import('./collarRuntime')
+  const neck = { ...top, role: 'neck', y: 220, h: 80, x: 470, w: 60 }
+  const figureSkin = bindFigureSkin('neck', neck, rest)
+  assert.ok(figureSkin, 'the neck rides the bones')
+  const binding = { standing: null, figureSkin, partSways: null, shaderGlobalTransform: false }
+  const rest2 = Float32Array.from([480, 230, 520, 230, 480, 290, 520, 290])
+  const clip = { rest: rest2, deformed: rest2.slice() } as Parameters<typeof carryCollarClipOnFigure>[0]
+  const pose = solveFigurePose(rest, { body: 1, pelvisTilt: 0.045, bendL: 1, bendR: 0 }, createFigurePose())
+  carryCollarClipOnFigure(clip, binding, { standing: null, figure: { rest, pose } as never })
+  for (let i = 0; i < 8; i += 2) {
+    const neckPoint = skinned('neck', neck, rest2[i], rest2[i + 1], pose)
+    assert.ok(Math.abs(clip.deformed[i] - neckPoint.x) < 1e-3 && Math.abs(clip.deformed[i + 1] - neckPoint.y) < 1e-3,
+      `${clip.deformed[i]},${clip.deformed[i + 1]} vs ${neckPoint.x},${neckPoint.y}`)
+    assert.ok(Math.abs(clip.deformed[i] - rest2[i]) > 5, 'the sway moved it')
+  }
+  // A bust has no figure: the clip stays where the collar motion put it.
+  const still = { rest: rest2, deformed: rest2.slice() } as Parameters<typeof carryCollarClipOnFigure>[0]
+  carryCollarClipOnFigure(still, binding, { standing: null, figure: null })
+  assert.deepEqual(Array.from(still.deformed), Array.from(rest2))
+})
