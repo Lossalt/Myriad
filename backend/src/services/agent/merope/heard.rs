@@ -10,7 +10,6 @@ use sea_orm::DatabaseConnection;
 use serde_json::json;
 
 use super::call::{self, Voice};
-use crate::services::agent::memory::lexical;
 use crate::services::agent::memory::unified::{self, Concept};
 
 /// Her own rows of what she heard.
@@ -98,38 +97,4 @@ pub async fn brought_back(
         });
     }
     recalled
-}
-
-/// What she heard that `talk` touches, most relevant first.
-pub async fn touched(db: &DatabaseConnection, talk: &str, limit: usize) -> Vec<String> {
-    if talk.trim().is_empty() {
-        return Vec::new();
-    }
-    let rows = unified::own_rows(db, SOURCE, HELD)
-        .await
-        .unwrap_or_default();
-    let concepts: Vec<Vec<Concept>> = rows
-        .iter()
-        .map(|row| serde_json::from_value(row.concepts.clone()).unwrap_or_default())
-        .collect();
-    let documents: Vec<lexical::Document> = rows
-        .iter()
-        .zip(&concepts)
-        .map(|(row, concepts)| lexical::Document {
-            text: &row.content,
-            concepts,
-        })
-        .collect();
-    let mut scored: Vec<(usize, f64)> = lexical::score_all(talk, &documents)
-        .into_iter()
-        .enumerate()
-        .filter(|(_, score)| score.strong)
-        .map(|(index, score)| (index, score.value))
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored
-        .into_iter()
-        .take(limit)
-        .map(|(index, _)| rows[index].content.clone())
-        .collect()
 }

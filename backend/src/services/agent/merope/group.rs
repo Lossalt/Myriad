@@ -15,19 +15,17 @@ pub mod bits {
 }
 
 pub mod doing {
-    pub(crate) use crate::services::agent::merope::doing::current;
+    pub(crate) use crate::services::agent::merope::doing::{
+        current, now_text, recalled, would_tell,
+    };
 }
 
 pub mod heard {
-    pub(crate) use crate::services::agent::merope::heard::take_in;
+    pub(crate) use crate::services::agent::merope::heard::{SOURCE, take_in};
 }
 
 pub mod jargon {
     pub(crate) use crate::services::agent::merope::jargon::{heard, section_for};
-}
-
-pub mod joining {
-    pub(crate) use crate::services::agent::merope::joining::{Here, decide};
 }
 
 pub mod memes {

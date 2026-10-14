@@ -112,6 +112,20 @@ pub struct Judging {
     pub stage: JudgeStage,
     #[serde(default)]
     pub owner: Option<i32>,
+    /// The recent talk she judges, hers as `you：…`.
+    #[serde(default)]
+    pub conversation: Vec<String>,
+    #[serde(default)]
+    pub here: Here,
+    /// What she has that the talk touches, so far: (kind, text).
+    #[serde(default)]
+    pub had: Vec<(String, String)>,
+    /// What of her own time she would tell someone, kept for last.
+    #[serde(default)]
+    pub would_tell: Vec<String>,
+    /// What she is doing now.
+    #[serde(default)]
+    pub own_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -119,6 +133,15 @@ pub struct Judging {
 pub enum JudgeStage {
     Identifying,
     Looking,
+    /// Her views the talk touches.
+    Views,
+    /// What she did, would tell, is doing.
+    Life,
+    /// What she heard elsewhere.
+    Heard,
+    /// The words and memes she knows.
+    Memes,
+    Soul,
     Judging,
 }
 

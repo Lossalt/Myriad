@@ -69,15 +69,6 @@ pub async fn section_for(db: &DatabaseConnection, text: &str) -> Option<String> 
     section(&known_in(text, &known))
 }
 
-/// Those she knows that `text` uses, as lines for what she has to draw on.
-pub(super) async fn lines_for(db: &DatabaseConnection, text: &str) -> Vec<String> {
-    let known = known(db).await;
-    known_in(text, &known)
-        .into_iter()
-        .map(|known| kept_line(&known.term, &known.meaning))
-        .collect()
-}
-
 /// Look up the words a judgment of the talk (`conversation`, in the group
 /// `venue` as sessions keep it) said she is not sure of, in the background:
 /// each she does not know yet and has not tried today, within the day's

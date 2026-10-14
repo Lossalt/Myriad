@@ -2,7 +2,7 @@
 //! someone is, whether they may talk to her, what she makes of the talk,
 //! whether she speaks up, and what she says.
 
-use myriad_merope::group::{self as core, Answer, Here, Looked, Spoken, Target, Who};
+use myriad_merope::group::{self as core, Answer, Looked, Spoken, Target, Who};
 
 use super::*;
 
@@ -402,28 +402,4 @@ pub(super) async fn stranger_turn(
         },
         _ => nothing,
     }
-}
-
-/// Whether she says something about the talk, billed to `owner`.
-pub(super) async fn judge(
-    venue: &str,
-    owner: i32,
-    conversation: &[String],
-    here: &Here,
-) -> Option<core::Decision> {
-    let db = db().ok()?;
-    let (why, reason) = crate::services::agent::merope::group::joining::decide(
-        &db,
-        owner,
-        venue,
-        conversation,
-        &crate::services::agent::merope::group::joining::Here {
-            last_spoke: here.last_spoke.as_deref(),
-            late: here.late.as_deref(),
-            how_it_went: here.how_it_went.as_deref(),
-            share: here.share.as_deref(),
-        },
-    )
-    .await?;
-    Some(core::Decision { why, reason })
 }

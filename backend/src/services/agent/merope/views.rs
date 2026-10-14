@@ -20,7 +20,6 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde_json::{Value, json};
 
 use crate::models::entities::agent_memories;
-use crate::services::agent::memory::lexical;
 use crate::services::agent::memory::unified::{self, Concept};
 use myriad_merope::views::{
     GREW_FROM, MAX_CHANGES, SCHEMA_NAME, parse, same_subject, schema, spread, system,
@@ -48,43 +47,13 @@ const TRIES_A_NIGHT: u32 = 3;
 
 /// A view she holds: what it is about, and what she thinks.
 fn view_of(row: &agent_memories::Model) -> Option<(String, String)> {
-    let evidence: Value = serde_json::from_str(row.evidence.as_deref()?).ok()?;
-    let about = evidence.get("about")?.as_str()?.trim().to_string();
-    (!about.is_empty()).then(|| (about, row.content.clone()))
+    myriad_merope::views::view_of(&row.content, row.evidence.as_deref())
 }
 
 /// A view with what it grew out of, and what she thought before if she
 /// changed her mind, as she holds it when it comes up.
 fn grown_view(row: &agent_memories::Model) -> Option<(String, String)> {
-    let (about, view) = view_of(row)?;
-    let evidence: Value = row
-        .evidence
-        .as_deref()
-        .and_then(|evidence| serde_json::from_str(evidence).ok())
-        .unwrap_or_default();
-    let grew_from: Vec<String> = evidence
-        .get("grewFrom")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|from| from.get("what")?.as_str().map(str::to_string))
-        .collect();
-    let mut notes = Vec::new();
-    if let Some(was) = evidence
-        .get("was")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|was| !was.is_empty())
-    {
-        notes.push(format!("you used to think: {was}"));
-    }
-    if !grew_from.is_empty() {
-        notes.push(format!("it grew from: {}", grew_from.join("; ")));
-    }
-    if notes.is_empty() {
-        return Some((about, view));
-    }
-    Some((about, format!("{view} ({})", notes.join("; "))))
+    myriad_merope::views::grown_view(&row.content, row.evidence.as_deref())
 }
 
 /// A new persona has not gone over anything yet.
@@ -299,34 +268,20 @@ pub async fn touched(db: &DatabaseConnection, words: &str, limit: usize) -> Vec<
     let Ok(rows) = unified::own_views(db, HELD).await else {
         return Vec::new();
     };
-    let views: Vec<(String, String)> = rows.iter().filter_map(view_of).collect();
-    let grown: Vec<(String, String)> = rows.iter().filter_map(grown_view).collect();
-    let texts: Vec<String> = views
-        .iter()
-        .map(|(about, view)| format!("{about} {view}"))
-        .collect();
     let concepts: Vec<Vec<Concept>> = rows
         .iter()
-        .filter(|row| view_of(row).is_some())
         .map(|row| serde_json::from_value(row.concepts.clone()).unwrap_or_default())
         .collect();
-    let documents: Vec<lexical::Document> = texts
+    let held: Vec<myriad_merope::views::Held> = rows
         .iter()
         .zip(&concepts)
-        .map(|(text, concepts)| lexical::Document { text, concepts })
+        .map(|(row, concepts)| myriad_merope::views::Held {
+            content: &row.content,
+            evidence: row.evidence.as_deref(),
+            concepts,
+        })
         .collect();
-    let mut scored: Vec<(usize, f64)> = lexical::score_all(words, &documents)
-        .into_iter()
-        .enumerate()
-        .filter(|(_, score)| score.strong)
-        .map(|(index, score)| (index, score.value))
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored
-        .into_iter()
-        .take(limit)
-        .map(|(index, _)| grown[index].clone())
-        .collect()
+    myriad_merope::views::touched(&held, words, limit)
 }
 
 /// The views she holds, most recent first, as "about: view".

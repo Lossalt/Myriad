@@ -114,3 +114,102 @@ pub fn spread<T: Clone>(rows: Vec<T>, keep: usize) -> Vec<T> {
 pub fn parse(raw: &str) -> Option<Changes> {
     crate::answer::parse(raw)
 }
+
+/// A kept view of hers as (what it is about, the view), from its text and
+/// evidence: none when it says about nothing.
+pub fn view_of(content: &str, evidence: Option<&str>) -> Option<(String, String)> {
+    let evidence: Value = serde_json::from_str(evidence?).ok()?;
+    let about = evidence.get("about")?.as_str()?.trim().to_string();
+    (!about.is_empty()).then(|| (about, content.to_string()))
+}
+
+/// A view with what it grew out of, and what she thought before if she
+/// changed her mind, as she holds it when it comes up.
+pub fn grown_view(content: &str, evidence: Option<&str>) -> Option<(String, String)> {
+    let (about, view) = view_of(content, evidence)?;
+    let evidence: Value = evidence
+        .and_then(|evidence| serde_json::from_str(evidence).ok())
+        .unwrap_or_default();
+    let grew_from: Vec<String> = evidence
+        .get("grewFrom")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|from| from.get("what")?.as_str().map(str::to_string))
+        .collect();
+    let mut notes = Vec::new();
+    if let Some(was) = evidence
+        .get("was")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|was| !was.is_empty())
+    {
+        notes.push(format!("you used to think: {was}"));
+    }
+    if !grew_from.is_empty() {
+        notes.push(format!("it grew from: {}", grew_from.join("; ")));
+    }
+    if notes.is_empty() {
+        return Some((about, view));
+    }
+    Some((about, format!("{view} ({})", notes.join("; "))))
+}
+
+/// Which of `documents` the words touch strongly, most first, at most
+/// `limit`: their indices.
+pub fn strongly_touched(
+    words: &str,
+    documents: &[myriad_agent_rules::memory::lexical::Document],
+    limit: usize,
+) -> Vec<usize> {
+    let mut scored: Vec<(usize, f64)> =
+        myriad_agent_rules::memory::lexical::score_all(words, documents)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, score)| score.strong)
+            .map(|(index, score)| (index, score.value))
+            .collect();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// A kept view as it is read.
+pub struct Held<'a> {
+    pub content: &'a str,
+    pub evidence: Option<&'a str>,
+    pub concepts: &'a [myriad_agent_rules::Concept],
+}
+
+/// The views their words touch, most first, as she holds them: (about,
+/// view).
+pub fn touched(rows: &[Held], words: &str, limit: usize) -> Vec<(String, String)> {
+    if words.trim().is_empty() {
+        return Vec::new();
+    }
+    let views: Vec<(&Held, (String, String))> = rows
+        .iter()
+        .filter_map(|row| Some((row, view_of(row.content, row.evidence)?)))
+        .collect();
+    let texts: Vec<String> = views
+        .iter()
+        .map(|(_, (about, view))| format!("{about} {view}"))
+        .collect();
+    let documents: Vec<myriad_agent_rules::memory::lexical::Document> = texts
+        .iter()
+        .zip(&views)
+        .map(
+            |(text, (row, _))| myriad_agent_rules::memory::lexical::Document {
+                text,
+                concepts: row.concepts,
+            },
+        )
+        .collect();
+    strongly_touched(words, &documents, limit)
+        .into_iter()
+        .filter_map(|index| grown_view(views[index].0.content, views[index].0.evidence))
+        .collect()
+}

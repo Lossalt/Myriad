@@ -24,6 +24,7 @@ pub async fn ask(
     let operation: &'static str = match operation {
         "draft_still" => "draft_still",
         "group_making_sense" => "group_making_sense",
+        "group_chime" => "group_chime",
         _ => "group_mind",
     };
     let voice = match voice {

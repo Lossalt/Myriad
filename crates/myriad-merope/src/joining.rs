@@ -103,6 +103,39 @@ pub fn material_view(material: &[Material]) -> Vec<Value> {
         .collect()
 }
 
+/// Where she stands in the group, beside what was said.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Standing<'a> {
+    /// How long ago she last spoke there.
+    pub last_spoke: Option<&'a str>,
+    /// How long ago the latest line was said, when she sees it late.
+    pub late: Option<&'a str>,
+    /// How her speaking up unasked went there lately.
+    pub how_it_went: Option<&'a str>,
+    /// How much of the talk there lately was hers.
+    pub share: Option<&'a str>,
+}
+
+/// What the judgment is given: the talk (hers as `you：…`), where she
+/// stands, what she is doing on her own, and what she has.
+pub fn input(
+    conversation: &[String],
+    here: &Standing,
+    own_time: Option<&str>,
+    material: &[Material],
+) -> String {
+    json!({
+        "conversation": conversation,
+        "youLastSpokeHere": here.last_spoke,
+        "youAreSeeingItLate": here.late,
+        "howItWentHere": here.how_it_went,
+        "yourShareOfTheTalk": here.share,
+        "yourOwnTime": own_time,
+        "whatYouHave": material_view(material),
+    })
+    .to_string()
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Judged {

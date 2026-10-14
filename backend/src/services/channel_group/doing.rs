@@ -224,19 +224,16 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
         }
         Effect::Write { what, .. } => write(what).await,
         Effect::Learn {
+            owner,
             terms,
             conversation,
         } => {
-            if let Ok(db) = db()
-                && let Some(owner) = owner(&db).await
-            {
-                crate::services::agent::merope::group::memes::learn(
-                    owner,
-                    &venue,
-                    terms,
-                    &conversation,
-                );
-            }
+            crate::services::agent::merope::group::memes::learn(
+                owner,
+                &venue,
+                terms,
+                &conversation,
+            );
         }
         Effect::ReadKept { id } => {
             tokio::spawn(async move {
@@ -305,17 +302,6 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 let answer =
                     stranger_turn(&venue, owner, stranger, transcript, said, why, sections).await;
                 answered(venue, id, answer).await;
-            });
-        }
-        Effect::Judge {
-            id,
-            owner,
-            conversation,
-            here,
-        } => {
-            tokio::spawn(async move {
-                let decision = judge(&venue, owner, &conversation, &here).await;
-                answered(venue, id, Answer::Judged { decision }).await;
             });
         }
         Effect::React { id, to, emoji } => {

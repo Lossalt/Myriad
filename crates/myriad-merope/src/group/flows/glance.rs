@@ -37,6 +37,11 @@ pub(crate) fn look_loop(cx: &mut Cx, mut errand: Errand) {
         message,
         stage: JudgeStage::Identifying,
         owner: None,
+        conversation: Vec::new(),
+        here: Here::default(),
+        had: Vec::new(),
+        would_tell: Vec::new(),
+        own_time: None,
     });
     match judge_start(cx, &mut judging) {
         Ok(awaiting) => {
@@ -142,9 +147,214 @@ pub(crate) fn judge_step(
             apply_seen(cx, seen);
             Ok(judge_ask(cx, judging))
         }
-        (JudgeStage::Judging, Some(Answer::Judged { decision })) => Err(decision),
+        (JudgeStage::Views, Some(Answer::Rows { rows })) => {
+            let held: Vec<crate::views::Held> = rows
+                .iter()
+                .map(|row| crate::views::Held {
+                    content: &row.content,
+                    evidence: row.evidence.as_deref(),
+                    concepts: &row.concepts,
+                })
+                .collect();
+            let talk = judging.conversation.join("\n");
+            for (about, view) in crate::views::touched(&held, &talk, PER_KIND) {
+                judging
+                    .had
+                    .push(("your_view".into(), format!("{about}: {view}")));
+            }
+            judging.stage = JudgeStage::Life;
+            Ok(cx.effect(|id| Effect::Read {
+                id,
+                of: Of::Hers,
+                what: ToRead::Life {
+                    talk,
+                    related: PER_KIND,
+                },
+            }))
+        }
+        (
+            JudgeStage::Life,
+            Some(Answer::Life {
+                did,
+                would_tell,
+                now,
+            }),
+        ) => {
+            for (what, stayed) in did {
+                judging
+                    .had
+                    .push(("you_did".into(), format!("{what}: {stayed}")));
+            }
+            judging.would_tell = would_tell;
+            judging.own_time = now;
+            Ok(own_rows(
+                cx,
+                judging,
+                JudgeStage::Heard,
+                HEARD_SOURCE,
+                HEARD_HELD,
+            ))
+        }
+        (JudgeStage::Heard, Some(Answer::Rows { rows })) => {
+            let talk = judging.conversation.join("\n");
+            if !talk.trim().is_empty() {
+                let documents: Vec<myriad_agent_rules::memory::lexical::Document> = rows
+                    .iter()
+                    .map(|row| myriad_agent_rules::memory::lexical::Document {
+                        text: &row.content,
+                        concepts: &row.concepts,
+                    })
+                    .collect();
+                for index in crate::views::strongly_touched(&talk, &documents, PER_KIND) {
+                    judging
+                        .had
+                        .push(("you_heard".into(), rows[index].content.clone()));
+                }
+            }
+            Ok(own_rows(
+                cx,
+                judging,
+                JudgeStage::Memes,
+                crate::memes::SOURCE,
+                MEMES_HELD,
+            ))
+        }
+        (JudgeStage::Memes, Some(Answer::Rows { rows })) => {
+            // Words and memes in the talk that she looked up before: she
+            // knows them.
+            let known: Vec<crate::memes::Known> = rows
+                .iter()
+                .filter_map(|row| crate::memes::read_kept(&row.content))
+                .collect();
+            let talk = judging.conversation.join("\n");
+            for known in crate::memes::known_in(&talk, &known) {
+                judging.had.push((
+                    "meme".into(),
+                    crate::memes::kept_line(&known.term, &known.meaning),
+                ));
+            }
+            for told in std::mem::take(&mut judging.would_tell) {
+                if !judging.had.iter().any(|(_, text)| told.contains(text)) {
+                    judging.had.push(("you_would_tell".into(), told));
+                }
+            }
+            judging.stage = JudgeStage::Soul;
+            Ok(cx.effect(|id| Effect::Read {
+                id,
+                of: Of::Hers,
+                what: ToRead::Soul,
+            }))
+        }
+        (JudgeStage::Soul, Some(Answer::Soul { text })) => {
+            let material = material(&judging.had);
+            let here = crate::joining::Standing {
+                last_spoke: judging.here.last_spoke.as_deref(),
+                late: judging.here.late.as_deref(),
+                how_it_went: judging.here.how_it_went.as_deref(),
+                share: judging.here.share.as_deref(),
+            };
+            let input = crate::joining::input(
+                &judging.conversation,
+                &here,
+                judging.own_time.as_deref(),
+                &material,
+            );
+            judging.stage = JudgeStage::Judging;
+            let owner = judging.owner.unwrap_or_default();
+            Ok(cx.effect(|id| Effect::Ask {
+                id,
+                how: AskKind::Json,
+                voice: "hers".into(),
+                owner,
+                operation: "group_chime".into(),
+                timeout_ms: JUDGE_WITHIN_MS,
+                system: crate::joining::system(&text),
+                input,
+                schema_name: crate::joining::SCHEMA_NAME.into(),
+                schema: crate::joining::schema(),
+            }))
+        }
+        (JudgeStage::Judging, Some(Answer::Asked { raw, .. })) => {
+            let raw = raw.ok_or(None)?;
+            // Words or memes in the talk she is not sure of: hers to look
+            // up, whether or not she speaks.
+            let terms = myriad_agent_rules::extract_json_object_from_ai_response(raw.trim())
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .map(|value| crate::memes::unsure_terms(&value))
+                .unwrap_or_default();
+            if !terms.is_empty() {
+                cx.out.effects.push(Effect::Learn {
+                    owner: judging.owner.unwrap_or_default(),
+                    terms,
+                    conversation: judging.conversation.clone(),
+                });
+            }
+            let material = material(&judging.had);
+            let decision = crate::joining::parse(&raw, material.len())
+                .flatten()
+                .ok_or(None)?;
+            // A reaction is only the emoji: nothing is said.
+            if decision.why == Why::React {
+                return Err(Some(Decision {
+                    why: Why::React,
+                    reason: decision.about,
+                }));
+            }
+            let reason = crate::joining::reason(&decision, &material);
+            Err(Some(Decision {
+                why: decision.why,
+                reason: match judging.here.late.as_deref() {
+                    Some(ago) => format!("{reason}\n{}", crate::joining::seeing_it_late(ago)),
+                    None => reason,
+                },
+            }))
+        }
         _ => Err(None),
     }
+}
+
+/// Things of hers per kind that the talk may touch.
+const PER_KIND: usize = 3;
+/// Her views, and what she heard, matched against.
+const VIEWS_HELD: u64 = 300;
+const HEARD_SOURCE: &str = "heard";
+const HEARD_HELD: u64 = 300;
+/// What she knows of words and memes, read back: the latest this many.
+const MEMES_HELD: u64 = 500;
+/// Her own judgment, thinking a little: answered without thinking, she took
+/// a line for someone it was not meant for.
+const JUDGE_WITHIN_MS: u64 = 30_000;
+
+fn own_rows(
+    cx: &mut Cx,
+    judging: &mut Judging,
+    stage: JudgeStage,
+    source: &str,
+    limit: u64,
+) -> String {
+    judging.stage = stage;
+    let source = source.to_string();
+    cx.effect(|id| Effect::Read {
+        id,
+        of: Of::Hers,
+        what: ToRead::OwnRows { source, limit },
+    })
+}
+
+/// What she has, as the judgment's rules take it.
+fn material(had: &[(String, String)]) -> Vec<crate::joining::Material> {
+    had.iter()
+        .map(|(kind, text)| crate::joining::Material {
+            kind: match kind.as_str() {
+                "your_view" => "your_view",
+                "you_did" => "you_did",
+                "you_heard" => "you_heard",
+                "meme" => "meme",
+                _ => "you_would_tell",
+            },
+            text: text.clone(),
+        })
+        .collect()
 }
 
 pub(crate) fn judge_ask(cx: &mut Cx, judging: &mut Judging) -> String {
@@ -187,20 +397,18 @@ pub(crate) fn judge_ask(cx: &mut Cx, judging: &mut Judging) -> String {
             .len();
         crate::joining::share_of_talk(recent.len(), hers, others)
     };
-    judging.stage = JudgeStage::Judging;
-    let owner = judging.owner.unwrap_or_default();
-    cx.effect(|id| Effect::Judge {
-        id,
-        owner,
-        conversation,
-        here: Here {
-            last_spoke,
-            late,
-            how_it_went,
-            share,
-        },
-    })
+    judging.conversation = conversation;
+    judging.here = Here {
+        last_spoke,
+        late,
+        how_it_went,
+        share,
+    };
+    judging.had.clear();
+    own_rows(cx, judging, JudgeStage::Views, VIEWS_OWN, VIEWS_HELD)
 }
+
+const VIEWS_OWN: &str = "view";
 
 pub(crate) fn judged(cx: &mut Cx, mut errand: Errand, decided: Option<Decision>) {
     let now = cx.now();

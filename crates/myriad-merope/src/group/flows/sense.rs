@@ -147,6 +147,7 @@ pub(crate) fn sense_step(cx: &mut Cx, s: &mut Sensing, answer: Option<Answer>) -
                 .unwrap_or_default();
             if !terms.is_empty() {
                 cx.out.effects.push(Effect::Learn {
+                    owner: s.owner.unwrap_or_default(),
                     terms,
                     conversation: s.conversation.clone(),
                 });

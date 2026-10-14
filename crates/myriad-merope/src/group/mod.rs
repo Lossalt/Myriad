@@ -13,9 +13,11 @@
 //! message, kept back when the talk moved on, stopped when she is called);
 //! the group's ledger of how it types; mutes; not answering one who never
 //! stops; and taking up what called her while she was away or before a
-//! restart. What she makes of the talk, whether she speaks up and what she
-//! says are still asked of the end as whole steps (`judge`, `turn`,
-//! `stranger`, `makeSense`); they move here later.
+//! restart; what she makes of the talk, and whether she speaks up, from what
+//! she has that the talk touches (her views, what she heard, the words she
+//! knows, read as rows; what she did, would tell and is doing, as facts her
+//! host's life gives). What she says is still asked of the end as whole
+//! steps (`turn`, `stranger`); it moves here later.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -545,9 +547,16 @@ pub enum Answer {
         #[serde(default = "yes")]
         bound: bool,
     },
-    Judged {
+    /// Her life as facts: what she did that the talk touches (what it was,
+    /// what stayed with her), what of her own time she would tell someone,
+    /// and what she is doing now.
+    Life {
         #[serde(default)]
-        decision: Option<Decision>,
+        did: Vec<(String, String)>,
+        #[serde(default)]
+        would_tell: Vec<String>,
+        #[serde(default)]
+        now: Option<String>,
     },
     Reacted {
         ok: bool,
@@ -710,8 +719,10 @@ pub enum Effect {
     Embed { id: String, text: String },
     /// Keep something: hers or others'.
     Write { of: Of, what: ToWrite },
-    /// Words or memes in the talk she is not sure of: hers to look up.
+    /// Words or memes in the talk she is not sure of: hers to look up,
+    /// billed to `owner`.
     Learn {
+        owner: i32,
         terms: Vec<String>,
         conversation: Vec<String>,
     },
@@ -744,13 +755,6 @@ pub enum Effect {
         said: String,
         why: Option<String>,
         sections: Vec<String>,
-    },
-    /// Whether she speaks up, billed to `owner`.
-    Judge {
-        id: String,
-        owner: i32,
-        conversation: Vec<String>,
-        here: Here,
     },
     React {
         id: String,
@@ -828,6 +832,19 @@ pub enum ToRead {
     Cues {
         ids: Vec<String>,
     },
+    /// Her own memories of one source (her views, what she heard, the words
+    /// and memes she knows), still standing, newest first.
+    OwnRows {
+        source: String,
+        limit: u64,
+    },
+    /// Her life as the host lives it, as facts: what she did that `talk`
+    /// touches (at most `related`), what of her own time she would tell
+    /// someone, and what she is doing now.
+    Life {
+        talk: String,
+        related: usize,
+    },
     /// The vectors kept for these memories (as read, with their cues), by
     /// the model in use; up to `fill` of those without one are given one
     /// behind the reply.
@@ -859,6 +876,8 @@ pub struct MemoryRow {
     #[serde(default)]
     pub concepts: Vec<myriad_agent_rules::Concept>,
     pub source: String,
+    #[serde(default)]
+    pub evidence: Option<String>,
     /// µs.
     pub created_at: i64,
     #[serde(default)]

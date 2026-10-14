@@ -1023,6 +1023,12 @@ impl End {
                 match what {
                     ToRead::Soul => "soul",
                     ToRead::VenueRows { .. } => "rows",
+                    ToRead::OwnRows { source, .. } => match source.as_str() {
+                        "view" => "own:view",
+                        "heard" => "own:heard",
+                        _ => "own:meme",
+                    },
+                    ToRead::Life { .. } => "life",
                     ToRead::Cues { .. } => "cues",
                     ToRead::Vectors { .. } => "vectors",
                 },
@@ -1032,13 +1038,13 @@ impl End {
             Effect::ReadKept { id } => (id, "kept"),
             Effect::Turn { id, .. } => (id, "turn"),
             Effect::StrangerTurn { id, .. } => (id, "stranger"),
-            Effect::Judge { id, .. } => (id, "judge"),
             Effect::React { id, .. } => (id, "react"),
             Effect::Typing { id, .. } => (id, "typing"),
             Effect::Ask { id, operation, .. } => (
                 id,
                 match operation.as_str() {
                     "group_making_sense" => "ask:group_making_sense",
+                    "group_chime" => "ask:group_chime",
                     _ => "ask",
                 },
             ),
@@ -1101,7 +1107,12 @@ fn default_answer(kind: &str) -> Answer {
         "soul" => Answer::Soul {
             text: "你是测试里的她。".into(),
         },
-        "rows" => Answer::Rows { rows: Vec::new() },
+        "rows" | "own:view" | "own:heard" | "own:meme" => Answer::Rows { rows: Vec::new() },
+        "life" => Answer::Life {
+            did: Vec::new(),
+            would_tell: Vec::new(),
+            now: None,
+        },
         "cues" => Answer::Cues {
             cues: HashMap::new(),
         },
@@ -1117,10 +1128,9 @@ fn default_answer(kind: &str) -> Answer {
             sticker: None,
             bound: true,
         },
-        "judge" => Answer::Judged { decision: None },
         "react" => Answer::Reacted { ok: true },
         "typing" => Answer::Typed,
-        "ask" | "ask:group_making_sense" => Answer::Asked {
+        "ask" | "ask:group_making_sense" | "ask:group_chime" => Answer::Asked {
             raw: None,
             failure: Some("unavailable".into()),
         },
@@ -1223,24 +1233,87 @@ fn g1_lines_wait_while_she_is_busy() {
 #[test]
 fn g1_she_speaks_up_unasked_and_reacts() {
     let mut end = End::new();
+    // What she has that the talk touches: a view of hers, what she did,
+    // what she heard, a word she knows, what she would tell someone.
     end.answer(
-        "judge",
-        1.0,
-        Answer::Judged {
-            decision: Some(Decision {
-                why: crate::joining::Why::Know,
-                reason: "you know something about it: 那家店周五人多".into(),
-            }),
+        "own:view",
+        0.5,
+        Answer::Rows {
+            rows: vec![MemoryRow {
+                id: "view-1".into(),
+                content: "火锅还是周五吃最热闹".into(),
+                concepts: Vec::new(),
+                source: "view".into(),
+                evidence: Some(
+                    r#"{"about":"火锅","was":"火锅太辣","grewFrom":[{"what":"和大家吃了一次火锅"}]}"#
+                        .into(),
+                ),
+                created_at: BASE - secs(86_400.0),
+                access_count: 0,
+                last_accessed_at: None,
+            }],
         },
     );
     end.answer(
-        "judge",
+        "life",
+        0.5,
+        Answer::Life {
+            did: vec![("昨天听了一首火锅之歌".into(), "旋律很下饭".into())],
+            would_tell: vec![
+                "刚画完一张图：画了火锅".into(),
+                "（想告诉人）昨天听了一首火锅之歌: 旋律很下饭".into(),
+            ],
+            now: Some("You are daydreaming, about 3 of 20 minutes in.".into()),
+        },
+    );
+    end.answer(
+        "own:heard",
+        0.5,
+        Answer::Rows {
+            rows: vec![MemoryRow {
+                id: "heard-1".into(),
+                content: "那家火锅店周五要排队".into(),
+                concepts: Vec::new(),
+                source: "heard".into(),
+                evidence: None,
+                created_at: BASE - secs(3_600.0),
+                access_count: 0,
+                last_accessed_at: None,
+            }],
+        },
+    );
+    end.answer(
+        "own:meme",
+        0.5,
+        Answer::Rows {
+            rows: vec![MemoryRow {
+                id: "meme-1".into(),
+                content: "「那家」：大家常去的那家店".into(),
+                concepts: Vec::new(),
+                source: "meme".into(),
+                evidence: None,
+                created_at: BASE - secs(3_600.0),
+                access_count: 0,
+                last_accessed_at: None,
+            }],
+        },
+    );
+    end.answer(
+        "ask:group_chime",
         1.0,
-        Answer::Judged {
-            decision: Some(Decision {
-                why: crate::joining::Why::React,
-                reason: "😁".into(),
-            }),
+        Answer::Asked {
+            raw: Some(
+                r#"{"speak":"know","about":"那家店周五人多","basis":2,"unsure":["烧糊"]}"#.into(),
+            ),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:group_chime",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"speak":"react","about":"😁","basis":null,"unsure":[]}"#.into()),
+            failure: None,
         },
     );
     heard(
