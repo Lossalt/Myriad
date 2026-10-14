@@ -34,7 +34,7 @@ import { inferOutfitProfileFromPartIds } from './outfit'
 import { repairAnime25DPsd } from './psdRepair'
 import { flattenPsdForRigger, flattenVisibleLayers, genericCloseParts, rasterFromRiggerPart } from './riggerBridge'
 import { skeletonInFrame } from './skeleton'
-import { tuckLiningBehindLegs } from './skirtLining'
+import { tuckGarmentOffLegsByReference, tuckLiningBehindLegs } from './skirtLining'
 
 export { ANIME25D_LAYER_DEPTH, type Anime25DLayerRole } from './anime25d'
 export type { Anime25DSourceReference } from './anime25dImportTypes'
@@ -137,6 +137,9 @@ export async function prepareAnime25DRigPsd(
     : layer)
   layers = splitHighCollarOcclusion(layers, rig.anchors, sourceReference)
   layers = tuckBackHairBehindNeck(layers)
+  // A coat drawn over a leg the portrait shows goes behind the legs before
+  // repair, which would cut it out and leave a hole once the leg moves.
+  if (sourceReference) layers = tuckGarmentOffLegsByReference(layers, sourceReference, visibleInAnalysisReference)
   layers.forEach((layer, index) => {
     layer.order = index
   })

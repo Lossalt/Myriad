@@ -1,5 +1,6 @@
-import type { RasterLayer } from './anime25dImportTypes'
+import type { Anime25DSourceReference, RasterLayer } from './anime25dImportTypes'
 import { rasterBounds, trimRaster, uniquePartId } from './anime25dRaster'
+import { alphaAt, closeMask, components } from './psdRepairMasks'
 
 const ALPHA_COMPONENT_THRESHOLD = 16
 
@@ -116,6 +117,142 @@ export function tuckLiningBehindLegs(layers: RasterLayer[]): RasterLayer[] {
   layers.forEach((layer, index) => {
     if (index === behind) output.push(trimRaster(lining))
     if (layer !== skirt) output.push(layer)
+    else if (rasterBounds(front)) output.push(front)
+  })
+  return output
+}
+
+/** Over a leg, the portrait shows the leg where the leg's layer is this many times closer to it than the garment's… */
+const LEG_SHOWN_RATIO = 3
+/**
+ * …and the garment is further off than art drawn where it belongs is
+ * (~15-18 RGB): magenta lining on brown stockings measured 26-67.
+ */
+const LEG_SHOWN_MIN_DISTANCE = 24
+/** A piece found so goes on over the leg where the garment is off by less (a patch at 22-34 by the knee). */
+const LEG_SHOWN_GROW_DISTANCE = 12
+/** A piece is at least this share of the legs drawn; specks of it stay. */
+const LEG_SHOWN_MIN_SHARE = 0.005
+/** Closes pinholes where the garment's colour happens to come close to the leg's. */
+const LEG_SHOWN_CLOSING = 3
+const OPAQUE_ALPHA = 128
+/** The garment's anti-aliased rim around a piece goes with it, or lingers as a ghost outline. */
+const LEG_SHOWN_RIM = 2
+const LEG_SHOWN_RIM_ALPHA = 160
+
+/**
+ * A full figure's coat or skirt drawn on across a leg the portrait shows in
+ * front of it: the lining a long coat opens on, painted over a thigh. There
+ * the leg's own layer has the portrait's colours and the garment's does not,
+ * yet dark red on dark stockings is too close for repair's reveal to see.
+ * Like a skirt's lining between the legs, that art goes to a layer of its own
+ * just behind the legs: at rest the leg shows, and as the leg moves, the
+ * lining it hung against is still there behind it.
+ */
+export function tuckGarmentOffLegsByReference(
+  layers: RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+  visibleAtRest: (layer: RasterLayer) => boolean,
+): RasterLayer[] {
+  const legs = layers.filter((layer) => layer.role === 'legwear' && visibleAtRest(layer))
+  if (!legs.length) return layers
+  const behind = Math.min(...legs.map((leg) => layers.indexOf(leg)))
+  const garments = layers.filter((layer, index) =>
+    (layer.role === 'topwear' || layer.role === 'bottomwear') && index > behind && visibleAtRest(layer))
+  if (!garments.length) return layers
+  const { width: canvasWidth, height: canvasHeight, data: portrait } = reference
+  // The topmost opaque layer at rest, per portrait pixel.
+  const top = new Int16Array(canvasWidth * canvasHeight).fill(-1)
+  let legArea = 0
+  layers.forEach((layer, index) => {
+    if (!visibleAtRest(layer)) return
+    for (let row = Math.max(0, -layer.top); row < Math.min(layer.height, canvasHeight - layer.top); row += 1) {
+      for (let col = Math.max(0, -layer.left); col < Math.min(layer.width, canvasWidth - layer.left); col += 1) {
+        if (layer.data[(row * layer.width + col) * 4 + 3] < OPAQUE_ALPHA) continue
+        top[(layer.top + row) * canvasWidth + layer.left + col] = index
+        if (layer.role === 'legwear') legArea += 1
+      }
+    }
+  })
+  const distance = (data: Uint8ClampedArray, offset: number, at: number) => Math.hypot(
+    data[offset] - portrait[at],
+    data[offset + 1] - portrait[at + 1],
+    data[offset + 2] - portrait[at + 2],
+  )
+  const linings: RasterLayer[] = []
+  const fronts = new Map<RasterLayer, RasterLayer>()
+  const ids = new Set(layers.map((layer) => layer.id))
+  for (const garment of garments) {
+    const index = layers.indexOf(garment)
+    const { width, height } = garment
+    // Where the garment shows over a leg, and where the portrait has that leg:
+    // surely, or near enough to go with a sure piece.
+    const over = new Uint8Array(width * height)
+    const shown = new Uint8Array(width * height)
+    const near = new Uint8Array(width * height)
+    for (let row = Math.max(0, -garment.top); row < Math.min(height, canvasHeight - garment.top); row += 1) {
+      for (let col = Math.max(0, -garment.left); col < Math.min(width, canvasWidth - garment.left); col += 1) {
+        const x = garment.left + col
+        const y = garment.top + row
+        if (top[y * canvasWidth + x] !== index) continue
+        const at = (y * canvasWidth + x) * 4
+        if (portrait[at + 3] < 250) continue
+        let leg: RasterLayer | null = null
+        for (let under = index - 1; under >= 0 && !leg; under -= 1) {
+          const layer = layers[under]
+          if (layer.role === 'legwear' && visibleAtRest(layer) && alphaAt(layer, x, y) >= OPAQUE_ALPHA) leg = layer
+        }
+        if (!leg) continue
+        const target = row * width + col
+        over[target] = 1
+        const garmentOff = distance(garment.data, target * 4, at)
+        const legOff = distance(leg.data, ((y - leg.top) * leg.width + x - leg.left) * 4, at)
+        if (legOff * LEG_SHOWN_RATIO > garmentOff) continue
+        if (garmentOff > LEG_SHOWN_GROW_DISTANCE) near[target] = 1
+        if (garmentOff > LEG_SHOWN_MIN_DISTANCE) shown[target] = 1
+      }
+    }
+    const keep = new Uint8Array(width * height)
+    let kept = false
+    for (const piece of components(closeMask(near, width, height, LEG_SHOWN_CLOSING), width, height)) {
+      if (piece.filter((target) => shown[target]).length < legArea * LEG_SHOWN_MIN_SHARE) continue
+      const members = piece.filter((target) => over[target])
+      for (const target of members) keep[target] = 1
+      kept = true
+    }
+    if (!kept) continue
+    for (let target = 0; target < keep.length; target += 1) {
+      if (keep[target] !== 1) continue
+      const col = target % width
+      const row = Math.floor(target / width)
+      for (let dy = -LEG_SHOWN_RIM; dy <= LEG_SHOWN_RIM; dy += 1) {
+        for (let dx = -LEG_SHOWN_RIM; dx <= LEG_SHOWN_RIM; dx += 1) {
+          const c = col + dx
+          const r = row + dy
+          if (c < 0 || r < 0 || c >= width || r >= height) continue
+          const next = r * width + c
+          const alpha = garment.data[next * 4 + 3]
+          if (!keep[next] && alpha > 0 && alpha < LEG_SHOWN_RIM_ALPHA) keep[next] = 2
+        }
+      }
+    }
+    const front = { ...garment, data: new Uint8ClampedArray(garment.data) }
+    const lining = { ...garment, data: new Uint8ClampedArray(garment.data.length) }
+    for (let target = 0; target < keep.length; target += 1) {
+      if (!keep[target]) continue
+      lining.data.set(garment.data.subarray(target * 4, target * 4 + 4), target * 4)
+      front.data[target * 4 + 3] = 0
+    }
+    lining.id = uniquePartId(`${garment.id}-lining`, ids)
+    linings.push(trimRaster(lining))
+    fronts.set(garment, front)
+  }
+  if (!linings.length) return layers
+  const output: RasterLayer[] = []
+  layers.forEach((layer, index) => {
+    if (index === behind) output.push(...linings)
+    const front = fronts.get(layer)
+    if (!front) output.push(layer)
     else if (rasterBounds(front)) output.push(front)
   })
   return output

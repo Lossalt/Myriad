@@ -499,6 +499,8 @@ export function bindFigureSkin(
     return { kind: 'leg', side }
   }
   if (CHEST_ROLES.has(baseRole)) return { kind: 'chest' }
+  // A coat hangs from the shoulders however low a piece of it lies (its lining behind the legs).
+  if (baseRole === 'topwear') return { kind: 'torso' }
   // Anything else low on the figure (a buckle, a garter) is on the leg it sits over.
   if ((layer.y + layer.h / 2 - rest.hips.y) / rest.legSpan > LOW_ON_LEG) {
     return { kind: 'leg', side: layer.x + layer.w / 2 < rest.hips.x ? 'L' : 'R' }

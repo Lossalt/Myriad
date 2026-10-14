@@ -1,7 +1,7 @@
 import type { RasterLayer } from './anime25dImportTypes'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { tuckLiningBehindLegs } from './skirtLining'
+import { tuckGarmentOffLegsByReference, tuckLiningBehindLegs } from './skirtLining'
 
 function solid(
   id: string,
@@ -54,4 +54,38 @@ test('a skirt reaching across the legs, or a short fringe between them, stays in
   assert.equal(tuckLiningBehindLegs(across), across)
   const fringe = standingFigure({ left: 41, width: 6, bottom: 32 })
   assert.equal(tuckLiningBehindLegs(fringe), fringe)
+})
+
+/** A 100x200 portrait: brown stockings on a leg at x 30..70, a coat's magenta lining over it where y < 100. */
+function liningOverLeg(portraitLining: boolean) {
+  const stocking = [94, 69, 74] as const
+  const lining = [128, 60, 86] as const
+  const leg = { ...solid('legwear-left', 'legwear', stocking, { left: 30, top: 0, width: 40, height: 200 }), side: 'left' as const }
+  const coat = { ...solid('topwear', 'topwear', lining, { left: 0, top: 0, width: 100, height: 100 }), side: null }
+  const data = new Uint8ClampedArray(100 * 200 * 4)
+  for (let y = 0; y < 200; y += 1) {
+    for (let x = 0; x < 100; x += 1) {
+      const onLeg = x >= 30 && x < 70
+      const colour = y < 100 && (!onLeg || portraitLining) ? lining : onLeg ? stocking : [255, 255, 255]
+      data.set([...colour, 255], (y * 100 + x) * 4)
+    }
+  }
+  return { layers: [leg, coat], reference: { width: 100, height: 200, data } }
+}
+
+test('a coat\'s lining drawn over a leg the portrait shows goes behind the leg', () => {
+  const { layers, reference } = liningOverLeg(false)
+  const tucked = tuckGarmentOffLegsByReference(layers, reference, () => true)
+  assert.deepEqual(tucked.map((layer) => layer.id), ['topwear-lining', 'legwear-left', 'topwear'])
+  const [lining, , coat] = tucked
+  // The coat keeps what lies beside the leg; the lining has what lay over it.
+  assert.equal(coat.data[(50 * coat.width + 50) * 4 + 3], 0)
+  assert.equal(coat.data[(50 * coat.width + 10) * 4 + 3], 255)
+  assert.equal(lining.data[((50 - lining.top) * lining.width + 50 - lining.left) * 4 + 3], 255)
+  assert.equal(lining.role, 'topwear')
+})
+
+test('a coat the portrait shows over the leg stays in front of it', () => {
+  const { layers, reference } = liningOverLeg(true)
+  assert.equal(tuckGarmentOffLegsByReference(layers, reference, () => true), layers)
 })

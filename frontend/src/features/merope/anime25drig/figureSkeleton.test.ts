@@ -122,6 +122,8 @@ test('layers ride the bones they hang from', () => {
   assert.deepEqual(bindFigureSkin('face', { ...top, group: 'head' }, rest), { kind: 'chest' })
   assert.deepEqual(bindFigureSkin('legwear', { ...legL, side: null }, rest), { kind: 'leg', side: 'L' })
   assert.deepEqual(bindFigureSkin('objects', { x: 520, y: 1100, w: 30, h: 30, group: 'body' }, rest), { kind: 'leg', side: 'R' })
+  // A coat's lining tucked behind a thigh hangs from the shoulders with the coat.
+  assert.deepEqual(bindFigureSkin('topwear', { x: 430, y: 900, w: 70, h: 400, group: 'body' }, rest), { kind: 'torso' })
   assert.equal(bindFigureSkin('topwear', top, null), null)
 })
 
