@@ -38,6 +38,7 @@ mod performance;
 mod persona;
 pub mod reach;
 pub mod remembering;
+pub mod rhythm;
 pub mod reading;
 pub mod recognizing;
 mod rig;

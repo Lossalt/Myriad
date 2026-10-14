@@ -248,6 +248,9 @@ struct Case {
     /// Days since they last talked (`reach_judge`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     days_since: Option<i64>,
+    /// How often the two of them talk, as production gives it (`reach_judge`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    how_often: Option<Value>,
     /// She is writing to them first, about this (chat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     writing_first: Option<String>,
@@ -1204,6 +1207,7 @@ fn request(case: &Case) -> Value {
             let (system, schema) = super::merope::reach::judge_probe_contract(&default_soul());
             let input = json!({"name":"阿明","localTime":"Saturday 19:30",
                 "daysSinceYouTalked":case.days_since,
+                "howOftenYouTalk":case.how_often,
                 "dueNow":case.threads.iter().map(|(about, then)| json!({"about":about,"then":then})).collect::<Vec<_>>(),
                 "remembered":case.remembered,
                 "yourOwnTime":{"now":case.own_time.as_ref().and_then(|own| own["now"].as_str()),
@@ -2524,7 +2528,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 135;
+const MIND_CASES: usize = 137;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {

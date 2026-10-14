@@ -136,6 +136,54 @@ pub(super) async fn acquaintance(
     Some(known)
 }
 
+/// How often they talk with her (see `myriad_merope::rhythm`), from the
+/// days they wrote to her anywhere; none until anything is usual. Looked up
+/// at most every few minutes per person.
+pub(super) async fn talk_rhythm(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+) -> Option<myriad_merope::rhythm::Rhythm> {
+    use myriad_merope::rhythm::Rhythm;
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    static KNOWN: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<i32, (std::time::Instant, Option<Rhythm>)>>,
+    > = std::sync::LazyLock::new(Default::default);
+    const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const PEOPLE_KEPT: usize = 4096;
+    // Enough for the gaps weighed and eight weeks of talking every day.
+    const DAYS: i64 = 64;
+    if let Some((_, known)) = KNOWN
+        .lock()
+        .ok()?
+        .get(&user_id)
+        .filter(|(at, _)| at.elapsed() < FRESH_FOR)
+    {
+        return *known;
+    }
+    let first = acquaintance(db, user_id).await?.0?.date_naive();
+    let days: Vec<chrono::NaiveDate> = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT day FROM (SELECT DISTINCT (m.created_at AT TIME ZONE 'UTC')::date AS day \
+             FROM agent_messages m JOIN agent_sessions s ON s.id = m.session_id \
+             WHERE s.user_id = $1 AND m.role = 'user') talked ORDER BY day DESC LIMIT $2",
+            [user_id.into(), DAYS.into()],
+        ))
+        .await
+        .ok()?
+        .iter()
+        .filter_map(|row| row.try_get::<chrono::NaiveDate>("", "day").ok())
+        .collect();
+    let known = myriad_merope::rhythm::rhythm(&days, first, chrono::Utc::now().date_naive());
+    if let Ok(mut cache) = KNOWN.lock() {
+        if cache.len() >= PEOPLE_KEPT {
+            cache.retain(|_, (at, _)| at.elapsed() < FRESH_FOR);
+        }
+        cache.insert(user_id, (std::time::Instant::now(), known));
+    }
+    known
+}
+
 /// How her lines to this person differ from theirs to her (see
 /// `myriad_merope::contrast`), from their latest chat messages anywhere and
 /// her latest answers (not work: a report is not how she talks). Looked up
@@ -824,5 +872,45 @@ mod tests {
             Some("## Since you got up\nNobody else has talked with you since you got up.")
         );
         assert_eq!(built(ming, Audience::group(group, ming)).await, None);
+    }
+
+    /// Someone who wrote to her nearly every day, privately and in a group,
+    /// and now not for a few days: how often they talk comes from the days
+    /// they wrote anywhere, and this time reads as longer than usual. On a
+    /// real database (an isolated schema; skipped without a test database).
+    #[tokio::test]
+    async fn how_often_they_talk_comes_from_the_days_they_wrote() {
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "talk_rhythm").await;
+        let db = isolated.db.clone();
+        // Far from the ids other tests' fresh schemas hand out, since what is
+        // looked up is kept for a while per person.
+        let person = 91_017;
+        db.execute_unprepared(&format!(
+            "INSERT INTO users (id, username, display_name) VALUES ({person}, 'daily', 'daily')"
+        ))
+        .await
+        .unwrap();
+        let now = chrono::Utc::now();
+        for ago in 4..40 {
+            let venue = (ago % 3 == 0).then_some("telegram:-1005566");
+            let at = now - chrono::Duration::days(ago);
+            said(&db, person, venue, at, "早", "user_turn", 50.0).await;
+            // Twice on a day is one day of talking.
+            said(&db, person, None, at, "晚安", "user_turn", 50.0).await;
+        }
+        let rhythm = talk_rhythm(&db, person).await.expect("something is usual");
+        assert_eq!(rhythm.usual_gap, 1);
+        assert_eq!(rhythm.since, 4);
+        assert!(rhythm.longer_this_time());
+        assert_eq!(rhythm.lately, None, "known for under eight weeks");
+        let line = rhythm.while_talking().unwrap();
+        assert!(
+            line.contains("on most days") && line.contains("4 days ago"),
+            "{line}"
+        );
+        isolated.drop().await;
     }
 }

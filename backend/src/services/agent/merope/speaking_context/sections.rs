@@ -19,13 +19,22 @@ pub(super) async fn who_they_are(
     if !group && let Some(told) = making_sense::told_by_section(db, user_id).await {
         sections.push(told);
     }
-    // How long the two of them have known each other is between them.
+    // How long the two of them have known each other is between them; so
+    // is how often they talk, when this time or lately is unlike it.
     if !group && let Some((first, days)) = acquaintance(db, user_id).await {
-        sections.push(myriad_merope::speaking::format_acquaintance_section(
+        let mut section = myriad_merope::speaking::format_acquaintance_section(
             first,
             days,
             super::super::clock::now(),
-        ));
+        );
+        if let Some(line) = talk_rhythm(db, user_id)
+            .await
+            .and_then(|rhythm| rhythm.while_talking())
+        {
+            section.push('\n');
+            section.push_str(&line);
+        }
+        sections.push(section);
     }
     // Whether it reads like them typing, here.
     if matches!(turn, Turn::Chat(_))

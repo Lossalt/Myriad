@@ -357,6 +357,11 @@ async fn would_write(
         "name": super::resolve_addressee_label(db, user_id).await,
         "localTime": super::clock::local_now().format("%A %H:%M").to_string(),
         "daysSinceYouTalked": reason.days_since,
+        "howOftenYouTalk": super::speaking_context::talk_rhythm(db, user_id).await.map(|rhythm| json!({
+            "usually": rhythm.usually(),
+            "talkDaysLastFourWeeks": rhythm.lately.map(|(now, _)| now),
+            "talkDaysFourWeeksBefore": rhythm.lately.map(|(_, before)| before),
+        })),
         "dueNow": reason.due.iter().map(|thread| json!({"about": thread.about, "then": thread.then})).collect::<Vec<_>>(),
         "youWantedTo": reason.wished.iter().map(|thread| json!({"about": thread.about, "then": thread.then})).collect::<Vec<_>>(),
         "remembered": remembered,
