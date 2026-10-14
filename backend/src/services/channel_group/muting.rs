@@ -14,7 +14,7 @@ const UNTIL_LIFTED: chrono::Duration = chrono::Duration::days(30);
 /// answers nothing there and does not speak up. A restart forgets the mute
 /// (not the line): what she says meanwhile is only refused by the platform.
 pub async fn muted(venue: &str, by: &str, muted: Muted, everyone: bool) {
-    let now = chrono::Utc::now();
+    let now = now();
     let until = match muted {
         Muted::For(seconds) => {
             Some(now + chrono::Duration::seconds(seconds.min(i64::MAX as u64) as i64))
@@ -80,7 +80,7 @@ fn how_long(seconds: u64) -> String {
 
 /// Whether she cannot speak in the group now.
 pub(super) fn is_muted(venue: &str) -> bool {
-    let now = chrono::Utc::now();
+    let now = now();
     with_group(venue, |group| muted_now(group, now)).unwrap_or(false)
 }
 

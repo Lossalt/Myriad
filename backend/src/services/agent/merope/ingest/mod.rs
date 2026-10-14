@@ -35,6 +35,10 @@ pub(crate) use redeem::say_on_app;
 const SAME_EVENT_MINUTES: i64 = 15;
 
 pub async fn is_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(away) = crate::services::channel_group::g0::away() {
+        return !away;
+    }
     // She is not on the site (moving, living on another end, moved out):
     // nothing of her runs here, as with her switch off (H3e-9).
     if !crate::services::persona_sync::lease::place().here() {

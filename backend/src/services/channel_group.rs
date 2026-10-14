@@ -41,7 +41,9 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use futures::StreamExt;
 use myriad_agent_rules::channel::{
@@ -58,7 +60,10 @@ use crate::services::channel_pairing::{ChannelBinding, PairingChannel};
 use crate::services::channel_platform::ChannelPlatform;
 
 mod answer;
+#[cfg(test)]
+pub(crate) mod g0;
 mod group;
+mod io;
 mod ledger;
 mod line;
 mod memory;
@@ -74,6 +79,7 @@ mod turns;
 
 use answer::*;
 use group::*;
+use io::*;
 use ledger::*;
 use memory::*;
 use muting::*;
@@ -158,5 +164,7 @@ const REACH_NAMESPACE: &str = "group_reach";
 /// How often a group she is in is written down again, at most.
 const REACH_KEPT_EVERY: Duration = Duration::from_secs(10 * 60);
 
+#[cfg(test)]
+mod g0_scenes;
 #[cfg(test)]
 mod tests;

@@ -10,6 +10,10 @@ use myriad_merope::timing::{self, Where};
 /// in chat apps and in her own time alike (see
 /// `myriad_merope::timing::asleep_at`).
 pub fn asleep_now() -> Option<f64> {
+    #[cfg(test)]
+    if let Some(asleep) = crate::services::channel_group::g0::asleep_for() {
+        return asleep;
+    }
     timing::asleep_at(super::clock::now(), &super::clock::zone())
 }
 
@@ -53,14 +57,23 @@ pub fn where_she_is(in_talk: bool, may_sleep: bool) -> Where {
 
 /// How long until she has seen `text` and read it.
 pub fn until_read(at: Where, text: &str) -> Duration {
-    let seconds = timing::seen_after(at, rand::random(), rand::random())
+    let seconds = timing::seen_after(at, roll(), roll())
         + timing::reading(text.chars().count());
     Duration::from_secs_f64(seconds)
 }
 
 /// How long typing `message` takes her, give or take.
 pub fn typing(message: &str) -> Duration {
-    Duration::from_secs_f64(timing::typing(message.chars().count(), rand::random()))
+    Duration::from_secs_f64(timing::typing(message.chars().count(), roll()))
+}
+
+/// A number uniform in [0, 1).
+fn roll() -> f64 {
+    #[cfg(test)]
+    if let Some(roll) = crate::services::channel_group::g0::roll() {
+        return roll;
+    }
+    rand::random()
 }
 
 #[cfg(test)]

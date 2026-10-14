@@ -84,5 +84,9 @@ pub async fn get_identity() -> Option<AgentIdentity> {
 
 /// User-facing soul: site persona when Merope is on, else SOUL.md.
 pub async fn get_speaking_soul() -> Option<String> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return Some(crate::services::channel_group::g0::SOUL.to_string());
+    }
     crate::services::agent::merope::resolve_speaking_soul().await
 }

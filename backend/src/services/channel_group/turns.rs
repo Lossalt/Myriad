@@ -54,10 +54,10 @@ pub async fn handle(message: GroupLine, token: String) {
     let venue = message.venue();
     // She is not on the site: not in the group either (D3-2). The latest
     // line that called her is the one she takes up when she is back.
-    if crate::services::channel_work::held::away() {
+    if away() {
         with_group(&venue, |group| {
             group.reach = Some((message.clone(), token.clone()));
-            group.left_while_away = Some((message, token, chrono::Utc::now()));
+            group.left_while_away = Some((message, token, now()));
         });
         info!(%venue, "[Group] she is not on the site; the line waits for her return");
         return;
@@ -216,8 +216,7 @@ pub fn back_from_away() {
                 .values_mut()
                 .filter_map(|group| group.left_while_away.take())
                 .filter(|(_, _, at)| {
-                    chrono::Utc::now() - *at
-                        < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
+                    now() - *at < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
                 })
                 .map(|(line, token, _)| (line, token))
                 .collect()
@@ -227,6 +226,15 @@ pub fn back_from_away() {
         info!(venue = %line.venue(), "[Group] she is back: the line that called her is taken up");
         tokio::spawn(handle(line, token));
     }
+}
+
+/// When this process first heard a group.
+pub(super) fn up_since() -> chrono::DateTime<chrono::Utc> {
+    #[cfg(test)]
+    if let Some(at) = g0::up_since() {
+        return at;
+    }
+    *UP_SINCE
 }
 
 /// Mark when this process first heard a group.
@@ -243,7 +251,7 @@ pub(super) fn left_waiting(
     venue: &str,
     past: &[(GroupLine, chrono::DateTime<chrono::Utc>, bool)],
 ) -> Option<GroupLine> {
-    let before = *UP_SINCE - chrono::Duration::seconds(5);
+    let before = up_since() - chrono::Duration::seconds(5);
     let mut past: Vec<_> = past.iter().collect();
     past.sort_by_key(|(_, at, _)| *at);
     let after_her = past
@@ -254,8 +262,7 @@ pub(super) fn left_waiting(
         !hers
             && line.addressed
             && *at < before
-            && chrono::Utc::now() - *at
-                < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
+            && now() - *at < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
     })?;
     let key = format!("{venue}#{}", line.message_id);
     let mut taken = TAKEN_BACK.lock().ok()?;

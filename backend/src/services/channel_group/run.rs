@@ -19,7 +19,7 @@ pub(super) async fn answer_stranger(
         info!(%venue, "[Group] enough replies to outsiders today");
         return false;
     }
-    let Ok(owner) = crate::services::site_owner::site_owner_user_id(db).await else {
+    let Some(owner) = owner(db).await else {
         return false;
     };
     let stranger = crate::services::agent::merope::group::strangers::Stranger {
@@ -47,32 +47,73 @@ pub(super) async fn answer_stranger(
         .chain(std::iter::once(read.said.clone()))
         .collect::<Vec<_>>()
         .join("\n");
-    sections.extend(crate::services::agent::merope::group::memes::section_for(db, &talk).await);
-    // And the groups' own words in it.
-    sections.extend(
-        crate::services::agent::merope::group::jargon::section_for(db, &venue, &talk).await,
-    );
-    let Ok(Some((reply, sticker))) = tokio::time::timeout(
-        TURN_DEADLINE,
-        crate::services::agent::merope::group::strangers::reply(
-            db,
-            owner,
-            &venue,
-            &stranger,
-            &read.transcript,
-            &read.said,
-            why,
-            &sections,
-        ),
-    )
-    .await
-    else {
+    // (A recording has no database to read them from.)
+    #[cfg(test)]
+    let look_up = !g0::on();
+    #[cfg(not(test))]
+    let look_up = true;
+    if look_up {
+        sections.extend(crate::services::agent::merope::group::memes::section_for(db, &talk).await);
+        // And the groups' own words in it.
+        sections.extend(
+            crate::services::agent::merope::group::jargon::section_for(db, &venue, &talk).await,
+        );
+    }
+    #[cfg(test)]
+    let g0_reply = if g0::on() {
+        Some(
+            tokio::time::timeout(
+                TURN_DEADLINE,
+                g0::stranger(serde_json::json!({
+                    "owner": owner,
+                    "venue": venue,
+                    "who": stranger.who,
+                    "name": stranger.name,
+                    "transcript": as_json(&read.transcript),
+                    "said": read.said,
+                    "why": why,
+                    "sections": sections,
+                })),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(test))]
+    let g0_reply = None;
+    let Ok(Some((reply, sticker))) = (if let Some(reply) = g0_reply {
+        reply
+    } else {
+        tokio::time::timeout(
+            TURN_DEADLINE,
+            crate::services::agent::merope::group::strangers::reply(
+                db,
+                owner,
+                &venue,
+                &stranger,
+                &read.transcript,
+                &read.said,
+                why,
+                &sections,
+            ),
+        )
+        .await
+    }) else {
         return false;
     };
     let reply = without_reply_mark(&reply);
     let sent = say_and_send(message, token, &reply, sticker, began, owner).await;
     if sent {
         answered(message);
+        #[cfg(test)]
+        if g0::on() {
+            g0::note(
+                "strangerAfter",
+                serde_json::json!({ "owner": owner, "venue": venue, "who": stranger.who, "said": read.said, "reply": reply, "messageId": message.message_id }),
+            );
+            return sent;
+        }
         crate::services::agent::merope::group::strangers::enqueue_after(
             db,
             owner,
@@ -87,18 +128,6 @@ pub(super) async fn answer_stranger(
     sent
 }
 
-pub(super) async fn current_binding(
-    db: &DatabaseConnection,
-    message: &GroupLine,
-    user_id: i32,
-) -> Option<ChannelBinding> {
-    let binding = ChannelBinding::resolve(db, message.platform, user_id, &message.from)
-        .await
-        .ok()
-        .flatten()?;
-    binding.is_current(db).await.then_some(binding)
-}
-
 pub(super) async fn run_turn(
     db: &DatabaseConnection,
     message: &GroupLine,
@@ -107,6 +136,10 @@ pub(super) async fn run_turn(
     chime: Option<String>,
     first: bool,
 ) -> Option<(String, Option<serde_json::Value>)> {
+    #[cfg(test)]
+    if g0::on() {
+        return g0_turn(db, message, user_id, chime, first).await;
+    }
     crate::services::principal::current_roles(db, user_id)
         .await
         .ok()??;
@@ -204,6 +237,69 @@ pub(super) async fn run_turn(
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+/// The conversation as its lines, for a recording.
+#[cfg(test)]
+pub(super) fn as_json(lines: &[ConversationMessage]) -> Vec<serde_json::Value> {
+    lines
+        .iter()
+        .map(|line| serde_json::json!({ "role": line.role, "content": line.content }))
+        .collect()
+}
+
+/// A member's turn as `run_turn` puts it together, given to the recording
+/// instead of a Chat run.
+#[cfg(test)]
+async fn g0_turn(
+    db: &DatabaseConnection,
+    message: &GroupLine,
+    user_id: i32,
+    chime: Option<String>,
+    first: bool,
+) -> Option<(String, Option<serde_json::Value>)> {
+    let venue = message.venue();
+    let read = (!first).then(|| reading(message));
+    let making_sense = match &read {
+        Some(read) => make_sense(db, message, read).await,
+        None => None,
+    };
+    let (transcript, input) = match read {
+        Some(read) => (read.transcript, read.said),
+        None => (transcript(&venue, None), said_now(message)),
+    };
+    let room = room(&venue).map(|room| serde_json::to_value(room).unwrap_or_default());
+    let differs = how_she_differs(&venue).await;
+    let late = if first { None } else { seen_late(message) };
+    let given = serde_json::json!({
+        "userId": user_id,
+        "input": input,
+        "venue": venue,
+        "transcript": as_json(&transcript),
+        "room": room,
+        "differs": differs,
+        "makingSense": making_sense,
+        "late": late,
+        "chime": chime,
+        "speaker": message.display_name,
+        "first": first,
+    });
+    let deadline = tokio::time::sleep(TURN_DEADLINE);
+    tokio::pin!(deadline);
+    let mut typing = tokio::time::interval(TYPING_EVERY);
+    let turn = g0::turn(given);
+    tokio::pin!(turn);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return None,
+            _ = typing.tick() => send_typing(message, "").await,
+            done = &mut turn => {
+                let (text, sticker) = done?;
+                let text = text.trim().to_string();
+                return (!text.is_empty() || sticker.is_some()).then_some((text, sticker));
             }
         }
     }

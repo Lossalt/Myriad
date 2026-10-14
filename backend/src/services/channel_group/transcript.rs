@@ -32,7 +32,7 @@ pub(super) fn said_ago(message: &GroupLine) -> Option<chrono::Duration> {
             .iter()
             .rev()
             .find(|line| !line.hers && line.message_id.as_deref() == Some(&message.message_id))
-            .map(|line| chrono::Utc::now() - line.at)
+            .map(|line| now() - line.at)
     })
     .flatten()
 }

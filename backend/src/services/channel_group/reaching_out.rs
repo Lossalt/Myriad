@@ -17,7 +17,7 @@ pub async fn share_first(owner: i32, what: String) {
     if timing::asleep_now().is_some() {
         return;
     }
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return;
     };
     let offered = offered(&db, None).await;
@@ -47,7 +47,7 @@ pub async fn come_back(owner: i32, venue: &str, what: &str) -> bool {
     if timing::asleep_now().is_some() {
         return false;
     }
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return false;
     };
     let Some(group) = offered(&db, Some(venue)).await.into_iter().next() else {
@@ -75,7 +75,7 @@ async fn offered(
     use crate::services::agent::merope::group::{bits, sharing};
     bring_back(db).await;
     let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await.clone();
-    let now = chrono::Utc::now();
+    let now = now();
     let seen: Vec<(String, Vec<String>, String, Vec<serde_json::Value>)> = {
         let Ok(groups) = GROUPS.lock() else {
             return Vec::new();
@@ -132,11 +132,20 @@ async fn offered(
     };
     let mut offered = Vec::with_capacity(seen.len());
     for (venue, lines, quiet_for, spoke_up_lately) in seen {
-        let shared = bits::in_group(db, &venue, 5, None)
-            .await
-            .into_iter()
-            .map(|(handle, how)| format!("{handle}: {how}"))
-            .collect();
+        // (A recording has no database to read them from.)
+        #[cfg(test)]
+        let look_up = !g0::on();
+        #[cfg(not(test))]
+        let look_up = true;
+        let shared = if look_up {
+            bits::in_group(db, &venue, 5, None)
+                .await
+                .into_iter()
+                .map(|(handle, how)| format!("{handle}: {how}"))
+                .collect()
+        } else {
+            Vec::new()
+        };
         offered.push(sharing::Offered {
             id: venue,
             lines,
@@ -152,9 +161,7 @@ async fn offered(
 /// from what was kept (see `memory::keep_reach`): their lines, if kept, and
 /// where she would say something. The token is read from the configuration.
 async fn bring_back(db: &DatabaseConnection) {
-    let kept = crate::services::runtime_registry::list(db, REACH_NAMESPACE, None, None)
-        .await
-        .unwrap_or_default();
+    let kept = all_kept(db, REACH_NAMESPACE).await;
     if kept.is_empty() {
         return;
     }
@@ -214,6 +221,10 @@ pub(super) fn token_for(
     chat: &str,
     config: &crate::config::DynamicConfig,
 ) -> Option<String> {
+    #[cfg(test)]
+    if g0::on() {
+        return g0::token_for(platform, chat);
+    }
     if !platform.enabled(config) {
         return None;
     }
@@ -262,15 +273,11 @@ pub(super) async fn share_turn(db: &DatabaseConnection, venue: &str, reason: &st
     let Some((seen, token)) = with_group(venue, |group| group.reach.clone()).flatten() else {
         return false;
     };
-    let Ok(owner) = crate::services::site_owner::site_owner_user_id(db).await else {
+    let Some(owner) = owner(db).await else {
         return false;
     };
-    let inbound_id = format!(
-        "group:{}:first:{}",
-        seen.chat,
-        chrono::Utc::now().timestamp_millis()
-    );
-    if !crate::services::channel_work::claim_inbound(db, seen.platform, None, &inbound_id).await {
+    let inbound_id = format!("group:{}:first:{}", seen.chat, now().timestamp_millis());
+    if !claim(db, seen.platform, &inbound_id).await {
         return false;
     }
     let line = GroupLine {

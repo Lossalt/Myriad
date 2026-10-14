@@ -21,6 +21,10 @@ const PER_KIND: usize = 3;
 /// brings up, what she heard about it elsewhere, and what of hers she would
 /// want to tell someone.
 pub async fn material(db: &DatabaseConnection, talk: &str) -> Vec<Material> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return Vec::new();
+    }
     let mut material: Vec<Material> = super::views::touched(db, talk, PER_KIND)
         .await
         .into_iter()

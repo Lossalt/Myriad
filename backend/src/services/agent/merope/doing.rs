@@ -116,11 +116,19 @@ pub(super) fn forget() {
 
 /// What she is in the middle of, if anything.
 pub fn current() -> Option<Doing> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return None;
+    }
     LIFE.lock().ok()?.now.clone()
 }
 
 /// How she is lazing about, if she is.
 pub fn lazing() -> Option<Lazing> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return None;
+    }
     LIFE.lock().ok()?.lazing.clone()
 }
 

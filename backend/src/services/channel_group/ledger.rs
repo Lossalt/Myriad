@@ -107,7 +107,7 @@ pub(super) fn note_said(
 
 /// Write what was noted to the group's ledger, keeping the latest.
 pub(super) async fn keep_ledger(venue: &str) {
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return;
     };
     let Some((messages, waits, theirs, hers)) = with_group(venue, |group| {
@@ -123,7 +123,7 @@ pub(super) async fn keep_ledger(venue: &str) {
     if messages.is_empty() && waits.is_empty() {
         return;
     }
-    let mut ledger = crate::services::runtime_registry::get::<Ledger>(&db, LEDGER_NAMESPACE, venue)
+    let mut ledger = kept::<Ledger>(&db, LEDGER_NAMESPACE, venue)
         .await
         .ok()
         .flatten()
@@ -138,22 +138,8 @@ pub(super) async fn keep_ledger(venue: &str) {
     ledger.theirs.keep_within(LEDGER_COUNTED);
     ledger.hers.merge(&hers);
     ledger.hers.keep_within(LEDGER_COUNTED);
-    let keep_until = (chrono::Utc::now() + chrono::Duration::days(LEDGER_DAYS)).timestamp();
-    if let Err(error) = crate::services::runtime_registry::put(
-        &db,
-        LEDGER_NAMESPACE,
-        venue,
-        crate::services::runtime_registry::RegistryIdentity {
-            subject_id: None,
-            owner_id: None,
-            tapp_id: None,
-            runtime_id: None,
-        },
-        &ledger,
-        keep_until,
-    )
-    .await
-    {
+    let keep_until = (now() + chrono::Duration::days(LEDGER_DAYS)).timestamp();
+    if let Err(error) = keep(&db, LEDGER_NAMESPACE, venue, &ledger, keep_until).await {
         warn!(%error, %venue, "[Group] could not keep the talk ledger");
     }
 }
@@ -166,9 +152,8 @@ pub(super) async fn how_she_differs(venue: &str) -> Option<String> {
     let (mut theirs, mut hers) = with_group(venue, |group| {
         (group.ledger_theirs.clone(), group.ledger_hers.clone())
     })?;
-    if let Ok(db) = crate::services::process_db::database()
-        && let Ok(Some(ledger)) =
-            crate::services::runtime_registry::get::<Ledger>(&db, LEDGER_NAMESPACE, venue).await
+    if let Ok(db) = db()
+        && let Ok(Some(ledger)) = kept::<Ledger>(&db, LEDGER_NAMESPACE, venue).await
     {
         theirs.merge(&ledger.theirs);
         hers.merge(&ledger.hers);

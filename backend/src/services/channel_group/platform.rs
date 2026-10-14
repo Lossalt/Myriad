@@ -11,6 +11,27 @@ pub(super) async fn send_reply(
     quoting: bool,
 ) -> Result<(), ConnectFailureKind> {
     use myriad_agent_rules::mentions;
+    #[cfg(test)]
+    if g0::on() {
+        let pieces: Vec<serde_json::Value> = pieces
+            .iter()
+            .map(|piece| match piece {
+                mentions::Piece::Text(text) => serde_json::json!({ "text": text }),
+                mentions::Piece::Mention { id, name } => {
+                    serde_json::json!({ "mention": id, "name": name })
+                }
+            })
+            .collect();
+        let quoted = quoting.then(|| line.message_id.clone());
+        return if g0::send(
+            "send",
+            serde_json::json!({ "venue": line.venue(), "thread": line.thread, "pieces": pieces, "quoted": quoted }),
+        ) {
+            Ok(())
+        } else {
+            Err(ConnectFailureKind::Transient)
+        };
+    }
     match line.platform {
         ChannelPlatform::Telegram => {
             let Ok(chat) = line.chat.parse() else {
@@ -61,6 +82,11 @@ pub(super) async fn send_reply(
 }
 
 pub(super) async fn send_typing(line: &GroupLine, token: &str) {
+    #[cfg(test)]
+    if g0::on() {
+        g0::send("typing", serde_json::json!({ "venue": line.venue() }));
+        return;
+    }
     match line.platform {
         ChannelPlatform::Telegram => {
             let _ = crate::services::telegram_bot::send_typing(token, &line.chat).await;
@@ -80,6 +106,13 @@ pub(super) async fn send_typing(line: &GroupLine, token: &str) {
 /// Put her reaction (one of `joining::REACTIONS`) on `line`. Whether the
 /// platform took it.
 pub(super) async fn react(line: &GroupLine, token: &str, emoji: &str) -> bool {
+    #[cfg(test)]
+    if g0::on() {
+        return g0::send(
+            "react",
+            serde_json::json!({ "venue": line.venue(), "messageId": line.message_id, "emoji": emoji }),
+        );
+    }
     let done = match line.platform {
         ChannelPlatform::Telegram => match (line.chat.parse(), line.message_id.parse()) {
             (Ok(chat), Ok(message_id)) => {
@@ -175,7 +208,7 @@ pub(super) async fn deliver(
     let room = room(&venue);
     let mut sent = false;
     let mut went_out: Vec<String> = Vec::new();
-    let since = chrono::Utc::now()
+    let since = now()
         - chrono::Duration::from_std(began.elapsed()).unwrap_or_else(|_| chrono::Duration::zero());
     // What came meanwhile, already weighed.
     let mut looked = 0;
@@ -189,7 +222,7 @@ pub(super) async fn deliver(
     // chat apps usually do, until the group has said enough), and only the
     // first quoting the line she answers.
     let lines = as_messages(reply);
-    let most = myriad_merope::talk_shape::messages_this_turn(lines.len(), rand::random::<f64>());
+    let most = myriad_merope::talk_shape::messages_this_turn(lines.len(), roll());
     for (index, message) in myriad_merope::talk_shape::goes_out_as(&lines, most, room.as_ref())
         .into_iter()
         .enumerate()
@@ -238,11 +271,7 @@ pub(super) async fn deliver(
                         .then(|| said_ago(line))
                         .flatten()
                         .map(|age| age.num_milliseconds() as f64 / 1000.0);
-                    let typed = myriad_merope::talk_shape::typed_by(
-                        HER,
-                        chrono::Utc::now().timestamp(),
-                        &chunk,
-                    );
+                    let typed = myriad_merope::talk_shape::typed_by(HER, now().timestamp(), &chunk);
                     note_said(&venue, typed, waited, Some(&chunk));
                     sent = true;
                     went_out.push(chunk);
@@ -257,14 +286,4 @@ pub(super) async fn deliver(
     }
     keep_ledger(&venue).await;
     went_out.join("\n")
-}
-
-pub(super) async fn lookup(db: &DatabaseConnection, line: &GroupLine) -> Option<PairingLookup> {
-    crate::services::channel_pairing::lookup_openid(
-        db,
-        PairingChannel::of(line.platform),
-        &line.from,
-    )
-    .await
-    .ok()
 }

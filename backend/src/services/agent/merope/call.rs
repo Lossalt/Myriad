@@ -185,6 +185,12 @@ impl Ask {
         schema_name: &str,
         schema: &Value,
     ) -> Result<String, Failure> {
+        #[cfg(test)]
+        if let Some(answer) =
+            crate::services::channel_group::g0::model(self.operation, system, input)
+        {
+            return answer.ok_or(Failure::Unavailable);
+        }
         self.model()
             .await?
             .json(system, input, schema_name, schema)

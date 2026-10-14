@@ -8,7 +8,7 @@ use super::*;
 /// Whether it was new: a line delivered again (after a restart the chat app
 /// sends its last batch again) is already there, and is not heard twice.
 pub(super) async fn remember_line(venue: &str, line: Line) -> bool {
-    let db = crate::services::process_db::database().ok();
+    let db = db().ok();
     remember_line_on(db.as_ref(), venue, line).await
 }
 
@@ -50,32 +50,21 @@ pub(super) async fn restore(db: &DatabaseConnection, venue: &str) {
     }
     // Not read is not nothing kept: marking it restored now would let the
     // lines since overwrite what was kept before.
-    let stored = match crate::services::runtime_registry::get::<StoredLines>(
-        db,
-        LINES_NAMESPACE,
-        venue,
-    )
-    .await
-    {
+    let stored = match kept::<StoredLines>(db, LINES_NAMESPACE, venue).await {
         Ok(stored) => stored,
         Err(error) => {
             warn!(%error, %venue, "[Group] could not read back the lines kept before a restart");
             return;
         }
     };
-    let spoke_up = crate::services::agent::merope::group::others::spoke_up_lately(
-        db,
-        venue,
-        SPOKE_UP_KEPT as u64,
-    )
-    .await;
+    let spoke_up = spoke_up_lately(db, venue, SPOKE_UP_KEPT as u64).await;
     with_group(venue, |group| {
         if !group.restored {
             group.restored = true;
             if let Some(stored) = stored {
                 merge_restored(group, stored.lines);
             }
-            restore_spoke_up(group, &spoke_up, chrono::Utc::now());
+            restore_spoke_up(group, &spoke_up, now());
         }
     });
 }
@@ -101,19 +90,12 @@ pub(super) fn restore_spoke_up(
 }
 
 pub(super) async fn keep_lines(db: &DatabaseConnection, venue: &str, lines: Vec<Line>) {
-    let keep_until = (chrono::Utc::now()
-        + chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default())
-    .timestamp();
-    if let Err(error) = crate::services::runtime_registry::put(
+    let keep_until =
+        (now() + chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()).timestamp();
+    if let Err(error) = keep(
         db,
         LINES_NAMESPACE,
         venue,
-        crate::services::runtime_registry::RegistryIdentity {
-            subject_id: None,
-            owner_id: None,
-            tapp_id: None,
-            runtime_id: None,
-        },
         &StoredLines { lines },
         keep_until,
     )
@@ -129,7 +111,7 @@ pub(super) async fn keep_lines(db: &DatabaseConnection, venue: &str, lines: Vec<
 /// hers as hers. Nothing is answered: it is only read.
 pub async fn catch_up(venue: &str, past: Vec<(GroupLine, chrono::DateTime<chrono::Utc>, bool)>) {
     heard_since_up();
-    let db = crate::services::process_db::database().ok();
+    let db = db().ok();
     if let Some(db) = &db {
         restore(db, venue).await;
     }
@@ -196,15 +178,12 @@ pub async fn catch_up(venue: &str, past: Vec<(GroupLine, chrono::DateTime<chrono
 /// taken up now with the configured token.
 pub async fn take_back_kept(platform: ChannelPlatform) {
     heard_since_up();
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return;
     };
     let prefix = format!("{}:", platform.slug());
     let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await.clone();
-    let kept = crate::services::runtime_registry::list(&db, LINES_NAMESPACE, None, None)
-        .await
-        .unwrap_or_default();
-    for row in kept {
+    for row in all_kept(&db, LINES_NAMESPACE).await {
         let Some(chat) = row.record_id.strip_prefix(&prefix).map(str::to_string) else {
             continue;
         };
@@ -215,12 +194,11 @@ pub async fn take_back_kept(platform: ChannelPlatform) {
         let Ok(stored) = serde_json::from_value::<StoredLines>(row.payload) else {
             continue;
         };
-        let thread =
-            crate::services::runtime_registry::get::<StoredReach>(&db, REACH_NAMESPACE, &venue)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|reach| reach.thread);
+        let thread = kept::<StoredReach>(&db, REACH_NAMESPACE, &venue)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|reach| reach.thread);
         let past = kept_as_heard(platform, &chat, thread, stored.lines);
         restore(&db, &venue).await;
         take_back(&venue, left_waiting(&venue, &past), token);
@@ -260,13 +238,12 @@ pub(super) fn kept_as_heard(
 
 /// Groups of `platform` she has kept lines of lately.
 pub async fn groups_lately(platform: ChannelPlatform) -> Vec<String> {
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return Vec::new();
     };
     let prefix = format!("{}:", platform.slug());
-    crate::services::runtime_registry::list(&db, LINES_NAMESPACE, None, None)
+    all_kept(&db, LINES_NAMESPACE)
         .await
-        .unwrap_or_default()
         .into_iter()
         .filter_map(|row| row.record_id.strip_prefix(&prefix).map(str::to_string))
         .collect()
@@ -286,34 +263,21 @@ async fn keep_reach(message: &GroupLine) {
         due
     })
     .unwrap_or(false);
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return;
     };
     if !due {
         return;
     }
-    let now = chrono::Utc::now();
+    let now = now();
     let keep_until = (now
         + chrono::Duration::from_std(super::reaching_out::SEEN_WITHIN).unwrap_or_default())
     .timestamp();
-    if let Err(error) = crate::services::runtime_registry::put(
-        &db,
-        REACH_NAMESPACE,
-        &venue,
-        crate::services::runtime_registry::RegistryIdentity {
-            subject_id: None,
-            owner_id: None,
-            tapp_id: None,
-            runtime_id: None,
-        },
-        &StoredReach {
-            thread: message.thread,
-            seen_at: now,
-        },
-        keep_until,
-    )
-    .await
-    {
+    let reach = StoredReach {
+        thread: message.thread,
+        seen_at: now,
+    };
+    if let Err(error) = keep(&db, REACH_NAMESPACE, &venue, &reach, keep_until).await {
         warn!(%error, %venue, "[Group] could not keep that she is in the group");
     }
 }
@@ -327,7 +291,7 @@ pub(super) fn bounded(text: &str) -> String {
 pub async fn record(message: &GroupLine) -> bool {
     heard_since_up();
     let line = Line {
-        at: chrono::Utc::now(),
+        at: now(),
         message_id: Some(message.message_id.clone()),
         name: message.display_name.clone(),
         from: Some(message.from.clone()),
@@ -344,7 +308,7 @@ pub async fn record(message: &GroupLine) -> bool {
     keep_reach(message).await;
     let typed = myriad_merope::talk_shape::typed_by(
         &ledger_who(&message.from),
-        chrono::Utc::now().timestamp(),
+        now().timestamp(),
         &message.text,
     );
     if note_said(&venue, typed, None, Some(&message.text)) {
@@ -352,10 +316,10 @@ pub async fn record(message: &GroupLine) -> bool {
     }
     // Not on the site, she hears nothing there (D3-2): the line is kept as
     // the group's talk, not taken in as hers.
-    let away = crate::services::channel_work::held::away();
+    let away = away();
     // Words she watches there as maybe the group's own count as they come up.
     if !away {
-        crate::services::agent::merope::group::jargon::heard(&venue, &message.text);
+        jargon_heard(&venue, &message.text);
     }
     take_in(&venue);
     with_group(&venue, |group| {
@@ -374,7 +338,7 @@ pub async fn record(message: &GroupLine) -> bool {
 /// with no name and no group on it.
 pub(super) fn take_in(venue: &str) {
     // What was said while she was not on the site she never heard.
-    if crate::services::channel_work::held::away() {
+    if away() {
         with_group(venue, |group| {
             group.heard_upto = group.lines.back().map(|line| line.at).or(group.heard_upto);
         });
@@ -390,7 +354,7 @@ pub(super) fn take_in(venue: &str) {
         let theirs = fresh.iter().filter(|line| !line.hers).count();
         let waited = fresh
             .first()
-            .is_some_and(|line| chrono::Utc::now() - line.at >= HEARD_AFTER);
+            .is_some_and(|line| now() - line.at >= HEARD_AFTER);
         if theirs < HEARD_EVERY && !(waited && theirs >= HEARD_AT_LEAST) {
             return None;
         }
@@ -415,30 +379,21 @@ pub(super) fn take_in(venue: &str) {
     };
     let venue = venue.to_string();
     tokio::spawn(async move {
-        let Ok(db) = crate::services::process_db::database() else {
+        let Ok(db) = db() else {
             return;
         };
-        let Ok(owner) = crate::services::site_owner::site_owner_user_id(&db).await else {
+        let Some(owner) = owner(&db).await else {
             return;
         };
-        let heard = stretch
-            .iter()
-            .map(|(_, name, text, hers)| myriad_merope::heard::Said {
-                name: name.clone(),
-                text: text.clone(),
-                hers: *hers,
-            })
-            .collect();
-        crate::services::agent::merope::group::heard::take_in(&db, owner, &venue, heard).await;
-        // And what the group was like, while its talk is still at hand.
-        crate::services::agent::merope::group::bits::go_over_stretch(&db, owner, &venue, stretch)
-            .await;
+        // What she heard, and what the group was like, while its talk is
+        // still at hand.
+        take_in_heard(&db, owner, &venue, stretch).await;
     });
 }
 
 pub(super) async fn record_hers(venue: &str, text: &str) {
     let line = Line {
-        at: chrono::Utc::now(),
+        at: now(),
         message_id: None,
         name: String::new(),
         from: None,

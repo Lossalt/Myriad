@@ -63,46 +63,18 @@ pub(super) async fn see(venue: &str, token: &str) {
     if unseen.is_empty() {
         return;
     }
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return;
     };
-    let Ok(owner) = crate::services::site_owner::site_owner_user_id(&db).await else {
+    let Some(owner) = owner(&db).await else {
         return;
     };
     // A sticker she looks at as she is: whether she would keep it to send.
-    let soul = crate::services::agent::identity::get_speaking_soul()
-        .await
-        .unwrap_or_default();
+    let soul = soul().await;
     let (db, soul) = (&db, soul.as_str());
     let looked = futures::future::join_all(unseen.into_iter().map(
         |(message_id, index, image)| async move {
-            let seen =
-                match crate::services::agent::merope::group::seeing::known(db, &image.key).await {
-                    Some(seen) => Some(seen),
-                    None => match fetch_picture(token, &image).await {
-                        Some(bytes) => {
-                            let sticker =
-                                (image.sticker && !soul.trim().is_empty()).then(|| bytes.clone());
-                            let seen = crate::services::agent::merope::group::seeing::look(
-                                db,
-                                owner,
-                                &image.key,
-                                bytes,
-                                image.hint.as_deref(),
-                                sticker.as_ref().map(|_| soul),
-                            )
-                            .await;
-                            if let (Some(seen), Some(bytes)) = (&seen, sticker) {
-                                crate::services::agent::merope::group::stickers::keep_theirs(
-                                    db, owner, venue, seen, bytes,
-                                )
-                                .await;
-                            }
-                            seen
-                        }
-                        None => None,
-                    },
-                };
+            let seen = look_at(db, owner, soul, venue, token, &image).await;
             (message_id, index, seen)
         },
     ))
@@ -137,7 +109,6 @@ pub(super) async fn see(venue: &str, token: &str) {
         }
     });
     for (key, seen) in again {
-        crate::services::agent::merope::group::bits::picture_again(db, owner, venue, &key, &seen)
-            .await;
+        picture_again(db, owner, venue, &key, &seen).await;
     }
 }

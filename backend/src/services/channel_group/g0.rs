@@ -1,0 +1,363 @@
+//! G0: the site's group behaviour, recorded. A test sets up a world (who is
+//! paired, what the model answers, what she sees in a picture) on its own
+//! thread; every call `io` and the model make then goes here instead, on a
+//! clock that moves only with tokio's paused time, and is written down with
+//! when it happened. The recordings are the goldens the group mind is held
+//! to as it moves into the shared core (D2).
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use serde_json::{Value, json};
+
+use crate::services::runtime_registry::RegistryRow;
+use myriad_agent_rules::channel::{GroupImage, PairingLookup};
+
+/// Her speaking soul in every recording.
+pub(crate) const SOUL: &str = "你是测试里的她，说话简短。";
+
+/// What the world does, as a test sets it up.
+pub(crate) struct World {
+    pub base: chrono::DateTime<chrono::Utc>,
+    pub start: tokio::time::Instant,
+    pub roll: f64,
+    pub away: bool,
+    pub asleep_for: Option<f64>,
+    pub up_since: Option<chrono::DateTime<chrono::Utc>>,
+    pub owner: Option<i32>,
+    /// Platform ids of paired members, and their user ids.
+    pub members: HashMap<String, i32>,
+    /// Members whose binding stops holding while she thinks.
+    pub unbound_after: HashSet<i32>,
+    /// Inbound ids already claimed.
+    pub claimed: HashSet<String>,
+    /// Answers of the model by operation, in order; none is a failure.
+    pub models: HashMap<String, VecDeque<Option<String>>>,
+    /// A member's turn: how long it takes, what she says, the sticker.
+    pub turns: VecDeque<(f64, String, Option<Value>)>,
+    pub strangers: VecDeque<(f64, String, Option<Value>)>,
+    /// What she sees in a picture, by its key.
+    pub seen: HashMap<String, myriad_merope::seeing::Seen>,
+    /// Text sends (counted from 0) the platform refuses.
+    pub refused: HashSet<usize>,
+    pub sends: usize,
+    pub registry: HashMap<(String, String), Value>,
+    pub spoke_up: HashMap<String, Vec<(chrono::DateTime<chrono::Utc>, bool)>>,
+    /// Chats the platform lets her send into (as the configuration would).
+    pub sendable: HashSet<String>,
+    pub log: Vec<Value>,
+}
+
+impl World {
+    pub(crate) fn new(roll: f64) -> Self {
+        Self {
+            // 14:00 at +08:00, a weekday afternoon.
+            base: chrono::DateTime::parse_from_rfc3339("2026-10-14T06:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            start: tokio::time::Instant::now(),
+            roll,
+            away: false,
+            asleep_for: None,
+            up_since: None,
+            owner: Some(1),
+            members: HashMap::new(),
+            unbound_after: HashSet::new(),
+            claimed: HashSet::new(),
+            models: HashMap::new(),
+            turns: VecDeque::new(),
+            strangers: VecDeque::new(),
+            seen: HashMap::new(),
+            refused: HashSet::new(),
+            sends: 0,
+            registry: HashMap::new(),
+            spoke_up: HashMap::new(),
+            sendable: HashSet::new(),
+            log: Vec::new(),
+        }
+    }
+}
+
+thread_local! {
+    static WORLD: RefCell<Option<World>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn enter(world: World) {
+    // A panic in a task of the scene is part of what happened: written
+    // down, so a golden never hides one.
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            note("panic", json!({ "message": info.to_string() }));
+            before(info);
+        }));
+    });
+    WORLD.with(|cell| *cell.borrow_mut() = Some(world));
+}
+
+pub(crate) fn leave() -> Option<World> {
+    WORLD.with(|cell| cell.borrow_mut().take())
+}
+
+pub(crate) fn with<T>(act: impl FnOnce(&mut World) -> T) -> Option<T> {
+    WORLD.with(|cell| cell.borrow_mut().as_mut().map(act))
+}
+
+pub(crate) fn on() -> bool {
+    with(|_| ()).is_some()
+}
+
+fn elapsed_ms(world: &World) -> i64 {
+    (tokio::time::Instant::now() - world.start).as_millis() as i64
+}
+
+pub(crate) fn now() -> Option<chrono::DateTime<chrono::Utc>> {
+    with(|world| world.base + chrono::Duration::milliseconds(elapsed_ms(world)))
+}
+
+pub(crate) fn roll() -> Option<f64> {
+    with(|world| world.roll)
+}
+
+pub(crate) fn away() -> Option<bool> {
+    with(|world| world.away)
+}
+
+pub(crate) fn asleep_for() -> Option<Option<f64>> {
+    with(|world| world.asleep_for)
+}
+
+pub(crate) fn up_since() -> Option<chrono::DateTime<chrono::Utc>> {
+    with(|world| world.up_since).flatten()
+}
+
+pub(crate) fn note(kind: &str, value: Value) {
+    with(|world| {
+        let t = elapsed_ms(world);
+        world
+            .log
+            .push(json!({ "t": t, "kind": kind, "what": value }));
+    });
+}
+
+pub(crate) fn owner() -> Option<i32> {
+    with(|world| world.owner).flatten()
+}
+
+pub(crate) fn claim(id: &str) -> bool {
+    note("claim", json!({ "id": id }));
+    with(|world| world.claimed.insert(id.to_string())).unwrap_or(false)
+}
+
+pub(crate) fn lookup(from: &str) -> Option<PairingLookup> {
+    with(|world| match world.members.get(from) {
+        Some(user_id) => PairingLookup::Paired { user_id: *user_id },
+        None => PairingLookup::Unpaired,
+    })
+}
+
+pub(crate) fn binding(user_id: i32) -> Option<crate::services::channel_pairing::ChannelBinding> {
+    Some(crate::services::channel_pairing::ChannelBinding {
+        user_id,
+        provider: "g0".into(),
+        identity_id: 0,
+        scope: String::new(),
+    })
+}
+
+pub(crate) fn still_bound(user_id: i32) -> bool {
+    with(|world| !world.unbound_after.contains(&user_id)).unwrap_or(true)
+}
+
+pub(crate) fn kept(namespace: &str, key: &str) -> Option<Value> {
+    with(|world| {
+        world
+            .registry
+            .get(&(namespace.to_string(), key.to_string()))
+            .cloned()
+    })
+    .flatten()
+}
+
+pub(crate) fn keep(namespace: &str, key: &str, value: Value, until: i64) {
+    let left =
+        with(|world| until - (world.base.timestamp() + elapsed_ms(world) / 1000)).unwrap_or(0);
+    note(
+        "keep",
+        json!({ "namespace": namespace, "key": key, "value": value, "keptFor": left }),
+    );
+    with(|world| {
+        world
+            .registry
+            .insert((namespace.to_string(), key.to_string()), value)
+    });
+}
+
+pub(crate) fn all_kept(namespace: &str) -> Vec<RegistryRow> {
+    with(|world| {
+        let mut rows: Vec<RegistryRow> = world
+            .registry
+            .iter()
+            .filter(|((ns, _), _)| ns == namespace)
+            .map(|((_, key), value)| RegistryRow {
+                record_id: key.clone(),
+                runtime_id: None,
+                payload: value.clone(),
+            })
+            .collect();
+        rows.sort_by(|a, b| a.record_id.cmp(&b.record_id));
+        rows
+    })
+    .unwrap_or_default()
+}
+
+pub(crate) fn spoke_up_lately(venue: &str) -> Vec<(chrono::DateTime<chrono::Utc>, bool)> {
+    with(|world| world.spoke_up.get(venue).cloned().unwrap_or_default()).unwrap_or_default()
+}
+
+pub(crate) fn look(image: &GroupImage, sticker_soul: bool) -> Option<myriad_merope::seeing::Seen> {
+    note(
+        "look",
+        json!({ "key": image.key, "hint": image.hint, "sticker": image.sticker, "keeps": image.sticker && sticker_soul }),
+    );
+    with(|world| world.seen.get(&image.key).cloned()).flatten()
+}
+
+/// A model call: what was asked, and the answer the world gives.
+pub(crate) fn model(operation: &str, system: &str, input: &str) -> Option<Option<String>> {
+    if !on() {
+        return None;
+    }
+    note(
+        "model",
+        json!({ "operation": operation, "system": system, "input": input }),
+    );
+    Some(
+        with(|world| {
+            world
+                .models
+                .get_mut(operation)
+                .and_then(VecDeque::pop_front)
+                .flatten()
+        })
+        .flatten(),
+    )
+}
+
+/// A member's group turn (the Chat run it would start): what it was given,
+/// and what she says after the time it takes.
+pub(crate) async fn turn(given: Value) -> Option<(String, Option<Value>)> {
+    note("turn", given);
+    let (seconds, text, sticker) = with(|world| world.turns.pop_front()).flatten()?;
+    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+    Some((text, sticker))
+}
+
+pub(crate) async fn stranger(given: Value) -> Option<(String, Option<Value>)> {
+    note("stranger", given);
+    let (seconds, text, sticker) = with(|world| world.strangers.pop_front()).flatten()?;
+    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+    Some((text, sticker))
+}
+
+/// A send to the platform; whether it took it.
+pub(crate) fn send(kind: &str, value: Value) -> bool {
+    note(kind, value);
+    if kind != "send" {
+        return true;
+    }
+    with(|world| {
+        let index = world.sends;
+        world.sends += 1;
+        !world.refused.contains(&index)
+    })
+    .unwrap_or(true)
+}
+
+/// Every value with its object keys in order, so maps compare by content.
+pub(crate) fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = serde_json::Map::new();
+            for key in keys {
+                out.insert(key.clone(), canonical(&map[key]));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The log as a golden: canonical, and what happened at the same moment in
+/// a fixed order (two things at one instant have no order of their own).
+pub(crate) fn golden(log: &[Value]) -> Value {
+    let mut log: Vec<Value> = log.iter().map(canonical).collect();
+    log.sort_by(|a, b| {
+        a["t"]
+            .as_i64()
+            .cmp(&b["t"].as_i64())
+            .then_with(|| a.to_string().cmp(&b.to_string()))
+    });
+    Value::Array(log)
+}
+
+/// Compare `log` to the golden `name`, or write it with `MYRIAD_RECORD_G0=1`.
+pub(crate) fn check(name: &str, log: &[Value]) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/services/channel_group/g0")
+        .join(format!("{name}.json"));
+    let got = golden(log);
+    assert!(
+        log.iter().all(|event| event["kind"] != "panic"),
+        "{name}: a task panicked: {log:?}"
+    );
+    if std::env::var("MYRIAD_RECORD_G0").as_deref() == Ok("1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
+        return;
+    }
+    let want: Value = serde_json::from_str(
+        &std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("no golden {name}")),
+    )
+    .unwrap();
+    if got != want {
+        let got = serde_json::to_string_pretty(&got).unwrap();
+        let want = serde_json::to_string_pretty(&want).unwrap();
+        let first = got
+            .lines()
+            .zip(want.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        panic!(
+            "{name}: differs from its golden at line {first}\n--- got\n{}\n--- want\n{}",
+            got.lines()
+                .skip(first.saturating_sub(5))
+                .take(30)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            want.lines()
+                .skip(first.saturating_sub(5))
+                .take(30)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+}
+
+/// What she sends into `chat` with: only a chat the scene lets her send to.
+pub(crate) fn token_for(
+    _platform: crate::services::channel_platform::ChannelPlatform,
+    chat: &str,
+) -> Option<String> {
+    with(|world| {
+        world
+            .sendable
+            .contains(chat)
+            .then(|| "g0-token".to_string())
+    })
+    .flatten()
+}

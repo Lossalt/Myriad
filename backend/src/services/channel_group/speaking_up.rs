@@ -10,7 +10,7 @@ use super::*;
 /// she waits.
 pub fn notice(message: GroupLine, token: String) {
     // She is not on the site: she does not glance at the group (D3-2).
-    if crate::services::channel_work::held::away() {
+    if away() {
         return;
     }
     let venue = message.venue();
@@ -59,11 +59,7 @@ pub(super) fn in_talk(group: &Group) -> bool {
             .iter()
             .rev()
             .find(|line| line.hers)
-            .is_some_and(|line| {
-                (chrono::Utc::now() - line.at)
-                    .to_std()
-                    .is_ok_and(|age| age < IN_TALK)
-            })
+            .is_some_and(|line| (now() - line.at).to_std().is_ok_and(|age| age < IN_TALK))
 }
 
 /// How long until she glances at a group she is not in: once what she is
@@ -75,13 +71,13 @@ pub(super) fn glance_after() -> Duration {
         crate::services::agent::merope::group::timing::where_she_is(false, true)
     {
         return Duration::from_secs_f64(wakes_in)
-            + Duration::from_secs(rand::random_range(GLANCE_AFTER_SECONDS));
+            + Duration::from_secs(roll_range(GLANCE_AFTER_SECONDS));
     }
     let free_in = crate::services::agent::merope::group::doing::current()
-        .and_then(|doing| (doing.ends - chrono::Utc::now()).to_std().ok())
+        .and_then(|doing| (doing.ends - now()).to_std().ok())
         .unwrap_or_default()
         .min(LONGEST_BUSY);
-    free_in + Duration::from_secs(rand::random_range(GLANCE_AFTER_SECONDS))
+    free_in + Duration::from_secs(roll_range(GLANCE_AFTER_SECONDS))
 }
 
 pub(super) enum Look {
@@ -211,10 +207,10 @@ pub(super) fn spoke_up_now(venue: &str) {
         })
         .flatten()
         .unwrap_or(false);
-        let Ok(db) = crate::services::process_db::database() else {
+        let Ok(db) = db() else {
             return;
         };
-        crate::services::agent::merope::group::others::spoke_up(&db, &venue, &line, taken).await;
+        spoke_up(&db, &venue, &line, taken).await;
     });
 }
 
@@ -229,7 +225,7 @@ pub(super) fn taken_up(group: &mut Group) {
 }
 
 pub(super) async fn judge(message: &GroupLine, token: &str) -> Option<(Why, String)> {
-    let db = crate::services::process_db::database().ok()?;
+    let db = db().ok()?;
     if stopped_answering(message) || is_muted(&message.venue()) {
         return None;
     }
@@ -238,9 +234,7 @@ pub(super) async fn judge(message: &GroupLine, token: &str) -> Option<(Why, Stri
             current_binding(&db, message, user_id).await?;
             user_id
         }
-        _ => crate::services::site_owner::site_owner_user_id(&db)
-            .await
-            .ok()?,
+        _ => owner(&db).await?,
     };
     let venue = message.venue();
     see(&venue, token).await;
@@ -263,7 +257,7 @@ pub(super) async fn judge(message: &GroupLine, token: &str) -> Option<(Why, Stri
             .iter()
             .rev()
             .find(|line| !line.hers)
-            .map(|line| chrono::Utc::now() - line.at)
+            .map(|line| now() - line.at)
             .filter(|age| *age >= LATE)
             .map(myriad_merope::doing::ago_text)
     })
@@ -274,7 +268,7 @@ pub(super) async fn judge(message: &GroupLine, token: &str) -> Option<(Why, Stri
             .iter()
             .rev()
             .find(|line| line.hers)
-            .map(|line| myriad_merope::doing::ago_text(chrono::Utc::now() - line.at))
+            .map(|line| myriad_merope::doing::ago_text(now() - line.at))
     })
     .flatten();
     let how_it_went = with_group(&venue, |group| {

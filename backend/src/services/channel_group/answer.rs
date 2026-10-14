@@ -14,9 +14,7 @@ pub(super) async fn make_sense(
     use crate::services::agent::merope::group::making_sense;
     let venue = message.venue();
     let stored = unified_venue(&venue);
-    let owner = crate::services::site_owner::site_owner_user_id(db)
-        .await
-        .ok()?;
+    let owner = owner(db).await?;
     // The line is in the talk in its place, with what came after it.
     let lines = &reading.transcript;
     let said = &reading.said;
@@ -33,10 +31,31 @@ pub(super) async fn make_sense(
         .collect();
     let sense = making_sense::read(owner, &venue, &conversation).await;
     if let Some(told) = sense.as_ref().and_then(|sense| sense.about_you.as_deref()) {
-        making_sense::remember_told(db, &stored, told, said).await;
+        #[cfg(test)]
+        if g0::on() {
+            g0::note(
+                "told",
+                serde_json::json!({ "venue": stored, "told": told, "line": said }),
+            );
+        }
+        #[cfg(test)]
+        let skip = g0::on();
+        #[cfg(not(test))]
+        let skip = false;
+        if !skip {
+            making_sense::remember_told(db, &stored, told, said).await;
+        }
     }
+    #[cfg(test)]
+    let told = if g0::on() {
+        None
+    } else {
+        making_sense::told_section(db, &stored, said).await
+    };
+    #[cfg(not(test))]
+    let told = making_sense::told_section(db, &stored, said).await;
     let sections: Vec<String> = [
-        making_sense::told_section(db, &stored, said).await,
+        told,
         sense.as_ref().map(myriad_merope::making_sense::section),
     ]
     .into_iter()
@@ -102,10 +121,10 @@ pub(super) fn answered(message: &GroupLine) {
 pub(super) async fn answer(message: &GroupLine, token: &str, chime: Option<String>) -> bool {
     // Not on the site, she answers nobody there, a stranger included, and
     // the line is not claimed: it can be taken up when she is back.
-    if crate::services::channel_work::held::away() {
+    if away() {
         return false;
     }
-    let Ok(db) = crate::services::process_db::database() else {
+    let Ok(db) = db() else {
         return false;
     };
     if stopped_answering(message) || read_already(message) {
@@ -116,8 +135,7 @@ pub(super) async fn answer(message: &GroupLine, token: &str, chime: Option<Strin
         return false;
     }
     let inbound_id = format!("group:{}:{}", message.chat, message.message_id);
-    if !crate::services::channel_work::claim_inbound(&db, message.platform, None, &inbound_id).await
-    {
+    if !claim(&db, message.platform, &inbound_id).await {
         return false;
     }
     see(&message.venue(), token).await;
@@ -135,7 +153,7 @@ pub(super) async fn answer(message: &GroupLine, token: &str, chime: Option<Strin
         return false;
     };
     // Unpaired or switched off while she was thinking: say nothing.
-    if !binding.is_current(&db).await {
+    if !still_bound(&db, &binding).await {
         return false;
     }
     let reply = without_reply_mark(&reply);
@@ -180,7 +198,24 @@ pub(super) async fn say_and_send(
 /// Send the sticker she chose into the group, making it first if it is new.
 pub(super) async fn send_sticker(message: &GroupLine, token: &str, chosen: &serde_json::Value) {
     use crate::services::agent::merope::group::stickers;
-    let Ok(db) = crate::services::process_db::database() else {
+    #[cfg(test)]
+    if g0::on() {
+        if chosen.get("make").is_some() {
+            send_typing(message, token).await;
+        }
+        if g0::send(
+            "sticker",
+            serde_json::json!({ "venue": message.venue(), "chosen": chosen }),
+        ) {
+            let meaning = chosen
+                .get("meaning")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("贴纸");
+            record_hers(&message.venue(), &format!("（表情包：{meaning}）")).await;
+        }
+        return;
+    }
+    let Ok(db) = db() else {
         return;
     };
     if chosen.get("make").is_some() {

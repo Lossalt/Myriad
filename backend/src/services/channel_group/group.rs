@@ -63,9 +63,7 @@ pub(super) struct StoredReach {
 
 /// Whether a line is still one she keeps in mind of the group.
 pub(super) fn within(line: &Line, window: Duration) -> bool {
-    (chrono::Utc::now() - line.at)
-        .to_std()
-        .map_or(true, |age| age < window)
+    (now() - line.at).to_std().map_or(true, |age| age < window)
 }
 
 #[derive(Default)]
