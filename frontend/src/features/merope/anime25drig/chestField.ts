@@ -1,4 +1,5 @@
 import type { Anime25DChestProfile, Anime25DPlayback } from './types'
+import { isAnime25DLiningPiece } from '../rig/anime25dLayerSemantics'
 
 const CHEST_BONE_ID = 'a25d-chest'
 const TOPWEAR_PART_ID = 'a25d-topwear'
@@ -126,7 +127,7 @@ export function deriveGeometryChestProfile(
     1,
     Math.abs(playback.anchors.face.y1 - playback.anchors.face.y0),
   )
-  const topwear = playback.layers.find((layer) => layer.role === 'topwear')
+  const topwear = playback.layers.find((layer) => layer.role === 'topwear' && !isAnime25DLiningPiece(layer.name))
   let centerX = clamp(playback.anchors.neckPivot.x, 0, width)
   let centerY = clamp(playback.anchors.neckBottom + faceHeight * 0.5, 0, height)
   if (topwear && topwear.w > 0 && topwear.h > 0) {

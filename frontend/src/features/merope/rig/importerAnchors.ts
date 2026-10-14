@@ -5,7 +5,7 @@ import type { Anime25DImportProfile } from './anime25dImportProfile'
 import type { AnimeAnchors, EyeSide, PreparedLayer, RasterLayer, RigCanvasFrame } from './anime25dImportTypes'
 import type { MeropeRigImportSource, RigPoint } from './types'
 import { anime25DImportProfile } from './anime25dImportProfile'
-import { anime25DLayerAffectsFraming } from './anime25dLayerSemantics'
+import { anime25DLayerAffectsFraming, isAnime25DLiningPiece } from './anime25dLayerSemantics'
 import { formatTemplate } from './formatTemplate'
 
 /** Removes model letterboxing, then pads (never stretches) into the profile's stage. */
@@ -107,8 +107,8 @@ export function deriveAnchors(
     if (irisCenter) irises[side] = irisCenter
   }
   const neckLayer = layers.find((layer) => layer.role === 'neck')
-  const topwear = layers.find((layer) => layer.role === 'topwear')
-  const bottomwear = layers.find((layer) => layer.role === 'bottomwear')
+  const topwear = layers.find((layer) => layer.role === 'topwear' && !isAnime25DLiningPiece(layer.id))
+  const bottomwear = layers.find((layer) => layer.role === 'bottomwear' && !isAnime25DLiningPiece(layer.id))
   const bodyReference = topwear ?? bottomwear ?? neckLayer
   const neck = neckLayer
     ? {

@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   anime25DBaseRole,
   anime25DLayerGroup,
+  isAnime25DLiningPiece,
   isAnime25DRigidAttachment,
   normalizeAnime25DLayerName,
   resolveAnime25DLayerSemantics,
@@ -100,4 +101,11 @@ test('regional accessory labels never imply cloth deformation or expression phys
     isAnime25DRigidAttachment({ role: 'unknown', phys: 'hair' }),
     false,
   )
+})
+
+test('a lining tucked behind the legs is a piece of its garment, not the garment', () => {
+  assert.equal(isAnime25DLiningPiece('topwear-lining'), true)
+  assert.equal(isAnime25DLiningPiece('bottomwear-lining-2'), true)
+  assert.equal(isAnime25DLiningPiece('topwear'), false)
+  assert.equal(isAnime25DLiningPiece('lining-topwear'), false)
 })

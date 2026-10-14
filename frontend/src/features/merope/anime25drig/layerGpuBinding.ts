@@ -21,6 +21,7 @@ import type { SurfaceContact } from './surfaceContact'
 import type { AttachmentTurn } from './turnKeyforms'
 import type { Anime25DPlayback, Anime25DShellProfile } from './types'
 import type { AtlasPixelPatch, CroppedLayerPixels } from './webglRuntime'
+import { isAnime25DLiningPiece } from '../rig/anime25dLayerSemantics'
 import { splitPairedHeadAccessory } from './accessoryComponents'
 import { duplicateAccessoryLayers } from './accessoryDuplicate'
 import { anime25DArmsTouch, anime25DHandTouchesHead, bindArmRig, bindArmRigMesh } from './armRig'
@@ -224,7 +225,7 @@ export function compileAnime25DGpuLayers(
       }
       return [...own, ...pieces]
     })
-    const torsos = playback.layers.filter((layer) => layer.role === 'topwear')
+    const torsos = playback.layers.filter((layer) => layer.role === 'topwear' && !isAnime25DLiningPiece(layer.name))
     const torso = torsos.length === 1 ? torsos[0] : null
     const torsoPixels =
       torso && playback.layers.some((layer) => layer.role === 'handwear')

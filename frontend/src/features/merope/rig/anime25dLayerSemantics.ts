@@ -141,6 +141,15 @@ export function resolveAnime25DLayerSemantics<
     : { ...source, role, group }
 }
 
+/**
+ * A garment's lining the import tucked behind the legs (skirtLining) is a
+ * piece of that garment, not the garment: what looks for the top or the
+ * skirt itself (its box, the torso the arms are sewn to) passes it by.
+ */
+export function isAnime25DLiningPiece(name: string): boolean {
+  return /-lining(?:-\d+)?$/.test(name)
+}
+
 export function isAnime25DRigidAttachment(source: {
   role: string
   fade?: string | null
