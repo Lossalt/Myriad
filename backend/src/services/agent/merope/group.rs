@@ -4,6 +4,10 @@
 //! Her modules stay inside `services::agent`; anything a channel needs is
 //! named here first.
 
+pub mod asking {
+    pub(crate) use crate::services::agent::merope::draft::ask as judge;
+}
+
 pub mod bits {
     pub(crate) use crate::services::agent::merope::bits::{
         go_over_stretch, in_group, picture_again,
@@ -23,7 +27,7 @@ pub mod jargon {
 }
 
 pub mod joining {
-    pub(crate) use crate::services::agent::merope::joining::{Here, Why, decide};
+    pub(crate) use crate::services::agent::merope::joining::{Here, decide};
 }
 
 pub mod memes {

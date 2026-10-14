@@ -145,145 +145,83 @@ pub(super) async fn react(line: &GroupLine, token: &str, emoji: &str) -> bool {
     done.is_ok()
 }
 
-pub(super) fn text_limit(platform: ChannelPlatform) -> usize {
-    match platform {
-        ChannelPlatform::Discord => myriad_agent_rules::channel::DISCORD_TEXT_LIMIT,
-        _ => myriad_agent_rules::channel::TELEGRAM_TEXT_LIMIT,
-    }
-}
-
-/// Her reply without a （回复 …） mark she copied from the transcript: the
-/// platform already shows what she replies to.
-pub(super) fn without_reply_mark(reply: &str) -> String {
-    let trimmed = reply.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("（回复") {
-        if let Some(end) = rest
-            .find('）')
-            .filter(|end| rest[..*end].chars().count() <= 200)
-        {
-            return rest[end + '）'.len_utf8()..].trim_start().to_string();
-        }
-    }
-    reply.to_string()
-}
-
-/// What the group said after `since`, not hers, oldest first: who, what,
-/// and whether it was the one she answers or called her.
-pub(super) fn came_since(
-    venue: &str,
-    since: chrono::DateTime<chrono::Utc>,
-    from: &str,
-) -> Vec<(String, String, bool)> {
-    with_group(venue, |group| {
-        group
-            .lines
-            .iter()
-            .filter(|said| !said.hers && said.at > since)
-            .map(|said| {
-                let theirs = !from.is_empty() && said.from.as_deref() == Some(from);
-                (said.name.clone(), said.said(), theirs || said.addressed)
-            })
-            .collect()
-    })
-    .unwrap_or_default()
-}
-
-/// Her reply, chunk by chunk; what of it reached the group (empty if
-/// nothing did): what she said there is what went out, not what she meant to.
-/// The group may have moved on while she wrote it: before anything has gone,
-/// she looks at what came and keeps it back if it no longer fits; once she is
-/// under way, the one she answers speaking again, or someone calling her,
-/// stops her there. `owner` is whom the look is billed to.
-pub(super) async fn deliver(
-    line: &GroupLine,
+/// Send the sticker she chose into the group, making it first if it is new;
+/// what it means, once it went.
+pub(super) async fn send_sticker(
+    message: &GroupLine,
     token: &str,
-    reply: &str,
-    began: Instant,
-    owner: i32,
-) -> String {
-    use crate::services::agent::merope::group::timing::typing;
-    use myriad_agent_rules::channel::{as_messages, split_channel_text};
-    let venue = line.venue();
-    let people = people(&venue);
-    let room = room(&venue);
-    let mut sent = false;
-    let mut went_out: Vec<String> = Vec::new();
-    let since = now()
-        - chrono::Duration::from_std(began.elapsed()).unwrap_or_else(|_| chrono::Duration::zero());
-    // What came meanwhile, already weighed.
-    let mut looked = 0;
-    let said = if line.text == myriad_merope::sharing::NOBODY_SAID {
-        String::new()
-    } else {
-        line.text.clone()
-    };
-    // Most turns go as one message, and a few in a row when something grabs
-    // her: typing each before it goes, typed the way people there type (or
-    // chat apps usually do, until the group has said enough), and only the
-    // first quoting the line she answers.
-    let lines = as_messages(reply);
-    let most = myriad_merope::talk_shape::messages_this_turn(lines.len(), roll());
-    for (index, message) in myriad_merope::talk_shape::goes_out_as(&lines, most, room.as_ref())
-        .into_iter()
-        .enumerate()
-    {
-        // Typing it takes as long as it takes; the first she was already
-        // at while she thought.
-        let left = if index == 0 {
-            typing(&message).saturating_sub(began.elapsed())
-        } else {
-            typing(&message)
-        };
-        if !left.is_zero() {
-            send_typing(line, token).await;
-            tokio::time::sleep(left).await;
+    chosen: &serde_json::Value,
+) -> Option<String> {
+    use crate::services::agent::merope::group::stickers;
+    #[cfg(test)]
+    if g0::on() {
+        if chosen.get("make").is_some() {
+            send_typing(message, token).await;
         }
-        let came = came_since(&venue, since, &line.from);
-        if came.len() > looked {
-            let fresh = &came[looked..];
-            if sent {
-                if fresh.iter().any(|(_, _, stops)| *stops) {
-                    break;
-                }
-            } else {
-                let fresh: Vec<(String, String)> = fresh
-                    .iter()
-                    .map(|(who, what, _)| (who.clone(), what.clone()))
-                    .collect();
-                if !crate::services::agent::merope::draft::still_fits(owner, &said, reply, &fresh)
-                    .await
-                {
-                    info!(venue = %venue, "[Group] the talk moved on; she keeps it back");
-                    with_group(&venue, |group| group.held_back = true);
-                    break;
-                }
-            }
-            looked = came.len();
+        if g0::send(
+            "sticker",
+            serde_json::json!({ "venue": message.venue(), "chosen": chosen }),
+        ) {
+            let meaning = chosen
+                .get("meaning")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("贴纸");
+            return Some(meaning.to_string());
         }
-        for chunk in split_channel_text(&message, text_limit(line.platform)) {
-            let pieces = myriad_agent_rules::mentions::split_mentions(&chunk, &people);
-            // A line with no message behind it (her saying something first)
-            // quotes nothing.
-            match send_reply(line, token, &pieces, !sent && !line.message_id.is_empty()).await {
-                Ok(()) => {
-                    // How long whoever called her waited for her first words.
-                    let waited = (!sent && line.addressed)
-                        .then(|| said_ago(line))
-                        .flatten()
-                        .map(|age| age.num_milliseconds() as f64 / 1000.0);
-                    let typed = myriad_merope::talk_shape::typed_by(HER, now().timestamp(), &chunk);
-                    note_said(&venue, typed, waited, Some(&chunk));
-                    sent = true;
-                    went_out.push(chunk);
-                }
-                Err(kind) => {
-                    warn!(?kind, venue = %line.venue(), "[Group] reply not sent");
-                    keep_ledger(&venue).await;
-                    return went_out.join("\n");
-                }
-            }
-        }
+        return None;
     }
-    keep_ledger(&venue).await;
-    went_out.join("\n")
+    let db = db().ok()?;
+    if chosen.get("make").is_some() {
+        send_typing(message, token).await;
+    }
+    let sticker = stickers::resolve(&db, chosen, None).await?;
+    let (png, _) = stickers::picture(&sticker).await?;
+    let prepared = crate::services::sticker_send::prepare(png, message.platform).await?;
+    let sent = match message.platform {
+        ChannelPlatform::Telegram => crate::services::telegram_bot::send_sticker(
+            token,
+            &message.chat,
+            &prepared.bytes,
+            message.thread,
+        )
+        .await
+        .is_ok(),
+        ChannelPlatform::Discord => crate::services::discord_bot::send_photo(
+            token,
+            &message.chat,
+            &prepared.bytes,
+            prepared.mime,
+            None,
+        )
+        .await
+        .is_ok(),
+        ChannelPlatform::OneBot => {
+            use base64::Engine as _;
+            let inline = format!(
+                "base64://{}",
+                base64::engine::general_purpose::STANDARD.encode(&prepared.bytes)
+            );
+            match myriad_agent_rules::onebot::encode::encode_group_message(
+                &message.chat,
+                &[myriad_agent_rules::onebot::encode::encode_image_segment(
+                    &inline,
+                )],
+            ) {
+                Some(action) => matches!(
+                    crate::services::onebot_send::send_action(action).await,
+                    Ok(None)
+                ),
+                None => false,
+            }
+        }
+        ChannelPlatform::Qq | ChannelPlatform::Feishu => false,
+    };
+    if sent {
+        stickers::sent(&db, &sticker).await;
+        // The group sees she sent it, and so does she.
+        Some(sticker.meaning)
+    } else {
+        warn!(venue = %message.venue(), "[Group] sticker not sent");
+        None
+    }
 }

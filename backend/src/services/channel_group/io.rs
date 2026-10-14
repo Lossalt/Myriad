@@ -17,25 +17,6 @@ pub(super) fn now() -> chrono::DateTime<chrono::Utc> {
     chrono::Utc::now()
 }
 
-/// A number uniform in [0, 1).
-pub(super) fn roll() -> f64 {
-    #[cfg(test)]
-    if let Some(roll) = g0::roll() {
-        return roll;
-    }
-    rand::random()
-}
-
-/// A whole number in `range`, uniform.
-pub(super) fn roll_range(range: std::ops::RangeInclusive<u64>) -> u64 {
-    #[cfg(test)]
-    if let Some(roll) = g0::roll() {
-        let span = range.end() - range.start() + 1;
-        return range.start() + ((roll * span as f64) as u64).min(span - 1);
-    }
-    rand::random_range(range)
-}
-
 /// She is not on the site now (D3).
 pub(super) fn away() -> bool {
     #[cfg(test)]
@@ -292,4 +273,35 @@ pub(super) async fn look_at(
             .await;
     }
     seen
+}
+
+const PICTURE_BYTES: usize = 5 * 1024 * 1024;
+const PICTURE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// A picture's bytes, from where the platform keeps it.
+pub(super) async fn fetch_picture(token: &str, image: &GroupImage) -> Option<Vec<u8>> {
+    match &image.fetch {
+        ImageFetch::TelegramFile { file_id } => {
+            crate::services::telegram_bot::download_file_bytes(token, file_id)
+                .await
+                .ok()
+                .map(|(bytes, _)| bytes)
+                .filter(|bytes| bytes.len() <= PICTURE_BYTES)
+        }
+        ImageFetch::Url { url } => {
+            let fetched = crate::services::outbound_security::get_public_following_redirects(
+                url,
+                PICTURE_TIMEOUT,
+                None,
+            )
+            .await
+            .ok()?;
+            if !fetched.response.status().is_success() {
+                return None;
+            }
+            crate::services::outbound_security::read_limited_body(fetched.response, PICTURE_BYTES)
+                .await
+                .ok()
+        }
+    }
 }

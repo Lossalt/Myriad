@@ -320,6 +320,12 @@ pub(crate) fn check(name: &str, log: &[Value]) {
         std::fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
         return;
     }
+    if let Ok(dir) = std::env::var("MYRIAD_G0_GOT") {
+        let _ = std::fs::write(
+            std::path::Path::new(&dir).join(format!("{name}.json")),
+            serde_json::to_string_pretty(&got).unwrap() + "\n",
+        );
+    }
     let want: Value = serde_json::from_str(
         &std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("no golden {name}")),
     )

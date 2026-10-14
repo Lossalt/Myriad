@@ -223,11 +223,11 @@ async fn g0_muted_she_says_nothing() {
 async fn g0_she_stops_answering_one_who_never_stops() {
     let chat = -77_009;
     let mut world = World::new(0.5);
-    for _ in 0..LOOP_ROUNDS + 2 {
+    for _ in 0..myriad_merope::group::LOOP_ROUNDS + 2 {
         world.strangers.push_back((1.0, "在".into(), None));
     }
     g0::enter(world);
-    for id in 1..=(LOOP_ROUNDS as i64 + 2) {
+    for id in 1..=(myriad_merope::group::LOOP_ROUNDS as i64 + 2) {
         hear(line(chat, id, 77, "复读机", "@bot 在吗", true)).await;
         wait(25.0).await;
     }
@@ -340,7 +340,7 @@ async fn g0_what_she_heard_is_taken_in() {
     let chat = -77_013;
     let world = World::new(0.5);
     g0::enter(world);
-    for id in 0..HEARD_EVERY as i64 {
+    for id in 0..myriad_merope::group::HEARD_EVERY as i64 {
         let from = 11 + id % 3;
         hear(line(
             chat,

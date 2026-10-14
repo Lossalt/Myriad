@@ -28,13 +28,20 @@ impl GroupLine {
         format!("{}:{}", self.platform.slug(), self.chat)
     }
 
-    /// What was said, with the line it replies to in front: a reply makes
-    /// sense only with what it answers ("说到一半怎么没了").
-    pub fn said(&self) -> String {
-        match &self.reply_to {
-            Some(quoted) if quoted.hers => format!("（回复你说的：{}）{}", quoted.text, self.text),
-            Some(quoted) => format!("（回复 {}：{}）{}", quoted.name, quoted.text, self.text),
-            None => self.text.clone(),
+    /// The line as her group mind takes it (which reads it, the line it
+    /// replies to in front: a reply makes sense only with what it answers).
+    pub(super) fn to_message(&self) -> myriad_merope::group::Message {
+        myriad_merope::group::Message {
+            platform: self.platform.slug().to_string(),
+            chat: self.chat.clone(),
+            message_id: self.message_id.clone(),
+            thread: self.thread,
+            from: self.from.clone(),
+            display_name: self.display_name.clone(),
+            text: self.text.clone(),
+            addressed: self.addressed,
+            reply_to: self.reply_to.clone(),
+            images: self.images.clone(),
         }
     }
 }

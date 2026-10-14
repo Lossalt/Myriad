@@ -6,6 +6,29 @@ use std::time::Duration;
 /// Someone is waiting on her answer: a quick look, not a second thought.
 const LOOK_FOR: Duration = Duration::from_secs(8);
 
+/// A look her group mind asks for (see `myriad_merope::group`): its prompt
+/// as the core put it, on the judging model, billed to `owner`. The raw
+/// answer, or none when it gave none in time.
+pub async fn ask(
+    owner: i32,
+    operation: &str,
+    within: Duration,
+    system: &str,
+    input: &str,
+    schema_name: &str,
+    schema: &serde_json::Value,
+) -> Option<String> {
+    let operation: &'static str = match operation {
+        "draft_still" => "draft_still",
+        _ => "group_mind",
+    };
+    super::call::Ask::new(super::call::Voice::Judge, owner, operation)
+        .within(within)
+        .json_raw(system, input, schema_name, schema)
+        .await
+        .ok()
+}
+
 /// Whether `draft`, her answer to `said`, still fits now that `came` arrived
 /// while she wrote it (who, what, oldest first). Nothing came: it does. No
 /// answer in time: it goes, as it would have before she looked.

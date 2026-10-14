@@ -38,9 +38,13 @@
 //! something of hers goes with it, or she wants to ask), and most of the time
 //! she stays quiet (see `merope::joining`). How often is hers to judge; the
 //! only stop is for a sender she answers nonstop, as two bots would.
+//!
+//! All of that is her group mind, which lives in the shared core
+//! (`myriad_merope::group`, D2) so any end that hosts her runs the same; this
+//! module is the site as that end (`mind`): it keeps each group's state,
+//! steps it with what comes, and does what it says against the platforms,
+//! the database and her other parts.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -54,102 +58,41 @@ use sea_orm::DatabaseConnection;
 use tracing::{info, warn};
 
 use crate::services::agent::AgentInteractionMode;
-use crate::services::agent::merope::group::joining::Why;
 use crate::services::agent::types::{AgentProgressEvent, ConversationMessage};
 use crate::services::channel_pairing::{ChannelBinding, PairingChannel};
 use crate::services::channel_platform::ChannelPlatform;
 
-mod answer;
+mod doing;
+mod first;
 #[cfg(test)]
 pub(crate) mod g0;
-mod group;
 mod io;
 mod ledger;
 mod line;
-mod memory;
-mod muting;
-mod pictures;
+mod mind;
 mod platform;
-mod reaching_out;
-mod run;
-mod speaking_up;
 mod title;
-mod transcript;
 mod turns;
 
-use answer::*;
-use group::*;
+use doing::*;
+use first::*;
 use io::*;
 use ledger::*;
-use memory::*;
-use muting::*;
-use pictures::*;
+use mind::*;
 use platform::*;
-use run::*;
-use speaking_up::*;
-use transcript::*;
 use turns::*;
 
+pub use first::{come_back, share_first};
 pub(crate) use ledger::talk_between;
 pub use line::GroupLine;
-pub use memory::{catch_up, groups_lately, record, take_back_kept};
-pub use muting::muted;
-pub use reaching_out::{come_back, share_first};
-pub use speaking_up::notice;
+pub use mind::{
+    back_from_away, catch_up, groups_lately, handle, muted, names_here, notice, record,
+    take_back_kept,
+};
 pub use title::title;
-pub use transcript::names_here;
-pub use turns::{back_from_away, handle};
 
-/// Lines of a group she keeps in mind, and for how long.
-const TRANSCRIPT_LINES: usize = 30;
-const TRANSCRIPT_FOR: Duration = Duration::from_secs(6 * 3600);
+/// Groups she keeps in mind at once.
 const MAX_GROUPS: usize = 256;
-const MAX_LINE_CHARS: usize = 500;
-/// Lines that spoke to her while she was busy, answered in order after: as
-/// many as the conversation she reads holds, so none goes unanswered while
-/// she can still see what it was about.
-const WAITING_LINES: usize = TRANSCRIPT_LINES;
-/// Between two of her replies in the same group.
-const GROUP_PAUSE: Duration = Duration::from_secs(5);
-/// Lines that did not call her by name, in talk she is in: she looks once
-/// the talk pauses this long, and in talk that never pauses, at least this
-/// often.
-const SETTLE: Duration = Duration::from_secs(5);
-const MAX_WAIT: Duration = Duration::from_secs(30);
-/// She is in a group's talk while she spoke there, or was called there,
-/// this recently; otherwise she glances at it now and then, when she is
-/// free: this many seconds after a line, give or take, and while she is in
-/// the middle of something of her own, once it is done (waiting at most so
-/// long for it).
-const IN_TALK: Duration = Duration::from_secs(10 * 60);
-const GLANCE_AFTER_SECONDS: std::ops::RangeInclusive<u64> = 30..=180;
-const LONGEST_BUSY: Duration = Duration::from_secs(30 * 60);
-/// Talk this old when she sees it, she knows she is seeing it late.
-const LATE: chrono::Duration = chrono::Duration::minutes(3);
-/// Her speaking up unasked counts as taken up if someone turns to her this
-/// soon after; she keeps this many of them in mind.
-const TAKEN_UP_WITHIN: Duration = Duration::from_secs(5 * 60);
-const SPOKE_UP_KEPT: usize = 8;
-/// Lines of the talk she looks at.
-const CONVERSATION_LINES: usize = 15;
-/// Two bots answering each other never stop, and no person talks like that:
-/// this many of her replies in a row to the same one, all within the
-/// window, and she stops answering them for a while.
-const LOOP_ROUNDS: usize = 20;
-const LOOP_WINDOW: Duration = Duration::from_secs(10 * 60);
-const LOOP_PAUSE: Duration = Duration::from_secs(15 * 60);
-/// What she heard about things (see `merope::heard`) is taken in every this
-/// many lines from others, or, in a slow group, once a few have waited this
-/// long: always while the lines are still in mind.
-const HEARD_EVERY: usize = 20;
-const HEARD_AT_LEAST: usize = 4;
-const HEARD_AFTER: chrono::Duration = chrono::Duration::hours(2);
-/// Replies a day to people outside the community, per group.
-const STRANGER_REPLIES_PER_DAY: u32 = 60;
-
-/// A wait before she sees a line longer than this goes on apart from the
-/// caller, which holds an ingress permit while it waits.
-const HOLD_AT_MOST: Duration = Duration::from_secs(120);
 /// Longest she takes over one group reply before giving up on it.
 const TURN_DEADLINE: Duration = Duration::from_secs(90);
 const TYPING_EVERY: Duration = Duration::from_secs(4);
@@ -161,8 +104,22 @@ const LINES_NAMESPACE: &str = "group_lines";
 /// after a restart she can still say something first in one that has gone
 /// quiet, for as long as it counts as one she is in.
 const REACH_NAMESPACE: &str = "group_reach";
-/// How often a group she is in is written down again, at most.
-const REACH_KEPT_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// A group's lines as kept across a restart.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredLines {
+    lines: Vec<myriad_merope::group::Line>,
+}
+
+/// A group she is in, as kept across a restart: where in it she would say
+/// something (a Telegram forum topic), and when she last saw a line there.
+/// Never the token: that is read from the configuration when she sends.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredReach {
+    #[serde(default)]
+    thread: Option<i64>,
+    seen_at: chrono::DateTime<chrono::Utc>,
+}
 
 #[cfg(test)]
 mod g0_scenes;

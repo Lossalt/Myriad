@@ -1,285 +1,481 @@
-//! One turn at a time per group: taking up a line that calls her, and the lines waiting while she is busy.
+//! The whole steps her group mind still asks of the site (D2a): who
+//! someone is, whether they may talk to her, what she makes of the talk,
+//! whether she speaks up, and what she says.
+
+use myriad_merope::group::{self as core, Answer, Here, Looked, Spoken, Target, Who};
 
 use super::*;
+
+/// Look at the pictures in the talk she has not seen yet, as a person
+/// reads back over what was sent. Billed to the site's owner.
+pub(super) async fn look(venue: &str, pictures: Vec<core::Picture>) -> Vec<Looked> {
+    let Ok(db) = db() else {
+        return Vec::new();
+    };
+    let Some(owner) = owner(&db).await else {
+        return Vec::new();
+    };
+    let token = token(venue);
+    // A sticker she looks at as she is: whether she would keep it to send.
+    let soul = soul().await;
+    let (db, soul, token) = (&db, soul.as_str(), token.as_str());
+    futures::future::join_all(pictures.into_iter().map(|picture| async move {
+        let seen = look_at(db, owner, soul, venue, token, &picture.image).await;
+        seen.map(|seen| Looked {
+            message_id: picture.message_id,
+            index: picture.index,
+            seen,
+        })
+    }))
+    .await
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Who wrote a line there, and the site's owner.
+pub(super) async fn identify(venue: &str, from: &str) -> Answer {
+    let Ok(db) = db() else {
+        return Answer::Identified {
+            who: Who::Unknown,
+            owner: None,
+        };
+    };
+    let Some(line) = venue
+        .split_once(':')
+        .and_then(|(slug, chat)| {
+            line_to(&Target {
+                platform: slug.to_string(),
+                chat: chat.to_string(),
+                thread: None,
+                message_id: String::new(),
+            })
+        })
+        .map(|line| GroupLine {
+            from: from.to_string(),
+            ..line
+        })
+    else {
+        return Answer::Identified {
+            who: Who::Unknown,
+            owner: None,
+        };
+    };
+    let who = match lookup(&db, &line).await {
+        Some(PairingLookup::Paired { user_id }) => {
+            let binding = current_binding(&db, &line, user_id).await;
+            let bound = binding.is_some();
+            if let (Some(binding), Ok(mut bindings)) = (binding, BINDINGS.lock()) {
+                bindings.insert((venue.to_string(), user_id), binding);
+            }
+            Who::Member { user_id, bound }
+        }
+        Some(_) => Who::Stranger,
+        None => Who::Unknown,
+    };
+    Answer::Identified {
+        who,
+        owner: owner(&db).await,
+    }
+}
+
+/// Whether `user_id` may talk to her now, with their session in this group.
+pub(super) async fn prepare(venue: &str, user_id: i32) -> bool {
+    #[cfg(test)]
+    if g0::on() {
+        return true;
+    }
+    let Ok(db) = db() else {
+        return false;
+    };
+    if !matches!(
+        crate::services::principal::current_roles(&db, user_id).await,
+        Ok(Some(_))
+    ) {
+        return false;
+    }
+    let key = (venue.to_string(), user_id);
+    let mut known = SESSIONS
+        .lock()
+        .ok()
+        .and_then(|sessions| sessions.get(&key).cloned());
+    // After a restart: the one they talked to her in here before.
+    if known.is_none() {
+        known = last_group_session(&db, user_id, venue).await;
+    }
+    // Made as the group's from the start: never read back as a private one.
+    let Ok(session_id) = crate::services::agent::sessions::ensure_session_in(
+        &db,
+        known.as_deref(),
+        user_id,
+        AgentInteractionMode::Chat,
+        Some(venue),
+    )
+    .await
+    else {
+        return false;
+    };
+    if let Ok(mut sessions) = SESSIONS.lock() {
+        sessions.insert(key, session_id);
+    }
+    true
+}
+
+/// The session someone last talked to her in, in this group.
+pub(super) async fn last_group_session(
+    db: &DatabaseConnection,
+    user_id: i32,
+    venue: &str,
+) -> Option<String> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    db.query_one_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT id FROM agent_sessions WHERE user_id = $1 AND context->>'venue' = $2 \
+           AND context->>'mode' = 'chat' ORDER BY last_active_at DESC LIMIT 1",
+        [user_id.into(), venue.into()],
+    ))
+    .await
+    .ok()
+    .flatten()?
+    .try_get::<String>("", "id")
+    .ok()
+}
+
+/// Before answering, she reads the talk: what is going on, what it means,
+/// what people are telling her about herself (kept). With what the group
+/// told her before, as the sections her reply starts from.
+pub(super) async fn make_sense(
+    db: &DatabaseConnection,
+    venue: &str,
+    conversation: &[String],
+    said: &str,
+) -> Option<String> {
+    use crate::services::agent::merope::group::making_sense;
+    let stored = unified_venue(venue);
+    let owner = owner(db).await?;
+    let sense = making_sense::read(owner, venue, conversation).await;
+    if let Some(told) = sense.as_ref().and_then(|sense| sense.about_you.as_deref()) {
+        #[cfg(test)]
+        if g0::on() {
+            g0::note(
+                "told",
+                serde_json::json!({ "venue": stored, "told": told, "line": said }),
+            );
+        }
+        #[cfg(test)]
+        let skip = g0::on();
+        #[cfg(not(test))]
+        let skip = false;
+        if !skip {
+            making_sense::remember_told(db, &stored, told, said).await;
+        }
+    }
+    #[cfg(test)]
+    let told = if g0::on() {
+        None
+    } else {
+        making_sense::told_section(db, &stored, said).await
+    };
+    #[cfg(not(test))]
+    let told = making_sense::told_section(db, &stored, said).await;
+    let sections: Vec<String> = [
+        told,
+        sense.as_ref().map(myriad_merope::making_sense::section),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!sections.is_empty()).then(|| sections.join("\n\n"))
+}
 
 /// A group's venue as memories store it (`group:telegram:-100123`).
 pub(super) fn unified_venue(venue: &str) -> String {
     crate::services::agent::memory::unified::Audience::group(venue, 0).venue()
 }
 
-/// Take the group's single turn, if it is free and not just replied in.
-pub(super) fn begin_turn(venue: &str) -> Turn {
-    with_group(venue, begin).unwrap_or(Turn::Busy)
+/// What a member's turn is given.
+pub(super) struct MemberTurn {
+    pub(super) user_id: i32,
+    pub(super) to: Target,
+    pub(super) input: String,
+    pub(super) transcript: Vec<Spoken>,
+    pub(super) room: Option<myriad_merope::talk_shape::Shape>,
+    pub(super) differs: Option<String>,
+    pub(super) making_sense: Option<String>,
+    pub(super) late: Option<String>,
+    pub(super) chime: Option<String>,
+    pub(super) speaker: String,
+    pub(super) first: bool,
 }
 
-pub(super) fn begin(group: &mut Group) -> Turn {
-    if group.busy {
-        return Turn::Busy;
-    }
-    if let Some(rest) = group
-        .last_reply
-        .and_then(|at| GROUP_PAUSE.checked_sub(at.elapsed()))
-        .filter(|rest| !rest.is_zero())
-    {
-        return Turn::Resting(rest);
-    }
-    group.busy = true;
-    Turn::Began
-}
-
-/// A line that spoke to her while she was busy: answered after, in order;
-/// past what she could still read the conversation of, the oldest goes.
-pub(super) fn park(group: &mut Group, message: GroupLine) {
-    group.waiting.push_back(message);
-    while group.waiting.len() > WAITING_LINES {
-        group.waiting.pop_front();
-    }
-}
-
-pub(super) fn end_turn(venue: &str, replied: bool) {
-    with_group(venue, |group| {
-        group.busy = false;
-        if replied {
-            group.last_reply = Some(Instant::now());
-        }
-    });
-}
-
-/// Answer one group line that spoke to her, once she sees it (see
-/// `merope::timing`): at once in talk she is in, otherwise when she next
-/// looks, and after she wakes if she is asleep; then now, or when she is
-/// done with the one on hand. A long wait does not hold the caller.
-pub async fn handle(message: GroupLine, token: String) {
-    use crate::services::agent::merope::group::timing;
-    let venue = message.venue();
-    // She is not on the site: not in the group either (D3-2). The latest
-    // line that called her is the one she takes up when she is back.
-    if away() {
-        with_group(&venue, |group| {
-            group.reach = Some((message.clone(), token.clone()));
-            group.left_while_away = Some((message, token, now()));
-        });
-        info!(%venue, "[Group] she is not on the site; the line waits for her return");
-        return;
-    }
-    // A line taken back up after a restart may also come in again (Telegram
-    // hands back what it was not told was read): answered once.
-    if !first_time(&venue, &message.message_id) {
-        return;
-    }
-    let talking = with_group(&venue, |group| {
-        taken_up(group);
-        group.reach = Some((message.clone(), token.clone()));
-        in_talk(group)
-    })
-    .unwrap_or(false);
-    let at = timing::where_she_is(talking, true);
-    let wait = timing::until_read(at, &message.text);
-    info!(%venue, ?at, seconds = wait.as_secs(), "[Group] she will see the line");
-    if wait > HOLD_AT_MOST {
-        tokio::spawn(async move {
-            tokio::time::sleep(wait).await;
-            take_up(message, token).await;
-        });
-        return;
-    }
-    tokio::time::sleep(wait).await;
-    take_up(message, token).await;
-}
-
-pub(super) async fn take_up(mut message: GroupLine, token: String) {
-    let venue = message.venue();
-    with_group(&venue, |group| group.called = Some(Instant::now()));
-    loop {
-        // Busy or not is decided under the same lock that parks the line, so
-        // the turn on hand cannot end without seeing it.
-        let turn = with_group(&venue, |group| {
-            let turn = begin(group);
-            if matches!(turn, Turn::Busy) {
-                park(group, message.clone());
-            }
-            turn
-        })
-        .unwrap_or(Turn::Busy);
-        match turn {
-            Turn::Began => break,
-            Turn::Resting(rest) => tokio::time::sleep(rest).await,
-            Turn::Busy => {
-                info!(%venue, "[Group] busy; the line waits for her");
-                return;
-            }
-        }
-    }
-    // Holding back what she wrote is how she says it again differently: at
-    // once, from the newest line, with all of it in view; once per line.
-    let mut again = true;
-    loop {
-        with_group(&venue, |group| group.held_back = false);
-        let replied = answer(&message, &token, None).await;
-        let held =
-            with_group(&venue, |group| std::mem::take(&mut group.held_back)).unwrap_or(false);
-        if held
-            && again
-            && let Some(newest) = newest_theirs(&message)
-        {
-            info!(%venue, "[Group] she answers again, from where the talk is now");
-            again = false;
-            message = newest;
-            continue;
-        }
-        again = true;
-        match finish_turn(&venue, replied).await {
-            Some(next) => message = next,
-            None => return,
-        }
-    }
-}
-
-/// The newest line someone else said in `like`'s group, as a line to answer.
-pub(super) fn newest_theirs(like: &GroupLine) -> Option<GroupLine> {
-    let line = with_group(&like.venue(), |group| {
-        group.lines.iter().rev().find(|line| !line.hers).cloned()
-    })
-    .flatten()?;
-    let message_id = line.message_id?;
-    (message_id != like.message_id).then(|| GroupLine {
-        platform: like.platform,
-        chat: like.chat.clone(),
-        message_id,
-        thread: like.thread,
-        from: line.from.unwrap_or_default(),
-        display_name: line.name,
-        text: line.text,
-        addressed: line.addressed,
-        reply_to: None,
-        images: line.images,
-    })
-}
-
-/// End the turn; if a line waited meanwhile, take the turn again for it
-/// after the pause.
-pub(super) async fn finish_turn(venue: &str, replied: bool) -> Option<GroupLine> {
-    end_turn(venue, replied);
-    with_group(venue, |group| !group.waiting.is_empty()).filter(|waiting| *waiting)?;
-    if replied {
-        tokio::time::sleep(GROUP_PAUSE).await;
-    }
-    loop {
-        match begin_turn(venue) {
-            Turn::Began => break,
-            Turn::Resting(rest) => tokio::time::sleep(rest).await,
-            // Someone else took the turn; they will find the line waiting.
-            Turn::Busy => return None,
-        }
-    }
-    let next = with_group(venue, |group| group.waiting.pop_front()).flatten();
-    if next.is_none() {
-        end_turn(venue, false);
-    }
-    next
-}
-
-/// When this process first heard a group: lines before it reached the one
-/// before, and whatever it was holding for her then went with it.
-pub(super) static UP_SINCE: LazyLock<chrono::DateTime<chrono::Utc>> =
-    LazyLock::new(chrono::Utc::now);
-/// Lines taken back up after a restart, so a reconnect does not take one up
-/// twice.
-static TAKEN_BACK: LazyLock<Mutex<std::collections::HashSet<String>>> =
-    LazyLock::new(Default::default);
-
-/// Lines that called her this process has taken up, by group and id.
-static HANDLED: LazyLock<Mutex<std::collections::HashSet<String>>> =
-    LazyLock::new(Default::default);
-
-pub(super) fn first_time(venue: &str, message_id: &str) -> bool {
-    if message_id.is_empty() {
-        return true;
-    }
-    let Ok(mut handled) = HANDLED.lock() else {
-        return true;
-    };
-    if handled.len() > MAX_GROUPS * WAITING_LINES * 4 {
-        handled.clear();
-    }
-    handled.insert(format!("{venue}#{message_id}"))
-}
-
-/// She is back on the site: in each group, the latest line that called her
-/// while she was away, taken up as if it had just come in, if it is still
-/// recent enough to be talk (as after a restart, see `left_waiting`).
-pub fn back_from_away() {
-    let left: Vec<(GroupLine, String)> = GROUPS
-        .lock()
-        .map(|mut groups| {
-            groups
-                .values_mut()
-                .filter_map(|group| group.left_while_away.take())
-                .filter(|(_, _, at)| {
-                    now() - *at < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
-                })
-                .map(|(line, token, _)| (line, token))
-                .collect()
-        })
-        .unwrap_or_default();
-    for (line, token) in left {
-        info!(venue = %line.venue(), "[Group] she is back: the line that called her is taken up");
-        tokio::spawn(handle(line, token));
-    }
-}
-
-/// When this process first heard a group.
-pub(super) fn up_since() -> chrono::DateTime<chrono::Utc> {
-    #[cfg(test)]
-    if let Some(at) = g0::up_since() {
-        return at;
-    }
-    *UP_SINCE
-}
-
-/// Mark when this process first heard a group.
-pub(super) fn heard_since_up() {
-    LazyLock::force(&UP_SINCE);
-}
-
-/// After a restart, the line that called her before it and that she never
-/// answered (she was asleep or busy, and the wait went with the process),
-/// out of what the group said meanwhile (oldest first, hers marked): the
-/// latest such line, if she has not spoken there since and it is recent
-/// enough to still be talk. Each line once.
-pub(super) fn left_waiting(
-    venue: &str,
-    past: &[(GroupLine, chrono::DateTime<chrono::Utc>, bool)],
-) -> Option<GroupLine> {
-    let before = up_since() - chrono::Duration::seconds(5);
-    let mut past: Vec<_> = past.iter().collect();
-    past.sort_by_key(|(_, at, _)| *at);
-    let after_her = past
+pub(super) fn as_conversation(lines: &[Spoken]) -> Vec<ConversationMessage> {
+    lines
         .iter()
-        .rposition(|(_, _, hers)| *hers)
-        .map_or(0, |at| at + 1);
-    let (line, _, _) = past[after_her..].iter().rev().find(|(line, at, hers)| {
-        !hers
-            && line.addressed
-            && *at < before
-            && now() - *at < chrono::Duration::from_std(TRANSCRIPT_FOR).unwrap_or_default()
-    })?;
-    let key = format!("{venue}#{}", line.message_id);
-    let mut taken = TAKEN_BACK.lock().ok()?;
-    if !taken.insert(key) {
-        return None;
-    }
-    if taken.len() > MAX_GROUPS * WAITING_LINES {
-        taken.clear();
-    }
-    Some(line.clone())
+        .map(|line| ConversationMessage {
+            role: line.role.clone(),
+            content: line.content.clone(),
+            created_at: None,
+        })
+        .collect()
 }
 
-/// Take up a line [`left_waiting`] found, as if it had just come in, sent
-/// with `token` (OneBot needs none).
-pub(super) fn take_back(venue: &str, line: Option<GroupLine>, token: String) {
-    if let Some(line) = line {
-        info!(%venue, "[Group] a line left waiting before the restart; taking it up");
-        tokio::spawn(handle(line, token));
+/// A member's turn: a Chat turn under their account, in the group venue.
+pub(super) async fn member_turn(venue: &str, turn: MemberTurn) -> Answer {
+    let Some(line) = line_to(&turn.to) else {
+        return Answer::Turned {
+            text: None,
+            sticker: None,
+            bound: false,
+        };
+    };
+    let token = token(venue);
+    let said = run_member_turn(venue, &line, &token, &turn).await;
+    // Unpaired or switched off while she was thinking: say nothing.
+    let bound = if turn.first {
+        true
+    } else {
+        let binding = BINDINGS
+            .lock()
+            .ok()
+            .and_then(|bindings| bindings.get(&(venue.to_string(), turn.user_id)).cloned());
+        match (binding, db()) {
+            (Some(binding), Ok(db)) => still_bound(&db, &binding).await,
+            _ => false,
+        }
+    };
+    let (text, sticker) = match said {
+        Some((text, sticker)) => (Some(text), sticker),
+        None => (None, None),
+    };
+    Answer::Turned {
+        text,
+        sticker,
+        bound,
     }
+}
+
+pub(super) async fn run_member_turn(
+    venue: &str,
+    line: &GroupLine,
+    token: &str,
+    turn: &MemberTurn,
+) -> Option<(String, Option<serde_json::Value>)> {
+    #[cfg(test)]
+    if g0::on() {
+        let given = serde_json::json!({
+            "userId": turn.user_id,
+            "input": turn.input,
+            "venue": venue,
+            "transcript": turn.transcript,
+            "room": turn.room,
+            "differs": turn.differs,
+            "makingSense": turn.making_sense,
+            "late": turn.late,
+            "chime": turn.chime,
+            "speaker": turn.speaker,
+            "first": turn.first,
+        });
+        let deadline = tokio::time::sleep(TURN_DEADLINE);
+        tokio::pin!(deadline);
+        let mut typing = tokio::time::interval(TYPING_EVERY);
+        let said = g0::turn(given);
+        tokio::pin!(said);
+        loop {
+            tokio::select! {
+                _ = &mut deadline => return None,
+                _ = typing.tick() => send_typing(line, token).await,
+                done = &mut said => {
+                    let (text, sticker) = done?;
+                    let text = text.trim().to_string();
+                    return (!text.is_empty() || sticker.is_some()).then_some((text, sticker));
+                }
+            }
+        }
+    }
+    let db = db().ok()?;
+    let session_id = SESSIONS
+        .lock()
+        .ok()
+        .and_then(|sessions| sessions.get(&(venue.to_string(), turn.user_id)).cloned())?;
+    let run = crate::services::agent::run::start_for_user(
+        db.clone(),
+        turn.user_id,
+        crate::services::agent::run::ProcessRequest {
+            input: turn.input.clone(),
+            context: Some(crate::services::agent::run::ProcessContext {
+                mode: Some(AgentInteractionMode::Chat),
+                session_id: Some(session_id),
+                group: Some(crate::services::agent::run::GroupTurn {
+                    transcript: as_conversation(&turn.transcript),
+                    room: turn.room.clone(),
+                    differs: turn.differs.clone(),
+                    making_sense: turn.making_sense.clone(),
+                    late: turn.late.clone(),
+                    venue: venue.to_string(),
+                    chime: turn.chime.clone(),
+                    speaker: turn.speaker.clone(),
+                    first: turn.first,
+                }),
+                ..Default::default()
+            }),
+        },
+    )
+    .await
+    .ok()?;
+    let mut events = Box::pin(crate::services::agent::run::agent_run_envelopes(run));
+    let mut typing = tokio::time::interval(TYPING_EVERY);
+    let deadline = tokio::time::sleep(TURN_DEADLINE);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => {
+                warn!(%venue, "[Group] no reply in time; she says nothing");
+                return None;
+            }
+            _ = typing.tick() => send_typing(line, token).await,
+            envelope = events.next() => {
+                match envelope?.event {
+                    AgentProgressEvent::TaskCompleted { success, response, .. } => {
+                        // A superseded or failed turn says nothing in the group.
+                        if !success {
+                            info!(%venue, "[Group] turn superseded or failed; she says nothing");
+                            return None;
+                        }
+                        let text = response
+                            .get("message")
+                            .and_then(|value| value.as_str())
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string();
+                        let sticker = response.pointer("/data/sticker").cloned();
+                        return (!text.is_empty() || sticker.is_some()).then_some((text, sticker));
+                    }
+                    AgentProgressEvent::Error { .. } => {
+                        warn!(%venue, "[Group] her turn failed; she says nothing");
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Her light answer to someone from outside, with little context, on the
+/// site owner's budget.
+pub(super) async fn stranger_turn(
+    venue: &str,
+    owner: i32,
+    stranger: core::Stranger,
+    transcript: Vec<Spoken>,
+    said: String,
+    why: Option<String>,
+    mut sections: Vec<String>,
+) -> Answer {
+    let nothing = Answer::Turned {
+        text: None,
+        sticker: None,
+        bound: true,
+    };
+    let Ok(db) = db() else {
+        return nothing;
+    };
+    let transcript = as_conversation(&transcript);
+    // Words and memes in the talk that she looked up before.
+    let talk: String = transcript
+        .iter()
+        .rev()
+        .take(12)
+        .map(|line| line.content.clone())
+        .chain(std::iter::once(said.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // (A recording has no database to read them from.)
+    #[cfg(test)]
+    let look_up = !g0::on();
+    #[cfg(not(test))]
+    let look_up = true;
+    if look_up {
+        sections
+            .extend(crate::services::agent::merope::group::memes::section_for(&db, &talk).await);
+        // And the groups' own words in it.
+        sections.extend(
+            crate::services::agent::merope::group::jargon::section_for(&db, venue, &talk).await,
+        );
+    }
+    #[cfg(test)]
+    if g0::on() {
+        let reply = tokio::time::timeout(
+            TURN_DEADLINE,
+            g0::stranger(serde_json::json!({
+                "owner": owner,
+                "venue": venue,
+                "who": stranger.who,
+                "name": stranger.name,
+                "transcript": transcript.iter().map(|line| serde_json::json!({ "role": line.role, "content": line.content })).collect::<Vec<_>>(),
+                "said": said,
+                "why": why,
+                "sections": sections,
+            })),
+        )
+        .await;
+        return match reply {
+            Ok(Some((text, sticker))) => Answer::Turned {
+                text: Some(text),
+                sticker,
+                bound: true,
+            },
+            _ => nothing,
+        };
+    }
+    let stranger = crate::services::agent::merope::group::strangers::Stranger {
+        who: stranger.who,
+        name: stranger.name,
+    };
+    match tokio::time::timeout(
+        TURN_DEADLINE,
+        crate::services::agent::merope::group::strangers::reply(
+            &db,
+            owner,
+            venue,
+            &stranger,
+            &transcript,
+            &said,
+            why.as_deref(),
+            &sections,
+        ),
+    )
+    .await
+    {
+        Ok(Some((text, sticker))) => Answer::Turned {
+            text: Some(text),
+            sticker,
+            bound: true,
+        },
+        _ => nothing,
+    }
+}
+
+/// Whether she says something about the talk, billed to `owner`.
+pub(super) async fn judge(
+    venue: &str,
+    owner: i32,
+    conversation: &[String],
+    here: &Here,
+) -> Option<core::Decision> {
+    let db = db().ok()?;
+    let (why, reason) = crate::services::agent::merope::group::joining::decide(
+        &db,
+        owner,
+        venue,
+        conversation,
+        &crate::services::agent::merope::group::joining::Here {
+            last_spoke: here.last_spoke.as_deref(),
+            late: here.late.as_deref(),
+            how_it_went: here.how_it_went.as_deref(),
+            share: here.share.as_deref(),
+        },
+    )
+    .await?;
+    Some(core::Decision { why, reason })
 }
