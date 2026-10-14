@@ -37,6 +37,8 @@ pub(crate) struct World {
     pub seen: HashMap<String, myriad_merope::seeing::Seen>,
     /// Text sends (counted from 0) the platform refuses.
     pub refused: HashSet<usize>,
+    /// Who cannot be whispered to (`<platform>:<id>`): the platform refuses.
+    pub unreachable: HashSet<String>,
     pub sends: usize,
     pub registry: HashMap<(String, String), Value>,
     pub spoke_up: HashMap<String, Vec<(chrono::DateTime<chrono::Utc>, bool)>>,
@@ -84,6 +86,7 @@ impl World {
             models: HashMap::new(),
             seen: HashMap::new(),
             refused: HashSet::new(),
+            unreachable: HashSet::new(),
             sends: 0,
             registry: HashMap::new(),
             spoke_up: HashMap::new(),
@@ -280,6 +283,12 @@ pub(crate) fn send(kind: &str, value: Value) -> bool {
         !world.refused.contains(&index)
     })
     .unwrap_or(true)
+}
+
+/// A private send to `who`, as the platform's request: whether it took it.
+pub(crate) fn outbound(kind: &str, value: Value, who: &str) -> bool {
+    note(kind, value);
+    with(|world| !world.unreachable.contains(who)).unwrap_or(true)
 }
 
 /// Every value with its object keys in order, so maps compare by content.

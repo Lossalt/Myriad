@@ -899,6 +899,24 @@ fn ask_again(cx: &mut Cx, r: &mut Replying) -> Replied {
 /// she would think up.
 fn answered(cx: &mut Cx, r: &mut Replying, raw: &str) -> Replied {
     let (said, started) = crate::soup::split_start(raw);
+    // A game with seats she said she would host: sign-up opens, and she
+    // says how to join.
+    let (mut said, seated) = crate::hosting::split_seat_game(&said);
+    if let Some(kind) = seated {
+        let to = Target {
+            platform: r.venue.split(':').next().unwrap_or_default().to_string(),
+            chat: r
+                .venue
+                .split_once(':')
+                .map(|(_, chat)| chat.to_string())
+                .unwrap_or_default(),
+            thread: None,
+            message_id: String::new(),
+        };
+        if let Some(line) = open_sign_up(cx, kind, to) {
+            said = format!("{said}\n\n{line}");
+        }
+    }
     let (said, choice) = crate::stickers::split_sticker_directive(&said);
     r.sticker = match choice {
         Some(crate::stickers::Choice::Send(number)) => cx

@@ -900,6 +900,32 @@ fn group_reply_payload(content: &str, mentioned: &[String], reply_to: Option<&st
     payload
 }
 
+/// The DM channel with `user_id`, opened if it is not yet: a member who
+/// keeps server DMs closed is refused only when she writes there.
+pub async fn open_dm(token: &str, user_id: &str) -> Result<String, ConnectFailureKind> {
+    if user_id.is_empty() || !bot_enabled().await {
+        return Err(ConnectFailureKind::Permanent);
+    }
+    let payload = serde_json::json!({ "recipient_id": user_id });
+    let (status, body) = discord_request(
+        token,
+        reqwest::Method::POST,
+        "/users/@me/channels",
+        Some(payload),
+    )
+    .await?;
+    if status == 429 {
+        return Err(ConnectFailureKind::Transient);
+    }
+    if !(200..300).contains(&status) {
+        return Err(classify_discord_rest(status, &body));
+    }
+    serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|channel| channel.get("id")?.as_str().map(str::to_string))
+        .ok_or(ConnectFailureKind::Transient)
+}
+
 /// Her reaction on a message in a server channel.
 pub async fn add_reaction(
     token: &str,

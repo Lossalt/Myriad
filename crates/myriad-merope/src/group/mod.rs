@@ -23,7 +23,8 @@
 //! end that opens and closes the turn as one of theirs (D2c-8 A, D2c-9 A);
 //! the game at the group's table, as a game she hosts (`crate::hosting`):
 //! read back, a line judged, one started, one over or left put away and
-//! remembered.
+//! remembered; and a game with seats there, she its referee: sign-up in the
+//! group, each seat's own part whispered to it alone, moves whispered back.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -259,6 +260,9 @@ pub struct Group {
     /// The member's turn she shows she is typing for, while it runs.
     #[serde(default)]
     pub typing_for: Option<String>,
+    /// A game with seats at the group's table, while it is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seating: Option<flows::Seating>,
     /// The last line she took in for what she heard.
     #[serde(default)]
     pub heard_upto: Option<i64>,
@@ -324,6 +328,7 @@ impl Default for Group {
             stranger_replies: None,
             offered: BTreeMap::new(),
             typing_for: None,
+            seating: None,
             heard_upto: None,
             pictures: BTreeMap::new(),
             reach: None,
@@ -482,6 +487,10 @@ pub enum Event {
         #[serde(default)]
         restore: Option<Restore>,
     },
+    /// Someone seated at the group's table whispered to her (`who` as
+    /// `<platform>:<id>`): taken when it is a move of theirs in the game,
+    /// else it is not the game's (see [`Outcome::taken`]).
+    Whispered { who: String, text: String },
 }
 
 /// Who wrote a line, as the end knows them.
@@ -582,6 +591,9 @@ pub enum Answer {
     },
     MayLookUp {
         may: May,
+    },
+    Whispered {
+        ok: bool,
     },
     /// What was asked could not be read (the store is down): what needs it
     /// is left, as when nothing could be asked.
@@ -851,6 +863,20 @@ pub enum Effect {
         #[serde(default)]
         turn: Option<String>,
     },
+    /// Whisper `text` to `user` on `platform` (one in the group `chat`):
+    /// answered with whether it reached them.
+    Whisper {
+        id: String,
+        platform: String,
+        user: String,
+        chat: String,
+        text: String,
+    },
+    /// `who` sits at the group's table: what they whisper to her comes to
+    /// the group's mind first.
+    Seat { who: String },
+    /// `who` sits there no more.
+    Unseat { who: String },
     /// Send one message of hers.
     Send {
         id: String,
@@ -925,7 +951,9 @@ pub enum ToRead {
     /// and those she kept that she still uses, belonging there or anywhere;
     /// most sent first. With whether she can make one, and how many are
     /// left this month.
-    Stickers { venue: String },
+    Stickers {
+        venue: String,
+    },
     /// The row of `source` kept in `venue` with no owner whose evidence
     /// carries `marker`, if any (her note on someone from outside, her guess
     /// at who they are), most recently touched first.
@@ -950,11 +978,17 @@ pub enum ToRead {
     },
     /// What these groups (`<platform>:<chat>`) call themselves, as their
     /// platforms say.
-    Titles { venues: Vec<String> },
+    Titles {
+        venues: Vec<String>,
+    },
     /// How someone from the community goes by, by their account.
-    Label { user_id: i32 },
+    Label {
+        user_id: i32,
+    },
     /// The game on at a table (`g:<venue>`), as the group keeps it.
-    Game { table: String },
+    Game {
+        table: String,
+    },
     /// Turtle-soup surfaces she used lately, at any table: hers.
     RecentSurfaces,
     /// The vectors kept for these memories (as read, with their cues), by
@@ -1088,6 +1122,9 @@ pub struct Outcome {
     /// For [`Event::Heard`]: whether the line was new.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fresh: Option<bool>,
+    /// For [`Event::Whispered`]: whether the game took it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taken: Option<bool>,
 }
 
 /// One step of the group's mind.

@@ -23,6 +23,7 @@ pub(crate) fn record(cx: &mut Cx, message: &Message, restore: Option<Restore>) -
     if !remember_line(cx.group, line, now, cx.out) {
         return false;
     }
+    heard_at_table(cx, message);
     // Written down as a group she is in, now and then.
     let due = cx
         .group

@@ -77,6 +77,19 @@ pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
     let has_id = !inbound.msg_id.is_empty();
     let already_seen = has_id
         && !crate::services::channel_work::claim_inbound(&db, platform, None, &claimed).await;
+    // A move of theirs in a game they sit at in a group, paired or not, is
+    // the game's (D2c-13): it never reaches pairing. Anything else they say
+    // goes on as it would.
+    if !already_seen
+        && crate::services::channel_group::whispered(
+            platform,
+            &inbound.user_openid,
+            &inbound.content,
+        )
+        .await
+    {
+        return;
+    }
     let pairing = if already_seen {
         // Not consulted: a duplicate is dropped before pairing matters.
         PairingLookup::Unpaired
@@ -130,6 +143,11 @@ mod tests {
         let claim = handle.find("claim_inbound(").expect("claim");
         let lookup = handle.find("text.lookup(").expect("lookup");
         assert!(claim < lookup, "the claim must precede the pairing lookup");
+        let game = handle.find("channel_group::whispered(").expect("game");
+        assert!(
+            claim < game && game < lookup,
+            "a game's move is taken after the claim and before pairing"
+        );
 
         for (name, source) in [
             ("qq_pairing", include_str!("../qq_pairing.rs")),

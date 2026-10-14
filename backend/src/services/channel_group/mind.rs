@@ -36,6 +36,25 @@ pub(super) static SESSIONS: LazyLock<Mutex<HashMap<(String, i32), String>>> =
 
 pub(super) static WAITER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Who sits at a game in which group (`<platform>:<id>` to its venue): what
+/// they whisper to her comes to that group's mind first.
+pub(super) static SEATED: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(Default::default);
+
+pub(super) fn seat(venue: &str, who: String) {
+    if let Ok(mut seated) = SEATED.lock() {
+        seated.insert(who, venue.to_string());
+    }
+}
+
+pub(super) fn unseat(venue: &str, who: &str) {
+    if let Ok(mut seated) = SEATED.lock()
+        && seated.get(who).is_some_and(|at| at == venue)
+    {
+        seated.remove(who);
+    }
+}
+
 /// When this process first heard a group: lines before it reached the one
 /// before, and whatever it was holding for her then went with it.
 static UP_SINCE: LazyLock<chrono::DateTime<chrono::Utc>> = LazyLock::new(chrono::Utc::now);
@@ -225,6 +244,31 @@ pub async fn handle(message: GroupLine, token: String) {
     );
     execute(venue, out.effects).await;
     let _ = done.await;
+}
+
+/// What `from` whispered to her on `platform`, ahead of pairing: true when
+/// it was a move of theirs in a game they sit at in a group (taken there,
+/// whoever they are, paired or not); else it is not the game's, and goes on
+/// as any private line does.
+pub async fn whispered(platform: ChannelPlatform, from: &str, text: &str) -> bool {
+    let who = format!("{}:{from}", platform.slug());
+    let Some(venue) = SEATED
+        .lock()
+        .ok()
+        .and_then(|seated| seated.get(&who).cloned())
+    else {
+        return false;
+    };
+    let out = step(
+        &venue,
+        Event::Whispered {
+            who,
+            text: text.to_string(),
+        },
+    );
+    let taken = out.taken.unwrap_or(false);
+    execute(venue, out.effects).await;
+    taken
 }
 
 /// A line that did not call her by name: she reads the group the way a

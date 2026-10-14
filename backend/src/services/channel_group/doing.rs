@@ -318,6 +318,20 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 answered(venue, id, Answer::Reacted { ok }).await;
             });
         }
+        Effect::Whisper {
+            id,
+            platform,
+            user,
+            text,
+            ..
+        } => {
+            tokio::spawn(async move {
+                let ok = whisper(&token(&venue), &platform, &user, &text).await;
+                answered(venue, id, Answer::Whispered { ok }).await;
+            });
+        }
+        Effect::Seat { who } => seat(&venue, who),
+        Effect::Unseat { who } => unseat(&venue, &who),
         Effect::Typing { id, to } => {
             tokio::spawn(async move {
                 if let Some(line) = line_to(&to) {

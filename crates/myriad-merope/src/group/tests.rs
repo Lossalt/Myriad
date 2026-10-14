@@ -1097,6 +1097,7 @@ impl End {
                 },
             ),
             Effect::Send { id, .. } => (id, "send"),
+            Effect::Whisper { id, .. } => (id, "whisper"),
             _ => return,
         };
         let id = id.clone();
@@ -1214,6 +1215,7 @@ fn default_answer(kind: &str) -> Answer {
             failure: Some("unavailable".into()),
         },
         "send" => Answer::Sent { ok: true },
+        "whisper" => Answer::Whispered { ok: true },
         _ => unreachable!("{kind}"),
     }
 }
@@ -1983,4 +1985,62 @@ fn g1_her_line_brings_back_what_a_failed_read_missed() {
         Some("来点歌")
     );
     end.check("her_line_brings_back_what_a_failed_read_missed");
+}
+
+/// A member asks her for a game with seats (the test game with private
+/// marks): sign-up opens, two join and one of them twice, one more cannot be
+/// whispered to and is told how to open it; each of the two is whispered
+/// their own mark, a move in turn comes back in private and is taken, one
+/// out of turn and one that is no move are not; seats that do not move in
+/// time pass, and over, the group remembers who played. Crate-only: the
+/// test game exists only in tests, so no other end replays this one.
+#[test]
+fn g1_a_game_with_seats_is_played_in_private() {
+    let mut end = End::new();
+    end.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("好，来一局\n[[game:marks]]".into()),
+            failure: None,
+        },
+    );
+    end.answer("whisper", 1.0, Answer::Whispered { ok: true });
+    end.answer("whisper", 1.0, Answer::Whispered { ok: true });
+    end.answer("whisper", 1.0, Answer::Whispered { ok: false });
+    heard(&mut end, 0.0, message(1, 11, "阿明", "@bot 来玩记号", true));
+    heard(&mut end, 20.0, message(2, 11, "阿明", "加入", false));
+    heard(&mut end, 21.0, message(3, 12, "小红", "加入", false));
+    heard(&mut end, 22.0, message(4, 13, "阿强", "我要玩", false));
+    heard(&mut end, 23.0, message(5, 12, "小红", "+1", false));
+    let whispered = |end: &mut End, at: f64, who: &str, text: &str| {
+        end.at(
+            BASE + secs(at),
+            Event::Whispered {
+                who: who.into(),
+                text: text.into(),
+            },
+        );
+    };
+    whispered(&mut end, 100.0, "telegram:11", "你好");
+    whispered(&mut end, 101.0, "telegram:12", "1");
+    whispered(&mut end, 102.0, "telegram:11", "1");
+    whispered(&mut end, 900.0, "telegram:11", "0");
+    end.run(BASE + secs(1200.0));
+    assert!(end.group.seating.is_none());
+    let taken: Vec<Option<bool>> = end
+        .steps
+        .iter()
+        .filter(|step| step["input"]["event"]["kind"] == "whispered")
+        .map(|step| step["output"]["taken"].as_bool())
+        .collect();
+    assert_eq!(taken, [Some(false), Some(false), Some(true), Some(false)]);
+    for step in &end.steps {
+        for effect in step["output"]["effects"].as_array().into_iter().flatten() {
+            if effect["kind"] == "send" {
+                assert!(!effect.to_string().contains("SECRET-"), "{effect}");
+            }
+        }
+    }
+    end.check("a_game_with_seats_is_played_in_private");
 }

@@ -40,6 +40,9 @@ pub(super) fn step(raw: &[u8]) -> Result<Value, Failure> {
     if let Some(fresh) = out.fresh {
         answer["fresh"] = json!(fresh);
     }
+    if let Some(taken) = out.taken {
+        answer["taken"] = json!(taken);
+    }
     Ok(answer)
 }
 

@@ -610,6 +610,14 @@ fn ask_again(cx: &mut Cx, r: &mut MemberReply) -> MemberNext {
 /// What she said, taken apart: the puzzle she said she would think up.
 fn answered(cx: &mut Cx, r: &mut MemberReply, raw: &str) -> MemberNext {
     let (text, started) = crate::soup::split_start(raw);
+    // A game with seats she said she would host: sign-up opens, and she
+    // says how to join (not when she spoke up unasked).
+    let (mut text, seated) = crate::hosting::split_seat_game(&text);
+    if let Some(kind) = seated.filter(|_| r.chime.is_none())
+        && let Some(line) = open_sign_up(cx, kind, r.to.clone())
+    {
+        text = format!("{text}\n\n{line}");
+    }
     // She said she would think one up: the puzzle follows her words (at the
     // group's table only, not when she spoke up unasked).
     if started && r.chime.is_none() {

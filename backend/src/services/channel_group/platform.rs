@@ -81,6 +81,82 @@ pub(super) async fn send_reply(
     }
 }
 
+/// Whisper `text` to `user` on `platform` (in private, where only they see
+/// it); whether it reached them. A Discord member is written to in the DM
+/// channel opened with them; a Telegram user who never started a chat with
+/// her, a Discord member who keeps server DMs closed, a QQ user who is not
+/// her friend, cannot be reached (the platform refuses).
+pub(super) async fn whisper(token: &str, platform: &str, user: &str, text: &str) -> bool {
+    #[cfg(test)]
+    let who = format!("{platform}:{user}");
+    let reached = match platform_of(platform) {
+        Some(ChannelPlatform::Telegram) => {
+            #[cfg(test)]
+            if g0::on() {
+                return g0::outbound(
+                    "telegram.sendMessage",
+                    serde_json::json!({ "chat_id": user, "text": text }),
+                    &who,
+                );
+            }
+            crate::services::telegram_bot::send_message(token, user, text)
+                .await
+                .is_ok()
+        }
+        Some(ChannelPlatform::Discord) => {
+            #[cfg(test)]
+            let opened = if g0::on() {
+                g0::note(
+                    "discord.openDm",
+                    serde_json::json!({ "recipient_id": user }),
+                );
+                Ok(format!("dm-{user}"))
+            } else {
+                crate::services::discord_bot::open_dm(token, user).await
+            };
+            #[cfg(not(test))]
+            let opened = crate::services::discord_bot::open_dm(token, user).await;
+            match opened {
+                Ok(channel) => {
+                    #[cfg(test)]
+                    if g0::on() {
+                        return g0::outbound(
+                            "discord.send",
+                            serde_json::json!({ "channel": channel, "content": text }),
+                            &who,
+                        );
+                    }
+                    crate::services::discord_bot::send_message(token, &channel, text)
+                        .await
+                        .is_ok()
+                }
+                Err(_) => false,
+            }
+        }
+        Some(ChannelPlatform::OneBot) => {
+            use myriad_agent_rules::onebot::encode;
+            match encode::encode_private_message(user, &[encode::encode_text_segment(text)]) {
+                Some(action) => {
+                    #[cfg(test)]
+                    if g0::on() {
+                        return g0::outbound("onebot.action", action, &who);
+                    }
+                    matches!(
+                        crate::services::onebot_send::send_action(action).await,
+                        Ok(None)
+                    )
+                }
+                None => false,
+            }
+        }
+        _ => false,
+    };
+    if !reached {
+        warn!(platform, "[Group] a whisper did not reach them");
+    }
+    reached
+}
+
 pub(super) async fn send_typing(line: &GroupLine, token: &str) {
     #[cfg(test)]
     if g0::on() {

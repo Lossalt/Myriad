@@ -13,6 +13,7 @@ const TOKEN: &str = "g0-token";
 mod games;
 mod members;
 mod memory;
+mod seats;
 mod strangers;
 
 fn line(chat: i64, id: i64, from: i64, name: &str, text: &str, addressed: bool) -> GroupLine {

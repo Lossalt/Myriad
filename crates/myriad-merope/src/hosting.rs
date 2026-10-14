@@ -219,68 +219,27 @@ pub fn read_choice(raw: &str, view: &SeatView) -> Option<usize> {
     (chosen.n < view.choices.len()).then_some(chosen.n)
 }
 
-/// Turtle soup, as a game at a table: anyone there asks, she alone knows
-/// the truth.
-pub struct Soup;
-
-impl Rules for Soup {
-    type State = crate::soup::Game;
-    const KIND: &'static str = "soup";
-
-    fn seats(_: &Self::State) -> Vec<Seat> {
-        Vec::new()
-    }
-
-    fn facts(game: &Self::State) -> Vec<Fact> {
-        let mut facts = vec![
-            Fact::all(format!("surface: {}", game.surface)),
-            Fact::host(format!("truth: {}", game.truth)),
-        ];
-        facts.extend(
-            game.keys
-                .iter()
-                .map(|key| Fact::host(format!("key: {key}"))),
-        );
-        facts.extend(game.asked.iter().map(|asked| {
-            Fact::all(format!(
-                "asked: {} — {}",
-                asked.question,
-                asked.verdict.says()
-            ))
-        }));
-        facts
-    }
-
-    fn choices(_: &Self::State, _: usize) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn take(_: &mut Self::State, _: usize, _: usize, _: &mut Rolls) {}
-
-    fn over(game: &Self::State) -> bool {
-        game.ending.is_some()
-    }
-}
-
-#[cfg(test)]
-mod tests {
+/// A game with private seats and nothing else, for tests of how a game she
+/// hosts reaches its players.
+#[cfg(any(test, feature = "test-games"))]
+pub mod marks {
     use super::*;
 
-    /// A test-only game with private seats: each seat is dealt a secret mark;
+    /// A game with private seats and nothing else, for tests: each seat is dealt a secret mark;
     /// a turn passes or guesses the next seat's mark; three rounds and it is
     /// over. It holds what a real party game does (secrets per seat, a public
     /// log, choices) and nothing else.
-    #[derive(Debug, Clone)]
-    struct Marks {
-        seats: Vec<Seat>,
-        marks: Vec<String>,
-        log: Vec<String>,
-        turn: usize,
-        rounds: usize,
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Marks {
+        pub seats: Vec<Seat>,
+        pub marks: Vec<String>,
+        pub log: Vec<String>,
+        pub turn: usize,
+        pub rounds: usize,
     }
 
     impl Marks {
-        fn deal(players: usize, hers: usize, rolls: &mut Rolls) -> Self {
+        pub fn deal(players: usize, hers: usize, rolls: &mut Rolls) -> Self {
             let seats = (0..players)
                 .map(|seat| Seat {
                     who: format!("telegram:{seat}"),
@@ -357,6 +316,256 @@ mod tests {
             game.rounds >= 3
         }
     }
+
+    impl Marks {
+        /// Dealt to those seated, in their order.
+        pub fn deal_to(seats: Vec<Seat>, rolls: &mut Rolls) -> Self {
+            let marks = (0..seats.len())
+                .map(|seat| format!("SECRET-{seat}-{}", rolls.range(1000..=9999)))
+                .collect();
+            Self {
+                seats,
+                marks,
+                log: Vec::new(),
+                turn: 0,
+                rounds: 0,
+            }
+        }
+    }
+}
+
+/// The kinds of game with seats she can host.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum SeatGame {
+    #[cfg(any(test, feature = "test-games"))]
+    Marks(marks::Marks),
+}
+
+/// What a kind of seat game is called, and how many may play it.
+pub struct SeatKind {
+    pub kind: &'static str,
+    pub name: &'static str,
+    pub fewest: usize,
+    pub most: usize,
+}
+
+/// The kinds of seat game there are.
+pub fn seat_kinds() -> Vec<SeatKind> {
+    vec![
+        #[cfg(any(test, feature = "test-games"))]
+        SeatKind {
+            kind: "marks",
+            name: "记号",
+            fewest: 2,
+            most: 8,
+        },
+    ]
+}
+
+pub fn seat_kind(kind: &str) -> Option<SeatKind> {
+    seat_kinds().into_iter().find(|known| known.kind == kind)
+}
+
+impl SeatGame {
+    /// A game of `kind` dealt to `seats`, by `rolls`.
+    pub fn deal(kind: &str, seats: Vec<Seat>, rolls: &mut Rolls) -> Option<Self> {
+        let _ = (&seats, &rolls);
+        match kind {
+            #[cfg(any(test, feature = "test-games"))]
+            "marks" => Some(Self::Marks(marks::Marks::deal_to(seats, rolls))),
+            _ => None,
+        }
+    }
+
+    pub fn seats(&self) -> Vec<Seat> {
+        match *self {
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(ref game) => marks::Marks::seats(game),
+        }
+    }
+
+    pub fn seat_view(&self, seat: usize) -> SeatView {
+        let _ = seat;
+        match *self {
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(ref game) => seat_view::<marks::Marks>(game, seat),
+        }
+    }
+
+    pub fn public_view(&self) -> PublicView {
+        match *self {
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(ref game) => public_view::<marks::Marks>(game),
+        }
+    }
+
+    pub fn take(&mut self, seat: usize, index: usize, rolls: &mut Rolls) {
+        let _ = (seat, index, &rolls);
+        match *self {
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(ref mut game) => marks::Marks::take(game, seat, index, rolls),
+        }
+    }
+
+    pub fn over(&self) -> bool {
+        match *self {
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(ref game) => marks::Marks::over(game),
+        }
+    }
+}
+
+/// Her line starting a seat game, as she writes it: the kind named after
+/// `[[game:` (turtle soup has its own, see `crate::soup::START_MARKER`). Her
+/// words without it, and the kind, when it is one there is.
+pub fn split_seat_game(raw: &str) -> (String, Option<&'static str>) {
+    for kind in seat_kinds() {
+        let marker = format!("[[game:{}]]", kind.kind);
+        if raw.contains(&marker) {
+            return (
+                raw.replace(&marker, "").trim_end().to_string(),
+                Some(kind.kind),
+            );
+        }
+    }
+    (raw.to_string(), None)
+}
+
+/// How long sign-up stays open, and how long a seat has for its move.
+pub const SIGN_UP_SECONDS: f64 = 60.0;
+pub const MOVE_SECONDS: f64 = 60.0;
+
+/// The words that join a game in the group, as people type them (with her
+/// @name or without).
+pub fn joins(text: &str) -> bool {
+    let words: String = text
+        .split_whitespace()
+        .filter(|word| !word.starts_with('@'))
+        .collect();
+    matches!(
+        words.as_str(),
+        "加入" | "我加入" | "+1" | "我要玩" | "算我一个"
+    )
+}
+
+/// What she says opening sign-up (it closes a minute after she answered,
+/// so a little less after this goes out: no exact seconds promised).
+pub fn sign_up_line(name: &str) -> String {
+    format!(
+        "要玩{name}的，一分钟内在群里说「加入」。私聊会发给每个人自己的东西，收不到的我会说怎么打开。"
+    )
+}
+
+/// What she whispers each who joined, to see that it reaches them.
+pub fn seated_line(name: &str) -> String {
+    format!("你在这局{name}里。这里私聊发给你的，只有你自己知道。")
+}
+
+/// What she tells the group of someone she cannot whisper to, by platform.
+pub fn unreachable_line(platform: &str, name: &str) -> String {
+    match platform {
+        "telegram" => {
+            format!("{name}，我私聊不了你：先私聊我一下、点「开始」，下一局就能玩了。")
+        }
+        "discord" => format!(
+            "{name}，我私信不了你：在这个服务器的隐私设置里打开「允许服务器成员私信」，下一局就能玩了。"
+        ),
+        _ => format!("{name}，我私聊不了你：先加我好友，下一局就能玩了。"),
+    }
+}
+
+/// Too few could be reached.
+pub fn too_few_line(name: &str, fewest: usize) -> String {
+    format!("能私聊到的人不够 {fewest} 个，{name}这局先不开了。")
+}
+
+/// It starts, with who plays.
+pub fn started_line(name: &str, seats: &[Seat]) -> String {
+    let names: Vec<&str> = seats.iter().map(|seat| seat.name.as_str()).collect();
+    format!("{name}开始了：{}。", names.join("、"))
+}
+
+/// Whispered to the seat whose move it is.
+pub fn your_move_line(view: &SeatView) -> String {
+    let choices: Vec<String> = view
+        .choices()
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| format!("{index}. {choice}"))
+        .collect();
+    format!("轮到你了：\n{}\n回一个号码就行。", choices.join("\n"))
+}
+
+/// A seat that did not move in time.
+pub fn no_move_line(name: &str) -> String {
+    format!("{name}没有动，这次算过。")
+}
+
+/// It is over.
+pub fn over_line(name: &str) -> String {
+    format!("{name}结束了。")
+}
+
+/// What she remembers of a seat game the group played.
+pub fn remembered_in_group(name: &str, seats: &[Seat]) -> String {
+    let names: Vec<&str> = seats.iter().map(|seat| seat.name.as_str()).collect();
+    format!("群里玩过一局{name}（{}）", names.join("、"))
+}
+
+/// A move as a seat types it: the number of one of its choices.
+pub fn read_move(text: &str, view: &SeatView) -> Option<usize> {
+    let number: usize = text.trim().trim_end_matches(['.', '。']).parse().ok()?;
+    (number < view.choices().len()).then_some(number)
+}
+
+/// Turtle soup, as a game at a table: anyone there asks, she alone knows
+/// the truth.
+pub struct Soup;
+
+impl Rules for Soup {
+    type State = crate::soup::Game;
+    const KIND: &'static str = "soup";
+
+    fn seats(_: &Self::State) -> Vec<Seat> {
+        Vec::new()
+    }
+
+    fn facts(game: &Self::State) -> Vec<Fact> {
+        let mut facts = vec![
+            Fact::all(format!("surface: {}", game.surface)),
+            Fact::host(format!("truth: {}", game.truth)),
+        ];
+        facts.extend(
+            game.keys
+                .iter()
+                .map(|key| Fact::host(format!("key: {key}"))),
+        );
+        facts.extend(game.asked.iter().map(|asked| {
+            Fact::all(format!(
+                "asked: {} — {}",
+                asked.question,
+                asked.verdict.says()
+            ))
+        }));
+        facts
+    }
+
+    fn choices(_: &Self::State, _: usize) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn take(_: &mut Self::State, _: usize, _: usize, _: &mut Rolls) {}
+
+    fn over(game: &Self::State) -> bool {
+        game.ending.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::marks::Marks;
+    use super::*;
 
     /// Whatever the seed, the number of players and which seat is hers, at
     /// every step: what she is asked as her seat, and as the voice of the

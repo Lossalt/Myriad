@@ -150,6 +150,8 @@ prost = "0.14"                                          # Feishu long-connection
 tokio = { version = "1", features = ["test-util"] }
 # The recordings' databases answer through a proxy (channel_group::g0).
 sea-orm = { version = "2.0", default-features = false, features = ["proxy"] }
+# The recordings play a seat game with private seats (channel_group::g0).
+myriad-merope = { path = "../crates/myriad-merope", features = ["test-games"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "3", features = ["full", "visit"] }
 

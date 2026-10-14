@@ -62,6 +62,21 @@ fn every_trajectory_replays_through_the_core() {
 }
 
 #[test]
+fn a_whisper_with_no_game_on_is_not_taken() {
+    let out = ok(
+        "group.step",
+        json!({
+            "now": 1_791_957_600_000_000i64,
+            "seed": 1,
+            "her": { "today": "2026-10-14" },
+            "event": { "kind": "whispered", "who": "telegram:11", "text": "1" },
+        }),
+    );
+    assert_eq!(out["taken"], false);
+    assert_eq!(out["effects"], json!([]));
+}
+
+#[test]
 fn a_state_of_another_version_starts_over() {
     let out = ok(
         "group.step",

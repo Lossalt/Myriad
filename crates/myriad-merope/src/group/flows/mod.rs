@@ -20,6 +20,7 @@ mod glance;
 mod heard;
 mod learn;
 mod member;
+mod seats;
 mod sense;
 mod state;
 mod stranger;
@@ -33,6 +34,7 @@ pub(crate) use glance::*;
 pub(crate) use heard::*;
 pub(crate) use learn::*;
 pub(crate) use member::*;
+pub(crate) use seats::*;
 pub(crate) use sense::*;
 pub(crate) use state::*;
 pub(crate) use stranger::*;
@@ -79,6 +81,8 @@ pub enum Kind {
     Learn,
     /// Showing she is typing while a member's turn of hers runs.
     Typer { token: String, to: Target },
+    /// The game with seats at the group's table: its timers and whispers.
+    Seats,
     /// Saying something first.
     First {
         waiter: String,
@@ -115,6 +119,7 @@ pub enum Doing {
         text: String,
     },
     Learning(Box<Learning>),
+    Seats,
     Timing,
 }
 
@@ -354,6 +359,10 @@ pub(crate) fn step(group: &mut Group, at: &mut At, event: Event, out: &mut Outco
             }
             let now = cx.now();
             record_hers(cx.group, &format!("（表情包：{meaning}）"), now, cx.out);
+        }
+        Event::Whispered { who, text } => {
+            let taken = whispered(&mut cx, &who, &text);
+            cx.out.taken = Some(taken);
         }
         Event::Woke { key } => resume(&mut cx, &key, None),
         Event::Done { id, answer } => resume(&mut cx, &id, Some(answer)),
