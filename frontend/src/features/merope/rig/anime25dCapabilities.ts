@@ -84,7 +84,9 @@ export function hasAnime25DCapability(
     case 'separate-front-hair':
       return hasLayer('front-hair')
     case 'separate-back-hair':
-      return hasLayer('back-hair')
+      // What hair shows behind the head is its own layer; hair drawn all in
+      // front of the shoulders leaves none behind to separate.
+      return hasLayer('back-hair') || hasLayer('front-hair')
     case 'separate-topwear':
       return hasLayer('topwear')
     case 'rigid-left-arm-fragment':

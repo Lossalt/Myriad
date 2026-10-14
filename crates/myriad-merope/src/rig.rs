@@ -624,7 +624,9 @@ pub fn validate_character_asset_source(
             .iter()
             .all(|variant| has_variant("mouth", variant)),
         "separate-front-hair" => has_layer("a25d-front-hair"),
-        "separate-back-hair" => has_layer("a25d-back-hair"),
+        // What hair shows behind the head is its own layer; hair drawn all in
+        // front of the shoulders leaves none behind to separate.
+        "separate-back-hair" => has_layer("a25d-back-hair") || has_layer("a25d-front-hair"),
         "separate-topwear" => has_layer("a25d-topwear"),
         "rigid-left-arm-fragment" => rigid_fragment("left"),
         "rigid-right-arm-fragment" => rigid_fragment("right"),
@@ -1427,6 +1429,13 @@ mod tests {
         let bust = CharacterAssetProfile::Bust;
         let full_body = CharacterAssetProfile::FullBody;
         validate_character_asset_source(bust, &bones, &layers).unwrap();
+
+        // Hair drawn all in front of the shoulders leaves none behind the head.
+        let back_hair = layers.remove(2);
+        assert_eq!(back_hair.id, "a25d-back-hair");
+        validate_character_asset_source(bust, &bones, &layers).unwrap();
+        validate_character_asset_source(full_body, &bones, &layers).unwrap();
+        layers.insert(2, back_hair);
 
         let right_arm = layers.pop().unwrap();
         assert_eq!(

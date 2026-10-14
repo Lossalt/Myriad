@@ -22,3 +22,9 @@ test('fails closed when the shared contract introduces an unknown capability', (
   assert.ok(missingAnime25DRequiredCapabilities([]).length > 0)
   assert.equal(hasAnime25DCapability([], 'future-capability'), false)
 })
+
+test('hair drawn all in front leaves no back hair to separate', () => {
+  assert.equal(hasAnime25DCapability([{ id: 'front hair', role: 'front-hair' }], 'separate-back-hair'), true)
+  assert.equal(hasAnime25DCapability([{ id: 'a25d-back-hair' }], 'separate-back-hair'), true)
+  assert.equal(hasAnime25DCapability([{ id: 'face', role: 'face' }], 'separate-back-hair'), false)
+})
