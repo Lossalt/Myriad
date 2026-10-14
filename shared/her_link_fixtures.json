@@ -353,6 +353,18 @@
       }
     },
     { "t": "ack", "seq": 5, "ack": 7, "at": 1760140803100, "body": {} },
+    {
+      "t": "host.freeze", "seq": 2, "ack": 1, "at": 1760140830000,
+      "body": { "moveId": "mv_0123456789abcdef0123456789abcdef", "kind": "move", "to": "site" }
+    },
+    {
+      "t": "host.thaw", "seq": 3, "ack": 2, "at": 1760140840000,
+      "body": { "moveId": "mv_0123456789abcdef0123456789abcdef" }
+    },
+    {
+      "t": "host.moved", "seq": 4, "ack": 3, "at": 1760140850000,
+      "body": { "epoch": 3, "holder": "site" }
+    },
     { "t": "ping", "seq": 8, "ack": 5, "at": 1760140815000, "body": {} },
     { "t": "pong", "seq": 6, "ack": 8, "at": 1760140815020, "body": {} },
     {

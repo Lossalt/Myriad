@@ -963,6 +963,39 @@ pub(crate) fn tables() -> Vec<TableDef> {
                 ColumnDef::new("state", "character varying").not_null(),
                 ColumnDef::new("move", "jsonb"),
                 ColumnDef::new("updated_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("done", "jsonb"),
+            ],
+        },
+        TableDef {
+            name: "agent_host_backups".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "character varying").not_null(),
+                ColumnDef::new("device_id", "character varying").not_null(),
+                ColumnDef::new("day", "character varying").not_null(),
+                ColumnDef::new("lineage", "character varying").not_null(),
+                ColumnDef::new("epoch", "bigint").not_null(),
+                ColumnDef::new("digest", "character varying").not_null(),
+                ColumnDef::new("bytes", "bigint").not_null(),
+                ColumnDef::new("received", "bigint")
+                    .not_null()
+                    .default_value("0"),
+                ColumnDef::new("complete", "boolean")
+                    .not_null()
+                    .default_value("false"),
+                ColumnDef::new("created_at", "timestamp with time zone").not_null(),
+                ColumnDef::new("updated_at", "timestamp with time zone").not_null(),
+            ],
+        },
+        TableDef {
+            name: "agent_kept_for_her".to_string(),
+            columns: vec![
+                ColumnDef::new("id", "bigint").not_null(),
+                ColumnDef::new("user_id", "integer").not_null(),
+                ColumnDef::new("event_key", "character varying").not_null(),
+                ColumnDef::new("summary", "text").not_null(),
+                ColumnDef::new("happened_at", "timestamp with time zone")
+                    .not_null()
+                    .default_value("now()"),
             ],
         },
         TableDef {

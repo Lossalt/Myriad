@@ -18,6 +18,8 @@ pub async fn complete(
     Extension(claims): Extension<Claims>,
     Json(body): Json<TouchSummary>,
 ) -> Result<StatusCode, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     let user_id = super::parse_user_id_with_agent_access(&claims, &db).await?;
     let live = crate::services::agent::consciousness::last_live_presence(user_id);
     ended(user_id, &body, &live, None).await.map_err(invalid)?;
@@ -29,6 +31,8 @@ pub async fn appraise(
     Extension(claims): Extension<Claims>,
     Json(body): Json<TouchSummary>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     let user_id = super::parse_user_id_with_agent_access(&claims, &db).await?;
     let decision = appraise_ongoing(&db, user_id, &body)
         .await

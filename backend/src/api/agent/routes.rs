@@ -758,6 +758,44 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        // 她搬出站点（导出并搬走、撤销、删掉这里的她）、留在站点上的别人的那部分、每日备份（H3e）
+        .route(
+            "/host/move-out",
+            post(super::devices::move_out).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/move-out/undo",
+            post(super::devices::undo_move_out).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/move-out/let-go",
+            post(super::devices::let_her_go).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/sealed",
+            delete(super::devices::clear_sealed).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
+        .route(
+            "/host/backups/{backup_id}",
+            get(super::devices::download_backup)
+                .delete(super::devices::delete_backup)
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::auth::auth_middleware,
+                )),
+        )
         .route(
             "/host/moves/{move_id}/cancel",
             post(super::devices::cancel_move).route_layer(from_fn_with_state(
@@ -797,6 +835,74 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
         .route(
             "/sync/moves",
             post(super::sync::sync_propose_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        // 她住到设备上、从设备搬回、每日备份（H3e）：只认设备令牌
+        .route(
+            "/sync/moves/{move_id}",
+            get(super::sync::sync_move_status).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/agree",
+            post(super::sync::sync_agree_move).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/archive",
+            get(super::sync::sync_move_archive).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/applied",
+            post(super::sync::sync_move_applied).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/commit",
+            post(super::sync::sync_move_commit).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/moves/{move_id}/frozen",
+            post(super::sync::sync_move_frozen).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/backups",
+            get(super::sync::sync_backups).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::sync_device::sync_device_auth,
+            )),
+        )
+        .route(
+            "/sync/backups/{backup_id}",
+            put(super::sync::sync_put_backup)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::services::persona_sync::backups::PIECE_MAX_BYTES + 4096,
+                ))
+                .route_layer(from_fn_with_state(
+                    app_state.clone(),
+                    middleware::sync_device::sync_device_auth,
+                )),
+        )
+        .route(
+            "/sync/backups/{backup_id}/file",
+            get(super::sync::sync_backup_piece).route_layer(from_fn_with_state(
                 app_state.clone(),
                 middleware::sync_device::sync_device_auth,
             )),

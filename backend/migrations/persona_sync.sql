@@ -30,18 +30,40 @@ ALTER TABLE agent_sync_devices DROP COLUMN IF EXISTS role;
 -- One row, because the site has one her. `holder` is `site` or the id of the
 -- device she lives on; `lineage` is her birth (issued with the row, kept
 -- across every move); `epoch` goes up by one at each commit or reclaim and
--- never down; `state` is live, frozen (a move under way: no end has her) or
--- vacant (she is not here: the device she lived on was removed). `move` is
--- the move in progress, if any. No key, token or grant is ever in it.
+-- never down; `state` is live, frozen (a move under way: no end has her),
+-- vacant (she is not here: the device she lived on was removed, or the site
+-- let her go after she moved out) or moved_out (exported to be brought in
+-- elsewhere, waiting for the owner to let this copy go or undo it). `move`
+-- is the move in progress, if any; `done` the last one that finished (its
+-- id and the epoch it left), so a commit asked again is answered. No key,
+-- token or grant is ever in it.
 CREATE TABLE IF NOT EXISTS agent_host_lease (
     id VARCHAR(8) PRIMARY KEY CHECK (id = 'her'),
     holder VARCHAR(40) NOT NULL,
     lineage VARCHAR(36) NOT NULL,
     epoch BIGINT NOT NULL CHECK (epoch >= 1),
-    state VARCHAR(8) NOT NULL CHECK (state IN ('live', 'frozen', 'vacant')),
+    state VARCHAR(12) NOT NULL
+        CONSTRAINT agent_host_lease_state_check
+        CHECK (state IN ('live', 'frozen', 'vacant', 'moved_out')),
     move JSONB,
     updated_at TIMESTAMPTZ NOT NULL
 );
+-- A lease from before she could move out of the site: its state takes the
+-- longer word, and the last finished move is kept beside it.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'agent_host_lease'
+          AND column_name = 'state' AND character_maximum_length < 12
+    ) THEN
+        ALTER TABLE agent_host_lease ALTER COLUMN state TYPE VARCHAR(12);
+        ALTER TABLE agent_host_lease DROP CONSTRAINT IF EXISTS agent_host_lease_state_check;
+        ALTER TABLE agent_host_lease ADD CONSTRAINT agent_host_lease_state_check
+            CHECK (state IN ('live', 'frozen', 'vacant', 'moved_out'));
+    END IF;
+END $$;
+ALTER TABLE agent_host_lease ADD COLUMN IF NOT EXISTS done JSONB;
 -- The epoch only goes up and the lineage never changes in place: a new birth
 -- is a new row.
 CREATE OR REPLACE FUNCTION agent_host_lease_guard() RETURNS trigger AS $$
@@ -193,4 +215,41 @@ CREATE TABLE IF NOT EXISTS agent_host_import_staging (
     entity_id VARCHAR(160) NOT NULL,
     canonical JSONB NOT NULL,
     PRIMARY KEY (import_id, kind, entity_id)
+);
+
+-- The daily backups of her a device she lives on pushes (D4): each a sealed
+-- `myriad.her-archive` the site cannot open (the passphrase never leaves the
+-- device), kept under `data/agent/backups/<device>/`. One per device and
+-- day; the newest seven of her lineage are kept, whichever device pushed
+-- them. `received` counts the bytes in so far while it comes in pieces;
+-- `complete` once all `bytes` are here. Removing the device keeps them:
+-- they are how she is taken back.
+CREATE TABLE IF NOT EXISTS agent_host_backups (
+    id VARCHAR(40) PRIMARY KEY,
+    device_id VARCHAR(40) NOT NULL,
+    day VARCHAR(10) NOT NULL,
+    lineage VARCHAR(36) NOT NULL,
+    epoch BIGINT NOT NULL,
+    digest VARCHAR(64) NOT NULL,
+    bytes BIGINT NOT NULL,
+    received BIGINT NOT NULL DEFAULT 0,
+    complete BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_host_backups_device_day
+    ON agent_host_backups (device_id, day);
+CREATE INDEX IF NOT EXISTS idx_agent_host_backups_lineage
+    ON agent_host_backups (lineage, created_at DESC);
+
+-- What the site's own Work did for the owner while she lived on another end
+-- (H3e-9): Work runs there as the plain assistant, and how it went is kept
+-- here for her, in the order it ended, until she is back on the site (or,
+-- later, her host takes it over the link). Nothing secret is in it.
+CREATE TABLE IF NOT EXISTS agent_kept_for_her (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_key VARCHAR(64) NOT NULL,
+    summary TEXT NOT NULL,
+    happened_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

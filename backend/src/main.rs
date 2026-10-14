@@ -530,6 +530,11 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
 
                 if role == runtime_role::RuntimeRole::All {
                     persona::start(db.clone()).await?;
+                } else {
+                    // Where she lives, for what this process says of her
+                    // (the public config tells the web she is away, H3e-9).
+                    services::persona_sync::lease::reload(&db).await;
+                    services::persona_sync::lease::keep(db.clone());
                 }
 
                 // Prune private Tapp installs when cleanup mode is "inactivity"

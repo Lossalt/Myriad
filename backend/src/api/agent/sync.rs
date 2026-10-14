@@ -51,6 +51,11 @@ pub async fn sync_hello(
         .await
         .map_err(sync_failed)?;
     let host = lease::shown(&db).await.map_err(sync_failed)?;
+    let role = if host["holder"].as_str() == Some(device.0.id.as_str()) {
+        "host"
+    } else {
+        "child"
+    };
     Ok(Json(json!({
         "formatVersion": myriad_persona_sync::FORMAT_VERSION,
         "deviceId": device.0.id,
@@ -64,9 +69,9 @@ pub async fn sync_hello(
         "import": persona_sync::import::shown_for_device(&db, &device.0.id)
             .await
             .map_err(sync_failed)?,
-        // A Mac from before host leases reads this and needs it; it is all
-        // a device ever is now.
-        "role": "child",
+        // A Mac from before host leases reads this and needs it: a child,
+        // unless this is the device she lives on (H3e-19).
+        "role": role,
         "limits": {
             "pullMaxEntities": persona_sync::PULL_MAX_ENTITIES,
             "pullMaxBytes": persona_sync::PULL_MAX_BYTES,
@@ -90,6 +95,7 @@ pub async fn sync_leave(
     )
     .await
     .map_err(sync_failed)?;
+    lease::reload(&db).await;
     tracing::info!(device = %device.0.id, "[sync] device left");
     Ok(Json(json!({ "left": true })))
 }
@@ -123,16 +129,242 @@ pub async fn sync_propose_move(
     Extension(device): Extension<SyncDevice>,
     Json(request): Json<ProposeMoveRequest>,
 ) -> Result<Json<Value>, HttpError> {
-    let Some(kind) = lease::Kind::parse(&request.kind) else {
-        return Err(bad_request("kind is move or merge", "invalid_move_kind"));
-    };
-    lease::start(&db, kind, &device.0.id, lease::Starter::Device)
-        .await
-        .map_err(move_refused)?;
+    // `back`: the device she lives on asks to bring her back to the site.
+    if request.kind == "back" {
+        lease::start_back(&db, &device.0.id, lease::Starter::Device)
+            .await
+            .map_err(move_refused)?;
+    } else {
+        let kind = match lease::Kind::parse(&request.kind) {
+            Some(kind @ (lease::Kind::Move | lease::Kind::Merge)) => kind,
+            _ => {
+                return Err(bad_request(
+                    "kind is move, back or merge",
+                    "invalid_move_kind",
+                ));
+            }
+        };
+        // Her living on a device opens with H4 (Q8): the acceptance entry only.
+        if kind == lease::Kind::Move && !lease::device_host_open() {
+            return Err(move_refused(lease::MoveError::Later));
+        }
+        lease::start(&db, kind, &device.0.id, lease::Starter::Device)
+            .await
+            .map_err(move_refused)?;
+    }
+    lease::reload(&db).await;
     tracing::info!(device = %device.0.id, "[host] a device asked for a move; the owner confirms it on the site");
     Ok(Json(
         json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
     ))
+}
+
+/// POST /api/agent/sync/moves/{move_id}/agree: the device a move to it is
+/// with says yes (its owner agreed there, H3e-2). She is not frozen until
+/// the owner confirms on the site.
+pub async fn sync_agree_move(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    if !lease::device_host_open() {
+        return Err(move_refused(lease::MoveError::Later));
+    }
+    lease::agree(&db, &move_id, &device.0.id)
+        .await
+        .map_err(move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
+    ))
+}
+
+/// GET /api/agent/sync/moves/{move_id}: the move to this device as it
+/// reads it: where it stands, and once she is sealed for it the file's size,
+/// digest and the key of this move (sent to this device alone, kept in no
+/// log; it goes with the move).
+pub async fn sync_move_status(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+) -> Result<axum::response::Response, HttpError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let answer = persona_sync::moves::shown_to_device(&db, &move_id, &device.0.id)
+        .await
+        .map_err(move_refused)?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(answer)).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PieceAt {
+    offset: u64,
+    #[serde(default)]
+    length: Option<usize>,
+}
+
+/// GET /api/agent/sync/moves/{move_id}/archive?offset=&length=: a piece of
+/// the sealed file of her this device takes.
+pub async fn sync_move_archive(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+    Query(at): Query<PieceAt>,
+) -> Result<axum::response::Response, HttpError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let bytes = persona_sync::moves::piece(
+        &db,
+        &move_id,
+        &device.0.id,
+        at.offset,
+        at.length.unwrap_or(persona_sync::moves::PIECE_MAX_BYTES),
+    )
+    .await
+    .map_err(move_refused)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DigestRequest {
+    digest: String,
+}
+
+/// POST /api/agent/sync/moves/{move_id}/applied: this device has all of her,
+/// checked against the digest and kept apart; it pushes its first backup next.
+pub async fn sync_move_applied(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+    Json(request): Json<DigestRequest>,
+) -> Result<Json<Value>, HttpError> {
+    persona_sync::moves::applied(&db, &move_id, &device.0.id, &request.digest)
+        .await
+        .map_err(move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
+    ))
+}
+
+/// POST /api/agent/sync/moves/{move_id}/commit: she lives on this device from
+/// now; the site lets its copy go in the same transaction. Asked again, it
+/// answers the lease. The device starts her only once this answered.
+pub async fn sync_move_commit(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+    Json(request): Json<DigestRequest>,
+) -> Result<Json<Value>, HttpError> {
+    persona_sync::moves::commit_to_device(
+        &db,
+        owner_of(&device),
+        &move_id,
+        &device.0.id,
+        &request.digest,
+    )
+    .await
+    .map_err(move_refused)?;
+    Ok(Json(
+        json!({ "host": lease::shown(&db).await.map_err(sync_failed)? }),
+    ))
+}
+
+/// POST /api/agent/sync/moves/{move_id}/frozen: the device she lives on is
+/// frozen for her move back and says what it froze; she comes as an import
+/// it sends next (pages, files, commit).
+pub async fn sync_move_frozen(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(move_id): Path<String>,
+    Json(frozen): Json<persona_sync::moves::Frozen>,
+) -> Result<Json<Value>, HttpError> {
+    let session = persona_sync::moves::report_frozen(&db, &move_id, &device.0.id, frozen)
+        .await
+        .map_err(import_refused)?;
+    Ok(Json(json!({
+        "import": session.json(None),
+        "host": lease::shown(&db).await.map_err(sync_failed)?,
+    })))
+}
+
+/// A backup refused, with its code.
+pub(crate) fn backup_refused(error: persona_sync::backups::BackupError) -> HttpError {
+    match &error {
+        persona_sync::backups::BackupError::Failed(what) => {
+            tracing::error!(what, "[backup] failed")
+        }
+        persona_sync::backups::BackupError::Invalid(what) => {
+            tracing::warn!(what, "[backup] refused: a piece that does not read")
+        }
+        _ => {}
+    }
+    let (status, code, message) = error.refusal();
+    HttpError::from((status, Json(json!({ "error": message, "code": code }))))
+}
+
+/// PUT /api/agent/sync/backups/{day}?offset=&total=&lineage=&epoch=&digest=:
+/// one piece of today's sealed backup from the device she lives on (D4).
+pub async fn sync_put_backup(
+    State(db): State<DatabaseConnection>,
+    Extension(device): Extension<SyncDevice>,
+    Path(day): Path<String>,
+    Query(query): Query<persona_sync::backups::PieceQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, HttpError> {
+    let taken = persona_sync::backups::take_piece(&db, &device.0.id, &day, query, body.to_vec())
+        .await
+        .map_err(backup_refused)?;
+    Ok(Json(taken))
+}
+
+/// GET /api/agent/sync/backups: her lineage's daily backups the site keeps,
+/// for a device to take her back from one (opened in the app, Q5).
+pub async fn sync_backups(
+    State(db): State<DatabaseConnection>,
+    Extension(_device): Extension<SyncDevice>,
+) -> Result<Json<Value>, HttpError> {
+    Ok(Json(json!({
+        "backups": persona_sync::backups::listed(&db).await.map_err(sync_failed)?,
+        "host": lease::shown(&db).await.map_err(sync_failed)?,
+    })))
+}
+
+/// GET /api/agent/sync/backups/{backup_id}/file?offset=&length=: a piece of
+/// one of them.
+pub async fn sync_backup_piece(
+    State(db): State<DatabaseConnection>,
+    Extension(_device): Extension<SyncDevice>,
+    Path(backup_id): Path<String>,
+    Query(at): Query<PieceAt>,
+) -> Result<axum::response::Response, HttpError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let bytes = persona_sync::backups::piece(
+        &db,
+        &backup_id,
+        at.offset,
+        at.length.unwrap_or(persona_sync::backups::PIECE_MAX_BYTES),
+    )
+    .await
+    .map_err(backup_refused)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 /// POST /api/agent/sync/moves/{move_id}/cancel: the device calls off a move

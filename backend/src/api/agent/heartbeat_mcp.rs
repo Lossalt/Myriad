@@ -517,6 +517,8 @@ pub(crate) async fn update_any_memory(
     Path(memory_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_current_admin(&claims, &db).await?;
     let content = body["content"].as_str().ok_or_else(|| {
         HttpError::from((
@@ -537,6 +539,8 @@ pub(crate) async fn delete_any_memory(
     Extension(claims): Extension<Claims>,
     Path(memory_id): Path<String>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_current_admin(&claims, &db).await?;
     let removed = crate::services::agent::memory::manage::retire_any(&db, &memory_id)
         .await

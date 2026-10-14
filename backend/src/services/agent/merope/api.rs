@@ -37,7 +37,7 @@ pub mod store {
     #[cfg(test)]
     pub(crate) use crate::services::agent::merope::store::latest_open_session;
     pub(crate) use crate::services::agent::merope::store::{
-        PERSONA_ROW_ID, affect_from_state, lock_persona_on,
+        PERSONA_MEMORY_SOURCES, PERSONA_ROW_ID, affect_from_state, lock_persona_on,
     };
 }
 

@@ -7,12 +7,14 @@
 //! memories, and nothing learned in a group.
 
 pub mod assets;
+pub mod backups;
 pub mod devices;
 pub mod export;
 pub mod fields;
 pub mod import;
 pub mod lease;
 pub mod merge;
+pub mod moves;
 mod outside;
 pub mod snapshot;
 

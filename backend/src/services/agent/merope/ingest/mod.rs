@@ -24,7 +24,7 @@ use crate::models::entities::agent_addressee_state;
 use crate::services::agent::run_hub;
 
 pub use myriad_merope::diary::{compact_summary, redact_event_text};
-pub use produce::{spawn, spawn_presence};
+pub use produce::{ingest, spawn, spawn_presence};
 #[cfg(test)]
 pub(crate) use produce::apply_task_mood;
 pub use redeem::tick_speak_intents;
@@ -35,6 +35,11 @@ pub(crate) use redeem::say_on_app;
 const SAME_EVENT_MINUTES: i64 = 15;
 
 pub async fn is_enabled() -> bool {
+    // She is not on the site (moving, living on another end, moved out):
+    // nothing of her runs here, as with her switch off (H3e-9).
+    if !crate::services::persona_sync::lease::place().here() {
+        return false;
+    }
     crate::GLOBAL_DYNAMIC_CONFIG
         .read()
         .await

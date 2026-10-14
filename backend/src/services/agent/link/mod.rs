@@ -93,6 +93,9 @@ struct Open {
     /// Where `act.request` goes, and the device's name, once the child said
     /// it takes `act`.
     acts: Option<(mpsc::Sender<connection::Outgoing>, String)>,
+    /// The device she lives on dialled in as her host (H3e-7): where it is
+    /// told she is frozen there or thawed, and the move it was last told of.
+    host: Option<(mpsc::Sender<connection::Outgoing>, Option<String>)>,
 }
 
 /// The open link of each device, by device id.
@@ -112,6 +115,7 @@ fn open(device_id: &str, owner: i32) -> (u64, oneshot::Receiver<Close>) {
             playback: false,
             experience: None,
             acts: None,
+            host: None,
         };
         if let Some(previous) = open.insert(device_id.to_string(), link) {
             let _ = previous.close.send(Close::Replaced);
@@ -148,6 +152,88 @@ fn takes_acts(device_id: &str, id: u64, sender: mpsc::Sender<connection::Outgoin
         if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
             link.acts = Some((sender, name));
         }
+    }
+}
+
+/// The link `id` is the device she lives on, as her host: lease changes are
+/// told through `sender`; `frozen` is the move it was told it is frozen for.
+fn takes_host(
+    device_id: &str,
+    id: u64,
+    sender: mpsc::Sender<connection::Outgoing>,
+    frozen: Option<String>,
+) {
+    if let Ok(mut open) = OPEN.lock() {
+        if let Some(link) = open.get_mut(device_id).filter(|link| link.id == id) {
+            link.host = Some((sender, frozen));
+        }
+    }
+}
+
+/// Where she lives changed: each child is told she is not here (frozen or
+/// moved) and reconnects to the refusal; the device she lives on is told on
+/// its own link that she is frozen there for a move, or thawed, and a device
+/// that is not her host any more is told she moved (H3e-7).
+pub(crate) fn lease_changed(lease: &crate::services::persona_sync::lease::Lease) {
+    use crate::services::persona_sync::lease::{State, Where};
+    let place = lease.place();
+    let mut closing: Vec<(Open, Close)> = Vec::new();
+    if let Ok(mut open) = OPEN.lock() {
+        let devices: Vec<String> = open.keys().cloned().collect();
+        for device in devices {
+            let Some(link) = open.get_mut(&device) else {
+                continue;
+            };
+            if let Some((sender, told)) = link.host.as_mut() {
+                let holds =
+                    lease.holder == device && matches!(lease.state, State::Live | State::Frozen);
+                if !holds {
+                    let _ = sender.try_send(connection::Outgoing::latest(
+                        "host.moved",
+                        serde_json::json!({ "epoch": lease.epoch, "holder": lease.holder }),
+                    ));
+                    if let Some(link) = open.remove(&device) {
+                        closing.push((link, Close::HostMoved));
+                    }
+                    continue;
+                }
+                let frozen_for = lease
+                    .moving
+                    .as_ref()
+                    .filter(|moving| lease.state == State::Frozen && moving.from == device);
+                match frozen_for {
+                    Some(moving) if told.as_deref() != Some(moving.id.as_str()) => {
+                        let _ = sender.try_send(connection::Outgoing::latest(
+                            "host.freeze",
+                            connection::freeze_body(moving),
+                        ));
+                        *told = Some(moving.id.clone());
+                    }
+                    Some(_) => {}
+                    None => {
+                        if let Some(id) = told.take() {
+                            let _ = sender.try_send(connection::Outgoing::latest(
+                                "host.thaw",
+                                serde_json::json!({ "moveId": id }),
+                            ));
+                        }
+                    }
+                }
+                continue;
+            }
+            let why = match place {
+                Where::Here => continue,
+                // No end has her: every child is told, and reconnects to the refusal.
+                Where::Moving => Close::HostFrozen,
+                Where::Elsewhere(_) | Where::Vacant | Where::MovedOut => Close::HostMoved,
+            };
+            if let Some(link) = open.remove(&device) {
+                closing.push((link, why));
+            }
+        }
+    }
+    for (link, why) in closing {
+        let _ = link.close.send(why);
     }
 }
 

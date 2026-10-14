@@ -4,12 +4,19 @@
 //! the registry of where that is: `holder` is `site` or the id of the device
 //! she lives on, `lineage` is her birth, `epoch` goes up by one each time she
 //! changes host (or is taken back) and never down, and `state` says whether
-//! she is there (`live`), moving (`frozen`: no end has her) or not on this
-//! site at all (`vacant`). A move is a small state machine kept on the row
+//! she is there (`live`), moving (`frozen`: no end has her), not on this
+//! site at all (`vacant`), or exported to be brought in elsewhere
+//! (`moved_out`, Q7). A move is a small state machine kept on the row
 //! (`move`): proposed → frozen → transferring → applied → committed →
 //! retired. Before the commit the old host still holds her and a move can be
 //! cancelled, which gives everything back as it was: freezing her only puts
-//! things aside, it destroys nothing.
+//! things aside, it destroys nothing. The last move that finished is kept
+//! (`done`), so a commit asked again is answered.
+//!
+//! Moves (H3e): to a device (the device agrees, the owner confirms with a
+//! passphrase for the copy the site keeps; [`super::moves`]), back from the
+//! device she lives on, and a reclaim from a daily backup by another device
+//! (`Recover`). Removing the device she lives on leaves the lease `vacant`.
 //!
 //! Anything that writes to the site's her needs the site owner's logged-in
 //! session once: a device token can propose a move, never confirm one.
@@ -42,14 +49,18 @@ pub const REREAD_EVERY: Duration = Duration::from_secs(30);
 
 /// Whether she is on the end that holds her.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum State {
     Live,
     /// A move is under way: no end has her until it is committed or cancelled.
     Frozen,
     /// She is not on this site and the site does not know where she is (the
-    /// device she lived on was removed).
+    /// device she lived on was removed, or the site let her go after she
+    /// moved out).
     Vacant,
+    /// Exported to be brought in elsewhere (「导出并搬走」, Q7): she is still
+    /// here but stopped, until the owner lets this copy go or undoes it.
+    MovedOut,
 }
 
 impl State {
@@ -58,6 +69,7 @@ impl State {
             State::Live => "live",
             State::Frozen => "frozen",
             State::Vacant => "vacant",
+            State::MovedOut => "moved_out",
         }
     }
 
@@ -66,6 +78,7 @@ impl State {
             "live" => Some(State::Live),
             "frozen" => Some(State::Frozen),
             "vacant" => Some(State::Vacant),
+            "moved_out" => Some(State::MovedOut),
             _ => None,
         }
     }
@@ -136,6 +149,9 @@ pub enum Kind {
     /// The her on a device (`from`) is merged into the site's, the first
     /// time it connects with a her of its own.
     Merge,
+    /// She is taken back onto the site from the daily backup the device she
+    /// lives on (`from`) pushed, by another device (`via`) that opened it.
+    Recover,
 }
 
 impl Kind {
@@ -143,6 +159,7 @@ impl Kind {
         match raw {
             "move" => Some(Kind::Move),
             "merge" => Some(Kind::Merge),
+            "recover" => Some(Kind::Recover),
             _ => None,
         }
     }
@@ -175,17 +192,55 @@ pub struct Move {
     pub started_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_at: Option<DateTime<Utc>>,
+    /// A move to a device: the device agreed (it said so with its token, the
+    /// owner there having said yes). The owner's confirmation needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agreed: Option<bool>,
+    /// The import that carries her here (a move back from a device, or a
+    /// reclaim), once there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<String>,
+    /// A reclaim: the device that opened the backup and sends her.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// Where she stood before the move began, given back if it is called off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub was: Option<State>,
 }
 
 impl Move {
-    /// The device a move is with, whichever way it goes.
+    /// The device a move is with, whichever way it goes: for a reclaim, the
+    /// device sending her.
     pub fn device(&self) -> &str {
-        if self.from == SITE {
+        if let Some(via) = &self.via {
+            via
+        } else if self.from == SITE {
             &self.to
         } else {
             &self.from
         }
     }
+
+    /// She goes from the site to the device `to`.
+    pub fn to_device(&self) -> bool {
+        self.kind == Kind::Move && self.from == SITE
+    }
+
+    /// She comes back to the site from the device she lives on.
+    pub fn back_to_site(&self) -> bool {
+        self.kind == Kind::Move && self.from != SITE && self.to == SITE
+    }
+}
+
+/// The last move that finished: its id, what it was and the epoch it left.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Done {
+    pub id: String,
+    pub kind: Kind,
+    pub epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,6 +251,7 @@ pub struct Lease {
     pub state: State,
     pub moving: Option<Move>,
     pub updated_at: DateTime<Utc>,
+    pub done: Option<Done>,
 }
 
 /// Where she is, as this site sees it.
@@ -209,6 +265,9 @@ pub enum Where {
     Elsewhere(String),
     /// Not here, and the site does not know where.
     Vacant,
+    /// Exported to be brought in elsewhere; stopped here until the owner
+    /// lets this copy go or undoes it.
+    MovedOut,
 }
 
 impl Where {
@@ -222,6 +281,7 @@ impl Lease {
         match self.state {
             State::Frozen => Where::Moving,
             State::Vacant => Where::Vacant,
+            State::MovedOut => Where::MovedOut,
             State::Live if self.holder == SITE => Where::Here,
             State::Live => Where::Elsewhere(self.holder.clone()),
         }
@@ -245,6 +305,11 @@ impl Lease {
                 "by": moving.by,
                 "startedAt": moving.started_at.to_rfc3339(),
                 "confirmedAt": moving.confirmed_at.map(|at| at.to_rfc3339()),
+                "agreed": moving.agreed,
+                "via": moving.via,
+                "viaName": moving.via.as_deref().and_then(named),
+                "import": moving.import,
+                "digest": moving.digest,
             })
         });
         json!({
@@ -254,6 +319,7 @@ impl Lease {
             "epoch": self.epoch,
             "state": self.state.as_str(),
             "move": moving,
+            "done": self.done,
             "updatedAt": self.updated_at.to_rfc3339(),
         })
     }
@@ -272,6 +338,9 @@ impl Lease {
             updated_at: row
                 .try_get::<DateTime<chrono::FixedOffset>>("", "updated_at")?
                 .with_timezone(&Utc),
+            done: row
+                .try_get::<Option<Value>>("", "done")?
+                .and_then(|raw| serde_json::from_value(raw).ok()),
         })
     }
 }
@@ -280,7 +349,7 @@ fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
     Statement::from_sql_and_values(DatabaseBackend::Postgres, sql, values)
 }
 
-const COLUMNS: &str = "holder, lineage, epoch, state, move, updated_at";
+const COLUMNS: &str = "holder, lineage, epoch, state, move, updated_at, done";
 
 /// The lease as stored. A site that has her and no lease yet (she was born
 /// before leases, or just now) is issued one: the site holds her, epoch 1,
@@ -350,6 +419,18 @@ pub enum MoveError {
     Unknown,
     /// The move is not at a step this can be done at.
     Phase(Phase),
+    /// A move to a device that the device has not agreed to yet.
+    NotAgreed,
+    /// What arrived is not what was sealed (a different digest).
+    Mismatch,
+    /// Her moving to a device opens with H4 (Q8): only the acceptance entry.
+    Later,
+    /// The device has not pushed its first daily backup: the site would have
+    /// no copy to take her back from.
+    BackupMissing,
+    /// Something needed could not be written (a file); the message names
+    /// what, never a value.
+    Failed(String),
     Db(DbErr),
 }
 
@@ -384,6 +465,31 @@ impl MoveError {
                 StatusCode::CONFLICT,
                 "move_phase",
                 "The move is not at a step this can be done at",
+            ),
+            MoveError::NotAgreed => (
+                StatusCode::CONFLICT,
+                "move_not_agreed",
+                "The device has not agreed to her living on it yet",
+            ),
+            MoveError::Mismatch => (
+                StatusCode::CONFLICT,
+                "move_mismatch",
+                "What arrived is not what was sealed",
+            ),
+            MoveError::BackupMissing => (
+                StatusCode::CONFLICT,
+                "move_backup_missing",
+                "The device has not kept its first backup of her here yet",
+            ),
+            MoveError::Later => (
+                StatusCode::CONFLICT,
+                "device_host_later",
+                "Her living on a device opens later",
+            ),
+            MoveError::Failed(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "move_failed",
+                "The move could not go on",
             ),
             MoveError::Db(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -430,15 +536,21 @@ async fn write(
 }
 
 /// Starts a move of the site's her with the device `device`: `Move` takes her
-/// to it, `Merge` brings its her into the site's. Asked by the owner on the
-/// site (the confirmation), it freezes her at once; asked by the device, it
-/// waits for the owner to confirm.
+/// to it, `Merge` brings its her into the site's. A merge the owner asks for
+/// on the site freezes her at once (that is the confirmation too); one a
+/// device asks for waits for the owner. A move to a device waits either way
+/// for both: the device agreeing (asked by it, or later with [`agree`]) and
+/// the owner confirming on the site with the passphrase for the copy the
+/// site keeps (H3e-2): only then is she frozen.
 pub async fn start(
     db: &DatabaseConnection,
     kind: Kind,
     device: &str,
     by: Starter,
 ) -> Result<Lease, MoveError> {
+    if !matches!(kind, Kind::Move | Kind::Merge) {
+        return Err(MoveError::Phase(Phase::Proposed));
+    }
     let txn = db.begin().await?;
     let lease = locked(&txn).await?.ok_or(MoveError::NoHer)?;
     if lease.moving.is_some() {
@@ -448,11 +560,11 @@ pub async fn start(
         return Err(MoveError::NotHere);
     }
     let (from, to) = match kind {
-        Kind::Move => (SITE.to_string(), device.to_string()),
         Kind::Merge => (device.to_string(), SITE.to_string()),
+        _ => (SITE.to_string(), device.to_string()),
     };
     let now = Utc::now();
-    let confirmed = by == Starter::Owner;
+    let confirmed = by == Starter::Owner && kind == Kind::Merge;
     let moving = Move {
         id: format!("mv_{}", uuid::Uuid::new_v4().simple()),
         kind,
@@ -467,6 +579,10 @@ pub async fn start(
         digest: None,
         started_at: now,
         confirmed_at: confirmed.then_some(now),
+        agreed: (kind == Kind::Move).then_some(by == Starter::Device),
+        import: None,
+        via: None,
+        was: Some(lease.state),
     };
     let state = if moving.phase.freezes() {
         State::Frozen
@@ -487,6 +603,74 @@ pub async fn start(
     Ok(lease)
 }
 
+/// The device she lives on, or the owner on the site, asks to bring her
+/// back to the site (H3e-8). Asked by the owner it is confirmed at once and
+/// she is frozen there (no end has her); asked by the device it waits for
+/// the owner. The device then reports what it froze ([`super::moves`]) and
+/// sends her as an import.
+pub async fn start_back(
+    db: &DatabaseConnection,
+    device: &str,
+    by: Starter,
+) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.moving.is_some() {
+        return Err(MoveError::InProgress);
+    }
+    if lease.place() != Where::Elsewhere(device.to_string()) {
+        return Err(MoveError::NotHere);
+    }
+    let now = Utc::now();
+    let confirmed = by == Starter::Owner;
+    let moving = Move {
+        id: format!("mv_{}", uuid::Uuid::new_v4().simple()),
+        kind: Kind::Move,
+        from: device.to_string(),
+        to: SITE.to_string(),
+        phase: if confirmed {
+            Phase::Frozen
+        } else {
+            Phase::Proposed
+        },
+        by,
+        digest: None,
+        started_at: now,
+        confirmed_at: confirmed.then_some(now),
+        agreed: None,
+        import: None,
+        via: None,
+        was: Some(lease.state),
+    };
+    let state = if confirmed {
+        State::Frozen
+    } else {
+        State::Live
+    };
+    let lease = write(&txn, state, Some(&moving)).await?;
+    txn.commit().await?;
+    tracing::info!(move_id = %moving.id, device, by = ?by, "[host] she is asked back to the site");
+    Ok(lease)
+}
+
+/// The device a move to it is with agreed (the owner said yes there).
+pub async fn agree(db: &DatabaseConnection, id: &str, device: &str) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::Unknown)?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.id == id && moving.to_device() && moving.to == device)
+        .ok_or(MoveError::Unknown)?;
+    if moving.phase != Phase::Proposed {
+        return Err(MoveError::Phase(moving.phase));
+    }
+    moving.agreed = Some(true);
+    let lease = write(&txn, lease.state, Some(&moving)).await?;
+    txn.commit().await?;
+    tracing::info!(move_id = %id, device, "[host] the device agreed to her living on it");
+    Ok(lease)
+}
+
 /// The owner confirmed on the site the move `id` a device asked for: she is
 /// frozen where she is.
 pub async fn confirm(db: &DatabaseConnection, id: &str) -> Result<Lease, MoveError> {
@@ -498,6 +682,9 @@ pub async fn confirm(db: &DatabaseConnection, id: &str) -> Result<Lease, MoveErr
         .ok_or(MoveError::Unknown)?;
     if moving.phase != Phase::Proposed {
         return Err(MoveError::Phase(moving.phase));
+    }
+    if moving.to_device() && moving.agreed != Some(true) {
+        return Err(MoveError::NotAgreed);
     }
     moving.phase = moving.phase.next().ok_or(MoveError::Phase(moving.phase))?;
     moving.confirmed_at = Some(Utc::now());
@@ -534,8 +721,16 @@ pub async fn cancel(
         tracing::info!(move_id = %id, by_device = device.is_some(), "[host] her way into the site was called off: no her here");
         return Ok(None);
     }
-    let lease = write(&txn, State::Live, None).await?;
+    // A move back or a reclaim carries her as an import: it goes too.
+    if let Some(import) = &moving.import {
+        super::import::drop_session(&txn, import).await?;
+    }
+    let lease = write(&txn, moving.was.unwrap_or(State::Live), None).await?;
     txn.commit().await?;
+    if let Some(import) = &moving.import {
+        super::import::forget_files(import).await;
+    }
+    super::moves::forget_files(id).await;
     tracing::info!(
         move_id = %id,
         phase = ?moving.phase,
@@ -570,7 +765,31 @@ pub(super) async fn arriving(
         digest: Some(digest.to_string()),
         started_at: now,
         confirmed_at: Some(now),
+        agreed: None,
+        import: None,
+        via: None,
+        was: None,
     };
+    // A site she left (vacant) with her lineage: the row it kept is hers, and
+    // what she left on it here (others' parts, sealed) is hers again.
+    let back = Move {
+        was: Some(State::Vacant),
+        ..moving.clone()
+    };
+    let back = serde_json::to_value(&back).map_err(|error| DbErr::Custom(error.to_string()))?;
+    if let Some(row) = txn
+        .query_one_raw(statement(
+            &format!(
+                "UPDATE agent_host_lease SET holder = $1, state = 'frozen', move = $3, \
+                 updated_at = NOW() WHERE id = 'her' AND state = 'vacant' AND lineage = $2 \
+                 RETURNING {COLUMNS}"
+            ),
+            vec![device.into(), lineage.into(), back.into()],
+        ))
+        .await?
+    {
+        return Lease::from_row(&row);
+    }
     let moving = serde_json::to_value(&moving).map_err(|error| DbErr::Custom(error.to_string()))?;
     let row = txn
         .query_one_raw(statement(
@@ -600,7 +819,10 @@ pub(super) async fn import_step(
     let Some(lease) = locked(txn).await? else {
         return Ok(());
     };
-    let Some(mut moving) = lease.moving.filter(|moving| moving.id == import_id) else {
+    let Some(mut moving) = lease
+        .moving
+        .filter(|moving| moving.id == import_id || moving.import.as_deref() == Some(import_id))
+    else {
         return Ok(());
     };
     if moving.phase.step() >= phase.step() {
@@ -648,6 +870,10 @@ pub(super) async fn merge_step(
             digest: None,
             started_at: now,
             confirmed_at: (phase != Phase::Proposed).then_some(now),
+            agreed: None,
+            import: None,
+            via: None,
+            was: None,
         },
     };
     Ok(write(txn, State::Live, Some(&moving)).await?)
@@ -725,11 +951,14 @@ pub(super) async fn landed(
     let row = match txn
         .query_one_raw(statement(
             &format!(
-                "UPDATE agent_host_lease SET holder = $1, epoch = epoch + 1, state = 'live', \
+                "UPDATE agent_host_lease SET holder = $1, epoch = GREATEST(epoch, $3) + 1, \
+                 state = 'live', done = CASE WHEN move IS NULL THEN done ELSE \
+                 jsonb_build_object('id', move->>'id', 'kind', move->>'kind', \
+                 'epoch', GREATEST(epoch, $3) + 1, 'import', move->>'import') END, \
                  move = NULL, updated_at = NOW() WHERE id = 'her' AND lineage = $2 \
                  RETURNING {COLUMNS}"
             ),
-            vec![SITE.into(), lineage.into()],
+            vec![SITE.into(), lineage.into(), came_at.max(0).into()],
         ))
         .await?
     {
@@ -755,8 +984,303 @@ pub(super) async fn forget_arrival<C: ConnectionTrait>(
     import_id: &str,
 ) -> Result<(), DbErr> {
     db.execute_raw(statement(
-        "DELETE FROM agent_host_lease WHERE id = 'her' AND holder <> $1 AND move->>'id' = $2",
+        "DELETE FROM agent_host_lease WHERE id = 'her' AND holder <> $1 AND move->>'id' = $2 \
+         AND move->>'was' IS NULL",
         vec![SITE.into(), import_id.into()],
+    ))
+    .await?;
+    // A site she had left (vacant) is left as it was.
+    db.execute_raw(statement(
+        "UPDATE agent_host_lease SET state = 'vacant', move = NULL, updated_at = NOW() \
+         WHERE id = 'her' AND move->>'id' = $1 AND move->>'was' = 'vacant'",
+        vec![import_id.into()],
+    ))
+    .await?;
+    // A move back or a reclaim that carried her as this import: she is
+    // where she stood before it.
+    db.execute_raw(statement(
+        "UPDATE agent_host_lease SET state = COALESCE(move->>'was', 'live'), move = NULL, \
+         updated_at = NOW() WHERE id = 'her' AND move->>'import' = $1",
+        vec![import_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+// --- Moves to and from a device, reclaims, and her leaving the site (H3e) ---
+
+/// Her moving to a device is built and accepted in H3, and opened to users
+/// with H4 (Q8): until then only a debug build with
+/// `MYRIAD_ACCEPT_DEVICE_HOST=1` takes it (the acceptance entry, as D17 is
+/// on the Mac). Not a platform setting.
+pub fn device_host_open() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var("MYRIAD_ACCEPT_DEVICE_HOST").is_ok_and(|value| value == "1")
+}
+
+/// A move to a device, frozen and sealed: the digest of what the device is
+/// to take.
+pub async fn sealed(db: &DatabaseConnection, id: &str, digest: &str) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::Unknown)?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.id == id && moving.to_device())
+        .ok_or(MoveError::Unknown)?;
+    if moving.phase != Phase::Frozen {
+        return Err(MoveError::Phase(moving.phase));
+    }
+    moving.digest = Some(digest.to_string());
+    let lease = write(&txn, State::Frozen, Some(&moving)).await?;
+    txn.commit().await?;
+    Ok(lease)
+}
+
+/// The device a move to it is with took a step: it is reading her
+/// (`Transferring`) or has all of her, checked and kept apart (`Applied`).
+pub async fn device_step(
+    db: &DatabaseConnection,
+    id: &str,
+    device: &str,
+    phase: Phase,
+) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::Unknown)?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.id == id && moving.to_device() && moving.to == device)
+        .ok_or(MoveError::Unknown)?;
+    if moving.digest.is_none() || !moving.phase.freezes() {
+        return Err(MoveError::Phase(moving.phase));
+    }
+    if moving.phase.step() >= phase.step() {
+        txn.commit().await?;
+        return Ok(Lease {
+            moving: Some(moving),
+            ..lease
+        });
+    }
+    moving.phase = phase;
+    let lease = write(&txn, State::Frozen, Some(&moving)).await?;
+    txn.commit().await?;
+    Ok(lease)
+}
+
+/// The commit of a move to the device `device`, in the transaction that
+/// lets the site's copy go: she lives on the device now, one epoch on.
+pub(super) async fn committed_to_device(
+    txn: &sea_orm::DatabaseTransaction,
+    id: &str,
+    device: &str,
+) -> Result<Lease, DbErr> {
+    let row = txn
+        .query_one_raw(statement(
+            &format!(
+                "UPDATE agent_host_lease SET holder = $2, epoch = epoch + 1, state = 'live', \
+                 done = jsonb_build_object('id', move->>'id', 'kind', move->>'kind', \
+                 'epoch', epoch + 1), move = NULL, updated_at = NOW() \
+                 WHERE id = 'her' AND move->>'id' = $1 RETURNING {COLUMNS}"
+            ),
+            vec![id.into(), device.into()],
+        ))
+        .await?
+        .ok_or(DbErr::RecordNotUpdated)?;
+    Lease::from_row(&row)
+}
+
+/// The lease, held for the transaction that changes it with what else
+/// goes with the change.
+pub(super) async fn hold(txn: &sea_orm::DatabaseTransaction) -> Result<Option<Lease>, DbErr> {
+    locked(txn).await
+}
+
+/// The move back `id` is frozen on the device she lives on, and her import
+/// `import` carries her: noted on the move.
+pub(super) async fn carried_by(
+    txn: &sea_orm::DatabaseTransaction,
+    id: &str,
+    import: &str,
+    digest: &str,
+) -> Result<Lease, DbErr> {
+    let lease = locked(txn)
+        .await?
+        .ok_or(DbErr::RecordNotFound("lease".into()))?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.id == id)
+        .ok_or(DbErr::RecordNotFound("move".into()))?;
+    moving.import = Some(import.to_string());
+    moving.digest = Some(digest.to_string());
+    write(txn, State::Frozen, Some(&moving)).await
+}
+
+/// Another device asks to take her back onto the site from a daily backup
+/// of the device she lived on (H3e-13): nothing happens to her until the
+/// owner confirms; then she is frozen everywhere (the device she lived on
+/// stops too, if it hears) until she lands here or it is called off.
+pub(super) async fn reclaiming(
+    txn: &sea_orm::DatabaseTransaction,
+    import: &str,
+    via: &str,
+) -> Result<Lease, MoveError> {
+    let lease = locked(txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.moving.is_some() {
+        return Err(MoveError::InProgress);
+    }
+    match lease.place() {
+        Where::Elsewhere(holder) if holder == via => return Err(MoveError::NotHere),
+        Where::Elsewhere(_) | Where::Vacant => {}
+        _ => return Err(MoveError::NotHere),
+    }
+    let moving = Move {
+        id: format!("mv_{}", uuid::Uuid::new_v4().simple()),
+        kind: Kind::Recover,
+        from: lease.holder.clone(),
+        to: SITE.to_string(),
+        phase: Phase::Proposed,
+        by: Starter::Device,
+        digest: None,
+        started_at: Utc::now(),
+        confirmed_at: None,
+        agreed: None,
+        import: Some(import.to_string()),
+        via: Some(via.to_string()),
+        was: Some(lease.state),
+    };
+    Ok(write(txn, lease.state, Some(&moving)).await?)
+}
+
+/// The owner confirmed the move that carries her as the import `import`:
+/// she is frozen until she lands or it is called off.
+pub(super) async fn import_confirmed(
+    txn: &sea_orm::DatabaseTransaction,
+    import: &str,
+) -> Result<Lease, MoveError> {
+    let lease = locked(txn).await?.ok_or(MoveError::Unknown)?;
+    let mut moving = lease
+        .moving
+        .filter(|moving| moving.import.as_deref() == Some(import))
+        .ok_or(MoveError::Unknown)?;
+    if moving.phase != Phase::Proposed {
+        return Err(MoveError::Phase(moving.phase));
+    }
+    moving.phase = Phase::Frozen;
+    moving.confirmed_at = Some(Utc::now());
+    Ok(write(txn, State::Frozen, Some(&moving)).await?)
+}
+
+/// The device she lives on was removed (or its owner is not the site's any
+/// more): the site does not know where she is now (vacant). A move with that
+/// device is called off; nothing of her comes back to life here.
+pub(super) async fn device_gone<C: ConnectionTrait>(db: &C, device: &str) -> Result<(), DbErr> {
+    // Her way into a site that had none, from it: called off, the site as it
+    // was (no her, or vacant as it was).
+    db.execute_raw(statement(
+        "DELETE FROM agent_host_lease WHERE id = 'her' AND holder = $1 \
+         AND move->>'id' LIKE 'imp\\_%' AND move->>'was' IS NULL",
+        vec![device.into()],
+    ))
+    .await?;
+    db.execute_raw(statement(
+        "DELETE FROM agent_host_import WHERE device_id = $1 AND phase <> 'committed'",
+        vec![device.into()],
+    ))
+    .await?;
+    // She lived on it: where she is now is not known here.
+    db.execute_raw(statement(
+        "UPDATE agent_host_lease SET state = 'vacant', move = NULL, updated_at = NOW() \
+         WHERE id = 'her' AND holder = $1 AND state <> 'vacant'",
+        vec![device.into()],
+    ))
+    .await?;
+    // A move to it, a merge from it, or a reclaim it was sending: called
+    // off, she is where she was.
+    db.execute_raw(statement(
+        "UPDATE agent_host_lease SET state = COALESCE(move->>'was', 'live'), move = NULL, \
+         updated_at = NOW() WHERE id = 'her' AND holder <> $1 AND \
+         (move->>'to' = $1 OR move->>'via' = $1 OR move->>'from' = $1)",
+        vec![device.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// A lease that names a device the site's owner no longer has (removed, or
+/// another owner's) is vacant: what [`device_gone`] does when the device is
+/// removed, for an owner change found later. Read from time to time.
+pub async fn settle_orphan(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let changed = db
+        .execute_raw(statement(
+            &format!(
+                "UPDATE agent_host_lease SET state = 'vacant', move = NULL, updated_at = NOW() \
+                 WHERE id = 'her' AND holder <> $1 AND state IN ('live', 'frozen') \
+                 AND move IS NULL AND NOT EXISTS (SELECT 1 FROM agent_sync_devices d \
+                 WHERE d.id = agent_host_lease.holder AND d.revoked_at IS NULL \
+                 AND d.user_id = ({})) ",
+                crate::services::principal::SITE_OWNER_ID_SQL
+            ),
+            vec![SITE.into()],
+        ))
+        .await?;
+    if changed.rows_affected() > 0 {
+        tracing::info!("[host] the device she lived on is not the site owner's any more: vacant");
+    }
+    Ok(())
+}
+
+/// She is exported to be brought in elsewhere (「导出并搬走」 on the site, Q7):
+/// stopped here until the owner lets this copy go or undoes it.
+pub async fn move_out(db: &DatabaseConnection) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.moving.is_some() {
+        return Err(MoveError::InProgress);
+    }
+    if lease.place() != Where::Here {
+        return Err(MoveError::NotHere);
+    }
+    let lease = write(&txn, State::MovedOut, None).await?;
+    txn.commit().await?;
+    tracing::info!(
+        epoch = lease.epoch,
+        "[host] she moved out of the site: stopped here"
+    );
+    Ok(lease)
+}
+
+/// The owner undid her moving out: she lives here again, as she was.
+pub async fn undo_move_out(db: &DatabaseConnection) -> Result<Lease, MoveError> {
+    let txn = db.begin().await?;
+    let lease = locked(&txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.state != State::MovedOut {
+        return Err(MoveError::Unknown);
+    }
+    let lease = write(&txn, State::Live, None).await?;
+    txn.commit().await?;
+    tracing::info!(
+        epoch = lease.epoch,
+        "[host] her moving out was undone: she is here again"
+    );
+    Ok(lease)
+}
+
+/// She moved out and the owner lets this copy go, in the transaction that
+/// does: the site does not have her now (vacant), her lineage kept for what
+/// is left of others here (Q2).
+pub async fn let_go_on(txn: &sea_orm::DatabaseTransaction) -> Result<Lease, MoveError> {
+    let lease = locked(txn).await?.ok_or(MoveError::NoHer)?;
+    if lease.state != State::MovedOut {
+        return Err(MoveError::Unknown);
+    }
+    Ok(write(txn, State::Vacant, None).await?)
+}
+
+/// The lease goes with what was left of her here, when the owner starts
+/// over on a site she left (vacant): the next her is another birth.
+pub async fn forget_vacant_on<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
+    db.execute_raw(statement(
+        "DELETE FROM agent_host_lease WHERE id = 'her' AND state = 'vacant'",
+        vec![],
     ))
     .await?;
     Ok(())
@@ -786,10 +1310,27 @@ pub fn refuse_while_away() -> Result<(), AppError> {
             "She is moving between her ends; nothing reaches her until the move is done or cancelled",
         )
         .with_code("host_frozen")),
-        Where::Elsewhere(_) | Where::Vacant => {
+        Where::Elsewhere(_) | Where::Vacant | Where::MovedOut => {
             Err(AppError::conflict("She does not live on this site now").with_code("host_moved"))
         }
     }
+}
+
+/// What a Work run is refused with while she is not on the site: only
+/// while she is moving (no end has her). Living on another end, the site's
+/// Work runs as the plain assistant, without her (H3e-9); exported from
+/// here and not let go yet, the copy here is still hers, so it waits.
+pub fn refuse_work_while_away() -> Result<(), AppError> {
+    match place() {
+        Where::Here | Where::Elsewhere(_) | Where::Vacant => Ok(()),
+        _ => refuse_while_away(),
+    }
+}
+
+/// Her own settings and records on the site are read only while she is not
+/// here (D5): she lives on another end and they are hers there.
+pub fn refuse_edit_while_away() -> Result<(), AppError> {
+    refuse_while_away()
 }
 
 /// One of her own drivers asks before each tick: true while she is not on
@@ -822,11 +1363,13 @@ pub fn adopt(lease: Option<Lease>) {
         state = lease.as_ref().map(|lease| lease.state.as_str()),
         "[host] where she lives changed"
     );
-    use crate::services::agent::link::{Close, disconnect_all};
+    // Every child is told and reconnects to the refusal; the device she
+    // lives on is told on its own link what became of her there.
+    if let Some(lease) = &lease {
+        crate::services::agent::link::lease_changed(lease);
+    }
     match after {
-        // No end has her: every child is told, and reconnects to the refusal.
-        Where::Moving => disconnect_all(Close::HostFrozen),
-        Where::Elsewhere(_) | Where::Vacant => disconnect_all(Close::HostMoved),
+        Where::Moving | Where::Elsewhere(_) | Where::Vacant | Where::MovedOut => {}
         Where::Here => {
             if let Ok(mut paused) = PAUSED.lock() {
                 paused.clear();
@@ -839,7 +1382,8 @@ pub fn adopt(lease: Option<Lease>) {
                 && tokio::runtime::Handle::try_current().is_ok()
             {
                 crate::services::channel_group::back_from_away();
-                tokio::spawn(crate::services::channel_work::held::replay(db));
+                tokio::spawn(crate::services::channel_work::held::replay(db.clone()));
+                tokio::spawn(crate::services::agent::merope::replay_kept_for_her(db));
             }
         }
     }
@@ -856,6 +1400,15 @@ pub async fn reload<C: ConnectionTrait>(db: &C) {
         Ok(lease) => adopt(lease),
         Err(error) => tracing::warn!(%error, "[host] could not read her host lease"),
     }
+}
+
+/// [`reload`], first making a lease vacant whose device is not the site
+/// owner's any more ([`settle_orphan`]): what the listener does each time.
+async fn reload_settled(db: &DatabaseConnection) {
+    if let Err(error) = settle_orphan(db).await {
+        tracing::warn!(%error, "[host] could not check the device she lives on");
+    }
+    reload(db).await;
 }
 
 /// Keeps this process's copy of the lease: read now, again on each
@@ -887,7 +1440,7 @@ async fn listen(db: DatabaseConnection) {
         return;
     }
     // Listening first, then reading: nothing committed in between is missed.
-    reload(&db).await;
+    reload_settled(&db).await;
     let mut every =
         tokio::time::interval_at(tokio::time::Instant::now() + REREAD_EVERY, REREAD_EVERY);
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -899,7 +1452,7 @@ async fn listen(db: DatabaseConnection) {
                 Ok(None) => reload(&db).await,
                 Err(_) => return,
             },
-            _ = every.tick() => reload(&db).await,
+            _ = every.tick() => reload_settled(&db).await,
         }
     }
 }
@@ -908,10 +1461,15 @@ async fn listen(db: DatabaseConnection) {
 /// this process's copy): `(code, body)`; None while she is on the site.
 pub async fn link_refusal<C: ConnectionTrait>(
     db: &C,
+    device: &str,
 ) -> Result<Option<(&'static str, Value)>, DbErr> {
     let Some(lease) = read(db).await? else {
         return Ok(None);
     };
+    // The device she lives on dials in as her host (H3e-7), moving or not.
+    if lease.holder == device && matches!(lease.state, State::Live | State::Frozen) {
+        return Ok(None);
+    }
     Ok(match lease.place() {
         Where::Here => None,
         Where::Moving => Some((
@@ -935,6 +1493,15 @@ pub async fn link_refusal<C: ConnectionTrait>(
         Where::Vacant => Some((
             "host_moved",
             json!({ "error": "She does not live on this site now", "code": "host_moved", "host": Value::Null }),
+        )),
+        Where::MovedOut => Some((
+            "host_moved",
+            json!({
+                "error": "She moved out of this site",
+                "code": "host_moved",
+                "host": Value::Null,
+                "movedOut": true,
+            }),
         )),
     })
 }
@@ -960,6 +1527,7 @@ pub async fn names<C: ConnectionTrait>(
     if let Some(moving) = &lease.moving {
         ids.push(moving.from.clone());
         ids.push(moving.to.clone());
+        ids.extend(moving.via.clone());
     }
     for id in ids.into_iter().filter(|id| id != SITE) {
         if let Some(name) = device_name(db, &id).await? {
@@ -1010,6 +1578,7 @@ mod tests {
             state,
             moving: None,
             updated_at: Utc::now(),
+            done: None,
         }
     }
 
@@ -1022,6 +1591,59 @@ mod tests {
             Where::Elsewhere("dev_1".into())
         );
         assert_eq!(lease("dev_1", State::Vacant).place(), Where::Vacant);
+        assert_eq!(lease(SITE, State::MovedOut).place(), Where::MovedOut);
+        assert_eq!(
+            serde_json::to_value(State::MovedOut).unwrap(),
+            "moved_out",
+            "as the row keeps it"
+        );
+        assert_eq!(State::parse("moved_out"), Some(State::MovedOut));
+    }
+
+    /// Which device a move is with, and which way it goes.
+    #[test]
+    fn a_move_names_the_device_it_is_with() {
+        let mut moving = Move {
+            id: "mv_1".into(),
+            kind: Kind::Move,
+            from: SITE.into(),
+            to: "dev_1".into(),
+            phase: Phase::Proposed,
+            by: Starter::Owner,
+            digest: None,
+            started_at: Utc::now(),
+            confirmed_at: None,
+            agreed: Some(false),
+            import: None,
+            via: None,
+            was: Some(State::Live),
+        };
+        assert!(moving.to_device() && !moving.back_to_site());
+        assert_eq!(moving.device(), "dev_1");
+        moving.from = "dev_1".into();
+        moving.to = SITE.into();
+        assert!(!moving.to_device() && moving.back_to_site());
+        assert_eq!(moving.device(), "dev_1");
+        moving.kind = Kind::Recover;
+        moving.via = Some("dev_2".into());
+        assert!(!moving.back_to_site());
+        assert_eq!(
+            moving.device(),
+            "dev_2",
+            "a reclaim is with the device sending her"
+        );
+        let read: Move = serde_json::from_value(serde_json::to_value(&moving).unwrap()).unwrap();
+        assert_eq!(read, moving);
+        // A move written before H3e reads with none of the new fields.
+        let old: Move = serde_json::from_value(json!({
+            "id": "mv_0", "kind": "merge", "from": "dev_1", "to": "site", "phase": "frozen",
+            "by": "device", "startedAt": "2026-10-13T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(
+            (old.agreed, old.import, old.via, old.was),
+            (None, None, None, None)
+        );
     }
 
     /// The lease as it is shown carries where she lives and the move, and
@@ -1039,6 +1661,10 @@ mod tests {
             digest: None,
             started_at: Utc::now(),
             confirmed_at: Some(Utc::now()),
+            agreed: None,
+            import: None,
+            via: None,
+            was: None,
         });
         let value = shown.json(|id| (id == "dev_1").then(|| "MacBook".to_string()));
         let keys: Vec<&str> = value
@@ -1050,6 +1676,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "done",
                 "epoch",
                 "holder",
                 "holderName",
@@ -1072,17 +1699,22 @@ mod tests {
         assert_eq!(
             moving,
             [
+                "agreed",
                 "by",
                 "confirmedAt",
+                "digest",
                 "from",
                 "fromName",
                 "id",
+                "import",
                 "kind",
                 "phase",
                 "startedAt",
                 "step",
                 "to",
-                "toName"
+                "toName",
+                "via",
+                "viaName"
             ]
         );
     }
@@ -1167,14 +1799,50 @@ mod tests {
             (State::Live, true, 1, issued.lineage.as_str()),
             "as she was"
         );
-        // The owner's own move freezes her at once.
+        // A move to a device the owner starts waits for the device to agree
+        // (H3e-2): the owner's confirmation needs it, and only then is she
+        // frozen.
         let owner = start(db, Kind::Move, "dev_2", Starter::Owner)
             .await
             .unwrap();
-        assert_eq!(owner.state, State::Frozen);
-        assert_eq!(owner.moving.as_ref().unwrap().phase, Phase::Frozen);
-        let id = owner.moving.unwrap().id;
-        cancel(db, &id, None).await.unwrap();
+        assert_eq!(owner.state, State::Live);
+        let moving = owner.moving.unwrap();
+        assert_eq!(
+            (moving.phase, moving.agreed),
+            (Phase::Proposed, Some(false))
+        );
+        assert!(matches!(
+            confirm(db, &moving.id).await,
+            Err(MoveError::NotAgreed)
+        ));
+        assert!(matches!(
+            agree(db, &moving.id, "dev_3").await,
+            Err(MoveError::Unknown)
+        ));
+        agree(db, &moving.id, "dev_2").await.unwrap();
+        let frozen = confirm(db, &moving.id).await.unwrap();
+        assert_eq!(frozen.state, State::Frozen);
+        assert!(
+            matches!(
+                device_step(db, &moving.id, "dev_2", Phase::Transferring).await,
+                Err(MoveError::Phase(Phase::Frozen))
+            ),
+            "nothing to read before she is sealed"
+        );
+        sealed(db, &moving.id, "d1").await.unwrap();
+        device_step(db, &moving.id, "dev_2", Phase::Transferring)
+            .await
+            .unwrap();
+        let applied = device_step(db, &moving.id, "dev_2", Phase::Applied)
+            .await
+            .unwrap();
+        assert_eq!(applied.moving.unwrap().phase, Phase::Applied);
+        cancel(db, &moving.id, None).await.unwrap();
+        assert_eq!(
+            read(db).await.unwrap().unwrap().place(),
+            Where::Here,
+            "as she was"
+        );
 
         // She lives on a device: the site starts nothing and refuses her link.
         db.execute_unprepared("UPDATE agent_host_lease SET holder = 'dev_9', epoch = 2")
@@ -1184,8 +1852,10 @@ mod tests {
             start(db, Kind::Move, "dev_2", Starter::Owner).await,
             Err(MoveError::NotHere)
         ));
-        let (code, body) = link_refusal(db).await.unwrap().unwrap();
+        let (code, body) = link_refusal(db, "dev_2").await.unwrap().unwrap();
         assert_eq!((code, &body["host"]), ("host_moved", &Value::Null));
+        // The device she lives on dials in as her host.
+        assert_eq!(link_refusal(db, "dev_9").await.unwrap(), None);
         assert!(
             db.execute_unprepared("UPDATE agent_host_lease SET epoch = 1")
                 .await
@@ -1208,5 +1878,134 @@ mod tests {
         assert_eq!(reborn.epoch, 1);
 
         fixture.close().await;
+    }
+
+    /// H3e on a database (an isolated schema; skipped without one): a move
+    /// back asked by the device she lives on and called off, a reclaim
+    /// called off, the device she lives on removed (vacant, a move with it
+    /// called off), an owner change found later, moving out and undoing it,
+    /// and a landing that keeps the epoch going up whatever the file says.
+    #[tokio::test]
+    async fn moves_back_reclaims_and_leaving_on_a_database() {
+        let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {
+            return;
+        };
+        let db = &fixture.db;
+        db.execute_unprepared(
+            "INSERT INTO users (id, username, is_owner) VALUES (41, 'owner41', true); \
+             INSERT INTO agent_sync_devices (id, user_id, name, token_hash, token_hint, created_at) \
+             VALUES ('dev_a', 41, 'A', 'ha', 'mys_a', NOW()), ('dev_b', 41, 'B', 'hb', 'mys_b', NOW()); \
+             INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, updated_at) \
+             VALUES ('her', 'dev_a', 'l-1', 2, 'live', NOW())",
+        )
+        .await
+        .unwrap();
+        // The device she lives on asks to bring her back: nothing yet.
+        let asked = start_back(db, "dev_a", Starter::Device).await.unwrap();
+        assert_eq!(asked.state, State::Live);
+        assert!(matches!(
+            start_back(db, "dev_b", Starter::Device).await,
+            Err(MoveError::InProgress)
+        ));
+        let id = asked.moving.unwrap().id;
+        let frozen = confirm(db, &id).await.unwrap();
+        assert_eq!(frozen.place(), Where::Moving);
+        let back = cancel(db, &id, Some("dev_a")).await.unwrap().unwrap();
+        assert_eq!(
+            (back.place(), back.epoch),
+            (Where::Elsewhere("dev_a".into()), 2),
+            "she lives on the device as she was"
+        );
+        // Only the device she lives on can ask her back.
+        assert!(matches!(
+            start_back(db, "dev_b", Starter::Device).await,
+            Err(MoveError::NotHere)
+        ));
+
+        // A reclaim by another device, called off: as she was.
+        {
+            let txn = db.begin().await.unwrap();
+            assert!(
+                matches!(
+                    reclaiming(&txn, "imp_x", "dev_a").await,
+                    Err(MoveError::NotHere)
+                ),
+                "not by the device she lives on"
+            );
+            let asked = reclaiming(&txn, "imp_1", "dev_b").await.unwrap();
+            let moving = asked.moving.unwrap();
+            assert_eq!(
+                (moving.kind, moving.from.as_str()),
+                (Kind::Recover, "dev_a")
+            );
+            let frozen = import_confirmed(&txn, "imp_1").await.unwrap();
+            assert_eq!(frozen.state, State::Frozen);
+            txn.commit().await.unwrap();
+        }
+        forget_arrival(db, "imp_1").await.unwrap();
+        let after = read(db).await.unwrap().unwrap();
+        assert_eq!(
+            (after.place(), after.moving.is_none()),
+            (Where::Elsewhere("dev_a".into()), true)
+        );
+
+        // A move to the site she lives on... the device is removed: vacant,
+        // and nothing comes back to life here.
+        device_gone(db, "dev_a").await.unwrap();
+        let vacant = read(db).await.unwrap().unwrap();
+        assert_eq!(
+            (vacant.place(), vacant.lineage.as_str()),
+            (Where::Vacant, "l-1")
+        );
+        assert!(refuse_while_away_at(&vacant).is_err());
+
+        // Her lineage lands again (a file at epoch 7): one past the higher.
+        {
+            let txn = db.begin().await.unwrap();
+            let landed = landed(&txn, "l-1", 7).await.unwrap();
+            txn.commit().await.unwrap();
+            assert_eq!((landed.place(), landed.epoch), (Where::Here, 8));
+        }
+        // Moving out and undoing it; moving out and letting her go.
+        let out = move_out(db).await.unwrap();
+        assert_eq!(out.place(), Where::MovedOut);
+        assert!(matches!(move_out(db).await, Err(MoveError::NotHere)));
+        let undone = undo_move_out(db).await.unwrap();
+        assert_eq!((undone.place(), undone.epoch), (Where::Here, 8));
+        move_out(db).await.unwrap();
+        {
+            let txn = db.begin().await.unwrap();
+            let gone = let_go_on(&txn).await.unwrap();
+            txn.commit().await.unwrap();
+            assert_eq!((gone.place(), gone.epoch), (Where::Vacant, 8));
+        }
+        forget_vacant_on(db).await.unwrap();
+        assert_eq!(
+            read(db).await.unwrap(),
+            None,
+            "the next her is another birth"
+        );
+
+        // An owner change found later: the device she lives on is another
+        // owner's now.
+        db.execute_unprepared(
+            "INSERT INTO agent_host_lease (id, holder, lineage, epoch, state, updated_at) \
+             VALUES ('her', 'dev_b', 'l-2', 3, 'live', NOW()); \
+             UPDATE users SET is_owner = false WHERE id = 41; \
+             INSERT INTO users (id, username, is_owner) VALUES (42, 'owner42', true)",
+        )
+        .await
+        .unwrap();
+        settle_orphan(db).await.unwrap();
+        assert_eq!(read(db).await.unwrap().unwrap().place(), Where::Vacant);
+        fixture.close().await;
+    }
+
+    fn refuse_while_away_at(lease: &Lease) -> Result<(), ()> {
+        if lease.place().here() {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }

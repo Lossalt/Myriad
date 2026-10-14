@@ -52,6 +52,8 @@ fn test_folded_extension_tables_in_expected_schema() {
         "agent_host_lease",
         "agent_host_import",
         "agent_host_import_staging",
+        "agent_host_backups",
+        "agent_kept_for_her",
         "agent_affect_events",
         "agent_affect_anchor",
         "agent_persona_field_history",

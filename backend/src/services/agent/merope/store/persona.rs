@@ -287,6 +287,87 @@ pub async fn clear_persona_on<C>(db: &C) -> Result<(), anyhow::Error>
 where
     C: ConnectionTrait,
 {
+    clear_on(db, true).await
+}
+
+/// What is left of others on the site after she moved off it (Q2: their
+/// memories, how she felt about them, groups' stickers and games), when the
+/// owner lets it go or another her arrives. Her own parts are gone already;
+/// what came by chat app for her while she was away stays (D3).
+pub async fn clear_sealed_on<C>(db: &C) -> Result<(), anyhow::Error>
+where
+    C: ConnectionTrait,
+{
+    clear_on(db, false).await
+}
+
+/// She moved off the site (H3e, Q2): her own parts go, in the transaction
+/// that moves her, exactly what moved with her (what `snapshot::whole`
+/// reads for the owner `owner`). Others' parts stay where they are, sealed
+/// with her lineage (the lease keeps it while she is away): nothing reads
+/// or writes them while she is not here, and they are hers again when the
+/// same lineage comes back. What came by chat app for her stays (D3-6).
+pub async fn retire_her_on<C>(db: &C, owner: i32) -> Result<(), anyhow::Error>
+where
+    C: ConnectionTrait,
+{
+    use sea_orm::{DatabaseBackend, Statement};
+    memory_jobs::lock(db).await?;
+    memory_jobs::forget(db).await?;
+    let synced = crate::services::persona_sync::SYNCED_MEMORY;
+    for sql in [
+        // Her own memories and the owner's private ones (vectors go with them).
+        format!("DELETE FROM agent_memories WHERE {synced}"),
+        "DELETE FROM agent_proactive_messages WHERE user_id = $1".to_string(),
+        "DELETE FROM agent_diary WHERE user_id = $1".to_string(),
+        "DELETE FROM agent_affect_events WHERE user_id = $1".to_string(),
+        "DELETE FROM agent_affect_anchor WHERE user_id = $1".to_string(),
+        "DELETE FROM agent_addressee_state WHERE user_id = $1".to_string(),
+        "DELETE FROM agent_intentions WHERE user_id = $1".to_string(),
+        // The owner's private chats with her that moved with her.
+        "DELETE FROM agent_messages WHERE session_id IN (SELECT id FROM agent_sessions \
+         WHERE user_id = $1 AND context->>'mode' = 'chat' AND context->>'venue' IS NULL \
+         AND NOT archived AND message_count > 0)"
+            .to_string(),
+        "DELETE FROM agent_sessions WHERE user_id = $1 AND context->>'mode' = 'chat' \
+         AND context->>'venue' IS NULL AND NOT archived AND message_count > 0"
+            .to_string(),
+        // Her turtle soup with the owner (groups' and others' games stay).
+        format!(
+            "DELETE FROM runtime_registry WHERE namespace = '{}' AND record_id = 'p:' || $1::text",
+            super::super::soup::GAMES_NAMESPACE
+        ),
+    ] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            &sql,
+            [owner.into()],
+        ))
+        .await?;
+    }
+    db.execute_unprepared("DELETE FROM agent_persona_field_history;")
+        .await?;
+    // Her stickers (a group's stay with the group).
+    crate::models::entities::merope_stickers::Entity::delete_many()
+        .filter(crate::models::entities::merope_stickers::Column::Venue.is_null())
+        .exec(db)
+        .await?;
+    agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
+        .exec(db)
+        .await?;
+    super::super::clock::note_zone(None);
+    super::super::serial::forget(db).await?;
+    super::super::pace::forget(db).await?;
+    super::super::vitals::forget(db).await?;
+    super::super::doing::forget_kept(db).await?;
+    resync_persona_avatar_snapshots(db, None).await?;
+    Ok(())
+}
+
+async fn clear_on<C>(db: &C, held_too: bool) -> Result<(), anyhow::Error>
+where
+    C: ConnectionTrait,
+{
     memory_jobs::lock(db).await?;
     memory_jobs::forget(db).await?;
     agent_proactive_messages::Entity::delete_many()
@@ -315,9 +396,13 @@ where
     // she was away, which was for her (D3).
     db.execute_unprepared(
         "DELETE FROM agent_affect_events; DELETE FROM agent_affect_anchor; \
-         DELETE FROM agent_persona_field_history; DELETE FROM agent_channel_held;",
+         DELETE FROM agent_persona_field_history; DELETE FROM agent_kept_for_her;",
     )
     .await?;
+    if held_too {
+        db.execute_unprepared("DELETE FROM agent_channel_held;")
+            .await?;
+    }
     agent_persona::Entity::delete_by_id(PERSONA_ROW_ID)
         .exec(db)
         .await?;

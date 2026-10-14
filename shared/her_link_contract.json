@@ -51,8 +51,8 @@
     "request": "Asks the other end to do something now; not kept or resent.",
     "control": "Link housekeeping."
   },
-  "roles": ["host", "child"],
-  "hosts": ["site"],
+  "roles": ["host", "child", "site"],
+  "hosts": ["site", "app"],
   "surfaces": ["app"],
   "capabilities": [
     "rig",
@@ -105,14 +105,14 @@
       "delivery": "handshake",
       "required": ["protocol", "role", "surface"],
       "optional": ["capabilities", "app", "lineage", "hostEpoch"],
-      "description": "The child's first frame, within helloTimeoutMs of the upgrade. role is child in protocol 1: asking to be the host while the site is the host closes the link with host_is_site. surface is the kind of child (app). capabilities is what this end can do, from the list above; unknown ones are dropped. app is {name, version} for logs. lineage and hostEpoch are what this child last heard in a welcome (null the first time); the host does not act on them yet."
+      "description": "The first frame, within helloTimeoutMs of the upgrade. role is child for a child end. role host is the device she lives on (her host lease names it, H3e): it is welcomed only while it holds the lease at the hostEpoch it says, and then only hears what becomes of her there (host.freeze, host.thaw, host.moved); otherwise the link closes with host_moved, and it lets its copy of her go. host while the site has no lease closes with host_is_site. surface is the kind of child (app). capabilities is what this end can do, from the list above; unknown ones are dropped. app is {name, version} for logs. lineage and hostEpoch are what this child last heard in a welcome (null the first time); the host does not act on them yet."
     },
     "welcome": {
       "from": "host",
       "delivery": "handshake",
       "required": ["protocol", "role", "host", "deviceId", "heartbeatMs", "capabilities", "turns", "serverTime"],
       "optional": ["deviceName", "lineage", "hostEpoch"],
-      "description": "The host's answer to hello. host is where she lives (site). lineage is her birth and hostEpoch her host lease's epoch, which only goes up: a child that later hears a higher epoch knows she moved in between. Both are null while the site has no her. deviceId and deviceName are this device as the site knows it. capabilities is the child's list as accepted. turns is this device's recent turns the host still has: [{turnId, runId, sessionId?, lastSequence, completed}], newest first, so a child can tell what to resume. serverTime is milliseconds since the epoch. After welcome the host sends mood, when her persona is on."
+      "description": "The answer to hello. host is where she lives (site; app on the link of the device she lives on, whose welcome has role site, no capabilities and no turns). lineage is her birth and hostEpoch her host lease's epoch, which only goes up: a child that later hears a higher epoch knows she moved in between. Both are null while the site has no her. deviceId and deviceName are this device as the site knows it. capabilities is the child's list as accepted. turns is this device's recent turns the host still has: [{turnId, runId, sessionId?, lastSequence, completed}], newest first, so a child can tell what to resume. serverTime is milliseconds since the epoch. After welcome the host sends mood, when her persona is on."
     },
     "input": {
       "from": "child",
@@ -336,6 +336,25 @@
       "required": [],
       "description": "Carries only the envelope's ack, for a child with nothing else to send. The host's frames always carry its ack, and it pings at least every heartbeat."
     },
+    "host.freeze": {
+      "from": "host",
+      "delivery": "request",
+      "required": ["moveId", "kind"],
+      "optional": ["to"],
+      "description": "Only on the link of the device she lives on: she is frozen there for the move moveId (kind move: back to the site, the owner confirmed it; kind recover: another device takes her back from a daily backup). The device stops her parts (put aside, not destroyed), and for a move back says what it froze over HTTP and sends her. Said again after each welcome while it holds."
+    },
+    "host.thaw": {
+      "from": "host",
+      "delivery": "request",
+      "required": ["moveId"],
+      "description": "Only on the link of the device she lives on: the move moveId was called off; she goes on there as she was."
+    },
+    "host.moved": {
+      "from": "host",
+      "delivery": "request",
+      "required": ["epoch", "holder"],
+      "description": "Only on the link of a device that held her: she lives elsewhere now (holder site or a device id, at epoch). The link closes with host_moved next; the device writes its copy of her to a sealed file and lets it go."
+    },
     "ping": {
       "from": "either",
       "delivery": "control",
@@ -386,9 +405,9 @@
     "revoked": { "code": 4001, "forgetCredentials": true, "reconnect": false, "description": "The device was removed from the site, or gave its token back." },
     "owner_changed": { "code": 4002, "forgetCredentials": true, "reconnect": false, "description": "The site has another owner; this device was the old owner's." },
     "replaced": { "code": 4003, "forgetCredentials": false, "reconnect": false, "description": "Another connection of this same device took over." },
-    "host_moved": { "code": 4004, "forgetCredentials": false, "reconnect": true, "description": "Her host lease moved her to another end, or the end she lived on was removed. The upgrade is then refused with host_moved, naming where she lives; a child reconnects seldom." },
+    "host_moved": { "code": 4004, "forgetCredentials": false, "reconnect": true, "description": "Her host lease moved her to another end, or the end she lived on was removed; to a device that dialled in as her host and does not hold the lease (at its epoch) any more, that she moved and it lets its copy go. The upgrade is then refused with host_moved, naming where she lives; a child reconnects seldom." },
     "host_frozen": { "code": 4005, "forgetCredentials": false, "reconnect": true, "description": "She is moving: her host lease is frozen and no end has her. The upgrade is refused with host_frozen until the move is done or cancelled; a child keeps reconnecting with backoff and says she is moving." },
-    "host_is_site": { "code": 4009, "forgetCredentials": false, "reconnect": false, "description": "hello asked for the host role while the site is her host." },
+    "host_is_site": { "code": 4009, "forgetCredentials": false, "reconnect": false, "description": "hello asked for the host role while the site has no host lease (it holds her, or has none)." },
     "bad_frame": { "code": 4400, "forgetCredentials": false, "reconnect": true, "description": "The hello could not be taken: not an envelope, a body without what it needs, or a role or surface this host does not know." },
     "unsupported_protocol": { "code": 4406, "forgetCredentials": false, "reconnect": false, "description": "hello.protocol is not one this host speaks." },
     "timeout": { "code": 4408, "forgetCredentials": false, "reconnect": true, "description": "No hello in time, or nothing heard for missedHeartbeats heartbeats." },

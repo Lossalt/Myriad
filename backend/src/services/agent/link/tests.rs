@@ -52,7 +52,7 @@ fn the_host_speaks_the_contract() {
     assert_eq!(CONTRACT.protocol, 1);
     assert_eq!(CONTRACT.path, "/api/agent/link");
     assert_eq!(raw["auth"]["tokenPrefix"], devices::TOKEN_PREFIX);
-    assert_eq!(CONTRACT.hosts, ["site"]);
+    assert_eq!(CONTRACT.hosts, ["site", "app"]);
     assert_eq!(CONTRACT.surfaces, ["app"]);
     // Every frame type is one the host sends, takes, or both.
     let declared: BTreeSet<String> = CONTRACT.frames.keys().cloned().collect();
@@ -754,6 +754,92 @@ async fn hello_welcome_and_what_the_link_will_not_take() {
 }
 
 /// The timings, shortened: no hello in time, and a child gone quiet.
+/// The device she lives on dials in as her host (H3e-7): welcomed only while
+/// it holds her lease at the epoch it says, with nothing of a child's; any
+/// other device is refused (she lives elsewhere), and one at an old epoch is
+/// closed as she moved (it lets its copy go).
+#[tokio::test]
+async fn the_device_she_lives_on_is_her_host_on_its_link() {
+    let Some(site) = site().await else {
+        return;
+    };
+    site.db
+        .execute_unprepared(
+            "INSERT INTO agent_persona (id, name, updated_at) VALUES ('site', 'Merope', NOW())",
+        )
+        .await
+        .unwrap();
+    let born = crate::services::persona_sync::lease::read(&site.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let (mac, token) = device(&site.db, "Studio").await;
+    let (_, other) = device(&site.db, "Laptop").await;
+    site.db
+        .execute_unprepared(&format!(
+            "UPDATE agent_host_lease SET holder = '{}', epoch = 2",
+            mac.id
+        ))
+        .await
+        .unwrap();
+    let mut host = Child::open(&site, &token).await;
+    host.send(
+        "hello",
+        None,
+        json!({ "protocol": 1, "role": "host", "surface": "app", "capabilities": ["rig"],
+                "lineage": born.lineage, "hostEpoch": 2 }),
+    )
+    .await;
+    let welcome = host.expect("welcome").await;
+    assert_eq!(
+        (
+            welcome["body"]["role"].as_str(),
+            welcome["body"]["host"].as_str()
+        ),
+        (Some("site"), Some("app"))
+    );
+    assert_eq!(welcome["body"]["capabilities"], json!([]));
+    assert_eq!(welcome["body"]["hostEpoch"], 2);
+    assert_eq!(welcome["body"]["lineage"], born.lineage.as_str());
+    // Her host's link carries nothing but the heartbeat.
+    host.send("ping", None, json!({})).await;
+    host.expect("pong").await;
+    let input = host
+        .send(
+            "input",
+            Some("turn_1"),
+            json!({ "surface": "app", "text": "hi" }),
+        )
+        .await;
+    assert_eq!(
+        host.expect("error").await["body"],
+        json!({ "code": "bad_frame", "ref": input })
+    );
+    // Another device: she lives elsewhere.
+    let (status, body) = refused(&site, Some(&other)).await;
+    assert_eq!((status, body["code"].as_str()), (403, Some("host_moved")));
+    assert_eq!(body["host"]["name"], "Studio");
+    drop(host);
+    // The device she lived on, at an old epoch: she moved since.
+    site.db
+        .execute_unprepared("UPDATE agent_host_lease SET epoch = 3")
+        .await
+        .unwrap();
+    let mut stale = Child::open(&site, &token).await;
+    stale
+        .send(
+            "hello",
+            None,
+            json!({ "protocol": 1, "role": "host", "surface": "app", "hostEpoch": 2 }),
+        )
+        .await;
+    assert_eq!(
+        stale.closed().await,
+        (Close::HostMoved.code(), Close::HostMoved.name().to_string())
+    );
+    site.close().await;
+}
+
 #[tokio::test]
 async fn a_quiet_child_is_let_go() {
     let Some(fixture) = crate::federation::test_db::SchemaDb::new_or_media().await else {

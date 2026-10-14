@@ -226,6 +226,17 @@ fn internal_error(error: impl std::fmt::Display) -> ApiError {
 }
 
 async fn require_merope_enabled() -> ApiResult<()> {
+    // Her looks are hers: read only while she is not on the site (D5), and
+    // nothing changes while she is moving.
+    if !crate::services::persona_sync::lease::place().here() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "She does not live on this site now",
+                "code": "host_moved"
+            })),
+        ));
+    }
     let enabled = crate::GLOBAL_DYNAMIC_CONFIG
         .read()
         .await

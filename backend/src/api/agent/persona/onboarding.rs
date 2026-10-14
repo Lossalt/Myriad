@@ -115,6 +115,8 @@ pub async fn report_signals(
     Extension(claims): Extension<Claims>,
     Json(request): Json<ReportSignalsRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = require_site_owner(&claims, &db).await?;
     require_persona_reports(&db, user_id).await?;
@@ -154,6 +156,8 @@ pub async fn suggest_name(
     Extension(claims): Extension<Claims>,
     Json(body): Json<SuggestNameRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = require_site_owner(&claims, &db).await?;
     require_persona_reports(&db, user_id).await?;
@@ -184,6 +188,8 @@ pub async fn draft_persona(
     Extension(claims): Extension<Claims>,
     Json(body): Json<DraftPersonaRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = require_site_owner(&claims, &db).await?;
     require_persona_reports(&db, user_id).await?;
@@ -221,6 +227,8 @@ pub async fn import_persona(
     Extension(claims): Extension<Claims>,
     Json(body): Json<ImportPersonaRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let _user_id = require_site_owner(&claims, &db).await?;
     let language = normalize_signals_language(&body.language);
@@ -266,6 +274,8 @@ pub async fn suggest_visual_design(
     Extension(claims): Extension<Claims>,
     Json(body): Json<SuggestVisualDesignRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let _user_id = require_site_owner(&claims, &db).await?;
     let persona = merope::get_persona(&db)
@@ -408,6 +418,8 @@ pub async fn observe_visual_from_portrait(
     Extension(claims): Extension<Claims>,
     Json(body): Json<ObservePortraitVisualRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let _user_id = require_site_owner(&claims, &db).await?;
     let language = required_visual_language(&body.language).ok_or_else(|| {

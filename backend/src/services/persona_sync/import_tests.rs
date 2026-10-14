@@ -92,7 +92,7 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
         .await
         .unwrap();
     assert!(matches!(
-        open_file(db, 41, &session.id, "雨天的伞".into()).await,
+        open_file(db, 41, &session.id, "雨天的伞".into(), false).await,
         Err(ImportError::Phase(_))
     ));
     let whole = take_piece(db, &session.id, half as u64, file.bytes[half..].to_vec())
@@ -100,10 +100,10 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
         .unwrap();
     assert_eq!(whole.received as usize, file.bytes.len());
     assert!(matches!(
-        open_file(db, 41, &session.id, "晴天的伞".into()).await,
+        open_file(db, 41, &session.id, "晴天的伞".into(), false).await,
         Err(ImportError::Unreadable)
     ));
-    let landed = open_file(db, 41, &session.id, "雨天的伞".into())
+    let landed = open_file(db, 41, &session.id, "雨天的伞".into(), false)
         .await
         .unwrap();
     assert_eq!(landed.counts.get("memory"), Some(&1));
@@ -164,7 +164,7 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
         take_page(db, &asked.id, &mac.id, opened.envelopes[0].clone()).await,
         Err(ImportError::Phase(_))
     ));
-    let frozen = confirm(db, 41, &asked.id, None).await.unwrap();
+    let frozen = confirm(db, 41, &asked.id, None, false).await.unwrap();
     assert_eq!(
         (frozen.holder.as_str(), frozen.state, frozen.epoch),
         (mac.id.as_str(), lease::State::Frozen, 3)
@@ -177,7 +177,7 @@ async fn she_comes_into_an_empty_site_from_a_file_or_a_device() {
     let asked = propose(db, 41, &mac.id, proposal(manifest.clone()))
         .await
         .unwrap();
-    confirm(db, 41, &asked.id, None).await.unwrap();
+    confirm(db, 41, &asked.id, None, false).await.unwrap();
     for page in &opened.envelopes {
         take_page(db, &asked.id, &mac.id, page.clone())
             .await
@@ -308,10 +308,10 @@ async fn a_macs_her_is_merged_into_the_sites() {
         "{shown}"
     );
     assert!(matches!(
-        confirm(db, 41, &asked.id, None).await,
+        confirm(db, 41, &asked.id, None, false).await,
         Err(ImportError::Invalid("passphrase"))
     ));
-    confirm(db, 41, &asked.id, Some("合并前".into()))
+    confirm(db, 41, &asked.id, Some("合并前".into()), false)
         .await
         .unwrap();
     let sealed = super::super::merge::retired_dir()
@@ -332,7 +332,7 @@ async fn a_macs_her_is_merged_into_the_sites() {
     let asked = propose(db, 41, &mac.id, proposal(Some("device")))
         .await
         .unwrap();
-    confirm(db, 41, &asked.id, Some("合并前".into()))
+    confirm(db, 41, &asked.id, Some("合并前".into()), false)
         .await
         .unwrap();
     take_page(db, &asked.id, &mac.id, page.clone())

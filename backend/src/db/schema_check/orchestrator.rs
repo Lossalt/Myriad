@@ -52,7 +52,11 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// `agent_host_import_staging`（H3c，随 004 与 `ensure_persona_sync_tables` 一起建）。
 /// 2026.10.13.6：第一次见面时把设备上的她合并进站点的她（H3d）：`agent_host_import`
 /// 加 `kind`、`subject`、`preview`、`retired`（同一份文件里的 ADD COLUMN IF NOT EXISTS）。
-pub const SCHEMA_VERSION: &str = "2026.10.13.6";
+/// 2026.10.14.1：她能住在设备上、搬回站点、用每日备份收回（H3e）：`agent_host_lease`
+/// 的 `state` 加 `moved_out`（列放宽到 12）和上一次搬家 `done`，每日备份的记录
+/// `agent_host_backups`，她住在别处时站点上办事的结果 `agent_kept_for_her`（都在同一份
+/// `persona_sync.sql` 里，随 004 与 `ensure_persona_sync_tables` 一起建）。
+pub const SCHEMA_VERSION: &str = "2026.10.14.1";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);

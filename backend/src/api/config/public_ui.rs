@@ -272,6 +272,15 @@ pub async fn get_public_config(
             stored_name.as_deref(),
         ),
         "agentPersonaAvatarUrl": sticker_avatar,
+        // She is not on this site now (H3e-9): moving, living on another
+        // end, or gone from it. Where is for the owner only (`/agent/host`).
+        "herAway": match crate::services::persona_sync::lease::place() {
+            crate::services::persona_sync::lease::Where::Here => None,
+            crate::services::persona_sync::lease::Where::Moving => Some("moving"),
+            crate::services::persona_sync::lease::Where::Elsewhere(_) => Some("elsewhere"),
+            crate::services::persona_sync::lease::Where::Vacant => Some("vacant"),
+            crate::services::persona_sync::lease::Where::MovedOut => Some("moved_out"),
+        },
     });
 
     (StatusCode::OK, Json(response))

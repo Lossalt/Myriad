@@ -145,13 +145,17 @@ pub async fn ingest(
     if !is_logged_in_addressee(user_id) {
         return Ok(());
     }
-    if !is_enabled().await {
-        log_skip(user_id, event_key, "disabled");
+    // She is not here to take it in: moving, or living on another end. What
+    // the site's Work did for the owner meanwhile is kept for her (H3e-9).
+    if crate::services::persona_sync::lease::paused("what she takes in") {
+        if super::super::kept::keeps(event_key) {
+            super::super::kept::keep(db, user_id, event_key, summary).await;
+        }
+        log_skip(user_id, event_key, "not_here");
         return Ok(());
     }
-    // She is not here to take it in: moving, or living on another end.
-    if crate::services::persona_sync::lease::paused("what she takes in") {
-        log_skip(user_id, event_key, "not_here");
+    if !is_enabled().await {
+        log_skip(user_id, event_key, "disabled");
         return Ok(());
     }
     let summary = compact_summary(summary);

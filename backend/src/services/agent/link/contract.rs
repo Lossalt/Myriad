@@ -175,8 +175,11 @@ impl Close {
 
 /// Frame types the host sends.
 #[cfg(test)]
-pub(super) const HOST_FRAMES: [&str; 23] = [
+pub(super) const HOST_FRAMES: [&str; 26] = [
     "welcome",
+    "host.freeze",
+    "host.thaw",
+    "host.moved",
     "run.accepted",
     "run.rejected",
     "run.event",

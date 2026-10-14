@@ -51,16 +51,58 @@ async fn device_list(db: &DatabaseConnection, owner: i32) -> Result<Value, HttpE
         .await
         .map_err(store_failed)?
         .is_none();
+    // Her daily backups (D4): what the site keeps and cannot open.
+    let backups = crate::services::persona_sync::backups::listed(db)
+        .await
+        .map_err(store_failed)?;
+    // What is left of others here while she is not (Q2), to let go of.
+    let sealed = if lease::current().is_some_and(|lease| {
+        matches!(
+            lease.place(),
+            lease::Where::Elsewhere(_) | lease::Where::Vacant
+        )
+    }) {
+        Some(sealed_count(db).await.map_err(store_failed)?)
+    } else {
+        None
+    };
     Ok(json!({
         "devices": list.iter().map(|device| device_json(device, now)).collect::<Vec<_>>(),
         "host": host,
         "import": import,
+        "backups": backups,
+        "sealed": sealed,
+        // Her living on a device opens with H4 (Q8); the acceptance entry only.
+        "deviceHostOpen": lease::device_host_open(),
         // What the site sealed of its her before a merge (H3d-12).
         "retired": crate::services::persona_sync::merge::retired().await,
         "empty": empty,
         "held": held,
         "limit": devices::MAX_DEVICES,
     }))
+}
+
+/// What is left of others on the site while she is away (sealed, Q2): their
+/// memories, as a count.
+async fn sealed_count(db: &DatabaseConnection) -> Result<i64, sea_orm::DbErr> {
+    use sea_orm::ConnectionTrait;
+    let sources = crate::services::agent::merope::api::store::PERSONA_MEMORY_SOURCES
+        .iter()
+        .map(|source| format!("'{source}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(db
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            format!(
+                "SELECT COUNT(*)::BIGINT AS n FROM agent_memories WHERE source IN ({sources}) \
+                 OR venue = 'own'"
+            ),
+        ))
+        .await?
+        .map(|row| row.try_get::<i64>("", "n"))
+        .transpose()?
+        .unwrap_or(0))
 }
 
 /// GET /api/agent/devices
@@ -91,21 +133,36 @@ pub struct StartMoveRequest {
 }
 
 /// POST /api/agent/host/moves: the owner, logged in, starts a move of her
-/// with one of their live devices (`move`: she goes to live on it; `merge`:
-/// its her joins the site's). Asked here it is confirmed already: she is
-/// frozen at once. Answers the lease.
+/// with one of their live devices: `move` (选主机, she goes to live on it:
+/// it waits for the device to agree, then for the owner's confirmation with
+/// a passphrase; Q8: the acceptance entry only until H4), `back` (she comes
+/// back from the device she lives on: confirmed already, she is frozen
+/// there at once) or `merge`. Answers the lease.
 pub async fn start_move(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Json(request): Json<StartMoveRequest>,
 ) -> Result<Json<Value>, HttpError> {
     let owner = super::persona::require_site_owner(&claims, &db).await?;
-    let Some(kind) = lease::Kind::parse(&request.kind) else {
-        return Err(HttpError::from((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "kind is move or merge", "code": "invalid_move_kind" })),
-        )));
+    let back = request.kind == "back";
+    let kind = if back {
+        lease::Kind::Move
+    } else {
+        match lease::Kind::parse(&request.kind) {
+            Some(kind @ (lease::Kind::Move | lease::Kind::Merge)) => kind,
+            _ => {
+                return Err(HttpError::from((
+                    StatusCode::BAD_REQUEST,
+                    Json(
+                        json!({ "error": "kind is move, back or merge", "code": "invalid_move_kind" }),
+                    ),
+                )));
+            }
+        }
     };
+    if kind == lease::Kind::Move && !back && !lease::device_host_open() {
+        return Err(super::sync::move_refused(lease::MoveError::Later));
+    }
     let live = devices::list(&db, owner)
         .await
         .map_err(store_failed)?
@@ -117,9 +174,15 @@ pub async fn start_move(
             Json(json!({ "error": "No such device", "code": "device_not_found" })),
         )));
     }
-    lease::start(&db, kind, &request.device, lease::Starter::Owner)
-        .await
-        .map_err(super::sync::move_refused)?;
+    if back {
+        lease::start_back(&db, &request.device, lease::Starter::Owner)
+            .await
+            .map_err(super::sync::move_refused)?;
+    } else {
+        lease::start(&db, kind, &request.device, lease::Starter::Owner)
+            .await
+            .map_err(super::sync::move_refused)?;
+    }
     lease::reload(&db).await;
     Ok(Json(
         json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
@@ -127,16 +190,60 @@ pub async fn start_move(
 }
 
 /// POST /api/agent/host/moves/{move_id}/confirm: the owner, logged in,
-/// confirms a move a device asked for. She is frozen where she is.
+/// confirms a move a device asked for. She is frozen where she is. A move
+/// to a device is confirmed with `{passphrase}` once the device agreed: the
+/// site seals the copy it keeps with it (used once, kept nowhere, D4).
 pub async fn confirm_move(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
     Path(move_id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>, HttpError> {
-    super::persona::require_site_owner(&claims, &db).await?;
-    lease::confirm(&db, &move_id)
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ConfirmRequest {
+        #[serde(default)]
+        passphrase: Option<String>,
+    }
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let request: ConfirmRequest = if body.is_empty() {
+        ConfirmRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|_| {
+            HttpError::from((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "The request does not read", "code": "invalid_request" })),
+            ))
+        })?
+    };
+    let to_device = lease::read(&db)
         .await
-        .map_err(super::sync::move_refused)?;
+        .map_err(store_failed)?
+        .and_then(|lease| lease.moving)
+        .is_some_and(|moving| moving.id == move_id && moving.to_device());
+    if to_device {
+        if !lease::device_host_open() {
+            return Err(super::sync::move_refused(lease::MoveError::Later));
+        }
+        let Some(passphrase) = request
+            .passphrase
+            .filter(|passphrase| !passphrase.is_empty())
+        else {
+            return Err(HttpError::from((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": "The copy the site keeps is sealed with a passphrase", "code": "passphrase_required" }),
+                ),
+            )));
+        };
+        crate::services::persona_sync::moves::confirm_to_device(&db, owner, &move_id, passphrase)
+            .await
+            .map_err(super::sync::move_refused)?;
+    } else {
+        lease::confirm(&db, &move_id)
+            .await
+            .map_err(super::sync::move_refused)?;
+    }
     lease::reload(&db).await;
     Ok(Json(
         json!({ "host": lease::shown(&db).await.map_err(store_failed)? }),
@@ -179,6 +286,9 @@ pub async fn confirm_import(
     struct ConfirmRequest {
         #[serde(default)]
         passphrase: Option<String>,
+        /// The site she left keeps what was left of another her: let it go.
+        #[serde(default)]
+        replace: bool,
     }
     let owner = super::persona::require_site_owner(&claims, &db).await?;
     let request: ConfirmRequest = if body.is_empty() {
@@ -190,9 +300,15 @@ pub async fn confirm_import(
             )
         })?
     };
-    crate::services::persona_sync::import::confirm(&db, owner, &import_id, request.passphrase)
-        .await
-        .map_err(super::sync::import_refused)?;
+    crate::services::persona_sync::import::confirm(
+        &db,
+        owner,
+        &import_id,
+        request.passphrase,
+        request.replace,
+    )
+    .await
+    .map_err(super::sync::import_refused)?;
     Ok(Json(device_list(&db, owner).await?))
 }
 
@@ -319,6 +435,9 @@ pub async fn file_import_piece(
 #[serde(deny_unknown_fields)]
 pub struct OpenFileRequest {
     passphrase: String,
+    /// The site she left keeps what was left of another her: let it go.
+    #[serde(default)]
+    replace: bool,
 }
 
 /// POST /api/agent/host/imports/{import_id}/open: the whole file is here;
@@ -336,6 +455,7 @@ pub async fn open_file_import(
         owner,
         &import_id,
         request.passphrase,
+        request.replace,
     )
     .await
     .map_err(super::sync::import_refused)?;
@@ -476,6 +596,183 @@ pub async fn export_her(
     }
 }
 
+fn sealed_file(name: String, bytes: Vec<u8>) -> axum::response::Response {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// POST /api/agent/host/move-out: 「导出并搬走」 on the site (H3c-5, Q7). The
+/// owner, logged in, gets her as one sealed file, and she moves out: stopped
+/// here (no reply, no life of her own) until the owner lets this copy go
+/// (`/host/move-out/let-go`) or undoes it. Nothing registers where the file
+/// goes, so the same file brought in twice cannot be told apart; the page
+/// says so.
+pub async fn move_out(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Json(request): Json<ExportRequest>,
+) -> Result<axum::response::Response, HttpError> {
+    use crate::services::persona_sync::export;
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    if request.passphrase.is_empty() {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": "An export is sealed with a passphrase", "code": "passphrase_required" }),
+            ),
+        )));
+    }
+    lease::move_out(&db)
+        .await
+        .map_err(super::sync::move_refused)?;
+    lease::reload(&db).await;
+    match export::export(&db, owner, request.passphrase).await {
+        Ok(file) => Ok(sealed_file(file.name, file.bytes)),
+        Err(error) => {
+            // No file: she did not move out.
+            let _ = lease::undo_move_out(&db).await;
+            lease::reload(&db).await;
+            tracing::error!(
+                ?error,
+                "[host] she could not be exported to move out; undone"
+            );
+            Err(HttpError::from((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "She could not be exported", "code": "export_failed" })),
+            )))
+        }
+    }
+}
+
+/// POST /api/agent/host/move-out/undo: she lives here again, as she was.
+pub async fn undo_move_out(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    lease::undo_move_out(&db)
+        .await
+        .map_err(super::sync::move_refused)?;
+    lease::reload(&db).await;
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+/// POST /api/agent/host/move-out/let-go: 「已经搬好，删掉这里的她」. Her own
+/// parts go; what was left of others stays, sealed with her lineage (Q2),
+/// and the site has no her now (vacant).
+pub async fn let_her_go(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Value>, HttpError> {
+    use sea_orm::TransactionTrait;
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let txn = db.begin().await.map_err(store_failed)?;
+    lease::let_go_on(&txn)
+        .await
+        .map_err(super::sync::move_refused)?;
+    crate::services::agent::merope::retire_her_on(&txn, owner)
+        .await
+        .map_err(store_failed)?;
+    let cleared = crate::services::merope_rig::persist_active_asset(&txn, None)
+        .await
+        .map_err(store_failed)?;
+    crate::services::media::bind_persona(
+        &txn,
+        None,
+        None,
+        None,
+        &crate::services::media::configured_origins().await,
+    )
+    .await
+    .map_err(|error| HttpError(error.into()))?;
+    txn.commit().await.map_err(store_failed)?;
+    crate::services::merope_rig::mirror_active_asset(cleared).await;
+    crate::services::agent::merope::forget_in_memory();
+    lease::reload(&db).await;
+    tracing::info!("[host] she moved out and the site let its copy of her go");
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+/// DELETE /api/agent/host/sealed: the owner lets go of what was left of
+/// others on the site while she is away (Q2). On a site she left (vacant),
+/// her lease goes too: the next her here is another birth (H3e-15).
+pub async fn clear_sealed(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Value>, HttpError> {
+    use sea_orm::TransactionTrait;
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    let place = lease::read(&db)
+        .await
+        .map_err(store_failed)?
+        .map(|lease| lease.place());
+    if !matches!(
+        place,
+        Some(lease::Where::Elsewhere(_) | lease::Where::Vacant)
+    ) {
+        return Err(HttpError::from((
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "She is not away from the site", "code": "her_not_away" })),
+        )));
+    }
+    let txn = db.begin().await.map_err(store_failed)?;
+    crate::services::agent::merope::clear_sealed_on(&txn)
+        .await
+        .map_err(store_failed)?;
+    if place == Some(lease::Where::Vacant) {
+        lease::forget_vacant_on(&txn).await.map_err(store_failed)?;
+    }
+    txn.commit().await.map_err(store_failed)?;
+    crate::services::agent::merope::forget_in_memory();
+    lease::reload(&db).await;
+    tracing::info!("[host] the owner let what was left of others here go");
+    Ok(Json(device_list(&db, owner).await?))
+}
+
+/// GET /api/agent/host/backups/{backup_id}: one daily backup as it was
+/// pushed. The site cannot open it; the app that made it can, with its
+/// passphrase (Q5).
+pub async fn download_backup(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(backup_id): Path<String>,
+) -> Result<axum::response::Response, HttpError> {
+    super::persona::require_site_owner(&claims, &db).await?;
+    let (path, _) = crate::services::persona_sync::backups::file(&db, &backup_id)
+        .await
+        .map_err(super::sync::backup_refused)?;
+    let bytes = tokio::fs::read(&path).await.map_err(store_failed)?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "her.her-archive".into());
+    Ok(sealed_file(format!("backup-{name}"), bytes))
+}
+
+/// DELETE /api/agent/host/backups/{backup_id}: the owner deletes a backup.
+pub async fn delete_backup(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Path(backup_id): Path<String>,
+) -> Result<Json<Value>, HttpError> {
+    let owner = super::persona::require_site_owner(&claims, &db).await?;
+    crate::services::persona_sync::backups::forget(&db, &backup_id)
+        .await
+        .map_err(super::sync::backup_refused)?;
+    Ok(Json(device_list(&db, owner).await?))
+}
+
 /// DELETE /api/agent/devices/{device_id}
 pub async fn remove_device(
     State(db): State<DatabaseConnection>,
@@ -492,6 +789,7 @@ pub async fn remove_device(
                 Json(json!({ "error": "No such device", "code": "device_not_found" })),
             ))
         })?;
+    lease::reload(&db).await;
     tracing::info!(device = %removed.id, "[sync] device removed by the owner");
     Ok(Json(json!({ "device": device_json(&removed, Utc::now()) })))
 }
@@ -572,17 +870,23 @@ mod tests {
         assert!(list.get("parent").is_none());
         assert!(list["devices"][0].get("role").is_none());
 
-        let (status, body) = start(&db, 41, "move", "dev_nope").await.unwrap_err();
+        // Her living on a device opens with H4 (Q8): only the acceptance entry.
+        let (status, body) = start(&db, 41, "move", &mac.id).await.unwrap_err();
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (StatusCode::CONFLICT, Some("device_host_later"))
+        );
+        let (status, body) = start(&db, 41, "merge", "dev_nope").await.unwrap_err();
         assert_eq!(
             (status, body["code"].as_str()),
             (StatusCode::NOT_FOUND, Some("device_not_found"))
         );
-        let (status, _) = start(&db, 42, "move", &mac.id).await.unwrap_err();
+        let (status, _) = start(&db, 42, "merge", &mac.id).await.unwrap_err();
         assert_eq!(status, StatusCode::FORBIDDEN);
-        let frozen = start(&db, 41, "move", &mac.id).await.unwrap();
+        let frozen = start(&db, 41, "merge", &mac.id).await.unwrap();
         assert_eq!(frozen["host"]["state"], "frozen");
         assert_eq!(frozen["host"]["move"]["phase"], "frozen");
-        assert_eq!(frozen["host"]["move"]["toName"], "Mac");
+        assert_eq!(frozen["host"]["move"]["fromName"], "Mac");
         let id = frozen["host"]["move"]["id"].as_str().unwrap().to_string();
         let (status, body) = start(&db, 41, "merge", &mac.id).await.unwrap_err();
         assert_eq!(
@@ -601,25 +905,46 @@ mod tests {
             .await
             .unwrap();
         let id = proposed.moving.unwrap().id;
-        let (status, _) =
-            answer(confirm_move(State(db.clone()), Extension(claims(42)), Path(id.clone())).await)
-                .await
-                .unwrap_err();
+        let (status, _) = answer(
+            confirm_move(
+                State(db.clone()),
+                Extension(claims(42)),
+                Path(id.clone()),
+                Default::default(),
+            )
+            .await,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(
             lease::read(&db).await.unwrap().unwrap().state,
             lease::State::Live
         );
-        let confirmed =
-            answer(confirm_move(State(db.clone()), Extension(claims(41)), Path(id.clone())).await)
-                .await
-                .unwrap();
+        let confirmed = answer(
+            confirm_move(
+                State(db.clone()),
+                Extension(claims(41)),
+                Path(id.clone()),
+                Default::default(),
+            )
+            .await,
+        )
+        .await
+        .unwrap();
         assert_eq!(confirmed["host"]["state"], "frozen");
         assert_eq!(confirmed["host"]["move"]["by"], "device");
-        let (status, body) =
-            answer(confirm_move(State(db.clone()), Extension(claims(41)), Path(id.clone())).await)
-                .await
-                .unwrap_err();
+        let (status, body) = answer(
+            confirm_move(
+                State(db.clone()),
+                Extension(claims(41)),
+                Path(id.clone()),
+                Default::default(),
+            )
+            .await,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             (status, body["code"].as_str()),
             (StatusCode::CONFLICT, Some("move_phase"))

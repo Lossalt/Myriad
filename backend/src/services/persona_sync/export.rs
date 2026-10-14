@@ -64,10 +64,45 @@ pub async fn export(
     if passphrase.is_empty() {
         return Err(ExportError::Passphrase);
     }
+    let her = read(db, owner).await?;
+    let bytes = seal(&her, passphrase).await?;
+    tracing::info!(
+        bytes = bytes.len(),
+        pages = her.pages.len(),
+        files = her.files.len(),
+        "[sync] she was exported"
+    );
+    Ok(Exported {
+        bytes,
+        name: format!("her-{}.her-archive", her.at.format("%Y%m%d-%H%M")),
+    })
+}
+
+/// Her as the site has her at one moment, ready to be sealed (once or with
+/// more than one key, as a move to a device does).
+pub struct Her {
+    pub(super) pages: Vec<Envelope>,
+    pub(super) files: Vec<(Part, Vec<u8>)>,
+    pub(super) manifest: Manifest,
+    pub(super) lineage: Option<String>,
+    pub(super) epoch: Option<u64>,
+    pub(super) at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Her {
+    /// The digest of everything in it, as the archive's manifest has it.
+    pub fn digest(&self) -> &str {
+        &self.manifest.digest
+    }
+}
+
+/// Reads her in one read-only snapshot transaction, while she lives here,
+/// is moving, or moved out and is not let go yet (H3b-5).
+pub async fn read(db: &DatabaseConnection, owner: i32) -> Result<Her, ExportError> {
     let lease = lease::read(db).await.map_err(ExportError::failed)?;
     if let Some(lease) = &lease {
         match lease.place() {
-            lease::Where::Here | lease::Where::Moving => {}
+            lease::Where::Here | lease::Where::Moving | lease::Where::MovedOut => {}
             lease::Where::Elsewhere(device) => return Err(ExportError::Elsewhere(Some(device))),
             lease::Where::Vacant => return Err(ExportError::Elsewhere(None)),
         }
@@ -99,7 +134,21 @@ pub async fn export(
     let pages = pages(lineage.clone(), model.clone(), entities, embeddings);
     let files = files(&pictures, &pages).await?;
     let manifest = Manifest::of_envelopes(&pages).map_err(ExportError::failed)?;
+    Ok(Her {
+        pages,
+        files,
+        manifest,
+        lineage,
+        epoch: lease.as_ref().map(|lease| lease.epoch.max(0) as u64),
+        at: chrono::Utc::now(),
+    })
+}
 
+/// [`Her`] sealed with `passphrase` (used once, for the key, kept nowhere).
+pub async fn seal(her: &Her, passphrase: String) -> Result<Vec<u8>, ExportError> {
+    if passphrase.is_empty() {
+        return Err(ExportError::Passphrase);
+    }
     let (salt, nonce_prefix) = {
         let mut rng = rand::rng();
         let mut salt = [0u8; SALT_BYTES];
@@ -108,16 +157,15 @@ pub async fn export(
         rng.fill_bytes(&mut prefix);
         (salt, prefix)
     };
-    let now = chrono::Utc::now();
     let header = ArchiveHeader::new(
         &salt,
         &nonce_prefix,
         HeaderFields {
-            lineage,
-            epoch: lease.as_ref().map(|lease| lease.epoch.max(0) as u64),
+            lineage: her.lineage.clone(),
+            epoch: her.epoch,
             origin: hlc::SITE.to_string(),
-            created_at: now.timestamp_micros(),
-            digest: manifest.digest.clone(),
+            created_at: her.at.timestamp_micros(),
+            digest: her.manifest.digest.clone(),
         },
     )
     .map_err(ExportError::failed)?;
@@ -130,7 +178,7 @@ pub async fn export(
 
     let mut sealer = Sealer::new(key, header).map_err(ExportError::failed)?;
     let mut out = Vec::new();
-    for page in &pages {
+    for page in &her.pages {
         let bytes =
             myriad_persona_sync::canonical::canonical_of(page).map_err(ExportError::failed)?;
         let part = Part::Envelope {
@@ -138,25 +186,21 @@ pub async fn export(
         };
         out.extend(sealer.part(&part, &bytes).map_err(ExportError::failed)?);
     }
-    for (part, payload) in &files {
+    for (part, payload) in &her.files {
         out.extend(sealer.part(part, payload).map_err(ExportError::failed)?);
     }
     out.extend(
         sealer
-            .part(&Part::End { manifest }, &[])
+            .part(
+                &Part::End {
+                    manifest: her.manifest.clone(),
+                },
+                &[],
+            )
             .map_err(ExportError::failed)?,
     );
     out.extend(sealer.finish().map_err(ExportError::failed)?);
-    tracing::info!(
-        bytes = out.len(),
-        pages = pages.len(),
-        files = files.len(),
-        "[sync] she was exported"
-    );
-    Ok(Exported {
-        bytes: out,
-        name: format!("her-{}.her-archive", now.format("%Y%m%d-%H%M")),
-    })
+    Ok(out)
 }
 
 /// The entities in pages of at most [`PAGE_ENTITIES`] and about

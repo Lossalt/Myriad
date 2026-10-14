@@ -188,14 +188,20 @@ pub(crate) async fn start(
 ) -> Result<Arc<AgentRun>, AppError> {
     let user_id = caller.user_id;
     validate_input(&req.input)?;
-    // She is on no end while she moves, and not here while she lives on
-    // another: every channel's turn is refused alike, Chat and Work.
-    crate::services::persona_sync::lease::refuse_while_away()?;
     let interaction_mode = req
         .context
         .as_ref()
         .and_then(|context| context.mode)
         .unwrap_or_default();
+    // She is on no end while she moves, and not here while she lives on
+    // another: every Chat turn is refused, whatever channel. Work is the
+    // site's own: while she lives on another end it runs as the plain
+    // assistant, without her (H3e-9); while she is moving it waits too.
+    if interaction_mode == crate::services::agent::AgentInteractionMode::Work {
+        crate::services::persona_sync::lease::refuse_work_while_away()?;
+    } else {
+        crate::services::persona_sync::lease::refuse_while_away()?;
+    }
     // Server-set only (`serde(skip)`): a group turn speaks as her, in Chat.
     let group = req
         .context
@@ -884,7 +890,8 @@ pub(crate) async fn answer(
     session_id: Option<String>,
 ) -> Result<Arc<AgentRun>, AppError> {
     validate_input(&answer)?;
-    crate::services::persona_sync::lease::refuse_while_away()?;
+    // Answering a Work question: Work runs while she lives elsewhere (H3e-9).
+    crate::services::persona_sync::lease::refuse_work_while_away()?;
     let task = crate::services::agent::executor::get_task_for_user(&task_id, user_id)
         .await
         .ok_or_else(|| AppError::not_found("Task not found"))?;

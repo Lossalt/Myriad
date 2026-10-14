@@ -20,6 +20,7 @@ pub(in crate::services::agent) mod ingest;
 pub(in crate::services::agent) mod inner;
 pub(in crate::services::agent) mod joining;
 pub(in crate::services::agent) mod jargon;
+pub(in crate::services::agent) mod kept;
 mod library;
 pub(in crate::services::agent) mod life;
 pub mod lifecycle;
@@ -90,11 +91,11 @@ pub use motion::{
 pub use outfit_overlay::{apply_model_wear_directive, chat_wardrobe_section, overlay_outfit_id};
 pub use store::{
     AffectChange, JsonDocumentUpdate, PersonaContractUpdate, PortraitUpdate, acquire_avatar_generation,
-    acquire_portrait_generation, avatar_generation_is_pending, clear_persona_on,
+    acquire_portrait_generation, avatar_generation_is_pending, clear_persona_on, clear_sealed_on,
     complete_avatar_generation, complete_portrait_generation, credit_music_listening,
     get_or_create_state, get_persona, get_persona_on, insert_diary, latest_diary,
     list_diary_from_sources, portrait_generation_is_pending, promote_activity,
-    release_avatar_generation, release_portrait_generation, rewrite_persona_media_urls,
+    release_avatar_generation, release_portrait_generation, retire_her_on, rewrite_persona_media_urls,
     set_activity, set_dnd_schedule, set_do_not_disturb, sticker_avatar_asset_id, update_affect,
     upsert_persona_on,
 };
@@ -126,10 +127,12 @@ use crate::models::entities::agent_persona;
 
 /// Soul text for user-facing speech: site persona when the flag is on, else SOUL.md.
 pub async fn resolve_speaking_soul() -> Option<String> {
-    let enabled = crate::GLOBAL_DYNAMIC_CONFIG
-        .read()
-        .await
-        .merope_enabled_resolved();
+    // Not on the site: what speaks here is the plain assistant (H3e-9).
+    let enabled = crate::services::persona_sync::lease::place().here()
+        && crate::GLOBAL_DYNAMIC_CONFIG
+            .read()
+            .await
+            .merope_enabled_resolved();
     if enabled {
         if let Ok(db) = crate::services::process_db::database() {
             if let Ok(Some(persona)) = get_persona(&db).await {
@@ -163,11 +166,9 @@ pub async fn note_user_turn(
     {
         return None;
     }
-    if !crate::GLOBAL_DYNAMIC_CONFIG
-        .read()
-        .await
-        .merope_enabled_resolved()
-    {
+    // Off, or not on this site (H3e-9: the site's Work runs without her
+    // then, and moves nothing of her).
+    if !is_enabled().await {
         return None;
     }
     let (praised, scolded) = detect_mood_cue(text);
@@ -273,6 +274,12 @@ pub fn turn_context(request: &crate::services::agent::UserRequest) -> TurnContex
 
 /// After the persona is deleted: nothing of her stays in memory either, so
 /// the next one does not carry on her song, game, state or thoughts.
+/// She is back on the site: what the site's Work did for the owner while
+/// she lived elsewhere reaches her now (H3e-9).
+pub async fn replay_kept_for_her(db: sea_orm::DatabaseConnection) {
+    kept::replay(db).await;
+}
+
 pub fn forget_in_memory() {
     doing::forget();
     soup::forget();

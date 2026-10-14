@@ -1744,6 +1744,19 @@
     "import_failed",
     "merge_no_her",
     "merge_changed",
-    "retired_unknown"
+    "retired_unknown",
+    "device_host_later",
+    "move_not_agreed",
+    "move_mismatch",
+    "move_failed",
+    "move_backup_missing",
+    "import_replaces_sealed",
+    "backup_not_host",
+    "backup_lineage",
+    "backup_invalid",
+    "backup_unknown",
+    "backup_failed",
+    "her_not_away",
+    "invalid_request"
   ]
 }

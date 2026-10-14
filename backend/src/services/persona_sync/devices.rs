@@ -234,6 +234,9 @@ pub async fn revoke<C: ConnectionTrait>(
         .map(Device::from_row)
         .transpose()?;
     if let Some(device) = &removed {
+        // She lived on it, or was moving with it: the lease says so now
+        // (vacant, or as she was before the move), and every process hears.
+        super::lease::device_gone(db, &device.id).await?;
         use crate::services::agent::link::{Close, disconnect};
         // The reason the link was allowed is gone: the device forgets its token.
         let close = match why {

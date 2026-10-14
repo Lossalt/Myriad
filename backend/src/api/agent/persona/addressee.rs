@@ -61,6 +61,8 @@ pub async fn put_addressee(
     Extension(claims): Extension<Claims>,
     Json(body): Json<PutAddresseeRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
     if !merope::is_logged_in_addressee(user_id) {
@@ -140,6 +142,8 @@ pub async fn post_doing_acting(
     Extension(claims): Extension<Claims>,
     Json(body): Json<DoingActingRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
     let rig_state = body
@@ -178,6 +182,8 @@ pub async fn post_music_listening(
     Extension(claims): Extension<Claims>,
     Json(body): Json<MusicListeningRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = parse_user_id_with_agent_access(&claims, &db).await?;
     if !merope::is_logged_in_addressee(user_id) {

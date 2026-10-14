@@ -218,6 +218,8 @@ pub async fn put_persona(
     Extension(claims): Extension<Claims>,
     Json(body): Json<PutPersonaRequest>,
 ) -> Result<Json<Value>, HttpError> {
+    // Read only while she is not on the site (D5).
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let user_id = require_site_owner(&claims, &db).await?;
     let zone = match body.zone {
@@ -412,14 +414,12 @@ pub async fn delete_persona(
     State(db): State<DatabaseConnection>,
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<Value>, HttpError> {
+    crate::services::persona_sync::lease::refuse_edit_while_away()?;
     require_merope_enabled().await?;
     let _user_id = require_site_owner(&claims, &db).await?;
-    // Not while she is moving: the move is called off first.
-    if crate::services::persona_sync::lease::place()
-        == crate::services::persona_sync::lease::Where::Moving
-    {
-        crate::services::persona_sync::lease::refuse_while_away()?;
-    }
+    // Not while she is moving (the move is called off first), and not while
+    // she is not on the site: what is left here of others is let go on the
+    // devices page (D5, H3e-15).
     let transaction = db
         .begin()
         .await

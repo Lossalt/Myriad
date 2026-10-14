@@ -97,6 +97,20 @@ pub(super) struct Hello {
     pub(super) surface: String,
     #[serde(default)]
     pub(super) capabilities: Vec<String>,
+    /// The epoch the end last heard; a host must hold the lease at it.
+    #[serde(default)]
+    pub(super) host_epoch: Option<i64>,
+}
+
+/// What `host.freeze` tells the device she lives on: the move she is frozen
+/// for there, and what it is (a move back to the site, or a reclaim from a
+/// backup by another device).
+pub(super) fn freeze_body(moving: &crate::services::persona_sync::lease::Move) -> Value {
+    json!({
+        "moveId": moving.id,
+        "kind": moving.kind,
+        "to": moving.to,
+    })
 }
 
 #[derive(Deserialize)]
@@ -161,6 +175,7 @@ pub(super) async fn serve_with(
         acts: false,
         wardrobe: None,
         live: None,
+        host: false,
     };
     tracing::info!(device = %link.device.id, "[link] opened");
     let why = link.run(sink, stream, rx, closed).await;
@@ -231,6 +246,9 @@ struct Link {
     /// Her conversations as the child was last told them, once it said it
     /// takes `conversations.live`.
     live: Option<Live>,
+    /// The end dialled in as her host (the device she lives on, H3e-7): it
+    /// only hears what becomes of her there.
+    host: bool,
 }
 
 /// What a child kept current was last told of her conversations: the
@@ -264,7 +282,13 @@ impl Link {
         let mut changed = super::conversations::subscribe_changes();
         loop {
             let why = tokio::select! {
-                why = &mut closed => Some(why.unwrap_or(Close::Unavailable)),
+                why = &mut closed => {
+                    // What was sent to it just before (her host told she moved).
+                    while let Ok(outgoing) = rx.try_recv() {
+                        self.queue.push(outgoing);
+                    }
+                    Some(why.unwrap_or(Close::Unavailable))
+                }
                 incoming = stream.next() => match incoming {
                     Some(Ok(Message::Text(text))) => {
                         self.last_heard = Instant::now();
@@ -373,6 +397,15 @@ impl Link {
             }
             return self.hello(inbound.body).await;
         }
+        // Her host's link carries nothing but the heartbeat and acks.
+        if self.host {
+            match inbound.t.as_str() {
+                "ping" => self.reply(frame("pong", json!({}))),
+                "ack" | "pong" => {}
+                _ => self.error("bad_frame", Some(inbound.seq)),
+            }
+            return None;
+        }
         match inbound.t.as_str() {
             "input" => self.input(inbound).await,
             "presence" => self.presence(inbound).await,
@@ -406,8 +439,8 @@ impl Link {
         }
         match hello.role.as_str() {
             "child" => {}
-            // She lives on the site; a device cannot be her host here.
-            "host" => return Some(Close::HostIsSite),
+            // The device she lives on, as her host (H3e-7).
+            "host" => return self.host_hello(hello).await,
             _ => return Some(Close::BadFrame),
         }
         if !CONTRACT.surfaces.contains(&hello.surface) {
@@ -600,6 +633,66 @@ impl Link {
             self.moods = Some(task.abort_handle());
         }
         tracing::info!(device = %self.device.id, "[link] hello");
+        None
+    }
+
+    /// The device she lives on dials in as her host: welcomed only while it
+    /// holds her lease at the epoch it heard; otherwise she moved (it lets
+    /// its copy go). It is told at once if she is frozen there for a move.
+    async fn host_hello(&mut self, hello: Hello) -> Option<Close> {
+        use crate::services::persona_sync::lease::{self, State};
+        if !CONTRACT.surfaces.contains(&hello.surface) {
+            return Some(Close::BadFrame);
+        }
+        let lease = match lease::read(&self.db).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                tracing::warn!(%error, device = %self.device.id, "[link] could not read her host lease");
+                return Some(Close::Unavailable);
+            }
+        };
+        let Some(lease) = lease else {
+            return Some(Close::HostIsSite);
+        };
+        let holds = lease.holder == self.device.id
+            && matches!(lease.state, State::Live | State::Frozen)
+            && hello.host_epoch.is_none_or(|epoch| epoch == lease.epoch);
+        if !holds {
+            tracing::info!(device = %self.device.id, epoch = lease.epoch, heard = ?hello.host_epoch, "[link] a host that does not hold her lease: she moved");
+            return Some(Close::HostMoved);
+        }
+        self.hello = true;
+        self.host = true;
+        let frozen = lease
+            .moving
+            .as_ref()
+            .filter(|moving| lease.state == State::Frozen && moving.from == self.device.id);
+        super::takes_host(
+            &self.device.id,
+            self.registered,
+            self.tx.clone(),
+            frozen.map(|moving| moving.id.clone()),
+        );
+        self.reply(frame(
+            "welcome",
+            json!({
+                "protocol": CONTRACT.protocol,
+                "role": "site",
+                "host": "app",
+                "deviceId": self.device.id,
+                "deviceName": self.device.name,
+                "lineage": lease.lineage,
+                "hostEpoch": lease.epoch,
+                "heartbeatMs": self.timing.heartbeat.as_millis() as u64,
+                "capabilities": [],
+                "turns": [],
+                "serverTime": chrono::Utc::now().timestamp_millis(),
+            }),
+        ));
+        if let Some(moving) = frozen {
+            self.reply(frame("host.freeze", freeze_body(moving)));
+        }
+        tracing::info!(device = %self.device.id, epoch = lease.epoch, "[link] her host is linked");
         None
     }
 

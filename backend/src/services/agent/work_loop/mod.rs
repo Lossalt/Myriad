@@ -181,9 +181,18 @@ impl Agent {
         .await
         {
             Ok(memories) if !memories.is_empty() => {
+                // While she lives on another end, Work is the plain
+                // assistant: nothing of her comes to mind, only Work's own
+                // lessons (H3e-9).
+                let away = !crate::services::persona_sync::lease::place().here();
+                let persona_sources =
+                    crate::services::agent::merope::api::store::PERSONA_MEMORY_SOURCES;
                 context.memory_context = Some(
                     memories
                         .iter()
+                        .filter(|memory| {
+                            !away || !persona_sources.contains(&memory.source.as_str())
+                        })
                         .map(|m| m.content.chars().take(1000).collect::<String>())
                         .collect::<Vec<_>>()
                         .join("\n"),

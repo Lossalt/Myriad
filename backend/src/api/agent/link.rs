@@ -27,7 +27,7 @@ pub async fn her_link(
     Extension(device): Extension<SyncDevice>,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
-    match lease::link_refusal(&db).await {
+    match lease::link_refusal(&db, &device.0.id).await {
         Ok(None) => {}
         Ok(Some((code, body))) => {
             tracing::info!(device = %device.0.id, code, "[link] refused: she is not here");

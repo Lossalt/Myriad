@@ -122,6 +122,11 @@ pub mod kind {
     pub const IMPORT: &str = "import";
     /// A device's her into the site's, the first time they meet (H3d).
     pub const MERGE: &str = "merge";
+    /// Her back from the device she lives on (H3e-8).
+    pub const RETURN: &str = "return";
+    /// Her taken back from a daily backup of the device she lived on, by
+    /// another device that opened it (H3e-13).
+    pub const RECOVER: &str = "recover";
 }
 
 /// One import as stored.
@@ -150,6 +155,12 @@ pub struct Session {
 impl Session {
     pub fn is_merge(&self) -> bool {
         self.kind == kind::MERGE
+    }
+
+    /// She comes to a site that has her lease (back from her device, or
+    /// taken back from a backup).
+    pub fn is_carried(&self) -> bool {
+        self.kind == kind::RETURN || self.kind == kind::RECOVER
     }
 
     fn from_row(row: &sea_orm::QueryResult) -> Result<Self, DbErr> {
@@ -241,6 +252,9 @@ pub enum ImportError {
     /// Her names on the two sides are now the same where they differed when
     /// the owner confirmed, or the other way round.
     Changed,
+    /// The site she left keeps what was left of others with another her's
+    /// lineage (Q2): bringing this one in lets that go, so the owner says so.
+    ReplacesSealed,
     Failed(String),
 }
 
@@ -314,6 +328,11 @@ impl ImportError {
                 "merge_changed",
                 "Her names changed since the owner confirmed; confirm the merge again",
             ),
+            Self::ReplacesSealed => (
+                StatusCode::CONFLICT,
+                "import_replaces_sealed",
+                "The site keeps what was left of another her; bringing this one in lets it go",
+            ),
             Self::Failed(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "import_failed",
@@ -337,14 +356,114 @@ pub async fn not_empty<C: ConnectionTrait>(
                 .filter(|name| !name.is_empty()),
         )));
     }
+    // A lease that is vacant is a site she left: she may come in again
+    // (her lineage takes up what she left; another lets it go, H3e-15).
     let leased = db
         .query_one_raw(statement(
-            "SELECT 1 AS one FROM agent_host_lease WHERE id = 'her'",
+            "SELECT 1 AS one FROM agent_host_lease WHERE id = 'her' AND state <> 'vacant'",
             vec![],
         ))
         .await?
         .is_some();
     Ok(leased.then_some(ImportError::NotEmpty(None)))
+}
+
+/// A site she left (vacant) that keeps another lineage than `lineage`:
+/// what is left there of others would go with her coming in.
+async fn sealed_other<C: ConnectionTrait>(db: &C, lineage: &str) -> Result<bool, DbErr> {
+    Ok(db
+        .query_one_raw(statement(
+            "SELECT 1 AS one FROM agent_host_lease WHERE id = 'her' AND state = 'vacant' \
+             AND lineage <> $1",
+            vec![lineage.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// What was left of another her on a site she left goes, with its lease,
+/// so a her of another lineage comes in (the owner said so).
+async fn let_sealed_go(txn: &DatabaseTransaction) -> Result<(), ImportError> {
+    crate::services::agent::merope::clear_sealed_on(txn)
+        .await
+        .map_err(ImportError::failed)?;
+    lease::forget_vacant_on(txn).await?;
+    tracing::info!("[import] what was left of another her here goes, with her lease");
+    Ok(())
+}
+
+/// The approval-layer record of her own Work on this end goes when she
+/// arrives here (H3e-17): whatever the owner let a her here do before, she
+/// starts with it off and the owner turns it on again here. Tool
+/// permissions and roles are this end's own and stay. Not for a merge: the
+/// her that was here is still here.
+pub(super) async fn void_her_own_work<C: ConnectionTrait>(db: &C, owner: i32) -> Result<(), DbErr> {
+    let gone = db
+        .execute_raw(statement(
+            "DELETE FROM agent_autonomy_grants WHERE user_id = $1",
+            vec![owner.into()],
+        ))
+        .await?;
+    if gone.rows_affected() > 0 {
+        tracing::info!(
+            "[import] she arrived: her own Work is off here until the owner turns it on"
+        );
+    }
+    Ok(())
+}
+
+/// The import that carries her back from the device she lives on: it
+/// starts confirmed (the owner confirmed the move it carries).
+pub(super) async fn begin_carrying(
+    txn: &DatabaseTransaction,
+    kind_of: &str,
+    device: &str,
+    lineage: &str,
+    epoch: i64,
+    name: Option<String>,
+    manifest: &Manifest,
+) -> Result<Session, ImportError> {
+    check_lineage(lineage)?;
+    make_room(txn, Some(device)).await?;
+    let id = format!("{ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
+    let name = name
+        .map(|name| name.trim().chars().take(80).collect::<String>())
+        .filter(|name| !name.is_empty());
+    let row = txn
+        .query_one_raw(statement(
+            &format!(
+                "INSERT INTO agent_host_import (id, source, device_id, lineage, epoch, name, \
+                 manifest, phase, created_at, updated_at, confirmed_at, kind) \
+                 VALUES ($1, 'device', $2, $3, $4, $5, $6, $7, NOW(), NOW(), NOW(), $8) \
+                 RETURNING {COLUMNS}"
+            ),
+            vec![
+                id.into(),
+                device.into(),
+                lineage.into(),
+                epoch.into(),
+                name.into(),
+                serde_json::to_value(manifest)
+                    .map_err(ImportError::failed)?
+                    .into(),
+                phase::CONFIRMED.into(),
+                kind_of.into(),
+            ],
+        ))
+        .await?
+        .ok_or_else(|| ImportError::failed("no row"))?;
+    Ok(Session::from_row(&row)?)
+}
+
+/// An import that carried her and is called off with its move: its session
+/// goes (what was staged with it).
+pub(super) async fn drop_session<C: ConnectionTrait>(db: &C, id: &str) -> Result<(), DbErr> {
+    db.execute_raw(statement(
+        "DELETE FROM agent_host_import WHERE id = $1 AND phase <> 'committed'",
+        vec![id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// The import now, if any (the last committed one too, until another).
@@ -449,6 +568,11 @@ pub(super) fn merge_refused(error: lease::MoveError) -> ImportError {
         lease::MoveError::Unknown => ImportError::Unknown,
         lease::MoveError::Phase(phase) => ImportError::Phase(format!("{phase:?}").to_lowercase()),
         lease::MoveError::Db(error) => ImportError::Failed(error.to_string()),
+        lease::MoveError::Mismatch => ImportError::Mismatch("not what was sealed".into()),
+        lease::MoveError::NotAgreed | lease::MoveError::Later | lease::MoveError::BackupMissing => {
+            ImportError::Phase("proposed".into())
+        }
+        lease::MoveError::Failed(what) => ImportError::Failed(what),
     }
 }
 
@@ -480,6 +604,7 @@ pub async fn propose(
     let merging = match proposal.kind.as_deref() {
         None | Some(kind::IMPORT) => false,
         Some(kind::MERGE) => true,
+        Some(kind::RECOVER) => return propose_reclaim(db, device, proposal).await,
         Some(_) => return Err(ImportError::Invalid("kind")),
     };
     let subject = match proposal.subject.as_deref() {
@@ -556,13 +681,59 @@ pub async fn propose(
     Ok(session)
 }
 
+/// Another device asks to take her back onto the site from a daily backup
+/// of the device she lived on (H3e-13), with what the backup holds. Her
+/// lineage must be the lease's; nothing happens to her until the owner
+/// confirms on the site.
+async fn propose_reclaim(
+    db: &DatabaseConnection,
+    device: &str,
+    proposal: Proposal,
+) -> Result<Session, ImportError> {
+    let txn = db.begin().await?;
+    one_at_a_time(&txn).await?;
+    let held = lease::hold(&txn).await?.ok_or(ImportError::NoHer)?;
+    if held.lineage != proposal.lineage {
+        return Err(ImportError::Mismatch("another lineage".into()));
+    }
+    let session = begin_carrying(
+        &txn,
+        kind::RECOVER,
+        device,
+        &proposal.lineage,
+        proposal.epoch,
+        proposal.name,
+        &proposal.manifest,
+    )
+    .await?;
+    // Asked, not confirmed: the owner confirms it on the site.
+    txn.execute_raw(statement(
+        "UPDATE agent_host_import SET phase = $2, confirmed_at = NULL WHERE id = $1",
+        vec![session.id.clone().into(), phase::PROPOSED.into()],
+    ))
+    .await?;
+    lease::reclaiming(&txn, &session.id, device)
+        .await
+        .map_err(merge_refused)?;
+    let session = locked(&txn, &session.id)
+        .await?
+        .ok_or(ImportError::Unknown)?;
+    txn.commit().await?;
+    lease::reload(db).await;
+    tracing::info!(import = %session.id, device, "[import] a device asks to take her back from a backup; the owner confirms on the site");
+    Ok(session)
+}
+
 /// The owner, logged in, confirms a device's import: the site's first lease
-/// names that device, frozen, until she lands or it is called off.
+/// names that device, frozen, until she lands or it is called off. On a
+/// site she left that keeps another her's lineage, `replace` says the owner
+/// lets what was left of that her go (H3e-15).
 pub async fn confirm(
     db: &DatabaseConnection,
     owner: i32,
     id: &str,
     passphrase: Option<String>,
+    replace: bool,
 ) -> Result<lease::Lease, ImportError> {
     if current(db)
         .await?
@@ -576,6 +747,21 @@ pub async fn confirm(
     if session.phase != phase::PROPOSED {
         return Err(ImportError::Phase(session.phase));
     }
+    if session.kind == kind::RECOVER {
+        let written = lease::import_confirmed(&txn, id)
+            .await
+            .map_err(merge_refused)?;
+        txn.execute_raw(statement(
+            "UPDATE agent_host_import SET phase = $2, confirmed_at = NOW(), updated_at = NOW() \
+             WHERE id = $1",
+            vec![id.into(), phase::CONFIRMED.into()],
+        ))
+        .await?;
+        txn.commit().await?;
+        tracing::info!(import = %id, "[import] the owner confirmed taking her back from a backup: she is frozen everywhere");
+        lease::reload(db).await;
+        return Ok(written);
+    }
     if let Some(refusal) = not_empty(&txn, owner).await? {
         return Err(refusal);
     }
@@ -587,6 +773,12 @@ pub async fn confirm(
     ) else {
         return Err(ImportError::Phase(session.phase));
     };
+    if sealed_other(&txn, lineage).await? {
+        if !replace {
+            return Err(ImportError::ReplacesSealed);
+        }
+        let_sealed_go(&txn).await?;
+    }
     let written = lease::arriving(&txn, id, device, lineage, epoch, &manifest.digest).await?;
     txn.execute_raw(statement(
         "UPDATE agent_host_import SET phase = $2, confirmed_at = NOW(), updated_at = NOW() \
@@ -961,10 +1153,20 @@ pub async fn commit(
         whole.files.insert(asset.id.clone(), files);
     }
     check_files(&whole.files, &refs)?;
+    if session.is_carried() {
+        // The move it carries is still the lease's.
+        let carried = lease::read(db)
+            .await?
+            .and_then(|lease| lease.moving)
+            .is_some_and(|moving| moving.import.as_deref() == Some(id) && moving.phase.freezes());
+        if !carried {
+            return Err(ImportError::Unknown);
+        }
+    }
     let landed = if session.is_merge() {
         super::merge::commit(db, owner, &session, whole).await?
     } else {
-        land(db, owner, Some(id), whole).await?
+        land(db, owner, Some(id), whole, false).await?
     };
     forget_files(id).await;
     Ok(landed)
@@ -1138,6 +1340,7 @@ pub async fn open_file(
     owner: i32,
     id: &str,
     passphrase: String,
+    replace: bool,
 ) -> Result<Landed, ImportError> {
     if passphrase.is_empty() {
         return Err(ImportError::Invalid("passphrase"));
@@ -1194,7 +1397,7 @@ pub async fn open_file(
                 .collect(),
         );
     }
-    let landed = land(db, owner, Some(id), whole).await?;
+    let landed = land(db, owner, Some(id), whole, replace).await?;
     forget_files(id).await;
     Ok(landed)
 }
@@ -1265,6 +1468,7 @@ async fn land(
     owner: i32,
     import: Option<&str>,
     whole: Whole,
+    replace: bool,
 ) -> Result<Landed, ImportError> {
     let lineage = match whole.lineage.clone() {
         Some(lineage) => {
@@ -1308,6 +1512,16 @@ async fn land(
     if !myriad_persona_sync::is_empty(&holdings) {
         return Err(ImportError::NotEmpty(super::persona_name(&txn).await?));
     }
+    // A site she left with another her's lineage (a file brought in by the
+    // owner): what was left of that her goes only when the owner said so.
+    if sealed_other(&txn, &lineage).await? {
+        if !replace {
+            return Err(ImportError::ReplacesSealed);
+        }
+        let_sealed_go(&txn).await?;
+    }
+    // Her own Work starts off on the end she arrives at (H3e-17).
+    void_her_own_work(&txn, owner).await?;
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut count = |kind: Kind| *counts.entry(kind.as_str().to_string()).or_default() += 1;
 
