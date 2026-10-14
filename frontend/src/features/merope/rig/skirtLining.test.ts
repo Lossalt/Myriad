@@ -1,7 +1,7 @@
 import type { RasterLayer } from './anime25dImportTypes'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { tuckGarmentOffLegsByReference, tuckLiningBehindLegs } from './skirtLining'
+import { tuckGarmentOffLegsByReference, tuckGarmentOffNeckByReference, tuckLiningBehindLegs } from './skirtLining'
 
 function solid(
   id: string,
@@ -88,4 +88,33 @@ test('a coat\'s lining drawn over a leg the portrait shows goes behind the leg',
 test('a coat the portrait shows over the leg stays in front of it', () => {
   const { layers, reference } = liningOverLeg(true)
   assert.equal(tuckGarmentOffLegsByReference(layers, reference, () => true), layers)
+})
+
+test('the back band a top draws over a neck the portrait shows bare goes behind the neck, unless the collar was split', () => {
+  // A 100x100 portrait: skin on the neck at x 40..60 down to y 70; the top has a grey band across it at y 40..55.
+  const skin = [240, 205, 190] as const
+  const grey = [170, 170, 175] as const
+  const neck = { ...solid('neck', 'neck', skin, { left: 40, top: 0, width: 20, height: 70 }), side: null }
+  const top = { ...solid('topwear', 'topwear', [30, 40, 90], { left: 0, top: 40, width: 100, height: 60 }), side: null }
+  for (let y = 40; y < 70; y += 1) {
+    for (let x = 40; x < 60; x += 1) {
+      const at = ((y - 40) * 100 + x) * 4
+      if (y < 55) top.data.set([...grey, 255], at)
+      else top.data[at + 3] = 0
+    }
+  }
+  const data = new Uint8ClampedArray(100 * 100 * 4)
+  for (let y = 0; y < 100; y += 1) {
+    for (let x = 0; x < 100; x += 1) {
+      const colour = x >= 40 && x < 60 && y < 70 ? skin : y >= 40 ? [30, 40, 90] : [255, 255, 255]
+      data.set([...colour, 255], (y * 100 + x) * 4)
+    }
+  }
+  const reference = { width: 100, height: 100, data }
+  const tucked = tuckGarmentOffNeckByReference([neck, top], reference, () => true)
+  assert.deepEqual(tucked.map((layer) => layer.id), ['topwear-lining', 'neck', 'topwear'])
+  assert.equal(tucked[2].data[((45 - 40) * 100 + 50) * 4 + 3], 0)
+  // The collar split into front and back already put what is in front of the neck where it goes.
+  const split = [neck, top, { ...solid('collar-front', 'collar-front', [30, 40, 90], { left: 30, top: 40, width: 40, height: 10 }), side: null }]
+  assert.equal(tuckGarmentOffNeckByReference(split, reference, () => true), split)
 })

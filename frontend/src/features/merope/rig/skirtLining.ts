@@ -122,23 +122,28 @@ export function tuckLiningBehindLegs(layers: RasterLayer[]): RasterLayer[] {
   return output
 }
 
-/** Over a leg, the portrait shows the leg where the leg's layer is this many times closer to it than the garment's… */
-const LEG_SHOWN_RATIO = 3
+/** Over a body part, the portrait shows the part where its layer is this many times closer to it than the garment's… */
+const SHOWN_RATIO = 3
 /**
  * …and the garment is further off than art drawn where it belongs is
  * (~15-18 RGB): magenta lining on brown stockings measured 26-67.
  */
-const LEG_SHOWN_MIN_DISTANCE = 24
-/** A piece found so goes on over the leg where the garment is off by less (a patch at 22-34 by the knee). */
-const LEG_SHOWN_GROW_DISTANCE = 12
-/** A piece is at least this share of the legs drawn; specks of it stay. */
-const LEG_SHOWN_MIN_SHARE = 0.005
-/** Closes pinholes where the garment's colour happens to come close to the leg's. */
-const LEG_SHOWN_CLOSING = 3
+const SHOWN_MIN_DISTANCE = 24
+/** A piece found so goes on over the part where the garment is off by less (a patch at 22-34 by the knee). */
+const SHOWN_GROW_DISTANCE = 12
+/** Closes pinholes where the garment's colour happens to come close to the part's. */
+const SHOWN_CLOSING = 3
 const OPAQUE_ALPHA = 128
 /** The garment's anti-aliased rim around a piece goes with it, or lingers as a ghost outline. */
-const LEG_SHOWN_RIM = 2
-const LEG_SHOWN_RIM_ALPHA = 160
+const SHOWN_RIM = 2
+const SHOWN_RIM_ALPHA = 160
+
+interface ShownPart {
+  role: RasterLayer['role']
+  garments: readonly RasterLayer['role'][]
+  /** A piece is at least this share of the part drawn; specks of it stay. */
+  minShare: number
+}
 
 /**
  * A full figure's coat or skirt drawn on across a leg the portrait shows in
@@ -154,23 +159,48 @@ export function tuckGarmentOffLegsByReference(
   reference: Readonly<Anime25DSourceReference>,
   visibleAtRest: (layer: RasterLayer) => boolean,
 ): RasterLayer[] {
-  const legs = layers.filter((layer) => layer.role === 'legwear' && visibleAtRest(layer))
-  if (!legs.length) return layers
-  const behind = Math.min(...legs.map((leg) => layers.indexOf(leg)))
+  return tuckGarmentOffPart(layers, reference, visibleAtRest, { role: 'legwear', garments: ['topwear', 'bottomwear'], minShare: 0.005 })
+}
+
+/**
+ * The same for a top drawn over the neck the portrait shows bare: the back
+ * band of an open collar, which a full figure's tiles can leave in front of
+ * the neck in grey (a stitch took the neck from one decomposition and the
+ * top from another). Behind the neck it is the collar's back. A collar the
+ * import split into front and back is left as split.
+ */
+export function tuckGarmentOffNeckByReference(
+  layers: RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+  visibleAtRest: (layer: RasterLayer) => boolean,
+): RasterLayer[] {
+  if (layers.some((layer) => layer.role === 'collar-front' || layer.role === 'collar-back')) return layers
+  return tuckGarmentOffPart(layers, reference, visibleAtRest, { role: 'neck', garments: ['topwear'], minShare: 0.02 })
+}
+
+function tuckGarmentOffPart(
+  layers: RasterLayer[],
+  reference: Readonly<Anime25DSourceReference>,
+  visibleAtRest: (layer: RasterLayer) => boolean,
+  part: ShownPart,
+): RasterLayer[] {
+  const parts = layers.filter((layer) => layer.role === part.role && visibleAtRest(layer))
+  if (!parts.length) return layers
+  const behind = Math.min(...parts.map((layer) => layers.indexOf(layer)))
   const garments = layers.filter((layer, index) =>
-    (layer.role === 'topwear' || layer.role === 'bottomwear') && index > behind && visibleAtRest(layer))
+    part.garments.includes(layer.role) && index > behind && visibleAtRest(layer))
   if (!garments.length) return layers
   const { width: canvasWidth, height: canvasHeight, data: portrait } = reference
   // The topmost opaque layer at rest, per portrait pixel.
   const top = new Int16Array(canvasWidth * canvasHeight).fill(-1)
-  let legArea = 0
+  let partArea = 0
   layers.forEach((layer, index) => {
     if (!visibleAtRest(layer)) return
     for (let row = Math.max(0, -layer.top); row < Math.min(layer.height, canvasHeight - layer.top); row += 1) {
       for (let col = Math.max(0, -layer.left); col < Math.min(layer.width, canvasWidth - layer.left); col += 1) {
         if (layer.data[(row * layer.width + col) * 4 + 3] < OPAQUE_ALPHA) continue
         top[(layer.top + row) * canvasWidth + layer.left + col] = index
-        if (layer.role === 'legwear') legArea += 1
+        if (layer.role === part.role) partArea += 1
       }
     }
   })
@@ -185,8 +215,8 @@ export function tuckGarmentOffLegsByReference(
   for (const garment of garments) {
     const index = layers.indexOf(garment)
     const { width, height } = garment
-    // Where the garment shows over a leg, and where the portrait has that leg:
-    // surely, or near enough to go with a sure piece.
+    // Where the garment shows over the part, and where the portrait has the
+    // part: surely, or near enough to go with a sure piece.
     const over = new Uint8Array(width * height)
     const shown = new Uint8Array(width * height)
     const near = new Uint8Array(width * height)
@@ -197,25 +227,25 @@ export function tuckGarmentOffLegsByReference(
         if (top[y * canvasWidth + x] !== index) continue
         const at = (y * canvasWidth + x) * 4
         if (portrait[at + 3] < 250) continue
-        let leg: RasterLayer | null = null
-        for (let under = index - 1; under >= 0 && !leg; under -= 1) {
-          const layer = layers[under]
-          if (layer.role === 'legwear' && visibleAtRest(layer) && alphaAt(layer, x, y) >= OPAQUE_ALPHA) leg = layer
+        let under: RasterLayer | null = null
+        for (let below = index - 1; below >= 0 && !under; below -= 1) {
+          const layer = layers[below]
+          if (layer.role === part.role && visibleAtRest(layer) && alphaAt(layer, x, y) >= OPAQUE_ALPHA) under = layer
         }
-        if (!leg) continue
+        if (!under) continue
         const target = row * width + col
         over[target] = 1
         const garmentOff = distance(garment.data, target * 4, at)
-        const legOff = distance(leg.data, ((y - leg.top) * leg.width + x - leg.left) * 4, at)
-        if (legOff * LEG_SHOWN_RATIO > garmentOff) continue
-        if (garmentOff > LEG_SHOWN_GROW_DISTANCE) near[target] = 1
-        if (garmentOff > LEG_SHOWN_MIN_DISTANCE) shown[target] = 1
+        const partOff = distance(under.data, ((y - under.top) * under.width + x - under.left) * 4, at)
+        if (partOff * SHOWN_RATIO > garmentOff) continue
+        if (garmentOff > SHOWN_GROW_DISTANCE) near[target] = 1
+        if (garmentOff > SHOWN_MIN_DISTANCE) shown[target] = 1
       }
     }
     const keep = new Uint8Array(width * height)
     let kept = false
-    for (const piece of components(closeMask(near, width, height, LEG_SHOWN_CLOSING), width, height)) {
-      if (piece.filter((target) => shown[target]).length < legArea * LEG_SHOWN_MIN_SHARE) continue
+    for (const piece of components(closeMask(near, width, height, SHOWN_CLOSING), width, height)) {
+      if (piece.filter((target) => shown[target]).length < partArea * part.minShare) continue
       const members = piece.filter((target) => over[target])
       for (const target of members) keep[target] = 1
       kept = true
@@ -225,14 +255,14 @@ export function tuckGarmentOffLegsByReference(
       if (keep[target] !== 1) continue
       const col = target % width
       const row = Math.floor(target / width)
-      for (let dy = -LEG_SHOWN_RIM; dy <= LEG_SHOWN_RIM; dy += 1) {
-        for (let dx = -LEG_SHOWN_RIM; dx <= LEG_SHOWN_RIM; dx += 1) {
+      for (let dy = -SHOWN_RIM; dy <= SHOWN_RIM; dy += 1) {
+        for (let dx = -SHOWN_RIM; dx <= SHOWN_RIM; dx += 1) {
           const c = col + dx
           const r = row + dy
           if (c < 0 || r < 0 || c >= width || r >= height) continue
           const next = r * width + c
           const alpha = garment.data[next * 4 + 3]
-          if (!keep[next] && alpha > 0 && alpha < LEG_SHOWN_RIM_ALPHA) keep[next] = 2
+          if (!keep[next] && alpha > 0 && alpha < SHOWN_RIM_ALPHA) keep[next] = 2
         }
       }
     }
