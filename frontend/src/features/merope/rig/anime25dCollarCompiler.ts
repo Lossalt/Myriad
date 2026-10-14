@@ -202,10 +202,13 @@ export function splitHighCollarOcclusion(
   // A neck turning with the head slides sideways inside the collar. The collar
   // beside it at rest is in front of where it goes (the inner back seen
   // through the opening lies within the neck), so it joins the front collar.
+  // What hair or an arm hangs over at rest stays with the top, under them.
+  const over = layers.slice(layers.indexOf(topwear) + 1).filter((layer) => layer !== neck)
+  const coveredAtRest = (x: number, y: number) => over.some((layer) => rasterAlphaAt(layer, x, y) >= 128)
   const reach = Math.round(neck.width * COLLAR_SIDE_REACH)
   for (let y = exposedTop; y <= exposedBottom; y += 1) {
     for (let x = Math.ceil(neck.left) - reach; x < neck.left + neck.width + reach; x += 1) {
-      if (rasterAlphaAt(neck, x, y) > 0 || hiddenByFace(x, y)) continue
+      if (rasterAlphaAt(neck, x, y) > 0 || hiddenByFace(x, y) || coveredAtRest(x, y)) continue
       const localX = x - Math.round(topwear.left)
       const localY = y - Math.round(topwear.top)
       if (localX < 0 || localY < 0 || localX >= topwear.width || localY >= topwear.height) continue

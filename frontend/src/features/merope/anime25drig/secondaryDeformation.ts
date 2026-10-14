@@ -184,6 +184,8 @@ export interface Anime25DSecondaryDeformationBinding {
   frontHair: boolean
   frontHairParallaxScale: Float32Array | null
   chestWeights: Float32Array | null
+  /** A front collar's share of the neck's motion per vertex (frontCollarNeckWeights); all of it when absent. */
+  collarNeckWeights?: Float32Array | null
   bangWeights: Float32Array | null
   strandWeights: Float32Array | null
   alongStrand: Float32Array | null
@@ -228,7 +230,7 @@ export function createAnime25DSecondaryDeformationBinding(input: {
   turnKeyform?: BoundTurnKeyform | null
   bodyTurnKeyform?: BoundTurnKeyform | null
   standing?: StandingBinding | null
-} & Pick<Anime25DSecondaryDeformationBinding, 'figureSkin' | 'partSways'>): Anime25DSecondaryDeformationBinding {
+} & Pick<Anime25DSecondaryDeformationBinding, 'figureSkin' | 'partSways' | 'collarNeckWeights'>): Anime25DSecondaryDeformationBinding {
   return {
     ...input,
     head: input.source.group === 'head',
@@ -269,11 +271,11 @@ export function deformAnime25DSecondaryPoint(
       ? clamp((followBottom - restY) / Math.max(1, followBottom - frame.neckBottom + frame.neckFollowSpan), 0, 1)
       : 0
     const neckHeadBlend =
-      verticalNeckFollow && frame.highCollar
+      (verticalNeckFollow && frame.highCollar
         ? collarNeckHeadBlend(restY, frame)
         : verticalNeckFollow
           ? smoothstep(neckFollowProgress)
-          : 0
+          : 0) * (binding.frontCollar ? binding.collarNeckWeights?.[vertex] ?? 1 : 1)
     const frontCollarProgress =
       binding.frontCollar && !binding.collarContact
         ? clamp(

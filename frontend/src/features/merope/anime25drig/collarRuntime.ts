@@ -252,6 +252,51 @@ export function deformCollarClipMesh(
   }
 }
 
+/** Beside the neck, a front collar's share of the neck's motion is gone this far out, as a share of the neck's width there. */
+export const FRONT_COLLAR_SIDE_FADE = 0.5
+
+/**
+ * How much of the neck's motion each vertex of a front collar (rest x, y
+ * pairs) takes: all of it over the neck, fading out beside it. Null without
+ * a neck to read. A collar
+ * beside the neck at rest joins the front collar so a turning neck goes
+ * behind it, but it is cloth on the shoulders: carried along with the neck
+ * all the way out, its edge with the rest of the top would tear open.
+ */
+export function frontCollarNeckWeights(
+  rest: Float32Array,
+  layers: readonly Anime25DPlaybackLayer[],
+  readPixels: (layer: Anime25DPlaybackLayer) => Readonly<{ pixels: Uint8ClampedArray; width: number; height: number }> | null,
+): Float32Array | null {
+  const neck = layers.find((layer) => layer.role === 'neck')
+  const neckImage = neck ? readPixels(neck) : null
+  if (!neck || !neckImage) return null
+  const { pixels, width, height } = neckImage
+  const weights = new Float32Array(rest.length / 2).fill(1)
+  if (width < 1 || height < 1 || pixels.length !== width * height * 4) return weights
+  const spans: Array<[number, number] | null> = []
+  for (let row = 0; row < height; row++) {
+    let left = -1
+    let right = -1
+    for (let x = 0; x < width; x++) {
+      if (pixels[(row * width + x) * 4 + 3] < 128) continue
+      if (left < 0) left = x
+      right = x
+    }
+    spans.push(left < 0 ? null : [neck.x + (left / width) * neck.w, neck.x + ((right + 1) / width) * neck.w])
+  }
+  for (let vertex = 0; vertex < weights.length; vertex++) {
+    const x = rest[vertex * 2]
+    const row = Math.floor(((rest[vertex * 2 + 1] - neck.y) / neck.h) * height)
+    const span = spans[Math.max(0, Math.min(height - 1, row))]
+    if (!span) continue
+    const outside = Math.max(span[0] - x, x - span[1], 0)
+    const fade = Math.max(1, (span[1] - span[0]) * FRONT_COLLAR_SIDE_FADE)
+    weights[vertex] = smoothstep(1 - outside / fade)
+  }
+  return weights
+}
+
 /**
  * A standing figure's bones carry every layer (figureSkeleton), the neck
  * the clip draws through too: the clip goes where they carry the neck, or

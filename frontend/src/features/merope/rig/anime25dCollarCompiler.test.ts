@@ -212,6 +212,21 @@ test('the high collar beside the neck joins the front collar, so a neck sliding 
   assert.equal(alpha(rest, 12, 85), 255)
 })
 
+test('the collar beside the neck that the hair hangs over stays under the hair', () => {
+  const neck = raster('neck', 20, 20, 40, 50, () => [245, 205, 190, 255])
+  const topwear = raster('topwear', 0, 0, 80, 100, (_x, y) =>
+    y >= 20 && y <= 35 ? [42, 45, 62, 255] : [184, 176, 196, 255],
+  )
+  // A lock down the left side, x 8..15.
+  const hair = { ...raster('neck', 8, 0, 8, 60, () => [40, 30, 70, 255]), id: 'back-hair', role: 'back-hair' as const, group: 'head' as const }
+  const output = splitHighCollarOcclusion([topwear, hair, neck], anchors)
+  const front = output.find((layer) => layer.role === 'collar-front')!
+  const rest = output.find((layer) => layer.role === 'topwear')!
+  assert.equal(alphaAt(front, 12, 40), 0, 'not over the lock')
+  assert.equal(alphaAt(rest, 12, 40), 255)
+  assert.equal(alphaAt(front, 17, 40), 255, 'beside it, as before')
+})
+
 test('what the face hides at rest stays under the neck, so a raised chin shows neck, not the guessed garment', () => {
   const neck = raster('neck', 20, 20, 40, 50, () => [245, 205, 190, 255])
   const topwear = raster('topwear', 0, 0, 80, 100, (_x, y) =>
@@ -235,11 +250,11 @@ test('what the face hides at rest stays under the neck, so a raised chin shows n
 
 test('an open collar the decomposition drew over the neck: only cloth reaching in from outside goes in front', () => {
   const skin = [245, 205, 190, 255] as const
-  const chest = [240, 212, 198, 255] as const     // the shirt painted with the open chest's skin
+  const chest = [240, 212, 198, 255] as const // the shirt painted with the open chest's skin
   const portraitChest = [238, 214, 200, 255] as const
   const shirt = [250, 250, 252, 255] as const
   const band = [120, 30, 40, 255] as const
-  const chain = [140, 60, 70, 255] as const       // a dark chain the band's colour lies nearer than skin
+  const chain = [140, 60, 70, 255] as const // a dark chain the band's colour lies nearer than skin
   const neck = raster('neck', 20, 20, 40, 50, () => skin)
   const topwear = raster('topwear', 0, 0, 80, 100, (x, y) =>
     y >= 20 && y < 32 ? band : (x < 28 || x >= 52) && y >= 40 ? shirt : chest,

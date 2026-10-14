@@ -7,6 +7,7 @@ import {
   collarNeckHeadBlend,
   createCollarClipMesh,
   deformCollarClipMesh,
+  frontCollarNeckWeights,
   uploadCollarClipMesh,
 } from './collarRuntime'
 import { anime25DTorsoShellOffsetX } from './torsoDeformation'
@@ -258,3 +259,18 @@ function meshGl(): WebGL2RenderingContext {
     vertexAttribPointer: () => undefined,
   } as unknown as WebGL2RenderingContext
 }
+
+test('a front collar takes the neck\'s motion over the neck and less of it out beside it', () => {
+  // A neck 20 wide (x 40..59) on a 100 px canvas, drawn 1:1.
+  const neck = { role: 'neck', x: 40, y: 0, w: 20, h: 40 } as Anime25DPlaybackLayer
+  const pixels = new Uint8ClampedArray(20 * 40 * 4)
+  for (let p = 0; p < 20 * 40; p++) pixels[p * 4 + 3] = 255
+  const rest = Float32Array.from([50, 20, 60, 20, 65, 20, 70, 20, 90, 20])
+  const weights = frontCollarNeckWeights(rest, [neck], () => ({ pixels, width: 20, height: 40 }))!
+  assert.equal(weights[0], 1, 'over the neck')
+  assert.ok(weights[2] > 0.3 && weights[2] < 0.7, `half the fade out: ${weights[2]}`)
+  assert.equal(weights[3], 0, 'half the neck\'s width out')
+  assert.equal(weights[4], 0)
+  assert.ok(weights[1] >= weights[2] && weights[2] >= weights[3])
+  assert.equal(frontCollarNeckWeights(rest, [], () => null), null)
+})

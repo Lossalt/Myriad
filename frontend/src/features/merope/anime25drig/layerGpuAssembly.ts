@@ -12,6 +12,7 @@ import { isAnime25DRigidAttachment } from '../rig/anime25dLayerSemantics'
 import { removeDuplicatedNeckComponents } from './accessoryComponents'
 import { bindBodyTurnKeyform, playbackBodyKeys } from './bodyTurnKeyforms'
 import { sampleChestWeight } from './chestPhysics'
+import { frontCollarNeckWeights } from './collarRuntime'
 import { bindCropBoundary } from './cropBoundary'
 import { deriveCrownOcclusionBand, unionDrawing } from './crownOcclusion'
 import {
@@ -256,6 +257,7 @@ export function buildGpuLayer(source: PlaybackLayer, context: GpuLayerBuildConte
     frontHair: hair.frontHair,
     frontHairParallaxScale: hair.frontHairParallaxScale,
     chestWeights,
+    collarNeckWeights: source.role === 'collar-front' ? frontCollarNeckWeights(rest, playback.layers, readBindingPixels) : null,
     bangWeights: hair.bangWeights,
     strandWeights: hair.strandWeights,
     alongStrand: hair.alongStrand,
