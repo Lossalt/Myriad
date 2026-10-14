@@ -154,6 +154,21 @@ export function stackLowerLimbsByReference(
 }
 
 /**
+ * The back hair is behind the head. A decomposition of a picture it reads
+ * poorly (watercolour washes) can stack it over the face, with what it
+ * filled in behind the face then covering it. It goes just behind the face;
+ * what of it the portrait shows over the face the import's repair reveals.
+ */
+export function tuckBackHairBehindFace(layers: RasterLayer[]): RasterLayer[] {
+  const face = layers.findIndex((layer) => layer.role === 'face')
+  if (face < 0) return layers
+  const over = layers.filter((layer, index) => index > face && layer.role === 'back-hair')
+  if (over.length === 0) return layers
+  const output = layers.filter((layer) => !over.includes(layer))
+  return output.toSpliced(output.indexOf(layers[face]), 0, ...over)
+}
+
+/**
  * The back hair hangs behind the neck. A decomposition can put it in front
  * of the neck when locks fall over the top's collar; at rest the face hides
  * what lies under the chin, but once the head nods the back hair shows there
