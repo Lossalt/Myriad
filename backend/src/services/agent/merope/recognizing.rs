@@ -9,13 +9,13 @@
 //! becomes knowing (`strangers::adopt`).
 
 use sea_orm::DatabaseConnection;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::call::{self, Voice};
 use super::strangers::Stranger;
 use crate::services::agent::memory::unified::{self, Audience, MemoryKind};
 use myriad_merope::recognizing::{
-    Known, RARE_NEEDED, SCHEMA_NAME, parse, rare_shared, schema, section, system,
+    Known, RARE_NEEDED, SCHEMA_NAME, parse, rare_shared, schema, system,
 };
 use myriad_merope::strangers::evidence_marker;
 
@@ -32,40 +32,6 @@ const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn group_venue(venue: &str) -> String {
     Audience::group(venue, 0).venue()
-}
-
-/// Whom she takes this stranger in this group for, if anyone: (who, how
-/// sure, why).
-pub async fn guess(
-    db: &DatabaseConnection,
-    venue: &str,
-    stranger: &Stranger,
-) -> Option<(i32, String, String)> {
-    let row = unified::unowned_with_evidence(
-        db,
-        &group_venue(venue),
-        SOURCE,
-        &evidence_marker(&stranger.who),
-    )
-    .await
-    .ok()??;
-    let evidence: Value = serde_json::from_str(row.evidence.as_deref()?).ok()?;
-    Some((
-        i32::try_from(evidence.get("userId")?.as_i64()?).ok()?,
-        evidence.get("sure")?.as_str()?.to_string(),
-        row.content,
-    ))
-}
-
-/// What she wonders about this stranger, for her reply to them there.
-pub async fn guess_section(
-    db: &DatabaseConnection,
-    venue: &str,
-    stranger: &Stranger,
-) -> Option<String> {
-    let (user_id, sure, why) = guess(db, venue, stranger).await?;
-    let candidate = super::resolve_addressee_label(db, user_id).await;
-    Some(section(&stranger.name, &candidate, &sure, &why))
 }
 
 /// Having talked with them (their lines `said`), whether they might be

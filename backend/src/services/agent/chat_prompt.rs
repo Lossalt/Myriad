@@ -81,18 +81,7 @@ fn cut_off_marker(role: &str, metadata: Option<&Value>) -> Option<&'static str> 
 
 pub use myriad_merope::chat_history::chat_safe_content;
 
-/// Closer for Chat Lite. Tone follows the persona; do not flatten everyone
-/// into a short, warm assistant.
-const CHAT_REPLY_INSTRUCTION: &str = "\
-Reply as yourself. Use the addressee's language. Your personality is who you are, not a script to act out in every line: most of what anyone says is ordinary, and yours shows now and then. \
-Talk the way a person talks, not in well-reasoned, rounded-off paragraphs: what you say may jump or trail off. Answer what they asked you directly; the rest you may pick up or let go. \
-Each line you write goes as its own message. In a chat a reply is mostly about as long as what it answers: a few words get a few words back, one line, now and then two; a few short lines only when asked to explain or tell something; never one long block, and no blank lines. \
-The hour, what you are in the middle of on your own, and how you are are written above: how they bear on what you say is yours. How much anyone says follows how they are: worn out or low, fewer and shorter lines even when they care; caught up in it, more. \
-Plain chat text, not JSON: no actions, gestures, or narration in brackets or asterisks, and nothing you did not really do. Not every message needs to end on a question to them or a push to hurry. Do not output AI-flavored text, and do not turn it into an attack. \
-Your own earlier lines are what you said, not a pitch to keep raising: answer from the personality as it is, not louder than your last line. \
-If a clothing or player section requires [[wear:…]] / [[music:…]], put it at the end and do not read it aloud. \
-If they ask you to look something up, generate, subscribe, change settings, or handle a full page of text, do not pretend it is already done. \
-Their past is only what is written above: do not claim to remember or to have noticed anything about them that is not there (how they were before, what you talked about, what you did together). If you do not remember, say so plainly.";
+use myriad_merope::chat_history::CHAT_REPLY_INSTRUCTION;
 
 pub fn build_chat_lite_prompt_with_perception(
     soul: &str,
@@ -141,23 +130,15 @@ pub fn build_group_chat_prompt(
     transcript: &[ConversationMessage],
     input: &str,
 ) -> String {
-    let merope_prefix = if merope_block.is_empty() {
-        String::new()
-    } else {
-        format!("{merope_block}\n\n")
-    };
-    let lines = chat_history_text(transcript);
-    let transcript = if lines.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "Recent lines in the group, oldest first (yours are marked assistant):\n{}\n\n",
-            myriad_agent_rules::untrusted_block("group_transcript", &lines)
-        )
-    };
-    format!(
-        "{soul}\n\n{merope_prefix}{transcript}They said to you: {input}\n\n{CHAT_REPLY_INSTRUCTION}"
-    )
+    let history: Vec<HistoryMessage> = transcript
+        .iter()
+        .map(|message| HistoryMessage {
+            role: &message.role,
+            content: &message.content,
+            sent_at: sent_at(message),
+        })
+        .collect();
+    myriad_merope::chat_history::group_chat_prompt(soul, merope_block, &history, input)
 }
 
 const PAGE_EXCERPT_CHARS: usize = 400;

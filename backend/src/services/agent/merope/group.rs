@@ -25,11 +25,11 @@ pub mod heard {
 }
 
 pub mod jargon {
-    pub(crate) use crate::services::agent::merope::jargon::{heard, nominate, section_for};
+    pub(crate) use crate::services::agent::merope::jargon::{heard, nominate};
 }
 
 pub mod memes {
-    pub(crate) use crate::services::agent::merope::memes::{may_look_up, section_for};
+    pub(crate) use crate::services::agent::merope::memes::may_look_up;
 }
 
 pub mod senses {
@@ -51,20 +51,29 @@ pub mod sharing {
 
 pub mod stickers {
     pub(crate) use crate::services::agent::merope::stickers::{
-        keep_theirs, picture, resolve, sent,
+        current_identity, keep_theirs, left_this_month, picture, resolve, sendable, sent,
     };
 }
 
 pub mod strangers {
-    pub(crate) use crate::services::agent::merope::strangers::{
-        Stranger, adopt, enqueue_after, reply,
-    };
+    pub(crate) use crate::services::agent::merope::strangers::{Stranger, adopt, enqueue_after};
 }
 
 /// Her memory work queue, driven by a recorded scene.
 #[cfg(test)]
 pub mod memory_jobs {
     pub(crate) use crate::services::agent::merope::memory_jobs::tick;
+}
+
+pub mod soup {
+    pub(crate) use crate::services::agent::merope::soup::{
+        Table, after_turn_at, start_at, this_turn_at,
+    };
+}
+
+pub mod speaking {
+    pub(crate) use crate::services::agent::merope::clock::local_now;
+    pub(crate) use crate::services::agent::merope::resolve_addressee_label;
 }
 
 pub mod timing {

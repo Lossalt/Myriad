@@ -35,7 +35,6 @@ pub(crate) struct World {
     pub models: HashMap<String, VecDeque<Option<String>>>,
     /// A member's turn: how long it takes, what she says, the sticker.
     pub turns: VecDeque<(f64, String, Option<Value>)>,
-    pub strangers: VecDeque<(f64, String, Option<Value>)>,
     /// What she sees in a picture, by its key.
     pub seen: HashMap<String, myriad_merope::seeing::Seen>,
     /// Text sends (counted from 0) the platform refuses.
@@ -84,7 +83,6 @@ impl World {
             claimed: HashSet::new(),
             models: HashMap::new(),
             turns: VecDeque::new(),
-            strangers: VecDeque::new(),
             seen: HashMap::new(),
             refused: HashSet::new(),
             sends: 0,
@@ -275,13 +273,6 @@ pub(crate) fn model(operation: &str, system: &str, input: &str) -> Option<Option
 pub(crate) async fn turn(given: Value) -> Option<(String, Option<Value>)> {
     note("turn", given);
     let (seconds, text, sticker) = with(|world| world.turns.pop_front()).flatten()?;
-    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
-    Some((text, sticker))
-}
-
-pub(crate) async fn stranger(given: Value) -> Option<(String, Option<Value>)> {
-    note("stranger", given);
-    let (seconds, text, sticker) = with(|world| world.strangers.pop_front()).flatten()?;
     tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
     Some((text, sticker))
 }

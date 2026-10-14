@@ -419,26 +419,7 @@ pub async fn current_identity(db: &DatabaseConnection) -> Option<String> {
 /// uses, that belong here (`venue` is a group, or none for anywhere else),
 /// those the talk touches first, then those she sends most.
 pub async fn offered(db: &DatabaseConnection, venue: Option<&str>, talk: &str) -> Vec<Model> {
-    let hers = match current_identity(db).await {
-        Some(identity) => Condition::all()
-            .add(Column::KeptFrom.is_null())
-            .add(Column::Identity.eq(identity)),
-        None => Condition::all().add(Column::Id.is_null()),
-    };
-    let belongs = match venue {
-        Some(venue) => Condition::any()
-            .add(Column::Venue.is_null())
-            .add(Column::Venue.eq(venue)),
-        None => Condition::all().add(Column::Venue.is_null()),
-    };
-    let rows = Entity::find()
-        .filter(Condition::any().add(hers).add(kept::in_use()))
-        .filter(belongs)
-        .order_by_desc(Column::Sent)
-        .order_by_desc(Column::CreatedAt)
-        .all(db)
-        .await
-        .unwrap_or_default();
+    let rows = sendable(db, venue).await;
     let documents: Vec<lexical::Document> = rows
         .iter()
         .map(|row| lexical::Document {
@@ -468,6 +449,32 @@ pub async fn offered(db: &DatabaseConnection, venue: Option<&str>, talk: &str) -
         .take(OFFERED)
         .map(|(index, _)| rows[index].clone())
         .collect()
+}
+
+/// Her stickers that are still of her, and those she kept that she still
+/// uses, that belong here (`venue` is a group, or none for anywhere else),
+/// those she sends most first.
+pub async fn sendable(db: &DatabaseConnection, venue: Option<&str>) -> Vec<Model> {
+    let hers = match current_identity(db).await {
+        Some(identity) => Condition::all()
+            .add(Column::KeptFrom.is_null())
+            .add(Column::Identity.eq(identity)),
+        None => Condition::all().add(Column::Id.is_null()),
+    };
+    let belongs = match venue {
+        Some(venue) => Condition::any()
+            .add(Column::Venue.is_null())
+            .add(Column::Venue.eq(venue)),
+        None => Condition::all().add(Column::Venue.is_null()),
+    };
+    Entity::find()
+        .filter(Condition::any().add(hers).add(kept::in_use()))
+        .filter(belongs)
+        .order_by_desc(Column::Sent)
+        .order_by_desc(Column::CreatedAt)
+        .all(db)
+        .await
+        .unwrap_or_default()
 }
 
 /// When this month began in her zone; none when its first midnight is

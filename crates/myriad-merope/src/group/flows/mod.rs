@@ -21,6 +21,7 @@ mod heard;
 mod learn;
 mod sense;
 mod state;
+mod stranger;
 
 pub(crate) use answer::*;
 pub(crate) use deliver::*;
@@ -31,6 +32,7 @@ pub(crate) use heard::*;
 pub(crate) use learn::*;
 pub(crate) use sense::*;
 pub(crate) use state::*;
+pub(crate) use stranger::*;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,6 +199,9 @@ pub struct Answering {
     /// Her reading of the talk, while she does it.
     #[serde(default)]
     pub sensing: Option<Box<Sensing>>,
+    /// Her answer to someone from outside, while she puts it together.
+    #[serde(default)]
+    pub replying: Option<Box<Replying>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

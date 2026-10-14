@@ -308,20 +308,37 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 answered(venue, id, answer).await;
             });
         }
-        Effect::StrangerTurn {
+        Effect::SoupTurn {
             id,
+            venue: at,
+            asker,
+            words,
             owner,
-            stranger,
-            transcript,
-            said,
-            why,
-            sections,
         } => {
             tokio::spawn(async move {
-                let answer =
-                    stranger_turn(&venue, owner, stranger, transcript, said, why, sections).await;
-                answered(venue, id, answer).await;
+                use crate::services::agent::merope::group::soup;
+                let section =
+                    soup::this_turn_at(&soup::Table::Group(at), Some(&asker), &words, owner).await;
+                answered(venue, id, Answer::Soup { section }).await;
             });
+        }
+        Effect::SoupStart {
+            id,
+            venue: at,
+            words,
+            owner,
+        } => {
+            tokio::spawn(async move {
+                use crate::services::agent::merope::group::soup;
+                let opening = soup::start_at(&soup::Table::Group(at), &words, owner).await;
+                answered(venue, id, Answer::SoupOpening { opening }).await;
+            });
+        }
+        Effect::SoupAfter { venue: at } => {
+            if let Ok(db) = db() {
+                use crate::services::agent::merope::group::soup;
+                soup::after_turn_at(&db, &soup::Table::Group(at)).await;
+            }
         }
         Effect::React { id, to, emoji } => {
             tokio::spawn(async move {
@@ -345,6 +362,7 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
         }
         Effect::Ask {
             id,
+            how,
             voice,
             owner,
             operation,
@@ -357,6 +375,7 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
         } => {
             tokio::spawn(async move {
                 let asked = crate::services::agent::merope::group::asking::judge(
+                    how,
                     &voice,
                     owner,
                     &operation,

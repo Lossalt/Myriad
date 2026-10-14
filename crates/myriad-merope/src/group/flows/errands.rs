@@ -176,6 +176,7 @@ pub(crate) fn start_answer(
         went_out: None,
         site_owner: None,
         sensing: None,
+        replying: None,
     });
     let owner = match &errand.kind {
         Kind::First { owner, .. } => *owner,

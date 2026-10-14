@@ -91,6 +91,7 @@
     ],
     "mutedUntil": null,
     "next": 44,
+    "offered": {},
     "paused": {},
     "pending": null,
     "pictures": {},
@@ -386,7 +387,8 @@
                 "evidence": "{\"about\":\"火锅\",\"was\":\"火锅太辣\",\"grewFrom\":[{\"what\":\"和大家吃了一次火锅\"}]}",
                 "id": "view-1",
                 "lastAccessedAt": null,
-                "source": "view"
+                "source": "view",
+                "venue": null
               }
             ]
           },
@@ -475,7 +477,8 @@
                 "evidence": null,
                 "id": "heard-1",
                 "lastAccessedAt": null,
-                "source": "heard"
+                "source": "heard",
+                "venue": null
               }
             ]
           },
@@ -520,7 +523,8 @@
                 "evidence": null,
                 "id": "meme-1",
                 "lastAccessedAt": null,
-                "source": "meme"
+                "source": "meme",
+                "venue": null
               }
             ]
           },
@@ -1029,7 +1033,8 @@
                 "evidence": null,
                 "id": "meme-1",
                 "lastAccessedAt": null,
-                "source": "meme"
+                "source": "meme",
+                "venue": null
               }
             ]
           },

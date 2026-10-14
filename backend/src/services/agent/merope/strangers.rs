@@ -24,15 +24,16 @@ use std::time::Duration;
 use sea_orm::DatabaseConnection;
 use serde_json::json;
 
+#[cfg(test)]
 use crate::models::entities::agent_memories;
 use crate::services::agent::memory::unified;
+pub use myriad_merope::strangers::Stranger;
 #[cfg(test)]
 use myriad_merope::strangers::talks_key;
 use myriad_merope::strangers::{
     EXCHANGE_CHARS, Exchange, NOTE_SCHEMA, evidence_marker, evidence_of, note_schema, note_system,
-    parse_note, without_directives,
+    parse_note,
 };
-pub use myriad_merope::strangers::{Stranger, section};
 #[cfg(test)]
 use serde_json::Value;
 
@@ -41,7 +42,6 @@ pub const SOURCE: &str = "stranger";
 const REGULAR_AFTER: i64 = 3;
 /// A note nobody has touched this long fades.
 const FADE_AFTER: chrono::Duration = chrono::Duration::days(60);
-const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 const NOTE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Runtime-registry namespace of the exchange counts.
 pub const TALKS_NAMESPACE: &str = "merope_stranger_talks";
@@ -92,157 +92,6 @@ pub async fn adopt(
 /// The stored venue of a group (`telegram:-100123` → `group:telegram:-100123`).
 fn group_venue(venue: &str) -> String {
     unified::Audience::group(venue, 0).venue()
-}
-
-/// Her note on this person in this group, if she keeps one.
-async fn note_on(
-    db: &DatabaseConnection,
-    venue: &str,
-    stranger: &Stranger,
-) -> Option<agent_memories::Model> {
-    let marker = evidence_marker(&stranger.who);
-    unified::unowned_with_evidence(db, &group_venue(venue), SOURCE, &marker)
-        .await
-        .ok()
-        .flatten()
-}
-
-/// Her reply to someone from outside the community, in a group: the same
-/// voice, far less context. `None` if the model gave nothing.
-pub async fn reply(
-    db: &DatabaseConnection,
-    owner: i32,
-    venue: &str,
-    stranger: &Stranger,
-    transcript: &[crate::services::agent::ConversationMessage],
-    words: &str,
-    why: Option<&str>,
-    // How the group types, how her lines differ from theirs, and what she
-    // made of the talk, as for anyone in the group.
-    reading: &[String],
-) -> Option<(String, Option<serde_json::Value>)> {
-    let soul: String = crate::services::agent::identity::get_speaking_soul()
-        .await
-        .unwrap_or_default();
-    let note = note_on(db, venue, stranger).await.map(|row| row.content);
-    // The same account in her other groups: what she noted of them there.
-    let elsewhere = super::other_groups::noted_elsewhere(
-        db,
-        &group_venue(venue),
-        SOURCE,
-        &evidence_marker(&stranger.who),
-    )
-    .await;
-    let mut sections = vec![
-        super::group_speaking_section(&stranger.name),
-        myriad_merope::speaking::chat_app_section().to_string(),
-        section(&stranger.name, note.as_deref(), &elsewhere),
-        super::speaking_prompts::format_now_section(super::clock::local_now()),
-    ];
-    // Whom she takes them for, if anyone: a guess, nothing more.
-    if let Some(block) = super::recognizing::guess_section(db, venue, stranger).await {
-        sections.push(block);
-    }
-    let now = super::doing::now_text(chrono::Utc::now());
-    if let Some(block) = super::format_doing_section(now.as_deref(), &[]) {
-        sections.push(block);
-    }
-    if let Some(block) = super::format_bits_section(
-        &super::bits::in_group(db, venue, 3, Some(words)).await,
-        true,
-    ) {
-        sections.push(block);
-    }
-    if let Some(block) =
-        super::format_group_days_section(&super::bits::days_in(db, venue, 3, Some(words)).await)
-    {
-        sections.push(block);
-    }
-    if let Some(block) = super::other_groups::theirs_section(db, venue, words).await {
-        sections.push(block);
-    }
-    if let Some(block) = super::format_views_section(&super::views::touched(db, words, 2).await) {
-        sections.push(block);
-    }
-    // What she heard in groups about things, as with anyone in the group.
-    if let Some(block) =
-        myriad_merope::heard::section(&super::heard::brought_back(db, venue, words, 3).await)
-    {
-        sections.push(block);
-    }
-    // The group's turtle soup: anyone may ask, and so may they.
-    let table = super::soup::Table::Group(venue.to_string());
-    let game = match super::soup::this_turn_at(&table, Some(&stranger.name), words, owner).await {
-        Some(section) => section,
-        None => super::soup::GROUP_OFFER.to_string(),
-    };
-    sections.push(game);
-    // Stickers of her: hers, and this group's own.
-    let sticker_key = format!("stranger:{venue}:{}", stranger.who);
-    if let Some(stickers) = super::stickers::section(db, &sticker_key, Some(venue), words).await {
-        sections.push(stickers);
-    }
-    sections.extend(reading.iter().cloned());
-    // They did not call her: she speaks for a reason of her own.
-    if let Some(why) = why {
-        sections.push(myriad_merope::joining::speaking_up_section(why));
-    }
-    let prompt = crate::services::agent::chat_prompt::build_group_chat_prompt(
-        &soul,
-        &sections.join("\n\n"),
-        transcript,
-        words,
-    );
-    #[cfg(test)]
-    let recorded = crate::services::channel_group::g0::on();
-    #[cfg(not(test))]
-    let recorded = false;
-    let raw = if recorded {
-        said_in_scene(&prompt).await?
-    } else {
-        let model = super::call::Ask::new(super::call::Voice::Hers, owner, "group_stranger")
-            .within(REPLY_TIMEOUT)
-            .model()
-            .await
-            .ok()?;
-        // A reply the provider dropped halfway reached no one: ask once more.
-        let mut raw = model.say(&prompt).await;
-        if raw.as_ref().is_err_and(super::call::was_cut) {
-            raw = model.say(&prompt).await;
-        }
-        raw.ok()?
-    };
-    let (said, started) = super::soup::split_start(&raw);
-    let (said, sticker) = myriad_merope::stickers::split_sticker_directive(&said);
-    let sticker = match sticker {
-        Some(choice) => super::stickers::chosen_in(db, &sticker_key, choice).await,
-        None => None,
-    };
-    let mut text = without_directives(&said);
-    // She said she would think one up: the puzzle follows her words.
-    if started {
-        let opening = super::soup::start_at(&table, words, owner).await;
-        text = format!("{text}\n\n{opening}").trim().to_string();
-    }
-    // A game this line ended is over, and the group remembers it.
-    super::soup::after_turn_at(db, &table).await;
-    (!text.is_empty() || sticker.is_some()).then_some((text, sticker))
-}
-
-/// [`reply`]'s asking, in a recorded scene: asked once more when cut.
-#[cfg(test)]
-async fn said_in_scene(prompt: &str) -> Option<String> {
-    use crate::services::channel_group::g0;
-    let mut said = g0::say("group_stranger", prompt).await?;
-    if said == Err("cut") {
-        said = g0::say("group_stranger", prompt).await?;
-    }
-    said.ok()
-}
-
-#[cfg(not(test))]
-async fn said_in_scene(_: &str) -> Option<String> {
-    None
 }
 
 /// After she answered someone from outside: count it, and when they pause

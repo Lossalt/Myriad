@@ -1022,7 +1022,27 @@ impl End {
                 id,
                 match what {
                     ToRead::Soul => "soul",
-                    ToRead::VenueRows { .. } => "rows",
+                    ToRead::VenueRows { source, .. } => match source.as_str() {
+                        "bit" => "rows:bit",
+                        "group_day" => "rows:group_day",
+                        _ => "rows",
+                    },
+                    ToRead::Unowned { source, .. } => match source.as_str() {
+                        "stranger" => "unowned:stranger",
+                        _ => "unowned:maybe_is",
+                    },
+                    ToRead::UnownedElsewhere { .. } => "elsewhere",
+                    ToRead::OtherGroups { sources, .. } => {
+                        if sources.iter().any(|source| source == "jargon") {
+                            "others:jargon"
+                        } else {
+                            "others"
+                        }
+                    }
+                    ToRead::Titles { .. } => "titles",
+                    ToRead::Label { .. } => "label",
+                    ToRead::Now => "now",
+                    ToRead::Stickers { .. } => "stickers",
                     ToRead::OwnRows { source, .. } => match source.as_str() {
                         "view" => "own:view",
                         "heard" => "own:heard",
@@ -1037,7 +1057,8 @@ impl End {
             Effect::ReadLedger { id } => (id, "ledger"),
             Effect::ReadKept { id } => (id, "kept"),
             Effect::Turn { id, .. } => (id, "turn"),
-            Effect::StrangerTurn { id, .. } => (id, "stranger"),
+            Effect::SoupTurn { id, .. } => (id, "soup"),
+            Effect::SoupStart { id, .. } => (id, "opening"),
             Effect::React { id, .. } => (id, "react"),
             Effect::MayLookUp { id, .. } => (id, "may"),
             Effect::Define { id, .. } => (id, "define"),
@@ -1049,6 +1070,7 @@ impl End {
                     "group_making_sense" => "ask:group_making_sense",
                     "group_chime" => "ask:group_chime",
                     "meme" => "ask:meme",
+                    "group_stranger" => "ask:group_stranger",
                     _ => "ask",
                 },
             ),
@@ -1111,7 +1133,31 @@ fn default_answer(kind: &str) -> Answer {
         "soul" => Answer::Soul {
             text: "你是测试里的她。".into(),
         },
-        "rows" | "own:view" | "own:heard" | "own:meme" => Answer::Rows { rows: Vec::new() },
+        "rows" | "rows:bit" | "rows:group_day" | "own:view" | "own:heard" | "own:meme"
+        | "unowned:stranger" | "unowned:maybe_is" | "elsewhere" | "others" | "others:jargon" => {
+            Answer::Rows { rows: Vec::new() }
+        }
+        "titles" => Answer::Titles { titles: Vec::new() },
+        "label" => Answer::Label {
+            label: "某人".into(),
+        },
+        "now" => Answer::Now {
+            local: "2026-10-14T14:00:00+08:00".into(),
+            doing: None,
+        },
+        "stickers" => Answer::Stickers {
+            stickers: Vec::new(),
+            can_make: false,
+            left: 0,
+        },
+        "soup" => Answer::Soup { section: None },
+        "opening" => Answer::SoupOpening {
+            opening: "汤面：……".into(),
+        },
+        "ask:group_stranger" => Answer::Asked {
+            raw: Some("嗯嗯".into()),
+            failure: None,
+        },
         "life" => Answer::Life {
             did: Vec::new(),
             would_tell: Vec::new(),
@@ -1127,7 +1173,7 @@ fn default_answer(kind: &str) -> Answer {
         "embed" => Answer::Embedded { vector: None },
         "ledger" => Answer::LedgerRead { stored: None },
         "kept" => Answer::Kept { restore: None },
-        "turn" | "stranger" => Answer::Turned {
+        "turn" => Answer::Turned {
             text: Some("嗯嗯".into()),
             sticker: None,
             bound: true,
@@ -1255,6 +1301,7 @@ fn g1_she_speaks_up_unasked_and_reacts() {
                     r#"{"about":"火锅","was":"火锅太辣","grewFrom":[{"what":"和大家吃了一次火锅"}]}"#
                         .into(),
                 ),
+                venue: None,
                 created_at: BASE - secs(86_400.0),
                 access_count: 0,
                 last_accessed_at: None,
@@ -1283,6 +1330,7 @@ fn g1_she_speaks_up_unasked_and_reacts() {
                 concepts: Vec::new(),
                 source: "heard".into(),
                 evidence: None,
+                venue: None,
                 created_at: BASE - secs(3_600.0),
                 access_count: 0,
                 last_accessed_at: None,
@@ -1299,6 +1347,7 @@ fn g1_she_speaks_up_unasked_and_reacts() {
                 concepts: Vec::new(),
                 source: "meme".into(),
                 evidence: None,
+                venue: None,
                 created_at: BASE - secs(3_600.0),
                 access_count: 0,
                 last_accessed_at: None,
@@ -1337,6 +1386,7 @@ fn g1_she_speaks_up_unasked_and_reacts() {
                 concepts: Vec::new(),
                 source: "meme".into(),
                 evidence: None,
+                venue: None,
                 created_at: BASE - secs(3_600.0),
                 access_count: 0,
                 last_accessed_at: None,
@@ -1417,13 +1467,196 @@ fn g1_an_outsider_calls_her() {
             failure: None,
         },
     );
+    // Who they are to her, and what she brings in that their words touch.
+    let row = |id: &str, content: &str, source: &str, evidence: &str, venue: &str| MemoryRow {
+        id: id.into(),
+        content: content.into(),
+        concepts: Vec::new(),
+        source: source.into(),
+        evidence: Some(evidence.into()),
+        venue: Some(venue.into()),
+        created_at: BASE - secs(7_200.0),
+        access_count: 0,
+        last_accessed_at: None,
+    };
+    let here = "group:telegram:-100777";
+    let marker = r#"{"name":"路人","who":"telegram:31"}"#;
     end.answer(
-        "stranger",
+        "unowned:stranger",
+        0.2,
+        Answer::Rows {
+            rows: vec![row("note-1", "路人是常客", "stranger", marker, here)],
+        },
+    );
+    end.answer(
+        "elsewhere",
+        0.2,
+        Answer::Rows {
+            rows: vec![row(
+                "note-2",
+                "在隔壁群说自己是机器人迷",
+                "stranger",
+                marker,
+                "group:telegram:-100888",
+            )],
+        },
+    );
+    end.answer(
+        "unowned:maybe_is",
+        0.2,
+        Answer::Rows {
+            rows: vec![row(
+                "guess-1",
+                "他说话像小林",
+                "maybe_is",
+                r#"{"name":"路人","sure":"maybe","userId":7,"who":"telegram:31"}"#,
+                here,
+            )],
+        },
+    );
+    end.answer(
+        "label",
+        0.2,
+        Answer::Label {
+            label: "小林".into(),
+        },
+    );
+    end.answer(
+        "now",
+        0.2,
+        Answer::Now {
+            local: "2026-10-14T14:00:30+08:00".into(),
+            doing: Some("You are listening to a song.".into()),
+        },
+    );
+    end.answer(
+        "rows:bit",
+        0.2,
+        Answer::Rows {
+            rows: vec![
+                row(
+                    "bit-1",
+                    "谁先到谁请奶茶",
+                    "bit",
+                    r#"{"handle":"山顶见"}"#,
+                    here,
+                ),
+                row("bit-2", "没有把手", "bit", r#"{"handle":" "}"#, here),
+            ],
+        },
+    );
+    end.answer(
+        "rows:group_day",
+        0.2,
+        Answer::Rows {
+            rows: vec![
+                row(
+                    "day-1",
+                    "聊了一下午",
+                    "group_day",
+                    r#"{"day":"2026-10-13"}"#,
+                    here,
+                ),
+                row("day-2", "大家都在", "group_day", "{}", here),
+            ],
+        },
+    );
+    end.answer(
+        "others",
+        0.2,
+        Answer::Rows {
+            rows: vec![row(
+                "theirs-1",
+                "隔壁群天天说机器人",
+                "bit",
+                r#"{"handle":"机器人"}"#,
+                "group:telegram:-100888",
+            )],
+        },
+    );
+    end.answer(
+        "own:heard",
+        0.2,
+        Answer::Rows {
+            rows: vec![row(
+                "heard-1",
+                "听说机器人会抢饭碗",
+                "heard",
+                r#"{"group":"telegram:-100888"}"#,
+                "own",
+            )],
+        },
+    );
+    end.answer(
+        "stickers",
+        0.2,
+        Answer::Stickers {
+            stickers: vec![StickerRow {
+                id: "sticker-1".into(),
+                meaning: "我不是机器人".into(),
+                venue: None,
+                sent: 2,
+                last_sent_at: Some(BASE - secs(3_600.0)),
+                kept_from: Some("telegram:-100888".into()),
+            }],
+            can_make: true,
+            left: 3,
+        },
+    );
+    end.answer(
+        "own:meme",
+        0.2,
+        Answer::Rows {
+            rows: vec![row("meme-1", "「bot」：机器人", "meme", "{}", "own")],
+        },
+    );
+    end.answer(
+        "others:jargon",
+        0.2,
+        Answer::Rows {
+            rows: vec![
+                row("jargon-1", "「常客」：天天来的人", "jargon", "{}", here),
+                row(
+                    "jargon-2",
+                    "「机器人」：隔壁群说的懒人",
+                    "jargon",
+                    "{}",
+                    "group:telegram:-100888",
+                ),
+            ],
+        },
+    );
+    end.answer(
+        "titles",
+        0.2,
+        Answer::Titles {
+            titles: vec![("telegram:-100888".into(), Some("隔壁群".into()))],
+        },
+    );
+    // Cut the first time; then her words, a sticker, and a puzzle.
+    end.answer(
+        "ask:group_stranger",
+        1.0,
+        Answer::Asked {
+            raw: None,
+            failure: Some("cut".into()),
+        },
+    );
+    end.answer(
+        "ask:group_stranger",
         2.0,
-        Answer::Turned {
-            text: Some("（回复 路人）我是这里的常客啦".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some(
+                "（回复 路人）我是这里的常客啦\n来玩海龟汤吗\n[[game:soup]]\n[[sticker:1]]".into(),
+            ),
+            failure: None,
+        },
+    );
+    end.answer(
+        "opening",
+        1.0,
+        Answer::SoupOpening {
+            opening: "汤面：一个人走进酒吧……".into(),
         },
     );
     heard(&mut end, 0.0, message(1, 31, "路人", "这个bot是谁", false));

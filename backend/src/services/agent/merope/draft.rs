@@ -6,11 +6,14 @@ use std::time::Duration;
 /// Someone is waiting on her answer: a quick look, not a second thought.
 const LOOK_FOR: Duration = Duration::from_secs(8);
 
-/// A look her group mind asks for (see `myriad_merope::group`): its prompt
-/// as the core put it, on the judging model, billed to `owner`. The raw
-/// answer, or none when it gave none in time.
+/// What her group mind asks of a model (see `myriad_merope::group`): its
+/// prompt as the core put it, in the voice it names, billed to `owner`; a
+/// JSON answer to `schema`, or what she says to the whole prompt (`input`).
+/// The raw answer, or how it failed (`unavailable`, `timeout`, `cut`,
+/// `invalid`, `failed`).
 #[allow(clippy::too_many_arguments)]
 pub async fn ask(
+    how: myriad_merope::group::AskKind,
     voice: &str,
     owner: i32,
     operation: &str,
@@ -21,11 +24,13 @@ pub async fn ask(
     schema: &serde_json::Value,
 ) -> Result<String, &'static str> {
     use super::call::{Failure, Voice};
+    use myriad_merope::group::AskKind;
     let operation: &'static str = match operation {
         "draft_still" => "draft_still",
         "group_making_sense" => "group_making_sense",
         "group_chime" => "group_chime",
         "meme" => "meme",
+        "group_stranger" => "group_stranger",
         _ => "group_mind",
     };
     let voice = match voice {
@@ -33,17 +38,34 @@ pub async fn ask(
         "hersAtLength" => Voice::HersAtLength,
         _ => Voice::Judge,
     };
-    super::call::Ask::new(voice, owner, operation)
-        .within(within)
-        .json_raw(system, input, schema_name, schema)
-        .await
-        .map_err(|failure| match failure {
-            Failure::Unavailable => "unavailable",
-            Failure::Timeout => "timeout",
-            Failure::StreamInterrupted => "cut",
-            Failure::InvalidOutput => "invalid",
-            _ => "failed",
-        })
+    let class = |failure: Failure| match failure {
+        Failure::Unavailable => "unavailable",
+        Failure::Timeout => "timeout",
+        Failure::StreamInterrupted => "cut",
+        Failure::InvalidOutput => "invalid",
+        _ => "failed",
+    };
+    let ask = super::call::Ask::new(voice, owner, operation).within(within);
+    match how {
+        AskKind::Say => {
+            #[cfg(test)]
+            if let Some(said) = crate::services::channel_group::g0::say(operation, input).await {
+                return said;
+            }
+            ask.model()
+                .await
+                .map_err(class)?
+                .say(input)
+                .await
+                .map_err(class)
+        }
+        AskKind::Json => ask
+            .json_raw(system, input, schema_name, schema)
+            .await
+            .map_err(class),
+        // Pictures are looked at through `look`; nothing asks this way yet.
+        AskKind::Look => Err("unavailable"),
+    }
 }
 
 /// Whether `draft`, her answer to `said`, still fits now that `came` arrived

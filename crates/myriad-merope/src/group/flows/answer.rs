@@ -212,28 +212,19 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
         (AnswerStage::StrangerTyping, Some(Answer::Typed)) => {
             a.began = now;
             a.stage = AnswerStage::StrangerTurning;
-            let effect = |id| Effect::StrangerTurn {
-                id,
-                owner: a.owner.unwrap_or_default(),
-                stranger: a.stranger.clone().unwrap_or(Stranger {
-                    who: String::new(),
-                    name: String::new(),
-                }),
-                transcript: a.transcript.clone(),
-                said: a.said.clone(),
-                why: a.chime.clone(),
-                sections: a.sections.clone(),
-            };
-            Next::Wait(cx.effect(effect))
+            let (replying, replied) = reply_start(cx, a);
+            a.replying = Some(Box::new(replying));
+            stranger_replied(cx, a, replied)
         }
-        (AnswerStage::StrangerTurning, Some(Answer::Turned { text, sticker, .. })) => {
-            let text = text.map(|text| text.trim().to_string()).unwrap_or_default();
-            if text.is_empty() && sticker.is_none() {
+        (AnswerStage::StrangerTurning, answer) => {
+            let Some(mut replying) = a.replying.take() else {
                 return Next::Done(false);
+            };
+            let replied = reply_step(cx, &mut replying, answer);
+            if matches!(replied, Replied::Wait(_)) {
+                a.replying = Some(replying);
             }
-            a.reply = without_reply_mark(&text);
-            a.sticker = sticker;
-            say(cx, a)
+            stranger_replied(cx, a, replied)
         }
         (AnswerStage::Restoring, Some(Answer::Kept { restore })) => {
             if let Some(restore) = restore {
@@ -412,4 +403,21 @@ fn sensed_stranger(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> N
     a.stage = AnswerStage::StrangerTyping;
     let to = a.message.target();
     Next::Wait(cx.effect(|id| Effect::Typing { id, to }))
+}
+
+/// Her answer to someone from outside, as far as it got.
+fn stranger_replied(cx: &mut Cx, a: &mut Answering, replied: Replied) -> Next {
+    match replied {
+        Replied::Wait(awaiting) => Next::Wait(awaiting),
+        Replied::Done(None) => Next::Done(false),
+        Replied::Done(Some((text, sticker))) => {
+            let text = text.trim().to_string();
+            if text.is_empty() && sticker.is_none() {
+                return Next::Done(false);
+            }
+            a.reply = without_reply_mark(&text);
+            a.sticker = sticker;
+            say(cx, a)
+        }
+    }
 }

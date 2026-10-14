@@ -254,7 +254,7 @@ pub(crate) fn sense_step(cx: &mut Cx, s: &mut Sensing, answer: Option<Answer>) -
 }
 
 /// Rows as recall reads them: each with its cues after what it says.
-fn with_cues(rows: &[MemoryRow], cues: &HashMap<String, String>) -> Vec<MemoryRow> {
+pub(crate) fn with_cues(rows: &[MemoryRow], cues: &HashMap<String, String>) -> Vec<MemoryRow> {
     rows.iter()
         .map(|row| {
             let mut row = row.clone();

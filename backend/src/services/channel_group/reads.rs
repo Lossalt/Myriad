@@ -14,6 +14,7 @@ fn row(model: crate::models::entities::agent_memories::Model) -> MemoryRow {
         content: model.content,
         source: model.source,
         evidence: model.evidence,
+        venue: Some(model.venue),
         created_at: model.created_at.timestamp_micros(),
         access_count: model.access_count,
         last_accessed_at: model.last_accessed_at.map(|at| at.timestamp_micros()),
@@ -32,7 +33,7 @@ pub(super) fn no_database() -> bool {
 
 pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
     let _ = venue;
-    if no_database() && !matches!(what, ToRead::Soul) {
+    if no_database() && !matches!(what, ToRead::Soul | ToRead::Now | ToRead::Titles { .. }) {
         return match what {
             ToRead::Cues { .. } => Answer::Cues {
                 cues: Default::default(),
@@ -45,6 +46,14 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
                 did: Vec::new(),
                 would_tell: Vec::new(),
                 now: None,
+            },
+            ToRead::Stickers { .. } => Answer::Stickers {
+                stickers: Vec::new(),
+                can_make: false,
+                left: 0,
+            },
+            ToRead::Label { user_id } => Answer::Label {
+                label: user_id.to_string(),
             },
             _ => Answer::Rows { rows: Vec::new() },
         };
@@ -100,6 +109,127 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
                 now: doing::now_text(crate::services::agent::memory::utc_now()),
             }
         }
+        ToRead::Unowned {
+            venue,
+            source,
+            marker,
+        } => {
+            let (Ok(db), Some(source)) = (db(), unowned_source(&source)) else {
+                return Answer::Rows { rows: Vec::new() };
+            };
+            Answer::Rows {
+                rows: unified::unowned_with_evidence(&db, &venue, source, &marker)
+                    .await
+                    .ok()
+                    .flatten()
+                    .into_iter()
+                    .map(row)
+                    .collect(),
+            }
+        }
+        ToRead::UnownedElsewhere {
+            here,
+            source,
+            marker,
+            limit,
+        } => {
+            let (Ok(db), Some(source)) = (db(), unowned_source(&source)) else {
+                return Answer::Rows { rows: Vec::new() };
+            };
+            Answer::Rows {
+                rows: unified::unowned_elsewhere(&db, &here, source, &marker, limit)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(row)
+                    .collect(),
+            }
+        }
+        ToRead::OtherGroups {
+            here,
+            sources,
+            limit,
+        } => {
+            let sources: Vec<&'static str> = sources
+                .iter()
+                .filter_map(|source| group_source(source))
+                .collect();
+            let Ok(db) = db() else {
+                return Answer::Rows { rows: Vec::new() };
+            };
+            if sources.is_empty() {
+                return Answer::Rows { rows: Vec::new() };
+            }
+            Answer::Rows {
+                rows: unified::in_other_groups(&db, None, &here, &sources, limit)
+                    .await
+                    .into_iter()
+                    .map(row)
+                    .collect(),
+            }
+        }
+        ToRead::Titles { venues } => {
+            let mut titles = Vec::with_capacity(venues.len());
+            for venue in venues {
+                let name = super::title(&venue).await;
+                titles.push((venue, name));
+            }
+            Answer::Titles { titles }
+        }
+        ToRead::Label { user_id } => {
+            let Ok(db) = db() else {
+                return Answer::Label {
+                    label: user_id.to_string(),
+                };
+            };
+            Answer::Label {
+                label: crate::services::agent::merope::group::speaking::resolve_addressee_label(
+                    &db, user_id,
+                )
+                .await,
+            }
+        }
+        // Her clock, and what her life on the site says she is doing.
+        ToRead::Now => Answer::Now {
+            local: crate::services::agent::merope::group::speaking::local_now()
+                .fixed_offset()
+                .to_rfc3339(),
+            doing: crate::services::agent::merope::group::doing::now_text(
+                crate::services::agent::memory::utc_now(),
+            ),
+        },
+        ToRead::Stickers { venue } => {
+            use crate::services::agent::merope::group::stickers;
+            let Ok(db) = db() else {
+                return Answer::Stickers {
+                    stickers: Vec::new(),
+                    can_make: false,
+                    left: 0,
+                };
+            };
+            let can_make = stickers::current_identity(&db).await.is_some();
+            let rows = stickers::sendable(&db, Some(&venue)).await;
+            let left = if can_make {
+                stickers::left_this_month(&db).await
+            } else {
+                0
+            };
+            Answer::Stickers {
+                stickers: rows
+                    .into_iter()
+                    .map(|sticker| myriad_merope::group::StickerRow {
+                        id: sticker.id,
+                        meaning: sticker.meaning,
+                        venue: sticker.venue,
+                        sent: sticker.sent,
+                        last_sent_at: sticker.last_sent_at.map(|at| at.timestamp_micros()),
+                        kept_from: sticker.kept_from,
+                    })
+                    .collect(),
+                can_make,
+                left,
+            }
+        }
         ToRead::Cues { ids } => {
             let cues = match db() {
                 Ok(db) => unified::cues_of(&db, &ids).await,
@@ -131,6 +261,26 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
                     .unwrap_or_default(),
             }
         }
+    }
+}
+
+/// Sources kept with no owner that her group mind reads: her notes on
+/// people from outside, and her guesses at who they are.
+fn unowned_source(source: &str) -> Option<&'static str> {
+    match source {
+        "stranger" => Some("stranger"),
+        "maybe_is" => Some("maybe_is"),
+        _ => None,
+    }
+}
+
+/// A group's own sources her group mind reads from other groups.
+fn group_source(source: &str) -> Option<&'static str> {
+    match source {
+        "bit" => Some("bit"),
+        "group_day" => Some("group_day"),
+        "jargon" => Some("jargon"),
+        _ => None,
     }
 }
 

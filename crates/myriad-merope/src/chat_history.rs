@@ -36,6 +36,46 @@ pub fn chat_safe_content(content: &str) -> String {
         .to_string()
 }
 
+/// Closer for Chat Lite. Tone follows the persona; do not flatten everyone
+/// into a short, warm assistant.
+pub const CHAT_REPLY_INSTRUCTION: &str = "\
+Reply as yourself. Use the addressee's language. Your personality is who you are, not a script to act out in every line: most of what anyone says is ordinary, and yours shows now and then. \
+Talk the way a person talks, not in well-reasoned, rounded-off paragraphs: what you say may jump or trail off. Answer what they asked you directly; the rest you may pick up or let go. \
+Each line you write goes as its own message. In a chat a reply is mostly about as long as what it answers: a few words get a few words back, one line, now and then two; a few short lines only when asked to explain or tell something; never one long block, and no blank lines. \
+The hour, what you are in the middle of on your own, and how you are are written above: how they bear on what you say is yours. How much anyone says follows how they are: worn out or low, fewer and shorter lines even when they care; caught up in it, more. \
+Plain chat text, not JSON: no actions, gestures, or narration in brackets or asterisks, and nothing you did not really do. Not every message needs to end on a question to them or a push to hurry. Do not output AI-flavored text, and do not turn it into an attack. \
+Your own earlier lines are what you said, not a pitch to keep raising: answer from the personality as it is, not louder than your last line. \
+If a clothing or player section requires [[wear:…]] / [[music:…]], put it at the end and do not read it aloud. \
+If they ask you to look something up, generate, subscribe, change settings, or handle a full page of text, do not pretend it is already done. \
+Their past is only what is written above: do not claim to remember or to have noticed anything about them that is not there (how they were before, what you talked about, what you did together). If you do not remember, say so plainly.";
+
+/// A group chat turn. The transcript is the group's recent lines, each
+/// `name：text`, written by anyone in the group including people outside the
+/// community, so it is fenced as untrusted data.
+pub fn group_chat_prompt(
+    soul: &str,
+    block: &str,
+    history: &[HistoryMessage],
+    input: &str,
+) -> String {
+    let prefix = if block.is_empty() {
+        String::new()
+    } else {
+        format!("{block}\n\n")
+    };
+    let latest = &history[history.len().saturating_sub(HISTORY_MESSAGES)..];
+    let lines = chat_history_text(latest);
+    let transcript = if lines.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Recent lines in the group, oldest first (yours are marked assistant):\n{}\n\n",
+            myriad_agent_rules::untrusted_block("group_transcript", &lines)
+        )
+    };
+    format!("{soul}\n\n{prefix}{transcript}They said to you: {input}\n\n{CHAT_REPLY_INSTRUCTION}")
+}
+
 /// The conversation as far back as she would still have it in front of
 /// her: the latest messages, up to this many or this much text.
 pub const HISTORY_MESSAGES: usize = 40;

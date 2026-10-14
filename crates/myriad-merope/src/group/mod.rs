@@ -16,9 +16,10 @@
 //! restart; what she makes of the talk, and whether she speaks up, from what
 //! she has that the talk touches (her views, what she heard, the words she
 //! knows, read as rows; what she did, would tell and is doing, as facts her
-//! host's life gives); looking up the words she is not sure of. What she
-//! says is still asked of the end as whole steps (`turn`, `stranger`); it
-//! moves here later.
+//! host's life gives); looking up the words she is not sure of; her whole
+//! answer to someone from outside, put together from what is read and
+//! asked of her here. What she says to a member is still asked of the end as
+//! a whole step (`turn`); it moves here later.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -247,6 +248,10 @@ pub struct Group {
     /// Replies today to people outside the community.
     #[serde(default)]
     pub stranger_replies: Option<DayCount>,
+    /// The stickers last offered to each person from outside (by who they
+    /// are), so the number she picks is the sticker she saw.
+    #[serde(default)]
+    pub offered: BTreeMap<String, Vec<String>>,
     /// The last line she took in for what she heard.
     #[serde(default)]
     pub heard_upto: Option<i64>,
@@ -310,6 +315,7 @@ impl Default for Group {
             muted_until: None,
             everyone_muted_until: None,
             stranger_replies: None,
+            offered: BTreeMap::new(),
             heard_upto: None,
             pictures: BTreeMap::new(),
             reach: None,
@@ -562,6 +568,36 @@ pub enum Answer {
     MayLookUp {
         may: May,
     },
+    Now {
+        /// RFC 3339, in her zone.
+        local: String,
+        #[serde(default)]
+        doing: Option<String>,
+    },
+    Stickers {
+        #[serde(default)]
+        stickers: Vec<StickerRow>,
+        #[serde(default)]
+        can_make: bool,
+        #[serde(default)]
+        left: usize,
+    },
+    Titles {
+        #[serde(default)]
+        titles: Vec<(String, Option<String>)>,
+    },
+    Label {
+        label: String,
+    },
+    /// The turtle soup's section for this turn, when a game is on.
+    Soup {
+        #[serde(default)]
+        section: Option<String>,
+    },
+    /// The puzzle she thought up, as it opens.
+    SoupOpening {
+        opening: String,
+    },
     /// The dictionaries' entry, if they have one.
     Defined {
         #[serde(default)]
@@ -761,16 +797,25 @@ pub enum Effect {
         speaker: String,
         first: bool,
     },
-    /// Her light answer to someone from outside, on the owner's account.
-    StrangerTurn {
+    /// The group's turtle soup at this turn (the end's until D2c):
+    /// `words` from `asker` judged when a game is on, billed to `owner`.
+    SoupTurn {
         id: String,
+        venue: String,
+        asker: String,
+        words: String,
         owner: i32,
-        stranger: Stranger,
-        transcript: Vec<Spoken>,
-        said: String,
-        why: Option<String>,
-        sections: Vec<String>,
     },
+    /// She said she would think one up: the puzzle she brings out.
+    SoupStart {
+        id: String,
+        venue: String,
+        words: String,
+        owner: i32,
+    },
+    /// After her reply: a game this turn ended is over, and the group
+    /// remembers it.
+    SoupAfter { venue: String },
     React {
         id: String,
         to: Target,
@@ -860,6 +905,40 @@ pub enum ToRead {
         talk: String,
         related: usize,
     },
+    /// Her clock in her zone (RFC 3339), and what she is doing now.
+    Now,
+    /// The stickers she may send in the group `venue`: hers still of her,
+    /// and those she kept that she still uses, belonging there or anywhere;
+    /// most sent first. With whether she can make one, and how many are
+    /// left this month.
+    Stickers { venue: String },
+    /// The row of `source` kept in `venue` with no owner whose evidence
+    /// carries `marker`, if any (her note on someone from outside, her guess
+    /// at who they are), most recently touched first.
+    Unowned {
+        venue: String,
+        source: String,
+        marker: String,
+    },
+    /// Those kept in groups other than `here`, at most `limit`.
+    UnownedElsewhere {
+        here: String,
+        source: String,
+        marker: String,
+        limit: u64,
+    },
+    /// Rows of `sources` kept in groups other than `here` (empty: any
+    /// group), freshest first, short notes that faded left out.
+    OtherGroups {
+        here: String,
+        sources: Vec<String>,
+        limit: u64,
+    },
+    /// What these groups (`<platform>:<chat>`) call themselves, as their
+    /// platforms say.
+    Titles { venues: Vec<String> },
+    /// How someone from the community goes by, by their account.
+    Label { user_id: i32 },
     /// The vectors kept for these memories (as read, with their cues), by
     /// the model in use; up to `fill` of those without one are given one
     /// behind the reply.
@@ -907,6 +986,25 @@ pub enum May {
     NoneLeft,
 }
 
+/// A sticker she may send, as it is read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickerRow {
+    pub id: String,
+    pub meaning: String,
+    /// The group it belongs to; none: anywhere.
+    #[serde(default)]
+    pub venue: Option<String>,
+    #[serde(default)]
+    pub sent: i32,
+    /// µs.
+    #[serde(default)]
+    pub last_sent_at: Option<i64>,
+    /// The group she kept it from, when it is not of her.
+    #[serde(default)]
+    pub kept_from: Option<String>,
+}
+
 /// A dictionary entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -927,6 +1025,9 @@ pub struct MemoryRow {
     pub source: String,
     #[serde(default)]
     pub evidence: Option<String>,
+    /// Where it is kept (`group:telegram:-100123`, `own`).
+    #[serde(default)]
+    pub venue: Option<String>,
     /// µs.
     pub created_at: i64,
     #[serde(default)]

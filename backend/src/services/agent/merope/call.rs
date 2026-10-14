@@ -291,11 +291,6 @@ pub(super) async fn site_owner() -> Option<i32> {
         .ok()
 }
 
-/// Whether the provider dropped a reply halfway.
-pub(super) fn was_cut(error: &Failure) -> bool {
-    *error == Failure::StreamInterrupted
-}
-
 /// A model's answer as `T`: the JSON object in it, or the whole of it.
 pub(super) use myriad_merope::answer::parse;
 
