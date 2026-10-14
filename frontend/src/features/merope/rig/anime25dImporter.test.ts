@@ -593,6 +593,31 @@ test('a full figure keeps each leg and shoe, frames down to the soles and leans 
   assert.ok(Math.abs(playback.anchors.groundY! - Math.max(...feet.map((layer) => layer.y + layer.h))) <= 3)
 })
 
+test('a gown down to the shoes, with no legs, leans from the top of the gown', async () => {
+  const standing = standingSeeThroughPsd([[80, 200, 120, 440], [136, 200, 176, 440]])
+  const width = standing.width
+  const height = standing.height
+  const gown = new Uint8ClampedArray(width * height * 4)
+  for (let y = 190; y < 445; y += 1) {
+    for (let x = 60; x < 196; x += 1) gown.set([40, 50, 120, 255], (y * width + x) * 4)
+  }
+  const psd = {
+    ...standing,
+    children: [
+      ...(standing.children ?? []).filter((layer) => layer.name !== 'legwear' && layer.name !== 'bottomwear'),
+      { name: 'bottomwear', left: 0, top: 0, imageData: { width, height, data: gown } },
+    ],
+  } as Psd
+  const prepared = await prepareWithFakeCanvas(psd, undefined, undefined, 'fullBody')
+  const playback = prepared.source.anime25dPlayback!
+  assert.ok(!playback.layers.some((layer) => layer.role === 'legwear'))
+  const skirt = playback.layers.filter((layer) => layer.role === 'bottomwear')
+  const waistY = Math.min(...skirt.map((layer) => layer.y))
+  assert.ok(Math.abs(playback.anchors.bodyPivot.y - waistY) <= 3, `${playback.anchors.bodyPivot.y} vs ${waistY}`)
+  const feet = playback.layers.filter((layer) => layer.role === 'footwear')
+  assert.ok(Math.abs(playback.anchors.groundY! - Math.max(...feet.map((layer) => layer.y + layer.h))) <= 3)
+})
+
 test('legs pressed together are cut down their middle into a left and a right leg', async () => {
   const prepared = await prepareWithFakeCanvas(
     standingSeeThroughPsd([[80, 200, 176, 440]]),

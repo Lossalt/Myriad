@@ -57,18 +57,20 @@ export function contentFrame(
 /**
  * A standing figure's hips and ground: the top of its legs, between them, and
  * the line its soles stand on. The upper body leans from the hips while the
- * legs and feet stay planted.
+ * legs and feet stay planted. A gown down to the shoes hides the legs: the
+ * hips are then the top of the lower garment, between its sides.
  */
 export function standingStance(
   layers: readonly RasterLayer[],
 ): { hips: RigPoint; groundY: number } | null {
   const legs = layers.filter((layer) => layer.role === 'legwear')
-  if (legs.length === 0) return null
-  const left = Math.min(...legs.map((layer) => layer.left))
-  const right = Math.max(...legs.map((layer) => layer.left + layer.width))
-  const planted = [...legs, ...layers.filter((layer) => layer.role === 'footwear')]
+  const lower = legs.length > 0 ? legs : layers.filter((layer) => layer.role === 'bottomwear')
+  if (lower.length === 0) return null
+  const left = Math.min(...lower.map((layer) => layer.left))
+  const right = Math.max(...lower.map((layer) => layer.left + layer.width))
+  const planted = [...lower, ...layers.filter((layer) => layer.role === 'footwear')]
   return {
-    hips: { x: (left + right) / 2, y: Math.min(...legs.map((layer) => layer.top)) },
+    hips: { x: (left + right) / 2, y: Math.min(...lower.map((layer) => layer.top)) },
     groundY: Math.max(...planted.map((layer) => layer.top + layer.height)),
   }
 }

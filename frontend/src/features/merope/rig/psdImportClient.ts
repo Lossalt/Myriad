@@ -24,6 +24,19 @@ export type RigPsdImportReply =
   | { prepared: PreparedAnime25DRigImport }
   | { error: string }
 
+/** A hung import gives up after this long for a PSD of IMPORT_TIMEOUT_PIXELS or less. */
+const IMPORT_TIMEOUT_MS = 60_000
+/** Larger PSDs (a stitched full figure, 4096 tall and as wide as its gown) get proportionally longer. */
+const IMPORT_TIMEOUT_PIXELS = 2048 * 2048
+
+/** How long the import of a PSD may take, from the size its header gives. */
+export function importTimeoutMs(buffer: ArrayBuffer): number {
+  if (buffer.byteLength < 26) return IMPORT_TIMEOUT_MS
+  const header = new DataView(buffer)
+  const pixels = header.getUint32(14) * header.getUint32(18)
+  return IMPORT_TIMEOUT_MS * Math.max(1, pixels / IMPORT_TIMEOUT_PIXELS)
+}
+
 export function importRigPsdInWorker(
   request: RigPsdImportRequest,
   signal?: AbortSignal,
@@ -53,7 +66,7 @@ export function importRigPsdInWorker(
       finish(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
     const timeout = setTimeout(
       () => finish(new Error(request.copy.psdSpecInvalid)),
-      60_000,
+      importTimeoutMs(request.buffer),
     )
     worker.onmessage = (event: MessageEvent<RigPsdImportReply>) => {
       if (settled) return
