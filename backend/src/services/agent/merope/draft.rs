@@ -31,6 +31,9 @@ pub async fn ask(
         "group_chime" => "group_chime",
         "meme" => "meme",
         "group_stranger" => "group_stranger",
+        "group_member" => "group_member",
+        "soup_judge" => "soup_judge",
+        "soup_start" => "soup_start",
         _ => "group_mind",
     };
     let voice = match voice {

@@ -36,11 +36,11 @@ use crate::services::agent::UserRequest;
 use crate::services::agent::memory::unified::{self, Audience};
 #[cfg(test)]
 pub(crate) use myriad_merope::soup::{Asked, Verdict};
-use myriad_merope::soup::{
-    Ending, Game, JUDGE_SCHEMA, JUDGE_SYSTEM, Judged, NOT_THIS_TIME, Puzzle, SETTINGS,
-    START_SCHEMA, apply, judge_input, judge_schema, section, start_schema, start_system,
-};
 pub use myriad_merope::soup::{GROUP_OFFER, OFFER, Table, split_start};
+use myriad_merope::soup::{
+    Game, JUDGE_SCHEMA, JUDGE_SYSTEM, Judged, NOT_THIS_TIME, Puzzle, SETTINGS, START_SCHEMA, apply,
+    judge_input, judge_schema, section, start_schema, start_system,
+};
 
 /// Kept past its last question at most this long, for it to be put away
 /// when they are next here.
@@ -55,13 +55,47 @@ pub const GAMES_NAMESPACE: &str = "merope_soup";
 static ON: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn mark(table: &Table, on: bool) {
+    mark_at(&table.record_id(), on);
+}
+
+fn mark_at(id: &str, on: bool) {
     if let Ok(mut tables) = ON.lock() {
         if on {
-            tables.insert(table.record_id());
+            tables.insert(id.to_string());
         } else {
-            tables.remove(&table.record_id());
+            tables.remove(id);
         }
     }
+}
+
+/// The game on at the table `id` (`Table::record_id`), as kept, for her group
+/// mind, which sees to it itself (whether it was left too long, too).
+pub(crate) async fn game_at(id: &str) -> Option<serde_json::Value> {
+    let db = crate::services::process_db::database().ok()?;
+    let game =
+        crate::services::runtime_registry::get::<serde_json::Value>(&db, GAMES_NAMESPACE, id)
+            .await
+            .ok()
+            .flatten();
+    mark_at(id, game.is_some());
+    game
+}
+
+/// Keep the game on at the table `id`, as her group mind left it.
+pub(crate) async fn keep_at(id: &str, game: serde_json::Value) {
+    let Ok(game) = serde_json::from_value::<Game>(game) else {
+        return;
+    };
+    save_at(id, &game).await;
+}
+
+/// Take the game off the table `id`.
+pub(crate) async fn take_at(id: &str) {
+    mark_at(id, false);
+    let Ok(db) = crate::services::process_db::database() else {
+        return;
+    };
+    let _ = crate::services::runtime_registry::take::<Game>(&db, GAMES_NAMESPACE, id).await;
 }
 
 async fn load(table: &Table) -> Option<Game> {
@@ -87,7 +121,11 @@ async fn load(table: &Table) -> Option<Game> {
 }
 
 async fn save(table: &Table, game: &Game) {
-    mark(table, true);
+    save_at(&table.record_id(), game).await;
+}
+
+async fn save_at(id: &str, game: &Game) {
+    mark_at(id, true);
     let Ok(db) = crate::services::process_db::database() else {
         return;
     };
@@ -96,7 +134,7 @@ async fn save(table: &Table, game: &Game) {
     if let Err(error) = crate::services::runtime_registry::put(
         &db,
         GAMES_NAMESPACE,
-        &table.record_id(),
+        id,
         crate::services::runtime_registry::RegistryIdentity {
             subject_id: None,
             owner_id: None,
@@ -176,7 +214,7 @@ pub fn in_game(request: &UserRequest) -> bool {
 static RECENT_SURFACES: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Surfaces used lately (in a recorded scene, its world's own).
-fn recent_surfaces() -> Vec<String> {
+pub(crate) fn recent_surfaces() -> Vec<String> {
     #[cfg(test)]
     if let Some(recent) =
         crate::services::channel_group::g0::with(|world| world.recent_surfaces.clone())
@@ -190,7 +228,7 @@ fn recent_surfaces() -> Vec<String> {
 }
 
 /// A surface she used, the latest ten kept.
-fn used_surface(surface: String) {
+pub(crate) fn used_surface(surface: String) {
     fn keep(recent: &mut Vec<String>, surface: String) {
         recent.push(surface);
         let excess = recent.len().saturating_sub(10);
@@ -427,31 +465,18 @@ pub async fn after_turn_at(db: &DatabaseConnection, table: &Table) {
 async fn put_away(db: &DatabaseConnection, table: &Table, game: &Game) {
     // One of hers: how it went stays with the puzzle too.
     super::making::tried(db, &table.record_id(), game).await;
-    let surface: String = game.surface.chars().take(60).collect();
-    let truth: String = game.truth.chars().take(200).collect();
-    let whose = if game.made.is_some() {
-        "我自己出的"
-    } else {
-        ""
-    };
     let concepts = vec![unified::Concept {
         name: "海龟汤".into(),
         aliases: vec!["turtle soup".into(), "情境猜谜".into()],
     }];
-    let asked = game.asked.len();
     match table {
         Table::Private { user_id, .. } => {
-            let how = match game.ending {
-                Some(Ending::Solved) => format!("问了{asked}个问题猜中了"),
-                Some(Ending::GaveUp) => format!("问了{asked}个问题后放弃了"),
-                None => format!("问了{asked}个问题，没玩完就搁下了；汤底是：{truth}"),
-            };
             let _ = unified::remember(
                 db,
                 unified::NewMemory {
                     user_id: *user_id,
                     kind: unified::MemoryKind::Fact,
-                    content: format!("和我玩过一局{whose}海龟汤（{surface}），{how}"),
+                    content: myriad_merope::soup::remembered_with_them(game),
                     evidence: None,
                     speaker: unified::Speaker::Agent,
                     source: "game",
@@ -463,18 +488,10 @@ async fn put_away(db: &DatabaseConnection, table: &Table, game: &Game) {
             .await;
         }
         Table::Group(venue) => {
-            let how = match (game.ending, game.solver.as_deref()) {
-                (Some(Ending::Solved), Some(solver)) => {
-                    format!("大家问了{asked}个问题，{solver}猜中了")
-                }
-                (Some(Ending::Solved), None) => format!("大家问了{asked}个问题猜中了"),
-                (Some(Ending::GaveUp), _) => format!("大家问了{asked}个问题后放弃了"),
-                (None, _) => format!("大家问了{asked}个问题，没玩完就搁下了；汤底是：{truth}"),
-            };
             let _ = unified::remember_in_venue(
                 db,
                 &Audience::group(venue.as_str(), 0).venue(),
-                &format!("群里玩过一局{whose}海龟汤（{surface}），{how}"),
+                &myriad_merope::soup::remembered_in_group(game),
                 &json!({ "game": "soup" }).to_string(),
                 "game",
             )

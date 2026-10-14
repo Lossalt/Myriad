@@ -1311,7 +1311,6 @@
         "effects": [
           {
             "first": false,
-            "game": null,
             "id": "g30",
             "kind": "turnEnd",
             "said": "嗯嗯",

@@ -106,6 +106,9 @@ pub struct Replying {
     /// Older rows the talk may bring back, while she looks them over.
     #[serde(default)]
     pub recall: Option<Recall>,
+    /// The game at the table, while she sees to it.
+    #[serde(default)]
+    pub table: Option<AtTable>,
     /// What their words mean, once embedded: none when it gave none.
     #[serde(default)]
     pub asked: Option<Option<Vec<f32>>>,
@@ -141,6 +144,7 @@ pub enum ReplyStage {
     Titles,
     Asking,
     Opening,
+    After,
 }
 
 /// Older rows the talk may bring back by their words or their meaning.
@@ -221,6 +225,7 @@ pub(crate) fn reply_start(cx: &mut Cx, a: &Answering) -> (Replying, Replied) {
         jargon: Vec::new(),
         titles: BTreeMap::new(),
         recall: None,
+        table: None,
         asked: None,
         prompt: String::new(),
         asks: 0,
@@ -329,6 +334,15 @@ pub(crate) fn reply_step(cx: &mut Cx, r: &mut Replying, answer: Option<Answer>) 
             Err(rows) => after_recall(cx, r, rows),
         };
     }
+    if let Some(mut table) = r.table.take() {
+        return match at_table_step(cx, &mut table, answer) {
+            AtTableNext::Wait(id) => {
+                r.table = Some(table);
+                Replied::Wait(id)
+            }
+            AtTableNext::Done(text) => at_table_done(cx, r, table.what, text),
+        };
+    }
     match (r.stage, answer) {
         (ReplyStage::Soul, Some(Answer::Soul { text })) => {
             r.soul = text;
@@ -423,12 +437,6 @@ pub(crate) fn reply_step(cx: &mut Cx, r: &mut Replying, answer: Option<Answer>) 
             };
             Replied::Wait(read(cx, Of::Hers, what))
         }
-        (ReplyStage::Soup, Some(Answer::Soup { section })) => {
-            r.soup = section.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string());
-            r.stage = ReplyStage::Stickers;
-            let venue = r.venue.clone();
-            Replied::Wait(read(cx, Of::Hers, ToRead::Stickers { venue }))
-        }
         (
             ReplyStage::Stickers,
             Some(Answer::Stickers {
@@ -488,10 +496,6 @@ pub(crate) fn reply_step(cx: &mut Cx, r: &mut Replying, answer: Option<Answer>) 
             None if failure.as_deref() == Some("cut") && r.asks < 2 => ask_again(cx, r),
             None => Replied::Done(None),
         },
-        (ReplyStage::Opening, Some(Answer::SoupOpening { opening })) => {
-            r.text = format!("{}\n\n{opening}", r.text).trim().to_string();
-            finish(cx, r)
-        }
         _ => Replied::Done(None),
     }
 }
@@ -547,14 +551,7 @@ fn after_recall(cx: &mut Cx, r: &mut Replying, rows: Vec<MemoryRow>) -> Replied 
                 r.words.clone(),
                 r.owner,
             );
-            Replied::Wait(cx.effect(|id| Effect::SoupTurn {
-                id,
-                venue,
-                asker,
-                words,
-                owner,
-                turn: None,
-            }))
+            seat_at_table(cx, r, AtTableDo::Turn, &venue, &asker, &words, owner)
         }
         _ => Replied::Done(None),
     }
@@ -919,24 +916,69 @@ fn answered(cx: &mut Cx, r: &mut Replying, raw: &str) -> Replied {
     // She said she would think one up: the puzzle follows her words.
     if started {
         r.stage = ReplyStage::Opening;
-        let (venue, words, owner) = (r.venue.clone(), r.words.clone(), r.owner);
-        return Replied::Wait(cx.effect(|id| Effect::SoupStart {
-            id,
-            venue,
-            words,
-            owner,
-            turn: None,
-        }));
+        let (venue, asker, words, owner) = (
+            r.venue.clone(),
+            r.stranger.name.clone(),
+            r.words.clone(),
+            r.owner,
+        );
+        return seat_at_table(cx, r, AtTableDo::Start, &venue, &asker, &words, owner);
     }
     finish(cx, r)
 }
 
+/// See to the game at the table.
+fn seat_at_table(
+    cx: &mut Cx,
+    r: &mut Replying,
+    what: AtTableDo,
+    venue: &str,
+    asker: &str,
+    words: &str,
+    owner: i32,
+) -> Replied {
+    let (table, next) = at_table(cx, what, venue, asker, words, owner, None);
+    match next {
+        AtTableNext::Wait(id) => {
+            r.table = Some(table);
+            Replied::Wait(id)
+        }
+        AtTableNext::Done(text) => at_table_done(cx, r, what, text),
+    }
+}
+
+/// What came of the game at the table, and her answer going on.
+fn at_table_done(cx: &mut Cx, r: &mut Replying, what: AtTableDo, text: Option<String>) -> Replied {
+    match what {
+        AtTableDo::Turn => {
+            // The group's turtle soup: anyone may ask, and so may they.
+            r.soup = text.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string());
+            r.stage = ReplyStage::Stickers;
+            let venue = r.venue.clone();
+            Replied::Wait(read(cx, Of::Hers, ToRead::Stickers { venue }))
+        }
+        AtTableDo::Start => {
+            if let Some(opening) = text {
+                r.text = format!("{}\n\n{opening}", r.text).trim().to_string();
+            }
+            finish(cx, r)
+        }
+        AtTableDo::After => {
+            let text = std::mem::take(&mut r.text);
+            let sticker = r.sticker.take();
+            Replied::Done((!text.is_empty() || sticker.is_some()).then_some((text, sticker)))
+        }
+    }
+}
+
 fn finish(cx: &mut Cx, r: &mut Replying) -> Replied {
     // A game this line ended is over, and the group remembers it.
-    cx.out.effects.push(Effect::SoupAfter {
-        venue: r.venue.clone(),
-    });
-    let text = std::mem::take(&mut r.text);
-    let sticker = r.sticker.take();
-    Replied::Done((!text.is_empty() || sticker.is_some()).then_some((text, sticker)))
+    let (venue, asker, words, owner) = (
+        r.venue.clone(),
+        r.stranger.name.clone(),
+        r.words.clone(),
+        r.owner,
+    );
+    r.stage = ReplyStage::After;
+    seat_at_table(cx, r, AtTableDo::After, &venue, &asker, &words, owner)
 }

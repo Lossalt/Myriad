@@ -72,14 +72,14 @@ impl Table {
 }
 
 /// One question and how it was judged; in a group, who asked it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Asked {
     pub by: Option<String>,
     pub question: String,
     pub verdict: Verdict,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Game {
     pub surface: String,
     pub truth: String,
@@ -325,6 +325,101 @@ Questions asked so far: {asked}. Key points found: {found} of {keys}.\n\
         surface = game.surface,
         truth = game.truth,
     )
+}
+
+/// What she keeps of a game once it is over, played with one person: a
+/// line of hers about it (one left unfinished keeps the truth too, which she
+/// knows and they do not).
+pub fn remembered_with_them(game: &Game) -> String {
+    let (surface, truth, whose, asked) = remembered_parts(game);
+    let how = match game.ending {
+        Some(Ending::Solved) => format!("问了{asked}个问题猜中了"),
+        Some(Ending::GaveUp) => format!("问了{asked}个问题后放弃了"),
+        None => format!("问了{asked}个问题，没玩完就搁下了；汤底是：{truth}"),
+    };
+    format!("和我玩过一局{whose}海龟汤（{surface}），{how}")
+}
+
+/// [`remembered_with_them`], played with a group.
+pub fn remembered_in_group(game: &Game) -> String {
+    let (surface, truth, whose, asked) = remembered_parts(game);
+    let how = match (game.ending, game.solver.as_deref()) {
+        (Some(Ending::Solved), Some(solver)) => format!("大家问了{asked}个问题，{solver}猜中了"),
+        (Some(Ending::Solved), None) => format!("大家问了{asked}个问题猜中了"),
+        (Some(Ending::GaveUp), _) => format!("大家问了{asked}个问题后放弃了"),
+        (None, _) => format!("大家问了{asked}个问题，没玩完就搁下了；汤底是：{truth}"),
+    };
+    format!("群里玩过一局{whose}海龟汤（{surface}），{how}")
+}
+
+fn remembered_parts(game: &Game) -> (String, String, &'static str, usize) {
+    let surface: String = game.surface.chars().take(60).collect();
+    let truth: String = game.truth.chars().take(200).collect();
+    let whose = if game.made.is_some() {
+        "我自己出的"
+    } else {
+        ""
+    };
+    (surface, truth, whose, game.asked.len())
+}
+
+/// How a game of hers went at `table`, as kept with the puzzle.
+pub fn tried(table: &str, game: &Game, at: chrono::DateTime<chrono::Utc>) -> crate::making::Tried {
+    crate::making::Tried {
+        table: table.to_string(),
+        at,
+        ending: match game.ending {
+            Some(Ending::Solved) => "solved",
+            Some(Ending::GaveUp) => "gave_up",
+            None => "left",
+        }
+        .to_string(),
+        asked: game.asked.len(),
+        solver: game.solver.clone(),
+    }
+}
+
+/// A game of a puzzle of hers, set up to play.
+pub fn of_her_own(made: &crate::making::Made, at: chrono::DateTime<chrono::Utc>) -> Game {
+    Game {
+        surface: made.surface.clone(),
+        truth: made.truth.clone(),
+        keys: made.keys.clone(),
+        asked: Vec::new(),
+        found: Vec::new(),
+        ending: None,
+        solver: None,
+        started: at,
+        last: None,
+        made: Some(made.id.clone()),
+    }
+}
+
+/// A game of a puzzle she made up just now, set up to play.
+pub fn made_up(puzzle: &Puzzle, at: chrono::DateTime<chrono::Utc>) -> Game {
+    Game {
+        surface: puzzle.surface.trim().to_string(),
+        truth: puzzle.truth.trim().to_string(),
+        keys: puzzle.keys.clone(),
+        asked: Vec::new(),
+        found: Vec::new(),
+        ending: None,
+        solver: None,
+        started: at,
+        last: None,
+        made: None,
+    }
+}
+
+/// The input she makes one up from: their words (for their language), a
+/// setting as a spark, and the surfaces she used lately.
+pub fn start_input(words: &str, setting: &str, recent: &[String]) -> String {
+    json!({
+        "theirWords": words.chars().take(300).collect::<String>(),
+        "setting": setting,
+        "recentSurfaces": recent,
+    })
+    .to_string()
 }
 
 pub const GROUP_OFFER: &str = "## Games\nIf someone in the group wants to play turtle soup (海龟汤, a lateral-thinking puzzle), you host it for the group: say briefly you are thinking one up and put [[game:soup]] alone on the last line, not read aloud; the puzzle follows your words, so never make one up yourself.\nIf the talk shows a soup still going but its truth is not here, you lost it: say so and offer a new one; never answer its questions without the truth.";

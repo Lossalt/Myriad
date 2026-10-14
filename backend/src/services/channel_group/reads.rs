@@ -71,6 +71,10 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
             ToRead::Label { user_id } => Answer::Label {
                 label: user_id.to_string(),
             },
+            ToRead::Game { .. } => Answer::Game { game: None },
+            ToRead::RecentSurfaces => Answer::Surfaces {
+                surfaces: Vec::new(),
+            },
             _ => Answer::Rows { rows: Vec::new() },
         };
     }
@@ -204,6 +208,12 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
                 .await,
             }
         }
+        ToRead::Game { table } => Answer::Game {
+            game: crate::services::agent::merope::group::soup::game_at(&table).await,
+        },
+        ToRead::RecentSurfaces => Answer::Surfaces {
+            surfaces: crate::services::agent::merope::group::soup::recent_surfaces(),
+        },
         // Her clock, and what her life on the site says she is doing.
         ToRead::Now => Answer::Now {
             local: crate::services::agent::merope::group::speaking::local_now()
@@ -305,6 +315,7 @@ fn own_source(source: &str) -> Option<&'static str> {
         "view" => Some(unified::OWN_VIEW),
         "heard" => Some(crate::services::agent::merope::group::heard::SOURCE),
         "meme" => Some(myriad_merope::memes::SOURCE),
+        "made_soup" => Some(myriad_merope::making::SOURCE),
         _ => None,
     }
 }
@@ -313,6 +324,7 @@ fn own_source(source: &str) -> Option<&'static str> {
 fn source(source: &str) -> Option<&'static str> {
     match source {
         "about_me" => Some("about_me"),
+        "game" => Some("game"),
         _ => None,
     }
 }
@@ -383,6 +395,21 @@ pub(super) async fn write(what: ToWrite) {
                 Ok(None) => {}
                 Err(error) => warn!(%error, "[Merope] could not keep a word she learned"),
             }
+        }
+        ToWrite::Game { table, game } => {
+            crate::services::agent::merope::group::soup::keep_at(&table, game).await;
+        }
+        ToWrite::TakeGame { table } => {
+            crate::services::agent::merope::group::soup::take_at(&table).await;
+        }
+        ToWrite::UsedSurface { surface } => {
+            crate::services::agent::merope::group::soup::used_surface(surface);
+        }
+        ToWrite::Tried { id, tried } => {
+            let Ok(db) = db() else {
+                return;
+            };
+            crate::services::agent::merope::group::soup::kept_tried(&db, &id, tried).await;
         }
         ToWrite::Watch { venue, term, used } => {
             let Ok(db) = db() else {

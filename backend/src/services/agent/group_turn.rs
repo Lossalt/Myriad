@@ -241,12 +241,7 @@ pub async fn within<F: std::future::Future>(turn: Option<&str>, work: F) -> F::O
 /// Close the turn. With what she said (a sticker she picked as the chat app
 /// sends it), it is kept and taken in, and her words as they stand are
 /// given back; without, it is left, nothing of hers kept.
-pub async fn end(
-    turn: &str,
-    said: Option<String>,
-    sticker: Option<Value>,
-    game: Option<String>,
-) -> Option<String> {
+pub async fn end(turn: &str, said: Option<String>, sticker: Option<Value>) -> Option<String> {
     let mut open = take(turn)?;
     let db = open.db.clone();
     let request = open.request.clone();
@@ -272,14 +267,6 @@ pub async fn end(
                 )
                 .await;
                 super::merope::spawn_inner_after(db.clone(), &request, &reply);
-                // A game this turn ended is over, and the group remembers it.
-                if let Some(venue) = game {
-                    let db = db.clone();
-                    super::merope::background::spawn("game aftermath", async move {
-                        let table = super::merope::soup::Table::Group(venue);
-                        super::merope::soup::after_turn_at(&db, &table).await;
-                    });
-                }
                 super::merope::spawn_curiosity(
                     user_id,
                     request.raw_input.clone(),

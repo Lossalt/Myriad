@@ -2,7 +2,7 @@
   "state": {
     "answered": [
       {
-        "at": 1791957652953576,
+        "at": 1791957653747764,
         "from": "11"
       }
     ],
@@ -17,7 +17,7 @@
     "heardUpto": 1791957619000000,
     "heldBack": false,
     "judging": false,
-    "lastReply": 1791957652953576,
+    "lastReply": 1791957653747764,
     "ledger": [],
     "ledgerHers": {
       "messages": 0,
@@ -270,7 +270,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:00:52.953576Z",
+        "at": "2026-10-14T06:00:53.747764Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -279,7 +279,7 @@
       }
     ],
     "mutedUntil": null,
-    "next": 32,
+    "next": 33,
     "offered": {},
     "paused": {},
     "pending": null,
@@ -6239,13 +6239,13 @@
       "output": {
         "effects": [
           {
-            "asker": "阿明",
             "id": "g19",
-            "kind": "soupTurn",
-            "owner": 101,
-            "turn": "turn-1",
-            "venue": "telegram:-100777",
-            "words": "@bot 你看这个"
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
           }
         ]
       }
@@ -6254,8 +6254,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soup",
-            "section": null
+            "game": null,
+            "kind": "game"
           },
           "id": "g19",
           "kind": "done"
@@ -6347,7 +6347,6 @@
         "effects": [
           {
             "first": false,
-            "game": "telegram:-100777",
             "id": "g22",
             "kind": "turnEnd",
             "said": "嗯嗯",
@@ -6382,6 +6381,39 @@
         "effects": [
           {
             "id": "g23",
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "game": null,
+            "kind": "game"
+          },
+          "id": "g23",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957651537259,
+        "seed": 1638968588875587419
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g24",
             "kind": "typing",
             "to": {
               "chat": "-100777",
@@ -6399,7 +6431,7 @@
           "answer": {
             "kind": "typed"
           },
-          "id": "g23",
+          "id": "g24",
           "kind": "done"
         },
         "her": {
@@ -6409,13 +6441,13 @@
           "today": "2026-10-14"
         },
         "now": 1791957651537259,
-        "seed": 1638968588875587419
+        "seed": 9806510563089115470
       },
       "output": {
         "effects": [
           {
-            "after": 1.4163174911168652,
-            "key": "g24",
+            "after": 2.2105058406761424,
+            "key": "g25",
             "kind": "wake"
           }
         ]
@@ -6424,7 +6456,7 @@
     {
       "input": {
         "event": {
-          "key": "g24",
+          "key": "g25",
           "kind": "woke"
         },
         "her": {
@@ -6433,13 +6465,13 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957652953576,
-        "seed": 9806510563089115470
+        "now": 1791957653747764,
+        "seed": 4130769461210134021
       },
       "output": {
         "effects": [
           {
-            "id": "g25",
+            "id": "g26",
             "kind": "send",
             "pieces": [
               {
@@ -6465,7 +6497,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g25",
+          "id": "g26",
           "kind": "done"
         },
         "her": {
@@ -6474,8 +6506,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957652953576,
-        "seed": 4130769461210134021
+        "now": 1791957653747764,
+        "seed": 16853997324930939696
       },
       "output": {
         "effects": [
@@ -6507,7 +6539,7 @@
                 "mark": false
               },
               {
-                "at": 1791957652,
+                "at": 1791957653,
                 "bang": false,
                 "by": "her",
                 "chars": 2,
@@ -6532,7 +6564,7 @@
               }
             },
             "waits": [
-              12.953
+              13.747
             ]
           },
           {
@@ -6778,7 +6810,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:00:52.953576Z",
+                "at": "2026-10-14T06:00:53.747764Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -6808,7 +6840,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957655537259,
-        "seed": 16853997324930939696
+        "seed": 2290261073831262399
       },
       "output": {
         "effects": []
@@ -6827,13 +6859,13 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 2290261073831262399
+        "seed": 9241407621645073378
       },
       "output": {
         "effects": [
           {
             "from": "13",
-            "id": "g26",
+            "id": "g27",
             "kind": "identify"
           }
         ]
@@ -6850,40 +6882,6 @@
               "kind": "member",
               "user_id": 101
             }
-          },
-          "id": "g26",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 9241407621645073378
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g27",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "view"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
           },
           "id": "g27",
           "kind": "done"
@@ -6904,9 +6902,9 @@
             "kind": "read",
             "of": "hers",
             "what": {
-              "kind": "life",
-              "related": 3,
-              "talk": "人：第7句\n人：第8句\n人：第9句\n人：第10句\n人：第11句\n人：第12句\n人：第13句\n人：第14句\n人：第15句\n人：第16句\n人：第17句\n人：第18句\n人：第19句\n阿明：@bot 你看这个\nyou：嗯嗯"
+              "kind": "ownRows",
+              "limit": 300,
+              "source": "view"
             }
           }
         ]
@@ -6916,10 +6914,8 @@
       "input": {
         "event": {
           "answer": {
-            "did": [],
-            "kind": "life",
-            "now": null,
-            "would_tell": []
+            "kind": "rows",
+            "rows": []
           },
           "id": "g28",
           "kind": "done"
@@ -6940,9 +6936,9 @@
             "kind": "read",
             "of": "hers",
             "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "heard"
+              "kind": "life",
+              "related": 3,
+              "talk": "人：第7句\n人：第8句\n人：第9句\n人：第10句\n人：第11句\n人：第12句\n人：第13句\n人：第14句\n人：第15句\n人：第16句\n人：第17句\n人：第18句\n人：第19句\n阿明：@bot 你看这个\nyou：嗯嗯"
             }
           }
         ]
@@ -6952,8 +6948,10 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "rows",
-            "rows": []
+            "did": [],
+            "kind": "life",
+            "now": null,
+            "would_tell": []
           },
           "id": "g29",
           "kind": "done"
@@ -6975,8 +6973,8 @@
             "of": "hers",
             "what": {
               "kind": "ownRows",
-              "limit": 500,
-              "source": "meme"
+              "limit": 300,
+              "source": "heard"
             }
           }
         ]
@@ -7008,7 +7006,9 @@
             "kind": "read",
             "of": "hers",
             "what": {
-              "kind": "soul"
+              "kind": "ownRows",
+              "limit": 500,
+              "source": "meme"
             }
           }
         ]
@@ -7018,8 +7018,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soul",
-            "text": "你是测试里的她。"
+            "kind": "rows",
+            "rows": []
           },
           "id": "g31",
           "kind": "done"
@@ -7036,8 +7036,40 @@
       "output": {
         "effects": [
           {
-            "how": "json",
             "id": "g32",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "soul"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "soul",
+            "text": "你是测试里的她。"
+          },
+          "id": "g32",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 684944971140478936
+      },
+      "output": {
+        "effects": [
+          {
+            "how": "json",
+            "id": "g33",
             "input": "{\"conversation\":[\"人：第7句\",\"人：第8句\",\"人：第9句\",\"人：第10句\",\"人：第11句\",\"人：第12句\",\"人：第13句\",\"人：第14句\",\"人：第15句\",\"人：第16句\",\"人：第17句\",\"人：第18句\",\"人：第19句\",\"阿明：@bot 你看这个\",\"you：嗯嗯\"],\"howItWentHere\":null,\"whatYouHave\":[],\"youAreSeeingItLate\":null,\"youLastSpokeHere\":\"just now\",\"yourOwnTime\":null,\"yourShareOfTheTalk\":\"Of the last 15 lines here, 1 were yours; 4 other people said the rest.\"}",
             "kind": "ask",
             "operation": "group_chime",
@@ -7104,7 +7136,7 @@
             "kind": "asked",
             "raw": null
           },
-          "id": "g32",
+          "id": "g33",
           "kind": "done"
         },
         "her": {
@@ -7114,7 +7146,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 684944971140478936
+        "seed": 6740290559361415751
       },
       "output": {
         "effects": []

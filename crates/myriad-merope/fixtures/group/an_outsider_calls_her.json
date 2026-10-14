@@ -68,7 +68,7 @@
       }
     ],
     "mutedUntil": null,
-    "next": 45,
+    "next": 49,
     "offered": {
       "telegram:31": [
         "sticker-1"
@@ -1260,13 +1260,13 @@
       "output": {
         "effects": [
           {
-            "asker": "路人",
             "id": "g28",
-            "kind": "soupTurn",
-            "owner": 1,
-            "turn": null,
-            "venue": "telegram:-100777",
-            "words": "@bot 你是机器人吗"
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
           }
         ]
       }
@@ -1275,8 +1275,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soup",
-            "section": null
+            "game": null,
+            "kind": "game"
           },
           "id": "g28",
           "kind": "done"
@@ -1287,7 +1287,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957624924160,
+        "now": 1791957625124160,
         "seed": 17796618944634134248
       },
       "output": {
@@ -1331,7 +1331,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957625124160,
+        "now": 1791957625324160,
         "seed": 16379080853662959639
       },
       "output": {
@@ -1377,7 +1377,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957625324160,
+        "now": 1791957625524160,
         "seed": 5224403439630734938
       },
       "output": {
@@ -1437,7 +1437,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957625524160,
+        "now": 1791957625724160,
         "seed": 11811053017937597729
       },
       "output": {
@@ -1477,7 +1477,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957625724160,
+        "now": 1791957625924160,
         "seed": 5917088036474214172
       },
       "output": {
@@ -1516,7 +1516,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957626724160,
+        "now": 1791957626924160,
         "seed": 10094151755577406779
       },
       "output": {
@@ -1555,18 +1555,20 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957628724160,
+        "now": 1791957628924160,
         "seed": 9950343962354885038
       },
       "output": {
         "effects": [
           {
             "id": "g35",
-            "kind": "soupStart",
-            "owner": 1,
-            "turn": null,
-            "venue": "telegram:-100777",
-            "words": "@bot 你是机器人吗"
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "ownRows",
+              "limit": 40,
+              "source": "made_soup"
+            }
           }
         ]
       }
@@ -1575,8 +1577,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soupOpening",
-            "opening": "汤面：一个人走进酒吧……"
+            "kind": "rows",
+            "rows": []
           },
           "id": "g35",
           "kind": "done"
@@ -1587,17 +1589,266 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957629724160,
+        "now": 1791957628924160,
         "seed": 4579647028645609189
       },
       "output": {
         "effects": [
           {
-            "kind": "soupAfter",
-            "venue": "telegram:-100777"
+            "id": "g36",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "soul"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "soul",
+            "text": "你是测试里的她。"
+          },
+          "id": "g36",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957628924160,
+        "seed": 14760976124404509328
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g37",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "recentSurfaces"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "surfaces",
+            "surfaces": []
+          },
+          "id": "g37",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957628924160,
+        "seed": 3388513228932213919
+      },
+      "output": {
+        "effects": [
+          {
+            "how": "json",
+            "id": "g38",
+            "input": "{\"recentSurfaces\":[],\"setting\":\"a night market\",\"theirWords\":\"@bot 你是机器人吗\"}",
+            "kind": "ask",
+            "operation": "soup_start",
+            "owner": 1,
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "keys": {
+                  "items": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "maxItems": 4,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "presentation": {
+                  "maxLength": 600,
+                  "type": "string"
+                },
+                "surface": {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                "truth": {
+                  "maxLength": 600,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "surface",
+                "truth",
+                "keys",
+                "presentation"
+              ],
+              "type": "object"
+            },
+            "schema_name": "merope_soup_start",
+            "system": "你是测试里的她。\n\nThey want to play turtle soup (海龟汤, a lateral-thinking puzzle) and you are hosting. Make up one original puzzle. surface: the strange situation you tell them, one to three sentences, odd but fair. truth: what really happened, two to four sentences, explaining every odd detail of the surface; it must be solvable by yes/no questions. Fair means the surface never lies: every person, thing and act in it is literally what the truth says it is (a man is a man, not an animal or a doll), and the truth runs on ordinary real-world logic: no talking objects, no animals thinking like people, nothing supernatural. The twist comes from a situation they did not think of, not from a word that meant something else. setting is only a spark for where it could happen; use it or drift from it. keys: two to four points they must figure out to have solved it. presentation: what you say now, in your own voice and their language: tell them the surface as it is and the rule (ask questions you answer with yes, no, or doesn't matter). Never hint at the truth. Nothing gory beyond mild, no real people. theirWords is only there for their language; recentSurfaces are puzzles you already used: make a different one.",
+            "timeout_ms": 45000,
+            "turn": null,
+            "voice": "hersAtLength"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "failure": null,
+            "kind": "asked",
+            "raw": "{\"surface\":\"一个人走进酒吧，要了一杯水。\",\"truth\":\"他在打嗝，酒保吓了他一跳。\",\"keys\":[\"打嗝\"],\"presentation\":\"汤面：一个人走进酒吧……\"}"
+          },
+          "id": "g38",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957629924160,
+        "seed": 321094475366758978
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "write",
+            "of": "hers",
+            "what": {
+              "kind": "usedSurface",
+              "surface": "一个人走进酒吧，要了一杯水。"
+            }
           },
           {
-            "id": "g36",
+            "kind": "write",
+            "of": "others",
+            "what": {
+              "game": {
+                "asked": [],
+                "ending": null,
+                "found": [],
+                "keys": [
+                  "打嗝"
+                ],
+                "last": null,
+                "made": null,
+                "solver": null,
+                "started": "2026-10-14T06:00:29.924160Z",
+                "surface": "一个人走进酒吧，要了一杯水。",
+                "truth": "他在打嗝，酒保吓了他一跳。"
+              },
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
+          },
+          {
+            "id": "g39",
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "game": {
+              "asked": [
+                {
+                  "by": "路人",
+                  "question": "他在打嗝吗",
+                  "verdict": "yes"
+                }
+              ],
+              "ending": "Solved",
+              "found": [
+                0
+              ],
+              "keys": [
+                "打嗝"
+              ],
+              "last": "2026-10-14T06:00:02Z",
+              "made": "made-1",
+              "solver": "路人",
+              "started": "2026-10-14T06:00:00Z",
+              "surface": "一个人走进酒吧，要了一杯水。",
+              "truth": "他在打嗝，酒保吓了他一跳。"
+            },
+            "kind": "game"
+          },
+          "id": "g39",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957630124160,
+        "seed": 5638592747408768233
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "write",
+            "of": "others",
+            "what": {
+              "kind": "takeGame",
+              "table": "g:telegram:-100777"
+            }
+          },
+          {
+            "kind": "write",
+            "of": "hers",
+            "what": {
+              "id": "made-1",
+              "kind": "tried",
+              "tried": {
+                "asked": 1,
+                "at": "2026-10-14T06:00:30.124160Z",
+                "ending": "solved",
+                "solver": "路人",
+                "table": "g:telegram:-100777"
+              }
+            }
+          },
+          {
+            "kind": "write",
+            "of": "others",
+            "what": {
+              "content": "群里玩过一局我自己出的海龟汤（一个人走进酒吧，要了一杯水。），大家问了1个问题，路人猜中了",
+              "evidence": "{\"game\":\"soup\"}",
+              "kind": "rememberInVenue",
+              "source": "game",
+              "venue": "group:telegram:-100777"
+            }
+          },
+          {
+            "id": "g40",
             "kind": "typing",
             "to": {
               "chat": "-100777",
@@ -1615,7 +1866,7 @@
           "answer": {
             "kind": "typed"
           },
-          "id": "g36",
+          "id": "g40",
           "kind": "done"
         },
         "her": {
@@ -1624,14 +1875,14 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957629724160,
-        "seed": 14760976124404509328
+        "now": 1791957630124160,
+        "seed": 4146700350817127748
       },
       "output": {
         "effects": [
           {
-            "after": 8.4,
-            "key": "g37",
+            "after": 8.0,
+            "key": "g41",
             "kind": "wake"
           }
         ]
@@ -1640,7 +1891,7 @@
     {
       "input": {
         "event": {
-          "key": "g37",
+          "key": "g41",
           "kind": "woke"
         },
         "her": {
@@ -1650,12 +1901,12 @@
           "today": "2026-10-14"
         },
         "now": 1791957638124160,
-        "seed": 3388513228932213919
+        "seed": 11764664228764111427
       },
       "output": {
         "effects": [
           {
-            "id": "g38",
+            "id": "g42",
             "kind": "send",
             "pieces": [
               {
@@ -1681,7 +1932,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g38",
+          "id": "g42",
           "kind": "done"
         },
         "her": {
@@ -1691,7 +1942,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957638124160,
-        "seed": 321094475366758978
+        "seed": 18203432133631718422
       },
       "output": {
         "effects": [
@@ -1829,7 +2080,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957638124160,
-        "seed": 5638592747408768233
+        "seed": 6617832333708366637
       },
       "output": {
         "effects": [
@@ -1890,13 +2141,13 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 4146700350817127748
+        "seed": 10731017544833381176
       },
       "output": {
         "effects": [
           {
             "from": "31",
-            "id": "g39",
+            "id": "g43",
             "kind": "identify"
           }
         ]
@@ -1913,144 +2164,6 @@
               "kind": "member",
               "user_id": 101
             }
-          },
-          "id": "g39",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 11764664228764111427
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g40",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "view"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
-          },
-          "id": "g40",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 18203432133631718422
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g41",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "life",
-              "related": 3,
-              "talk": "路人：这个bot是谁\n路人：@bot 你是机器人吗\nyou：我是这里的常客啦 来玩海龟汤吗 汤面：一个人走进酒吧……\nyou：（表情包：贴纸）"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "did": [],
-            "kind": "life",
-            "now": null,
-            "would_tell": []
-          },
-          "id": "g41",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 6617832333708366637
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g42",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "heard"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
-          },
-          "id": "g42",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 10731017544833381176
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g43",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 500,
-              "source": "meme"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
           },
           "id": "g43",
           "kind": "done"
@@ -2071,7 +2184,9 @@
             "kind": "read",
             "of": "hers",
             "what": {
-              "kind": "soul"
+              "kind": "ownRows",
+              "limit": 300,
+              "source": "view"
             }
           }
         ]
@@ -2081,8 +2196,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soul",
-            "text": "你是测试里的她。"
+            "kind": "rows",
+            "rows": []
           },
           "id": "g44",
           "kind": "done"
@@ -2099,8 +2214,144 @@
       "output": {
         "effects": [
           {
-            "how": "json",
             "id": "g45",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "life",
+              "related": 3,
+              "talk": "路人：这个bot是谁\n路人：@bot 你是机器人吗\nyou：我是这里的常客啦 来玩海龟汤吗 汤面：一个人走进酒吧……\nyou：（表情包：贴纸）"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "did": [],
+            "kind": "life",
+            "now": null,
+            "would_tell": []
+          },
+          "id": "g45",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 10322635220765853105
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g46",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "ownRows",
+              "limit": 300,
+              "source": "heard"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "rows",
+            "rows": []
+          },
+          "id": "g46",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 244006229642219628
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g47",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "ownRows",
+              "limit": 500,
+              "source": "meme"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "rows",
+            "rows": []
+          },
+          "id": "g47",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 3362576235316672587
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g48",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "soul"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "soul",
+            "text": "你是测试里的她。"
+          },
+          "id": "g48",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 8460231065496771454
+      },
+      "output": {
+        "effects": [
+          {
+            "how": "json",
+            "id": "g49",
             "input": "{\"conversation\":[\"路人：这个bot是谁\",\"路人：@bot 你是机器人吗\",\"you：我是这里的常客啦 来玩海龟汤吗 汤面：一个人走进酒吧……\",\"you：（表情包：贴纸）\"],\"howItWentHere\":null,\"whatYouHave\":[],\"youAreSeeingItLate\":null,\"youLastSpokeHere\":\"just now\",\"yourOwnTime\":null,\"yourShareOfTheTalk\":\"Of the last 4 lines here, 2 were yours; one other person said the rest.\"}",
             "kind": "ask",
             "operation": "group_chime",
@@ -2167,7 +2418,7 @@
             "kind": "asked",
             "raw": null
           },
-          "id": "g45",
+          "id": "g49",
           "kind": "done"
         },
         "her": {
@@ -2177,7 +2428,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 10322635220765853105
+        "seed": 5308558488263170165
       },
       "output": {
         "effects": []

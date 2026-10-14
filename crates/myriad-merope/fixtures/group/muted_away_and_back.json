@@ -2,7 +2,7 @@
   "state": {
     "answered": [
       {
-        "at": 1791958455744377,
+        "at": 1791958455512351,
         "from": "11"
       }
     ],
@@ -18,7 +18,7 @@
     "heardUpto": 1791958310000000,
     "heldBack": false,
     "judging": false,
-    "lastReply": 1791958455744377,
+    "lastReply": 1791958455512351,
     "ledger": [],
     "ledgerHers": {
       "messages": 0,
@@ -69,7 +69,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:14:15.744377Z",
+        "at": "2026-10-14T06:14:15.512351Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -78,7 +78,7 @@
       }
     ],
     "mutedUntil": 1791958201000000,
-    "next": 27,
+    "next": 28,
     "offered": {},
     "paused": {},
     "pending": null,
@@ -1016,13 +1016,13 @@
       "output": {
         "effects": [
           {
-            "asker": "阿明",
             "id": "g21",
-            "kind": "soupTurn",
-            "owner": 101,
-            "turn": "turn-1",
-            "venue": "telegram:-100777",
-            "words": "@bot 现在呢"
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
           }
         ]
       }
@@ -1031,8 +1031,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soup",
-            "section": null
+            "game": null,
+            "kind": "game"
           },
           "id": "g21",
           "kind": "done"
@@ -1124,7 +1124,6 @@
         "effects": [
           {
             "first": false,
-            "game": "telegram:-100777",
             "id": "g24",
             "kind": "turnEnd",
             "said": "嗯嗯",
@@ -1159,6 +1158,39 @@
         "effects": [
           {
             "id": "g25",
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "game": null,
+            "kind": "game"
+          },
+          "id": "g25",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958453560831,
+        "seed": 1013095791027354525
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g26",
             "kind": "typing",
             "to": {
               "chat": "-100777",
@@ -1176,7 +1208,7 @@
           "answer": {
             "kind": "typed"
           },
-          "id": "g25",
+          "id": "g26",
           "kind": "done"
         },
         "her": {
@@ -1186,13 +1218,13 @@
           "today": "2026-10-14"
         },
         "now": 1791958453560831,
-        "seed": 1013095791027354525
+        "seed": 17796618944634134248
       },
       "output": {
         "effects": [
           {
-            "after": 2.1835465928709623,
-            "key": "g26",
+            "after": 1.9515209789706895,
+            "key": "g27",
             "kind": "wake"
           }
         ]
@@ -1201,7 +1233,7 @@
     {
       "input": {
         "event": {
-          "key": "g26",
+          "key": "g27",
           "kind": "woke"
         },
         "her": {
@@ -1210,13 +1242,13 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791958455744377,
-        "seed": 17796618944634134248
+        "now": 1791958455512351,
+        "seed": 16379080853662959639
       },
       "output": {
         "effects": [
           {
-            "id": "g27",
+            "id": "g28",
             "kind": "send",
             "pieces": [
               {
@@ -1242,7 +1274,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g27",
+          "id": "g28",
           "kind": "done"
         },
         "her": {
@@ -1251,8 +1283,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791958455744377,
-        "seed": 16379080853662959639
+        "now": 1791958455512351,
+        "seed": 5224403439630734938
       },
       "output": {
         "effects": [
@@ -1319,7 +1351,7 @@
               }
             },
             "waits": [
-              145.744
+              145.512
             ]
           },
           {
@@ -1363,7 +1395,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:14:15.744377Z",
+                "at": "2026-10-14T06:14:15.512351Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -1388,7 +1420,7 @@
           "today": "2026-10-14"
         },
         "now": 1791958457560831,
-        "seed": 5224403439630734938
+        "seed": 11811053017937597729
       },
       "output": {
         "effects": []

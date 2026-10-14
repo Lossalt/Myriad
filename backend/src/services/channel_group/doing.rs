@@ -298,54 +298,13 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             said,
             sticker,
             first,
-            game,
         } => {
             tokio::spawn(async move {
-                let reply =
-                    crate::services::agent::group_turn::end(&turn, said, sticker, game).await;
+                let reply = crate::services::agent::group_turn::end(&turn, said, sticker).await;
                 // Unpaired or switched off while she was thinking.
                 let bound = first || still_hers(&venue, user_id).await;
                 answered(venue, id, Answer::TurnEnded { reply, bound }).await;
             });
-        }
-        Effect::SoupTurn {
-            id,
-            venue: at,
-            asker,
-            words,
-            owner,
-            turn,
-        } => {
-            tokio::spawn(async move {
-                use crate::services::agent::merope::group::soup;
-                let table = soup::Table::Group(at);
-                let judged = soup::this_turn_at(&table, Some(&asker), &words, owner);
-                let section =
-                    crate::services::agent::group_turn::within(turn.as_deref(), judged).await;
-                answered(venue, id, Answer::Soup { section }).await;
-            });
-        }
-        Effect::SoupStart {
-            id,
-            venue: at,
-            words,
-            owner,
-            turn,
-        } => {
-            tokio::spawn(async move {
-                use crate::services::agent::merope::group::soup;
-                let table = soup::Table::Group(at);
-                let started = soup::start_at(&table, &words, owner);
-                let opening =
-                    crate::services::agent::group_turn::within(turn.as_deref(), started).await;
-                answered(venue, id, Answer::SoupOpening { opening }).await;
-            });
-        }
-        Effect::SoupAfter { venue: at } => {
-            if let Ok(db) = db() {
-                use crate::services::agent::merope::group::soup;
-                soup::after_turn_at(&db, &soup::Table::Group(at)).await;
-            }
         }
         Effect::React { id, to, emoji } => {
             tokio::spawn(async move {
@@ -384,12 +343,30 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 let within = Duration::from_millis(timeout_ms);
                 let asked = match turn {
                     // Within a member's turn: as their Chat turn asks her.
-                    Some(turn) => tokio::time::timeout(
+                    Some(turn) if how == core::AskKind::Say => tokio::time::timeout(
                         within,
                         crate::services::agent::group_turn::say(&turn, &input),
                     )
                     .await
                     .unwrap_or(Err("timeout")),
+                    // A judgment within a member's turn is billed as part of it.
+                    Some(turn) => {
+                        crate::services::agent::group_turn::within(
+                            Some(&turn),
+                            crate::services::agent::merope::group::asking::judge(
+                                how,
+                                &voice,
+                                owner,
+                                &operation,
+                                within,
+                                &system,
+                                &input,
+                                &schema_name,
+                                &schema,
+                            ),
+                        )
+                        .await
+                    }
                     None => {
                         crate::services::agent::merope::group::asking::judge(
                             how,

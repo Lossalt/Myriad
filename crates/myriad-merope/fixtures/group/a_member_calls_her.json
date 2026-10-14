@@ -2,7 +2,7 @@
   "state": {
     "answered": [
       {
-        "at": 1791957640353576,
+        "at": 1791957641720019,
         "from": "11"
       }
     ],
@@ -17,7 +17,7 @@
     "heardUpto": null,
     "heldBack": false,
     "judging": false,
-    "lastReply": 1791957640353576,
+    "lastReply": 1791957641720019,
     "ledger": [],
     "ledgerHers": {
       "messages": 0,
@@ -59,7 +59,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:00:40.353576Z",
+        "at": "2026-10-14T06:00:41.720019Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -68,7 +68,7 @@
       }
     ],
     "mutedUntil": null,
-    "next": 35,
+    "next": 38,
     "offered": {},
     "paused": {},
     "pending": null,
@@ -856,13 +856,13 @@
       "output": {
         "effects": [
           {
-            "asker": "阿明",
             "id": "g19",
-            "kind": "soupTurn",
-            "owner": 101,
-            "turn": "turn-1",
-            "venue": "telegram:-100777",
-            "words": "@bot 你推荐哪家"
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
+            }
           }
         ]
       }
@@ -871,8 +871,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soup",
-            "section": null
+            "game": null,
+            "kind": "game"
           },
           "id": "g19",
           "kind": "done"
@@ -999,7 +999,6 @@
         "effects": [
           {
             "first": false,
-            "game": "telegram:-100777",
             "id": "g24",
             "kind": "turnEnd",
             "said": "去老地方吧\n便宜又好吃",
@@ -1056,19 +1055,11 @@
         "effects": [
           {
             "id": "g25",
-            "kind": "send",
-            "pieces": [
-              {
-                "kind": "text",
-                "text": "去老地方吧"
-              }
-            ],
-            "quote": true,
-            "to": {
-              "chat": "-100777",
-              "messageId": "3",
-              "platform": "telegram",
-              "thread": null
+            "kind": "read",
+            "of": "others",
+            "what": {
+              "kind": "game",
+              "table": "g:telegram:-100777"
             }
           }
         ]
@@ -1078,8 +1069,8 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "sent",
-            "ok": true
+            "game": null,
+            "kind": "game"
           },
           "id": "g25",
           "kind": "done"
@@ -1129,7 +1120,7 @@
       "output": {
         "effects": [
           {
-            "after": 3.6616705114774253,
+            "after": 0.21289740802738688,
             "key": "g27",
             "kind": "wake"
           }
@@ -1148,7 +1139,7 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957640353576,
+        "now": 1791957636904803,
         "seed": 1013095791027354525
       },
       "output": {
@@ -1159,10 +1150,10 @@
             "pieces": [
               {
                 "kind": "text",
-                "text": "便宜又好吃"
+                "text": "去老地方吧"
               }
             ],
-            "quote": false,
+            "quote": true,
             "to": {
               "chat": "-100777",
               "messageId": "3",
@@ -1189,8 +1180,126 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957640353576,
+        "now": 1791957636904803,
         "seed": 17796618944634134248
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g29",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g29",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957636904803,
+        "seed": 16379080853662959639
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 4.815216349211546,
+            "key": "g30",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g23",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957640691906,
+        "seed": 5224403439630734938
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g30",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957641720019,
+        "seed": 11811053017937597729
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g31",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "便宜又好吃"
+              }
+            ],
+            "quote": false,
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g31",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957641720019,
+        "seed": 5917088036474214172
       },
       "output": {
         "effects": [
@@ -1245,7 +1354,7 @@
                 "mark": false
               },
               {
-                "at": 1791957640,
+                "at": 1791957641,
                 "bang": false,
                 "by": "her",
                 "chars": 5,
@@ -1274,7 +1383,7 @@
               }
             },
             "waits": [
-              32.691
+              32.904
             ]
           },
           {
@@ -1309,7 +1418,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:00:40.353576Z",
+                "at": "2026-10-14T06:00:41.720019Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -1329,25 +1438,6 @@
     {
       "input": {
         "event": {
-          "key": "g23",
-          "kind": "woke"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957640691906,
-        "seed": 16379080853662959639
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
           "key": "g2",
           "kind": "woke"
         },
@@ -1358,13 +1448,13 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 5224403439630734938
+        "seed": 10094151755577406779
       },
       "output": {
         "effects": [
           {
             "from": "12",
-            "id": "g29",
+            "id": "g32",
             "kind": "identify"
           }
         ]
@@ -1381,110 +1471,6 @@
               "kind": "member",
               "user_id": 101
             }
-          },
-          "id": "g29",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 11811053017937597729
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g30",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "view"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
-          },
-          "id": "g30",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 5917088036474214172
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g31",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "life",
-              "related": 3,
-              "talk": "阿明：周五聚餐吗\n小红：我可以\n阿明：@bot 你推荐哪家\nyou：去老地方吧\n便宜又好吃"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "did": [],
-            "kind": "life",
-            "now": null,
-            "would_tell": []
-          },
-          "id": "g31",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957731000000,
-        "seed": 10094151755577406779
-      },
-      "output": {
-        "effects": [
-          {
-            "id": "g32",
-            "kind": "read",
-            "of": "hers",
-            "what": {
-              "kind": "ownRows",
-              "limit": 300,
-              "source": "heard"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "rows",
-            "rows": []
           },
           "id": "g32",
           "kind": "done"
@@ -1506,8 +1492,8 @@
             "of": "hers",
             "what": {
               "kind": "ownRows",
-              "limit": 500,
-              "source": "meme"
+              "limit": 300,
+              "source": "view"
             }
           }
         ]
@@ -1539,7 +1525,9 @@
             "kind": "read",
             "of": "hers",
             "what": {
-              "kind": "soul"
+              "kind": "life",
+              "related": 3,
+              "talk": "阿明：周五聚餐吗\n小红：我可以\n阿明：@bot 你推荐哪家\nyou：去老地方吧\n便宜又好吃"
             }
           }
         ]
@@ -1549,8 +1537,10 @@
       "input": {
         "event": {
           "answer": {
-            "kind": "soul",
-            "text": "你是测试里的她。"
+            "did": [],
+            "kind": "life",
+            "now": null,
+            "would_tell": []
           },
           "id": "g34",
           "kind": "done"
@@ -1567,8 +1557,108 @@
       "output": {
         "effects": [
           {
-            "how": "json",
             "id": "g35",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "ownRows",
+              "limit": 300,
+              "source": "heard"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "rows",
+            "rows": []
+          },
+          "id": "g35",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 3388513228932213919
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g36",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "ownRows",
+              "limit": 500,
+              "source": "meme"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "rows",
+            "rows": []
+          },
+          "id": "g36",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 321094475366758978
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g37",
+            "kind": "read",
+            "of": "hers",
+            "what": {
+              "kind": "soul"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "soul",
+            "text": "你是测试里的她。"
+          },
+          "id": "g37",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 5638592747408768233
+      },
+      "output": {
+        "effects": [
+          {
+            "how": "json",
+            "id": "g38",
             "input": "{\"conversation\":[\"阿明：周五聚餐吗\",\"小红：我可以\",\"阿明：@bot 你推荐哪家\",\"you：去老地方吧\\n便宜又好吃\"],\"howItWentHere\":null,\"whatYouHave\":[],\"youAreSeeingItLate\":null,\"youLastSpokeHere\":\"just now\",\"yourOwnTime\":null,\"yourShareOfTheTalk\":\"Of the last 4 lines here, 1 were yours; 2 other people said the rest.\"}",
             "kind": "ask",
             "operation": "group_chime",
@@ -1635,7 +1725,7 @@
             "kind": "asked",
             "raw": null
           },
-          "id": "g35",
+          "id": "g38",
           "kind": "done"
         },
         "her": {
@@ -1645,7 +1735,7 @@
           "today": "2026-10-14"
         },
         "now": 1791957731000000,
-        "seed": 3388513228932213919
+        "seed": 4146700350817127748
       },
       "output": {
         "effects": []

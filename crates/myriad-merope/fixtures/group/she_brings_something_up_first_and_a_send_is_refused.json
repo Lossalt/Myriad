@@ -843,7 +843,6 @@
         "effects": [
           {
             "first": true,
-            "game": null,
             "id": "g23",
             "kind": "turnEnd",
             "said": "今天听到一首好歌\n分享给你们",

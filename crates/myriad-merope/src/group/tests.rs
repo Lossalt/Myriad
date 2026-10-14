@@ -1043,9 +1043,12 @@ impl End {
                     ToRead::Label { .. } => "label",
                     ToRead::Now => "now",
                     ToRead::Stickers { .. } => "stickers",
+                    ToRead::Game { .. } => "game",
+                    ToRead::RecentSurfaces => "recent",
                     ToRead::OwnRows { source, .. } => match source.as_str() {
                         "view" => "own:view",
                         "heard" => "own:heard",
+                        "made_soup" => "own:made_soup",
                         _ => "own:meme",
                     },
                     ToRead::Life { .. } => "life",
@@ -1075,8 +1078,6 @@ impl End {
                 self.at(at, Event::Done { id, answer });
                 return;
             }
-            Effect::SoupTurn { id, .. } => (id, "soup"),
-            Effect::SoupStart { id, .. } => (id, "opening"),
             Effect::React { id, .. } => (id, "react"),
             Effect::MayLookUp { id, .. } => (id, "may"),
             Effect::Define { id, .. } => (id, "define"),
@@ -1090,6 +1091,8 @@ impl End {
                     "meme" => "ask:meme",
                     "group_stranger" => "ask:group_stranger",
                     "group_member" => "ask:group_member",
+                    "soup_judge" => "ask:soup_judge",
+                    "soup_start" => "ask:soup_start",
                     _ => "ask",
                 },
             ),
@@ -1153,9 +1156,8 @@ fn default_answer(kind: &str) -> Answer {
             text: "你是测试里的她。".into(),
         },
         "rows" | "rows:bit" | "rows:group_day" | "own:view" | "own:heard" | "own:meme"
-        | "unowned:stranger" | "unowned:maybe_is" | "elsewhere" | "others" | "others:jargon" => {
-            Answer::Rows { rows: Vec::new() }
-        }
+        | "own:made_soup" | "unowned:stranger" | "unowned:maybe_is" | "elsewhere" | "others"
+        | "others:jargon" => Answer::Rows { rows: Vec::new() },
         "titles" => Answer::Titles { titles: Vec::new() },
         "label" => Answer::Label {
             label: "某人".into(),
@@ -1169,9 +1171,9 @@ fn default_answer(kind: &str) -> Answer {
             can_make: false,
             left: 0,
         },
-        "soup" => Answer::Soup { section: None },
-        "opening" => Answer::SoupOpening {
-            opening: "汤面：……".into(),
+        "game" => Answer::Game { game: None },
+        "recent" => Answer::Surfaces {
+            surfaces: Vec::new(),
         },
         "ask:group_stranger" | "ask:group_member" => Answer::Asked {
             raw: Some("嗯嗯".into()),
@@ -1202,7 +1204,12 @@ fn default_answer(kind: &str) -> Answer {
         "define" => Answer::Defined { entry: None },
         "search" => Answer::Found { found: None },
         "typing" => Answer::Typed,
-        "ask" | "ask:group_making_sense" | "ask:group_chime" | "ask:meme" => Answer::Asked {
+        "ask"
+        | "ask:group_making_sense"
+        | "ask:group_chime"
+        | "ask:meme"
+        | "ask:soup_judge"
+        | "ask:soup_start" => Answer::Asked {
             raw: None,
             failure: Some("unavailable".into()),
         },
@@ -1700,11 +1707,36 @@ fn g1_an_outsider_calls_her() {
             failure: None,
         },
     );
+    // The puzzle she makes up when she says she will host one; and after
+    // her answer, a game the table had finished is put away.
     end.answer(
-        "opening",
+        "ask:soup_start",
         1.0,
-        Answer::SoupOpening {
-            opening: "汤面：一个人走进酒吧……".into(),
+        Answer::Asked {
+            raw: Some(
+                r#"{"surface":"一个人走进酒吧，要了一杯水。","truth":"他在打嗝，酒保吓了他一跳。","keys":["打嗝"],"presentation":"汤面：一个人走进酒吧……"}"#
+                    .into(),
+            ),
+            failure: None,
+        },
+    );
+    end.answer("game", 0.2, Answer::Game { game: None });
+    end.answer(
+        "game",
+        0.2,
+        Answer::Game {
+            game: Some(json!({
+                "surface": "一个人走进酒吧，要了一杯水。",
+                "truth": "他在打嗝，酒保吓了他一跳。",
+                "keys": ["打嗝"],
+                "asked": [{ "by": "路人", "question": "他在打嗝吗", "verdict": "yes" }],
+                "found": [0],
+                "ending": "Solved",
+                "solver": "路人",
+                "started": "2026-10-14T06:00:00Z",
+                "last": "2026-10-14T06:00:02Z",
+                "made": "made-1"
+            })),
         },
     );
     heard(&mut end, 0.0, message(1, 31, "路人", "这个bot是谁", false));

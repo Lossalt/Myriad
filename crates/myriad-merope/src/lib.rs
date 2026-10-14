@@ -21,6 +21,7 @@ pub mod elsewhere;
 pub mod explore;
 pub mod group;
 pub mod heard;
+pub mod hosting;
 pub mod inner;
 pub mod jargon;
 pub mod joining;

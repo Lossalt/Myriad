@@ -13,7 +13,7 @@ use crate::services::agent::memory::unified;
 use myriad_merope::making::{
     MAKE_SCHEMA, Made, SOURCE, Tried, kept_line, make_input, make_schema, make_system, parse_idea,
 };
-use myriad_merope::soup::{Ending, Game};
+use myriad_merope::soup::Game;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Puzzles of hers read back, newest first.
@@ -119,6 +119,16 @@ pub(super) async fn tried(db: &DatabaseConnection, table: &str, game: &Game) {
     let Some(id) = game.made.as_deref() else {
         return;
     };
+    kept_tried(
+        db,
+        id,
+        myriad_merope::soup::tried(table, game, super::clock::now()),
+    )
+    .await;
+}
+
+/// How a puzzle of hers (`id`) went at a table, kept with it.
+pub(crate) async fn kept_tried(db: &DatabaseConnection, id: &str, tried: Tried) {
     let Ok(Some(row)) = agent_memories::Entity::find_by_id(id.to_string())
         .one(db)
         .await
@@ -128,18 +138,7 @@ pub(super) async fn tried(db: &DatabaseConnection, table: &str, game: &Game) {
     let Some(mut made) = made_of(&row) else {
         return;
     };
-    made.tried.push(Tried {
-        table: table.to_string(),
-        at: super::clock::now(),
-        ending: match game.ending {
-            Some(Ending::Solved) => "solved",
-            Some(Ending::GaveUp) => "gave_up",
-            None => "left",
-        }
-        .to_string(),
-        asked: game.asked.len(),
-        solver: game.solver.clone(),
-    });
+    made.tried.push(tried);
     let evidence = serde_json::to_string(&made).unwrap_or_default();
     let updated = agent_memories::Entity::update_many()
         .col_expr(

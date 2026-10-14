@@ -23,6 +23,7 @@ mod member;
 mod sense;
 mod state;
 mod stranger;
+mod table;
 
 pub(crate) use answer::*;
 pub(crate) use deliver::*;
@@ -35,6 +36,7 @@ pub(crate) use member::*;
 pub(crate) use sense::*;
 pub(crate) use state::*;
 pub(crate) use stranger::*;
+pub(crate) use table::*;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

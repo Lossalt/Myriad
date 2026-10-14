@@ -77,6 +77,17 @@ pub struct MemberReply {
     /// The sticker she chose, as the chat app sends it.
     #[serde(default)]
     pub sticker: Option<Value>,
+    /// The game at the table, while she sees to it.
+    #[serde(default)]
+    pub table: Option<AtTable>,
+    /// Whether a game her turn may have ended is to be put away after it.
+    #[serde(default)]
+    pub after_game: bool,
+    /// What the closed turn gave back.
+    #[serde(default)]
+    pub reply: Option<String>,
+    #[serde(default)]
+    pub bound: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -147,6 +158,10 @@ pub(crate) fn member_start(
         asks: 0,
         text: String::new(),
         sticker: None,
+        table: None,
+        after_game: false,
+        reply: None,
+        bound: false,
     };
     let (user_id, input, transcript, speaker, chime, first) = (
         reply.user_id,
@@ -233,7 +248,7 @@ fn end(
     };
     // A game this line ended is over, and the group remembers it: after
     // her turn is kept, as a Chat turn at the table does.
-    let game = (said.is_some() && r.chime.is_none()).then(|| r.venue.clone());
+    r.after_game = said.is_some() && r.chime.is_none();
     r.stage = MemberStage::Ending;
     r.text = String::new();
     let (user_id, first) = (r.user_id, r.first);
@@ -244,13 +259,21 @@ fn end(
         said,
         sticker,
         first,
-        game,
     }))
 }
 
 /// A step of her answer.
 pub(crate) fn member_step(cx: &mut Cx, r: &mut MemberReply, answer: Option<Answer>) -> MemberNext {
     let now = cx.now();
+    if let Some(mut table) = r.table.take() {
+        return match at_table_step(cx, &mut table, answer) {
+            AtTableNext::Wait(id) => {
+                r.table = Some(table);
+                MemberNext::Wait(id)
+            }
+            AtTableNext::Done(text) => at_table_done(cx, r, table.what, text),
+        };
+    }
     // Past the turn's deadline, she lets it go.
     if r.stage != MemberStage::Ending && now - r.began >= DEADLINE_MS as i64 * 1_000 {
         return end(cx, r, None, None);
@@ -309,25 +332,8 @@ pub(crate) fn member_step(cx: &mut Cx, r: &mut MemberReply, answer: Option<Answe
                 return stickers(cx, r);
             }
             r.stage = MemberStage::Game;
-            let (venue, asker, words, owner, turn) = (
-                r.venue.clone(),
-                r.speaker.clone(),
-                r.said.clone(),
-                r.user_id,
-                r.turn.clone(),
-            );
-            MemberNext::Wait(cx.effect(|id| Effect::SoupTurn {
-                id,
-                venue,
-                asker,
-                words,
-                owner,
-                turn,
-            }))
-        }
-        (MemberStage::Game, Some(Answer::Soup { section })) => {
-            r.game = Some(section.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string()));
-            stickers(cx, r)
+            let turn = r.turn.clone();
+            seat_at_table(cx, r, AtTableDo::Turn, turn)
         }
         (
             MemberStage::Stickers,
@@ -363,14 +369,14 @@ pub(crate) fn member_step(cx: &mut Cx, r: &mut MemberReply, answer: Option<Answe
             }
             _ => end(cx, r, None, None),
         },
-        (MemberStage::Opening, Some(Answer::SoupOpening { opening })) => {
-            let text = format!("{}\n\n{opening}", r.text);
-            taken_apart(cx, r, text.trim())
-        }
         (MemberStage::Ending, Some(Answer::TurnEnded { reply, bound })) => {
             stop_typing(cx);
-            let sticker = r.sticker.take();
-            MemberNext::Done(reply.map(|reply| (reply, sticker)), bound)
+            r.reply = reply;
+            r.bound = bound;
+            if r.after_game {
+                return seat_at_table(cx, r, AtTableDo::After, None);
+            }
+            ended(r)
         }
         _ => end(cx, r, None, None),
     }
@@ -609,17 +615,63 @@ fn answered(cx: &mut Cx, r: &mut MemberReply, raw: &str) -> MemberNext {
     if started && r.chime.is_none() {
         r.stage = MemberStage::Opening;
         r.text = text;
-        let (venue, words, owner, turn) =
-            (r.venue.clone(), r.said.clone(), r.user_id, r.turn.clone());
-        return MemberNext::Wait(cx.effect(|id| Effect::SoupStart {
-            id,
-            venue,
-            words,
-            owner,
-            turn,
-        }));
+        let turn = r.turn.clone();
+        return seat_at_table(cx, r, AtTableDo::Start, turn);
     }
     taken_apart(cx, r, text.trim())
+}
+
+/// See to the game at the table, within the turn when it runs in one.
+fn seat_at_table(
+    cx: &mut Cx,
+    r: &mut MemberReply,
+    what: AtTableDo,
+    turn: Option<String>,
+) -> MemberNext {
+    let (venue, asker, words, owner) = (
+        r.venue.clone(),
+        r.speaker.clone(),
+        r.said.clone(),
+        r.user_id,
+    );
+    let (table, next) = at_table(cx, what, &venue, &asker, &words, owner, turn);
+    match next {
+        AtTableNext::Wait(id) => {
+            r.table = Some(table);
+            MemberNext::Wait(id)
+        }
+        AtTableNext::Done(text) => at_table_done(cx, r, what, text),
+    }
+}
+
+/// What came of the game at the table, and her answer going on.
+fn at_table_done(
+    cx: &mut Cx,
+    r: &mut MemberReply,
+    what: AtTableDo,
+    text: Option<String>,
+) -> MemberNext {
+    match what {
+        // A turtle soup on in this group, with this line judged; or how she
+        // would start one for the group.
+        AtTableDo::Turn => {
+            r.game = Some(text.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string()));
+            stickers(cx, r)
+        }
+        AtTableDo::Start => {
+            let text = match text {
+                Some(opening) => format!("{}\n\n{opening}", r.text),
+                None => r.text.clone(),
+            };
+            taken_apart(cx, r, text.trim())
+        }
+        AtTableDo::After => ended(r),
+    }
+}
+
+fn ended(r: &mut MemberReply) -> MemberNext {
+    let sticker = r.sticker.take();
+    MemberNext::Done(r.reply.take().map(|reply| (reply, sticker)), r.bound)
 }
 
 /// Her words, the sticker she chose taken out, and the turn closed with them.

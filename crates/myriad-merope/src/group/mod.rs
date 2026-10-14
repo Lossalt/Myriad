@@ -20,7 +20,10 @@
 //! answer to someone from outside, put together from what is read and
 //! asked of her here; her answer to a member too, the group's own part put
 //! together here, what she knows of them and how she is given whole by the
-//! end that opens and closes the turn as one of theirs (D2c-8 A, D2c-9 A).
+//! end that opens and closes the turn as one of theirs (D2c-8 A, D2c-9 A);
+//! the game at the group's table, as a game she hosts (`crate::hosting`):
+//! read back, a line judged, one started, one over or left put away and
+//! remembered.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -604,14 +607,15 @@ pub enum Answer {
     Label {
         label: String,
     },
-    /// The turtle soup's section for this turn, when a game is on.
-    Soup {
+    /// The game on at a table, as kept (none: none is on).
+    Game {
         #[serde(default)]
-        section: Option<String>,
+        game: Option<Value>,
     },
-    /// The puzzle she thought up, as it opens.
-    SoupOpening {
-        opening: String,
+    /// Turtle-soup surfaces she used lately, wherever.
+    Surfaces {
+        #[serde(default)]
+        surfaces: Vec<String>,
     },
     /// The dictionaries' entry, if they have one.
     Defined {
@@ -822,35 +826,7 @@ pub enum Effect {
         sticker: Option<Value>,
         /// She spoke first: nobody's binding to hold to.
         first: bool,
-        /// The table whose game this turn may have ended (still the end's
-        /// until the games move into the core): put away after it.
-        #[serde(default)]
-        game: Option<String>,
     },
-    /// The group's turtle soup at this turn (the end's until D2c):
-    /// `words` from `asker` judged when a game is on, billed to `owner`.
-    SoupTurn {
-        id: String,
-        venue: String,
-        asker: String,
-        words: String,
-        owner: i32,
-        /// A member's turn it is judged within, when it is one.
-        #[serde(default)]
-        turn: Option<String>,
-    },
-    /// She said she would think one up: the puzzle she brings out.
-    SoupStart {
-        id: String,
-        venue: String,
-        words: String,
-        owner: i32,
-        #[serde(default)]
-        turn: Option<String>,
-    },
-    /// After her reply: a game this turn ended is over, and the group
-    /// remembers it.
-    SoupAfter { venue: String },
     React {
         id: String,
         to: Target,
@@ -977,6 +953,10 @@ pub enum ToRead {
     Titles { venues: Vec<String> },
     /// How someone from the community goes by, by their account.
     Label { user_id: i32 },
+    /// The game on at a table (`g:<venue>`), as the group keeps it.
+    Game { table: String },
+    /// Turtle-soup surfaces she used lately, at any table: hers.
+    RecentSurfaces,
     /// The vectors kept for these memories (as read, with their cues), by
     /// the model in use; up to `fill` of those without one are given one
     /// behind the reply.
@@ -1010,6 +990,17 @@ pub enum ToWrite {
         venue: String,
         term: String,
         used: Vec<String>,
+    },
+    /// Keep the game on at a table (as the game is kept).
+    Game { table: String, game: Value },
+    /// Take the game off a table.
+    TakeGame { table: String },
+    /// A turtle-soup surface she used: hers.
+    UsedSurface { surface: String },
+    /// How a puzzle of hers went at a table, kept with it: hers.
+    Tried {
+        id: String,
+        tried: crate::making::Tried,
     },
 }
 

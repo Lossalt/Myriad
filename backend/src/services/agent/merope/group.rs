@@ -66,8 +66,9 @@ pub mod memory_jobs {
 }
 
 pub mod soup {
+    pub(crate) use crate::services::agent::merope::making::kept_tried;
     pub(crate) use crate::services::agent::merope::soup::{
-        Table, after_turn_at, start_at, this_turn_at,
+        game_at, keep_at, recent_surfaces, take_at, used_surface,
     };
 }
 
