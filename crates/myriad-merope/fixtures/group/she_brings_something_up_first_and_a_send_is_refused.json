@@ -1,0 +1,720 @@
+{
+  "state": {
+    "answered": [],
+    "busy": false,
+    "called": null,
+    "errands": [],
+    "everyoneMutedUntil": null,
+    "glanceAt": null,
+    "handled": [],
+    "heardUpto": null,
+    "heldBack": false,
+    "judging": false,
+    "lastReply": 1791959410674617,
+    "ledger": [],
+    "ledgerHers": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerTheirs": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerWaits": [],
+    "leftWhileAway": null,
+    "lines": [
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "1",
+        "name": "阿明",
+        "text": "最近有什么好歌"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:30:10.674617Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "今天听到一首好歌"
+      }
+    ],
+    "mutedUntil": null,
+    "next": 17,
+    "paused": {},
+    "pending": null,
+    "pictures": {},
+    "reach": {
+      "addressed": false,
+      "chat": "-100777",
+      "displayName": "阿明",
+      "from": "11",
+      "images": [],
+      "messageId": "1",
+      "platform": "telegram",
+      "replyTo": null,
+      "text": "最近有什么好歌",
+      "thread": null
+    },
+    "reachKept": 1791957600000000,
+    "readWith": [],
+    "restored": false,
+    "seenBefore": null,
+    "spokeUp": [
+      {
+        "at": 1791959410674617,
+        "taken": false
+      }
+    ],
+    "strangerReplies": null,
+    "takenBack": [],
+    "unjudgedSince": null,
+    "version": 1,
+    "waiting": []
+  },
+  "steps": [
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "最近有什么好歌",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 7806831264735756412
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "最近有什么好歌"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791957600000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "最近有什么好歌"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "最近有什么好歌",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 9396908728118811419
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 131.0,
+            "key": "g2",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g2",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 11960119808228829710
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g3",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g3",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 7062582979898595269
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：最近有什么好歌"
+            ],
+            "here": {
+              "howItWent": null,
+              "lastSpoke": null,
+              "late": null,
+              "share": "Of the last 1 lines here, 0 were yours; one other person said the rest."
+            },
+            "id": "g4",
+            "kind": "judge",
+            "owner": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "decision": null,
+            "kind": "judged"
+          },
+          "id": "g4",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 14673421054488193520
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "speakFirst",
+          "owner": 1,
+          "reason": "something of yours: 一首歌",
+          "waiter": "first"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959400000000,
+        "seed": 9232803539723513983
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g6",
+            "inbound_id": "group:-100777:first:1791959400000",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g6",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959400000000,
+        "seed": 10218303843513747618
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g7",
+            "kind": "prepare",
+            "user_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "prepared",
+            "ok": true
+          },
+          "id": "g7",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959400000000,
+        "seed": 1206773305466921929
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g8",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g8",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959400000000,
+        "seed": 15490212636682683044
+      },
+      "output": {
+        "effects": [
+          {
+            "chime": "something of yours: 一首歌",
+            "differs": null,
+            "first": true,
+            "id": "g9",
+            "input": "（没人在跟你说话。）",
+            "kind": "turn",
+            "late": null,
+            "making_sense": null,
+            "room": null,
+            "speaker": "",
+            "to": {
+              "chat": "-100777",
+              "messageId": "",
+              "platform": "telegram",
+              "thread": null
+            },
+            "transcript": [
+              {
+                "content": "阿明：最近有什么好歌",
+                "role": "user"
+              }
+            ],
+            "user_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "今天听到一首好歌\n分享给你们"
+          },
+          "id": "g9",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959402000000,
+        "seed": 3660572683296592931
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g10",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g10",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959402000000,
+        "seed": 13756953107850766454
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 5.849725277613742,
+            "key": "g11",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g11",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959407849725,
+        "seed": 9882984339513518093
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g12",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "今天听到一首好歌"
+              }
+            ],
+            "quote": false,
+            "to": {
+              "chat": "-100777",
+              "messageId": "",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g12",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959407849725,
+        "seed": 14456408541175185048
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g13",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g13",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959407849725,
+        "seed": 5848529123618728455
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 2.8248924603543357,
+            "key": "g14",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g14",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959410674617,
+        "seed": 4493283409665547658
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g15",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "分享给你们"
+              }
+            ],
+            "quote": false,
+            "to": {
+              "chat": "-100777",
+              "messageId": "",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": false
+          },
+          "id": "g15",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959410674617,
+        "seed": 13833615605184489617
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:好歌": 1,
+                "end:歌": 1,
+                "end:首好歌": 1,
+                "start:今": 1,
+                "start:今天": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791957600,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 7,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791959407,
+                "bang": false,
+                "by": "her",
+                "chars": 8,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 1,
+              "pieces": {
+                "end:么好歌": 1,
+                "end:好歌": 1,
+                "end:歌": 1,
+                "start:最": 1,
+                "start:最近": 1
+              }
+            },
+            "waits": []
+          },
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "最近有什么好歌"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:30:10.674617Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "今天听到一首好歌"
+              }
+            ]
+          },
+          {
+            "after": 300.0,
+            "key": "g17",
+            "kind": "wake"
+          },
+          {
+            "kind": "settled",
+            "value": true,
+            "waiter": "first"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g17",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791959710674617,
+        "seed": 7831313575529992652
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "spokeUp",
+            "line": "今天听到一首好歌",
+            "taken": false
+          }
+        ]
+      }
+    }
+  ]
+}

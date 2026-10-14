@@ -1,0 +1,805 @@
+{
+  "state": {
+    "answered": [
+      {
+        "at": 1791957630343783,
+        "from": "31"
+      }
+    ],
+    "busy": false,
+    "called": 1791957622124160,
+    "errands": [],
+    "everyoneMutedUntil": null,
+    "glanceAt": null,
+    "handled": [
+      "2"
+    ],
+    "heardUpto": null,
+    "heldBack": false,
+    "judging": false,
+    "lastReply": 1791957630343783,
+    "ledger": [],
+    "ledgerHers": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerTheirs": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerWaits": [],
+    "leftWhileAway": null,
+    "lines": [
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:00Z",
+        "from": "31",
+        "hers": false,
+        "message_id": "1",
+        "name": "路人",
+        "text": "这个bot是谁"
+      },
+      {
+        "addressed": true,
+        "at": "2026-10-14T06:00:01Z",
+        "from": "31",
+        "hers": false,
+        "message_id": "2",
+        "name": "路人",
+        "text": "@bot 你是机器人吗"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:30.343783Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "我是这里的常客啦"
+      }
+    ],
+    "mutedUntil": null,
+    "next": 15,
+    "paused": {},
+    "pending": null,
+    "pictures": {},
+    "reach": {
+      "addressed": true,
+      "chat": "-100777",
+      "displayName": "路人",
+      "from": "31",
+      "images": [],
+      "messageId": "2",
+      "platform": "telegram",
+      "replyTo": null,
+      "text": "@bot 你是机器人吗",
+      "thread": null
+    },
+    "reachKept": 1791957600000000,
+    "readWith": [],
+    "restored": false,
+    "seenBefore": null,
+    "spokeUp": [],
+    "strangerReplies": {
+      "count": 1,
+      "day": "2026-10-14"
+    },
+    "takenBack": [],
+    "unjudgedSince": null,
+    "version": 1,
+    "waiting": []
+  },
+  "steps": [
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "路人",
+            "from": "31",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "这个bot是谁",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 7806831264735756412
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "31",
+                "hers": false,
+                "message_id": "1",
+                "name": "路人",
+                "text": "这个bot是谁"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791957600000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "这个bot是谁"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "路人",
+            "from": "31",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "这个bot是谁",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 9396908728118811419
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 131.0,
+            "key": "g2",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "路人",
+            "from": "31",
+            "images": [],
+            "messageId": "2",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 你是机器人吗",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957601000000,
+        "seed": 11960119808228829710
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "31",
+                "hers": false,
+                "message_id": "1",
+                "name": "路人",
+                "text": "这个bot是谁"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "31",
+                "hers": false,
+                "message_id": "2",
+                "name": "路人",
+                "text": "@bot 你是机器人吗"
+              }
+            ]
+          },
+          {
+            "kind": "jargon",
+            "text": "@bot 你是机器人吗"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "called",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "路人",
+            "from": "31",
+            "images": [],
+            "messageId": "2",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 你是机器人吗",
+            "thread": null
+          },
+          "waiter": "w1"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957601000000,
+        "seed": 7062582979898595269
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 21.124160063754296,
+            "key": "g4",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g4",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957622124160,
+        "seed": 14673421054488193520
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g5",
+            "inbound_id": "group:-100777:2",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g5",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957622124160,
+        "seed": 9232803539723513983
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "31",
+            "id": "g6",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "kind": "stranger"
+            }
+          },
+          "id": "g6",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957622124160,
+        "seed": 10218303843513747618
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g7",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g7",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957622124160,
+        "seed": 1206773305466921929
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "路人：这个bot是谁",
+              "路人：@bot 你是机器人吗"
+            ],
+            "id": "g8",
+            "kind": "makeSense",
+            "said": "@bot 你是机器人吗"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sense",
+            "section": "有人第一次来，在问她是谁"
+          },
+          "id": "g8",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957623124160,
+        "seed": 15490212636682683044
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g9",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g9",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957623124160,
+        "seed": 3660572683296592931
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g10",
+            "kind": "strangerTurn",
+            "owner": 1,
+            "said": "@bot 你是机器人吗",
+            "sections": [
+              "有人第一次来，在问她是谁"
+            ],
+            "stranger": {
+              "name": "路人",
+              "who": "telegram:31"
+            },
+            "transcript": [
+              {
+                "content": "路人：这个bot是谁",
+                "role": "user"
+              },
+              {
+                "content": "路人：@bot 你是机器人吗",
+                "role": "user"
+              }
+            ],
+            "why": null
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "（回复 路人）我是这里的常客啦"
+          },
+          "id": "g10",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957625124160,
+        "seed": 13756953107850766454
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g11",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g11",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957625124160,
+        "seed": 9882984339513518093
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 5.219623520366482,
+            "key": "g12",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g12",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957630343783,
+        "seed": 14456408541175185048
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g13",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "我是这里的常客啦"
+              }
+            ],
+            "quote": true,
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g13",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957630343783,
+        "seed": 5848529123618728455
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:啦": 1,
+                "end:客啦": 1,
+                "end:常客啦": 1,
+                "start:我": 1,
+                "start:我是": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791957600,
+                "bang": false,
+                "by": "eb1e33e8a81b",
+                "chars": 7,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791957601,
+                "bang": false,
+                "by": "eb1e33e8a81b",
+                "chars": 11,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791957630,
+                "bang": false,
+                "by": "her",
+                "chars": 8,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 2,
+              "pieces": {
+                "end:t是谁": 1,
+                "end:人吗": 1,
+                "end:吗": 1,
+                "end:器人吗": 1,
+                "end:是谁": 1,
+                "end:谁": 1,
+                "start:@": 1,
+                "start:@b": 1,
+                "start:这": 1,
+                "start:这个": 1
+              }
+            },
+            "waits": [
+              29.343
+            ]
+          },
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "31",
+                "hers": false,
+                "message_id": "1",
+                "name": "路人",
+                "text": "这个bot是谁"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "31",
+                "hers": false,
+                "message_id": "2",
+                "name": "路人",
+                "text": "@bot 你是机器人吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:30.343783Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "我是这里的常客啦"
+              }
+            ]
+          },
+          {
+            "kind": "strangerAfter",
+            "message_id": "2",
+            "owner": 1,
+            "reply": "我是这里的常客啦",
+            "said": "@bot 你是机器人吗",
+            "stranger": {
+              "name": "路人",
+              "who": "telegram:31"
+            }
+          },
+          {
+            "kind": "settled",
+            "value": true,
+            "waiter": "w1"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g2",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 4493283409665547658
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "31",
+            "id": "g14",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g14",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 13833615605184489617
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "路人：这个bot是谁",
+              "路人：@bot 你是机器人吗",
+              "you：我是这里的常客啦"
+            ],
+            "here": {
+              "howItWent": null,
+              "lastSpoke": "just now",
+              "late": null,
+              "share": "Of the last 3 lines here, 1 were yours; one other person said the rest."
+            },
+            "id": "g15",
+            "kind": "judge",
+            "owner": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "decision": null,
+            "kind": "judged"
+          },
+          "id": "g15",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 7831313575529992652
+      },
+      "output": {
+        "effects": []
+      }
+    }
+  ]
+}

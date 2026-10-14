@@ -1,0 +1,815 @@
+{
+  "state": {
+    "answered": [
+      {
+        "at": 1791957613528262,
+        "from": "11"
+      }
+    ],
+    "busy": false,
+    "called": 1791957611200494,
+    "errands": [],
+    "everyoneMutedUntil": null,
+    "glanceAt": null,
+    "handled": [
+      "4"
+    ],
+    "heardUpto": null,
+    "heldBack": false,
+    "judging": false,
+    "lastReply": 1791957613528262,
+    "ledger": [],
+    "ledgerHers": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerTheirs": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerWaits": [],
+    "leftWhileAway": null,
+    "lines": [
+      {
+        "addressed": true,
+        "at": "2026-10-14T04:30:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "1",
+        "name": "阿明",
+        "text": "@bot 早"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T04:31:00Z",
+        "from": null,
+        "hers": true,
+        "message_id": "2",
+        "name": "",
+        "text": "早呀"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T05:20:00Z",
+        "from": "12",
+        "hers": false,
+        "message_id": "3",
+        "name": "阿明",
+        "text": "她起了没"
+      },
+      {
+        "addressed": true,
+        "at": "2026-10-14T05:30:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "4",
+        "name": "阿明",
+        "text": "@bot 晚上打游戏吗"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T05:40:00Z",
+        "from": "12",
+        "hers": false,
+        "message_id": "5",
+        "name": "阿明",
+        "text": "没回，睡着了吧"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:13.528262Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "嗯嗯"
+      }
+    ],
+    "mutedUntil": null,
+    "next": 11,
+    "paused": {},
+    "pending": null,
+    "pictures": {},
+    "reach": {
+      "addressed": true,
+      "chat": "-100777",
+      "displayName": "阿明",
+      "from": "11",
+      "images": [],
+      "messageId": "4",
+      "platform": "telegram",
+      "replyTo": null,
+      "text": "@bot 晚上打游戏吗",
+      "thread": null
+    },
+    "reachKept": null,
+    "readWith": [],
+    "restored": true,
+    "seenBefore": null,
+    "spokeUp": [
+      {
+        "at": 1791954600000000,
+        "taken": true
+      }
+    ],
+    "strangerReplies": null,
+    "takenBack": [
+      "4"
+    ],
+    "unjudgedSince": null,
+    "version": 1,
+    "waiting": []
+  },
+  "steps": [
+    {
+      "input": {
+        "event": {
+          "kind": "restored",
+          "lines": null,
+          "spoke_up": [
+            {
+              "at": 1791954600000000,
+              "taken": true
+            }
+          ]
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 7806831264735756412
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "resumed",
+          "past": [
+            {
+              "at": 1791952200000000,
+              "hers": false,
+              "message": {
+                "addressed": true,
+                "chat": "-100777",
+                "displayName": "阿明",
+                "from": "11",
+                "images": [],
+                "messageId": "1",
+                "platform": "telegram",
+                "replyTo": null,
+                "text": "@bot 早",
+                "thread": null
+              }
+            },
+            {
+              "at": 1791952260000000,
+              "hers": true,
+              "message": {
+                "addressed": false,
+                "chat": "-100777",
+                "displayName": "",
+                "from": "0",
+                "images": [],
+                "messageId": "2",
+                "platform": "telegram",
+                "replyTo": null,
+                "text": "早呀",
+                "thread": null
+              }
+            },
+            {
+              "at": 1791955200000000,
+              "hers": false,
+              "message": {
+                "addressed": false,
+                "chat": "-100777",
+                "displayName": "阿明",
+                "from": "12",
+                "images": [],
+                "messageId": "3",
+                "platform": "telegram",
+                "replyTo": null,
+                "text": "她起了没",
+                "thread": null
+              }
+            },
+            {
+              "at": 1791955800000000,
+              "hers": false,
+              "message": {
+                "addressed": true,
+                "chat": "-100777",
+                "displayName": "阿明",
+                "from": "11",
+                "images": [],
+                "messageId": "4",
+                "platform": "telegram",
+                "replyTo": null,
+                "text": "@bot 晚上打游戏吗",
+                "thread": null
+              }
+            },
+            {
+              "at": 1791956400000000,
+              "hers": false,
+              "message": {
+                "addressed": false,
+                "chat": "-100777",
+                "displayName": "阿明",
+                "from": "12",
+                "images": [],
+                "messageId": "5",
+                "platform": "telegram",
+                "replyTo": null,
+                "text": "没回，睡着了吧",
+                "thread": null
+              }
+            }
+          ],
+          "up_since": 1791957300000000,
+          "why": "restart"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 9396908728118811419
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": true,
+                "at": "2026-10-14T04:30:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "@bot 早"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T04:31:00Z",
+                "from": null,
+                "hers": true,
+                "message_id": "2",
+                "name": "",
+                "text": "早呀"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:20:00Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "她起了没"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T05:30:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "4",
+                "name": "阿明",
+                "text": "@bot 晚上打游戏吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:40:00Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "5",
+                "name": "阿明",
+                "text": "没回，睡着了吧"
+              }
+            ]
+          },
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:呀": 1,
+                "start:早": 1,
+                "whole:早呀": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791952200,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 6,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791952260,
+                "bang": false,
+                "by": "her",
+                "chars": 2,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791955200,
+                "bang": false,
+                "by": "6b51d431df5d",
+                "chars": 4,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791955800,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 11,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791956400,
+                "bang": false,
+                "by": "6b51d431df5d",
+                "chars": 7,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 4,
+              "pieces": {
+                "end: 早": 1,
+                "end:t 早": 1,
+                "end:了吧": 1,
+                "end:了没": 1,
+                "end:吗": 1,
+                "end:吧": 1,
+                "end:戏吗": 1,
+                "end:早": 1,
+                "end:没": 1,
+                "end:游戏吗": 1,
+                "end:着了吧": 1,
+                "end:起了没": 1,
+                "start:@": 2,
+                "start:@b": 2,
+                "start:她": 1,
+                "start:她起": 1,
+                "start:没": 1,
+                "start:没回": 1,
+                "whole:她起了没": 1
+              }
+            },
+            "waits": []
+          },
+          {
+            "after": 11.20049415463913,
+            "key": "g2",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g2",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 11960119808228829710
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g3",
+            "inbound_id": "group:-100777:4",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g3",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 7062582979898595269
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g4",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g4",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 14673421054488193520
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g5",
+            "kind": "prepare",
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "prepared",
+            "ok": true
+          },
+          "id": "g5",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 9232803539723513983
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：@bot 早",
+              "you：早呀",
+              "阿明：她起了没",
+              "阿明：@bot 晚上打游戏吗",
+              "阿明：没回，睡着了吧"
+            ],
+            "id": "g6",
+            "kind": "makeSense",
+            "said": "@bot 晚上打游戏吗"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sense",
+            "section": null
+          },
+          "id": "g6",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 10218303843513747618
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g7",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g7",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 1206773305466921929
+      },
+      "output": {
+        "effects": [
+          {
+            "chime": null,
+            "differs": null,
+            "first": false,
+            "id": "g8",
+            "input": "@bot 晚上打游戏吗",
+            "kind": "turn",
+            "late": "30 minutes ago",
+            "making_sense": null,
+            "room": null,
+            "speaker": "阿明",
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            },
+            "transcript": [
+              {
+                "content": "阿明：@bot 早",
+                "role": "user"
+              },
+              {
+                "content": "早呀",
+                "role": "assistant"
+              },
+              {
+                "content": "阿明：她起了没",
+                "role": "user"
+              },
+              {
+                "content": "阿明：@bot 晚上打游戏吗",
+                "role": "user"
+              },
+              {
+                "content": "阿明：没回，睡着了吧",
+                "role": "user"
+              }
+            ],
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "嗯嗯"
+          },
+          "id": "g8",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 15490212636682683044
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g9",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g9",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611200494,
+        "seed": 3660572683296592931
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 2.327768068431732,
+            "key": "g10",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g10",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957613528262,
+        "seed": 13756953107850766454
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g11",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "嗯嗯"
+              }
+            ],
+            "quote": true,
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g11",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957613528262,
+        "seed": 9882984339513518093
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:嗯": 1,
+                "start:嗯": 1,
+                "whole:嗯嗯": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791957613,
+                "bang": false,
+                "by": "her",
+                "chars": 2,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 0,
+              "pieces": {}
+            },
+            "waits": [
+              1813.528
+            ]
+          },
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": true,
+                "at": "2026-10-14T04:30:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "@bot 早"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T04:31:00Z",
+                "from": null,
+                "hers": true,
+                "message_id": "2",
+                "name": "",
+                "text": "早呀"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:20:00Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "她起了没"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T05:30:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "4",
+                "name": "阿明",
+                "text": "@bot 晚上打游戏吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:40:00Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "5",
+                "name": "阿明",
+                "text": "没回，睡着了吧"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:13.528262Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "嗯嗯"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

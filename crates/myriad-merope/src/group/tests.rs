@@ -1,0 +1,1427 @@
+//! The group's mind on its own, and the trajectories (G1) every end replays:
+//! a small end is simulated here (a clock, timers, scripted answers), and
+//! each step it takes is written to `fixtures/group/<name>.json` with
+//! `MYRIAD_RECORD_G1=1`, else compared with it.
+
+use std::collections::{BTreeMap, HashMap, VecDeque};
+
+use myriad_agent_rules::channel::{GroupImage, ImageFetch};
+use serde_json::{Value, json};
+
+use super::flows::without_reply_mark;
+use super::lines::*;
+use super::*;
+
+const BASE: i64 = 1_791_957_600_000_000; // 2026-10-14T06:00:00Z
+
+fn secs(seconds: f64) -> i64 {
+    (seconds * 1_000_000.0) as i64
+}
+
+fn message(id: i64, from: i64, name: &str, text: &str, addressed: bool) -> Message {
+    Message {
+        platform: "telegram".into(),
+        chat: "-100777".into(),
+        message_id: id.to_string(),
+        thread: None,
+        from: from.to_string(),
+        display_name: name.into(),
+        text: text.into(),
+        addressed,
+        reply_to: None,
+        images: Vec::new(),
+    }
+}
+
+fn her() -> Her {
+    Her {
+        away: false,
+        asleep_for: None,
+        busy_for: None,
+        today: "2026-10-14".into(),
+    }
+}
+
+fn at(now: i64) -> At {
+    At {
+        now,
+        her: her(),
+        rolls: Rolls::new(7, Vec::new()),
+    }
+}
+
+fn line(at: i64, id: Option<&str>, from: Option<&str>, name: &str, text: &str, hers: bool) -> Line {
+    Line {
+        at: time(at),
+        message_id: id.map(str::to_string),
+        name: name.into(),
+        from: from.map(str::to_string),
+        text: text.into(),
+        hers,
+        addressed: false,
+        images: Vec::new(),
+        seen: Vec::new(),
+    }
+}
+
+// ------------------------------------------------------------ rules
+
+#[test]
+fn a_line_heard_again_is_kept_once() {
+    let mut group = Group::default();
+    let heard = |group: &mut Group| {
+        step(
+            group,
+            &mut at(BASE),
+            Event::Heard {
+                message: message(1, 11, "阿明", "@bot 在吗", false),
+                restore: None,
+            },
+        )
+        .fresh
+    };
+    assert_eq!(heard(&mut group), Some(true));
+    assert_eq!(heard(&mut group), Some(false));
+    assert_eq!(transcript(&group, None, BASE).len(), 1);
+}
+
+#[test]
+fn the_transcript_is_the_lines_before_the_one_she_answers() {
+    let mut group = Group::default();
+    push_line(
+        &mut group,
+        line(BASE, Some("1"), Some("1"), "阿明", "周五聚餐吗", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("2"), Some("2"), "小红", "我可以", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, None, None, "", "我在屏幕里", true),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("3"), Some("1"), "阿明", "@bot 你推荐哪家", false),
+        BASE,
+    );
+    let lines: Vec<(String, String)> = transcript(&group, Some("3"), BASE)
+        .into_iter()
+        .map(|spoken| (spoken.role, spoken.content))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("user".into(), "阿明：周五聚餐吗".into()),
+            ("user".into(), "小红：我可以".into()),
+            ("assistant".into(), "我在屏幕里".into()),
+        ]
+    );
+}
+
+#[test]
+fn she_mentions_whoever_spoke_lately_by_their_last_name_and_reads_ids_as_names() {
+    let mut group = Group::default();
+    push_line(
+        &mut group,
+        line(BASE, Some("1"), Some("11"), "阿明", "嗯", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("2"), Some("12"), "小红", "嗯", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("3"), Some("11"), "阿明同学", "嗯", false),
+        BASE,
+    );
+    assert_eq!(
+        people(&group, BASE),
+        [
+            ("阿明同学".to_string(), "11".to_string()),
+            ("小红".to_string(), "12".to_string())
+        ]
+    );
+    let people = vec![("小红".to_string(), "111".to_string())];
+    assert_eq!(
+        by_name("@111 你看 @1112 @222", &people),
+        "@小红 你看 @1112 @222"
+    );
+    assert_eq!(by_name("邮箱 a@b.c", &people), "邮箱 a@b.c");
+}
+
+#[test]
+fn she_answers_what_was_said_up_to_when_she_gets_to_it() {
+    let mut group = Group::default();
+    push_line(
+        &mut group,
+        line(BASE, Some("1"), Some("11"), "阿明", "周五聚餐吗", false),
+        BASE,
+    );
+    let called = message(2, 11, "阿明", "你推荐哪家", true);
+    push_line(
+        &mut group,
+        line(BASE, Some("2"), Some("11"), "阿明", "你推荐哪家", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("3"), Some("12"), "小红", "我想吃火锅", false),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(BASE, Some("4"), Some("11"), "阿明", "最好便宜点", false),
+        BASE,
+    );
+    let added = message(4, 11, "阿明", "最好便宜点", true);
+    group.waiting.push_back(added.clone());
+    let read = reading(&mut group, &called, BASE);
+    assert_eq!(read.said, "你推荐哪家\n最好便宜点");
+    assert_eq!(read.transcript.len(), 4);
+    assert!(group.waiting.is_empty());
+    assert!(read_already(&group, &added));
+    assert!(!read_already(&group, &called));
+}
+
+#[test]
+fn what_came_while_she_wrote_is_after_she_began_and_never_hers() {
+    let mut group = Group::default();
+    let since = BASE;
+    push_line(
+        &mut group,
+        line(
+            since - secs(10.0),
+            Some("1"),
+            Some("1"),
+            "阿明",
+            "周六几点集合",
+            false,
+        ),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(
+            since + secs(5.0),
+            Some("2"),
+            Some("2"),
+            "阿红",
+            "刚说了十点",
+            false,
+        ),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(since + secs(6.0), None, None, "", "（她的）", true),
+        BASE,
+    );
+    push_line(
+        &mut group,
+        line(
+            since + secs(8.0),
+            Some("3"),
+            Some("1"),
+            "阿明",
+            "那就十点",
+            false,
+        ),
+        BASE,
+    );
+    let mut calling = line(
+        since + secs(9.0),
+        Some("4"),
+        Some("3"),
+        "小周",
+        "@她 你来吗",
+        false,
+    );
+    calling.addressed = true;
+    push_line(&mut group, calling, BASE);
+    assert_eq!(
+        came_since(&group, since, "1"),
+        [
+            ("阿红".to_string(), "刚说了十点".to_string(), false),
+            ("阿明".to_string(), "那就十点".to_string(), true),
+            ("小周".to_string(), "@她 你来吗".to_string(), true),
+        ]
+    );
+    assert!(!came_since(&group, since, "")[1].2);
+}
+
+#[test]
+fn lines_kept_before_a_restart_come_back_under_newer_ones() {
+    let mut group = Group::default();
+    let minutes = |m: i64| BASE - m * 60_000_000;
+    push_line(
+        &mut group,
+        line(
+            minutes(1),
+            Some("9"),
+            Some("1"),
+            "阿明",
+            "说到一半怎么没了",
+            false,
+        ),
+        BASE,
+    );
+    merge_restored(
+        &mut group,
+        vec![
+            line(minutes(30), Some("7"), Some("1"), "阿明", "来点歌", false),
+            line(minutes(29), None, None, "", "放就放，听完要是", true),
+            line(
+                minutes(1),
+                Some("9"),
+                Some("1"),
+                "阿明",
+                "说到一半怎么没了",
+                false,
+            ),
+            line(
+                minutes(7 * 60),
+                Some("1"),
+                Some("1"),
+                "阿明",
+                "太久以前的话",
+                false,
+            ),
+        ],
+        BASE,
+    );
+    let texts: Vec<&str> = group.lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, ["来点歌", "放就放，听完要是", "说到一半怎么没了"]);
+    // The kept shape reads back, and an old line without the flag does not
+    // call her.
+    let mut old = serde_json::to_value(&group.lines[0]).unwrap();
+    old.as_object_mut().unwrap().remove("addressed");
+    assert!(!serde_json::from_value::<Line>(old).unwrap().addressed);
+}
+
+#[test]
+fn a_mute_is_told_as_it_happened_and_holds_until_it_ends() {
+    let mut group = Group::default();
+    let mut out = step(
+        &mut group,
+        &mut at(BASE),
+        Event::Muted {
+            by: String::new(),
+            mute: Mute::For { seconds: 600 },
+            everyone: false,
+            restore: None,
+        },
+    );
+    assert_eq!(group.lines.back().unwrap().text, "（把你禁言了 10 分钟）");
+    assert_eq!(group.lines.back().unwrap().name, "群管理");
+    assert!(matches!(out.effects.pop(), Some(Effect::KeepLines { .. })));
+    assert_eq!(group.muted_until, Some(BASE + secs(600.0)));
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Muted {
+            by: String::new(),
+            mute: Mute::For { seconds: 3 * 3600 },
+            everyone: false,
+            restore: None,
+        },
+    );
+    assert_eq!(group.lines.back().unwrap().text, "（把你禁言了 3 小时）");
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Muted {
+            by: String::new(),
+            mute: Mute::For { seconds: 2 * 86400 },
+            everyone: true,
+            restore: None,
+        },
+    );
+    assert_eq!(group.lines.back().unwrap().text, "（全员禁言 2 天）");
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Muted {
+            by: String::new(),
+            mute: Mute::Lifted,
+            everyone: false,
+            restore: None,
+        },
+    );
+    assert_eq!(group.lines.back().unwrap().text, "（解除了你的禁言）");
+    // Everyone's mute still holds.
+    assert!(group.everyone_muted_until.is_some_and(|until| until > BASE));
+    assert_eq!(group.muted_until, None);
+}
+
+#[test]
+fn a_line_left_waiting_by_a_restart_is_taken_back_up_once() {
+    let mut group = Group::default();
+    let up = BASE;
+    let ago = |minutes: i64| up - minutes * 60_000_000;
+    let past = |id: i64, minutes: i64, text: &str, hers: bool, addressed: bool| Past {
+        message: message(id, 11, "阿明", text, addressed),
+        at: ago(minutes),
+        hers,
+    };
+    let lines = vec![
+        past(1, 90, "@bot 早", false, true),
+        past(2, 89, "早呀", true, false),
+        past(3, 40, "她起了没", false, false),
+        past(4, 30, "@bot 晚上打游戏吗", false, true),
+        past(5, 20, "没回，睡着了吧", false, false),
+    ];
+    let out = step(
+        &mut group,
+        &mut at(BASE),
+        Event::Resumed {
+            why: Resume::Restart,
+            past: lines.clone(),
+            up_since: Some(up),
+        },
+    );
+    let taken: Vec<&flows::Errand> = group.errands.iter().collect();
+    assert_eq!(taken.len(), 1, "{out:?}");
+    match &taken[0].kind {
+        flows::Kind::TakeUp { message, .. } => assert_eq!(message.message_id, "4"),
+        other => panic!("{other:?}"),
+    }
+    let again = step(
+        &mut group,
+        &mut at(BASE),
+        Event::Resumed {
+            why: Resume::Restart,
+            past: lines,
+            up_since: Some(up),
+        },
+    );
+    assert!(
+        again
+            .effects
+            .iter()
+            .all(|effect| !matches!(effect, Effect::Wake { .. }))
+    );
+}
+
+#[test]
+fn she_stops_answering_one_who_never_stops() {
+    let mut group = Group::default();
+    group.answered = (0..LOOP_ROUNDS - 1)
+        .map(|_| Answered {
+            from: "77".into(),
+            at: BASE,
+        })
+        .collect();
+    let bot = message(1, 77, "复读机", "在吗", true);
+    assert!(group.paused.is_empty());
+    // One more round, all within the window: paused.
+    group.answered.push_back(Answered {
+        from: "77".into(),
+        at: BASE,
+    });
+    let looping = group.answered.len() == LOOP_ROUNDS
+        && group.answered.iter().all(|one| one.from == bot.from);
+    assert!(looping);
+}
+
+#[test]
+fn the_ledger_keeps_numbers_not_words_or_ids_and_a_member_is_the_same_token_everywhere() {
+    assert_eq!(ledger_who("1"), ledger_who("1"));
+    assert_ne!(ledger_who("1"), "1");
+    assert_eq!(ledger_who("1").len(), 12);
+    // SHA-256 of "1", first six bytes: the same on every end and build.
+    assert_eq!(ledger_who("1"), "6b86b273ff34");
+    let merged = merge_ledger(
+        Ledger::default(),
+        vec![crate::talk_shape::typed_by("x", 0, "周五聚餐吗").unwrap()],
+        vec![1.5],
+        &Counts::of(["周五聚餐吗"]),
+        &Counts::default(),
+    );
+    // Messages are numbers; only the pieces they are made of are counted.
+    let json = serde_json::to_string(&merged.messages).unwrap();
+    assert!(!json.contains("聚餐"));
+    assert!(merged.theirs.pieces.contains_key("end:餐吗"));
+    assert_eq!(merged.her_waits, [1.5]);
+}
+
+#[test]
+fn she_does_not_echo_the_reply_mark() {
+    assert_eq!(
+        without_reply_mark("（回复 阿明）谁是你宝宝！"),
+        "谁是你宝宝！"
+    );
+    assert_eq!(without_reply_mark("（回复你说的：听完要是）断了"), "断了");
+    assert_eq!(
+        without_reply_mark("谁暴躁了（回复一下）"),
+        "谁暴躁了（回复一下）"
+    );
+}
+
+#[test]
+fn a_group_of_another_version_is_read_as_nothing_in_mind() {
+    let mut group = Group::default();
+    push_line(
+        &mut group,
+        line(BASE, Some("1"), Some("1"), "阿明", "嗯", false),
+        BASE,
+    );
+    let mut kept = serde_json::to_value(&group).unwrap();
+    assert_eq!(Group::read(kept.clone()), group);
+    kept["version"] = json!(VERSION + 1);
+    assert_eq!(Group::read(kept), Group::default());
+}
+
+#[test]
+fn chance_from_a_seed_is_the_same_everywhere() {
+    let mut rolls = Rolls::new(7, vec![0.25]);
+    assert_eq!(rolls.roll(), 0.25);
+    let first = rolls.roll();
+    let mut again = Rolls::new(7, Vec::new());
+    assert_eq!(again.roll(), first);
+    assert!((0.0..1.0).contains(&first));
+    let mut range = Rolls::new(0, vec![0.5, 0.999_999]);
+    assert_eq!(range.range(GLANCE_AFTER_SECONDS), 105);
+    assert_eq!(range.range(GLANCE_AFTER_SECONDS), 180);
+}
+
+#[test]
+fn a_group_gets_one_turn_at_a_time_and_a_pause_after_replying() {
+    let mut group = Group::default();
+    assert_eq!(flows::begin(&mut group, BASE), Ok(()));
+    assert_eq!(
+        flows::begin(&mut group, BASE),
+        Err(None),
+        "one turn at a time"
+    );
+    flows::end_turn(&mut group, true, BASE);
+    assert_eq!(
+        flows::begin(&mut group, BASE + secs(1.0)),
+        Err(Some(4.0)),
+        "a short pause after a reply"
+    );
+    assert_eq!(flows::begin(&mut group, BASE + secs(5.0)), Ok(()));
+    flows::end_turn(&mut group, false, BASE + secs(5.0));
+    assert_eq!(
+        flows::begin(&mut group, BASE + secs(5.0)),
+        Ok(()),
+        "no reply, no pause"
+    );
+}
+
+#[test]
+fn a_line_that_comes_while_she_is_busy_waits_and_only_the_oldest_go() {
+    let mut group = Group::default();
+    for id in 1..=(WAITING_LINES as i64 + 3) {
+        flows::park(
+            &mut group,
+            message(id, 11, "阿明", &format!("第{id}问"), true),
+        );
+    }
+    assert_eq!(group.waiting.len(), WAITING_LINES);
+    assert_eq!(group.waiting.front().unwrap().text, "第4问");
+    let mut today = None;
+    for _ in 0..3 {
+        assert!(flows::count_today(&mut today, "2026-10-14", 3));
+    }
+    assert!(!flows::count_today(&mut today, "2026-10-14", 3));
+    // Her next day counts afresh (her day, in her zone: D2-18).
+    assert!(flows::count_today(&mut today, "2026-10-15", 3));
+}
+
+#[test]
+fn she_looks_once_the_talk_settles_and_glances_at_the_rest_once() {
+    let mut group = Group::default();
+    let mut at = at(BASE);
+    // Not in the talk: one glance is planned, not one per line.
+    let first = step(
+        &mut group,
+        &mut at,
+        Event::Noticed {
+            message: message(1, 11, "阿明", "有人听过吗", false),
+        },
+    );
+    assert!(matches!(first.effects[..], [Effect::Wake { .. }]));
+    let planned = group.glance_at;
+    assert!(planned.is_some_and(|at| at <= BASE + secs(LONGEST_BUSY_SECONDS + 180.0)));
+    let second = step(
+        &mut group,
+        &mut at,
+        Event::Noticed {
+            message: message(2, 11, "阿明", "你们说呢", false),
+        },
+    );
+    assert!(second.effects.is_empty());
+    assert_eq!(group.glance_at, planned);
+    assert_eq!(
+        group.pending.as_ref().map(|line| line.message_id.as_str()),
+        Some("2")
+    );
+    assert!(group.unjudged_since.is_some());
+    // She said something there: she is in the talk, and looks once it settles.
+    push_line(
+        &mut group,
+        line(BASE, None, None, "", "我在屏幕里", true),
+        BASE,
+    );
+    assert!(flows::in_talk(&group, BASE));
+    let third = step(
+        &mut group,
+        &mut at,
+        Event::Noticed {
+            message: message(3, 12, "小红", "可以", false),
+        },
+    );
+    assert!(matches!(&third.effects[..], [Effect::Wake { after, .. }] if *after == SETTLE_SECONDS));
+    // Called there lately is in the talk too.
+    let mut other = Group::default();
+    other.called = Some(BASE);
+    assert!(flows::in_talk(&other, BASE + secs(60.0)));
+    assert!(!flows::in_talk(&other, BASE + secs(IN_TALK_SECONDS)));
+}
+
+#[test]
+fn pictures_read_as_she_saw_them_and_one_sent_again_is_counted() {
+    let mut group = Group::default();
+    let picture = |id: i64| {
+        let mut picture = message(id, 11, "阿明", "", false);
+        picture.images = vec![GroupImage {
+            key: "telegram:cat".into(),
+            fetch: ImageFetch::TelegramFile {
+                file_id: "f".into(),
+            },
+            hint: Some("😂".into()),
+            sticker: true,
+        }];
+        picture
+    };
+    for heard in [
+        picture(1),
+        message(2, 12, "小红", "哈哈哈", false),
+        picture(3),
+    ] {
+        step(
+            &mut group,
+            &mut at(BASE),
+            Event::Heard {
+                message: heard,
+                restore: None,
+            },
+        );
+    }
+    assert_eq!(
+        transcript(&group, None, BASE)[0].content,
+        "阿明：[表情：😂]"
+    );
+    assert_eq!(group.pictures.get("telegram:cat"), Some(&2));
+    group.lines[0].seen = vec![Some(crate::seeing::Seen {
+        what: "一只翻白眼的猫".into(),
+        says: Some("无语".into()),
+        ..Default::default()
+    })];
+    assert_eq!(
+        transcript(&group, None, BASE)[0].content,
+        "阿明：[表情：一只翻白眼的猫（无语）]"
+    );
+    assert_eq!(said_now(&group, &picture(3)), "[表情：😂]");
+}
+
+#[test]
+fn a_line_she_sees_hours_later_she_knows_she_sees_late_and_the_room_is_theirs() {
+    let mut group = Group::default();
+    let asked = message(1, 11, "阿明", "@bot 在吗", true);
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Heard {
+            message: asked.clone(),
+            restore: None,
+        },
+    );
+    assert_eq!(seen_late(&group, &asked, BASE), None);
+    assert_eq!(
+        seen_late(&group, &asked, BASE + secs(7.0 * 3600.0)).as_deref(),
+        Some("7 hours ago")
+    );
+    assert_eq!(
+        seen_late(&group, &asked, BASE + secs(2.0 * 3600.0)).as_deref(),
+        Some("2 hours ago")
+    );
+    for index in 0..crate::talk_shape::ROOM_AT_LEAST as i64 {
+        push_line(
+            &mut group,
+            line(
+                BASE,
+                Some(&format!("r{index}")),
+                Some("11"),
+                "阿明",
+                "哈哈哈",
+                false,
+            ),
+            BASE,
+        );
+        push_line(
+            &mut group,
+            line(
+                BASE,
+                None,
+                None,
+                "",
+                "这句话很长很长很长很长很长很长！",
+                true,
+            ),
+            BASE,
+        );
+    }
+    let room = room(&group, BASE).unwrap();
+    assert_eq!(room.chars_median, 3);
+    assert_eq!(room.bang, 0.0);
+}
+
+#[test]
+fn a_group_keeps_only_its_recent_lines_and_reads_back_what_was_said_while_away() {
+    let mut group = Group::default();
+    for index in 0..(TRANSCRIPT_LINES as i64 + 5) {
+        step(
+            &mut group,
+            &mut at(BASE),
+            Event::Heard {
+                message: message(index, 1, "某人", &format!("第{index}句"), false),
+                restore: None,
+            },
+        );
+    }
+    let lines = transcript(&group, None, BASE);
+    assert_eq!(lines.len(), TRANSCRIPT_LINES);
+    assert_eq!(lines[0].content, "某人：第5句");
+
+    let mut group = Group::default();
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Heard {
+            message: message(5, 1, "瞳", "@bot 宝宝", true),
+            restore: None,
+        },
+    );
+    let ago = |minutes: i64| BASE - minutes * 60_000_000;
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Resumed {
+            why: Resume::Restart,
+            past: vec![
+                Past {
+                    message: message(3, 2, "leaphy", "宝宝，晚安喵", false),
+                    at: ago(3),
+                    hers: false,
+                },
+                Past {
+                    message: message(4, 0, "", "晚安", false),
+                    at: ago(2),
+                    hers: true,
+                },
+                // Already had, and long gone: neither is taken again.
+                Past {
+                    message: message(5, 1, "瞳", "@bot 宝宝", true),
+                    at: ago(1),
+                    hers: false,
+                },
+                Past {
+                    message: message(1, 3, "某人", "昨天的事", false),
+                    at: ago(60 * 24),
+                    hers: false,
+                },
+            ],
+            up_since: Some(BASE),
+        },
+    );
+    let lines: Vec<(String, String)> = transcript(&group, None, BASE)
+        .into_iter()
+        .map(|spoken| (spoken.role, spoken.content))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("user".to_string(), "leaphy：宝宝，晚安喵".to_string()),
+            ("assistant".to_string(), "晚安".to_string()),
+            ("user".to_string(), "瞳：@bot 宝宝".to_string()),
+        ]
+    );
+    // Read back, not answered: nothing is waiting for her.
+    assert!(group.waiting.is_empty() && group.pending.is_none());
+}
+
+#[test]
+fn a_line_that_called_her_before_a_restart_is_found_in_what_was_kept_and_taken_up_once() {
+    let at_minutes = |minutes: i64| BASE - minutes * 60_000_000;
+    let kept = |id: &str, minutes: i64, text: &str, hers: bool, addressed: bool| Line {
+        addressed,
+        ..line(
+            at_minutes(minutes),
+            (!hers).then_some(id),
+            (!hers).then_some("1"),
+            if hers { "" } else { "阿明" },
+            text,
+            hers,
+        )
+    };
+    let past = kept_as_heard(
+        "telegram",
+        "-100777",
+        Some(9),
+        vec![
+            kept("1", 40, "绮羽在吗", false, true),
+            kept("", 35, "在", true, false),
+            kept("3", 20, "绮羽你看这个", false, true),
+            kept("4", 10, "没人理我", false, false),
+        ],
+    );
+    let mut group = Group::default();
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Resumed {
+            why: Resume::Restart,
+            past: past.clone(),
+            up_since: Some(BASE),
+        },
+    );
+    let taken: Vec<&Message> = group
+        .errands
+        .iter()
+        .filter_map(|errand| match &errand.kind {
+            flows::Kind::TakeUp { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].message_id, "3");
+    assert_eq!(taken[0].thread, Some(9));
+    assert!(taken[0].addressed);
+    // And a line taken up is answered once, however often it comes in.
+    let mut group = Group::default();
+    assert!(flows::first_time(&mut group, "3"));
+    assert!(!flows::first_time(&mut group, "3"));
+    assert!(flows::first_time(&mut group, ""));
+    assert!(flows::first_time(&mut group, ""));
+}
+
+#[test]
+fn held_back_she_answers_again_from_the_newest_line_of_theirs() {
+    let mut group = Group::default();
+    let asked = message(1, 11, "阿明", "@bot 周六几点", true);
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Heard {
+            message: asked.clone(),
+            restore: None,
+        },
+    );
+    assert!(newest_theirs(&group, &asked).is_none());
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Heard {
+            message: message(2, 12, "小红", "刚问过了 十点", false),
+            restore: None,
+        },
+    );
+    push_line(&mut group, line(BASE, None, None, "", "九点吧", true), BASE);
+    let newest = newest_theirs(&group, &asked).unwrap();
+    assert_eq!(newest.message_id, "2");
+    assert_eq!(newest.text, "刚问过了 十点");
+    assert_eq!(newest.venue(), asked.venue());
+}
+
+#[test]
+fn her_speaking_up_counts_as_taken_up_soon_and_comes_back_after_a_restart_under_what_came_since() {
+    let mut group = Group::default();
+    flows::taken_up(&mut group, BASE);
+    assert!(group.spoke_up.is_empty());
+    group.spoke_up.push_back(SpokeUp {
+        at: BASE - secs(TAKEN_UP_WITHIN_SECONDS),
+        taken: false,
+    });
+    flows::taken_up(&mut group, BASE);
+    assert!(!group.spoke_up.back().unwrap().taken);
+    group.spoke_up.push_back(SpokeUp {
+        at: BASE,
+        taken: false,
+    });
+    flows::taken_up(&mut group, BASE);
+    assert_eq!(
+        group
+            .spoke_up
+            .iter()
+            .map(|one| one.taken)
+            .collect::<Vec<_>>(),
+        [false, true]
+    );
+
+    let mut group = Group::default();
+    group.spoke_up.push_back(SpokeUp {
+        at: BASE,
+        taken: false,
+    });
+    let kept: Vec<SpokeUp> = (0..SPOKE_UP_KEPT)
+        .map(|index| SpokeUp {
+            at: BASE - (10 - index as i64) * 60_000_000,
+            taken: index % 2 == 0,
+        })
+        .collect();
+    step(
+        &mut group,
+        &mut at(BASE),
+        Event::Restored {
+            lines: None,
+            spoke_up: kept,
+        },
+    );
+    assert_eq!(group.spoke_up.len(), SPOKE_UP_KEPT);
+    assert!(
+        !group.spoke_up.back().unwrap().taken,
+        "the newest, since the restart, is last"
+    );
+    assert!(
+        group
+            .spoke_up
+            .iter()
+            .zip(group.spoke_up.iter().skip(1))
+            .all(|(a, b)| a.at <= b.at)
+    );
+}
+
+// ------------------------------------------------------------ trajectories
+
+/// A small end: a clock, its timers, and what it answers.
+struct End {
+    now: i64,
+    group: Group,
+    her: Her,
+    seed: u64,
+    /// Events due, by when and in what order they came.
+    due: BTreeMap<(i64, u64), Event>,
+    order: u64,
+    /// Answers by effect kind, in order, and how long each takes.
+    answers: HashMap<&'static str, VecDeque<(f64, Answer)>>,
+    steps: Vec<Value>,
+}
+
+impl End {
+    fn new() -> Self {
+        Self {
+            now: BASE,
+            group: Group::default(),
+            her: her(),
+            seed: 1,
+            due: BTreeMap::new(),
+            order: 0,
+            answers: HashMap::new(),
+            steps: Vec::new(),
+        }
+    }
+
+    fn answer(&mut self, kind: &'static str, after: f64, answer: Answer) {
+        self.answers
+            .entry(kind)
+            .or_default()
+            .push_back((after, answer));
+    }
+
+    fn at(&mut self, at: i64, event: Event) {
+        self.order += 1;
+        self.due.insert((at, self.order), event);
+    }
+
+    fn step(&mut self, event: Event) {
+        self.seed = self
+            .seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let input = json!({
+            "now": self.now,
+            "seed": self.seed,
+            "her": self.her,
+            "event": event,
+        });
+        let mut at = At {
+            now: self.now,
+            her: self.her.clone(),
+            rolls: Rolls::new(self.seed, Vec::new()),
+        };
+        let out = step(&mut self.group, &mut at, event);
+        self.steps.push(json!({ "input": input, "output": out }));
+        for effect in out.effects {
+            self.does(effect);
+        }
+    }
+
+    fn does(&mut self, effect: Effect) {
+        let (id, kind) = match &effect {
+            Effect::Wake { key, after } => {
+                let at = self.now + secs(*after);
+                self.at(at, Event::Woke { key: key.clone() });
+                return;
+            }
+            Effect::Sticker { chosen, .. } => {
+                let meaning = chosen["meaning"].as_str().unwrap_or("贴纸").to_string();
+                self.at(self.now, Event::StickerSent { meaning });
+                return;
+            }
+            Effect::Claim { id, .. } => (id, "claim"),
+            Effect::Look { id, pictures } => {
+                let seen = pictures
+                    .iter()
+                    .map(|picture| Looked {
+                        message_id: picture.message_id.clone(),
+                        index: picture.index,
+                        seen: crate::seeing::Seen {
+                            what: format!("看见了{}", picture.image.key),
+                            ..Default::default()
+                        },
+                    })
+                    .collect();
+                let id = id.clone();
+                self.at(
+                    self.now,
+                    Event::Done {
+                        id,
+                        answer: Answer::Looked { seen },
+                    },
+                );
+                return;
+            }
+            Effect::Identify { id, .. } => (id, "identify"),
+            Effect::Prepare { id, .. } => (id, "prepare"),
+            Effect::MakeSense { id, .. } => (id, "sense"),
+            Effect::ReadLedger { id } => (id, "ledger"),
+            Effect::Turn { id, .. } => (id, "turn"),
+            Effect::StrangerTurn { id, .. } => (id, "stranger"),
+            Effect::Judge { id, .. } => (id, "judge"),
+            Effect::React { id, .. } => (id, "react"),
+            Effect::Typing { id, .. } => (id, "typing"),
+            Effect::Ask { id, .. } => (id, "ask"),
+            Effect::Send { id, .. } => (id, "send"),
+            _ => return,
+        };
+        let id = id.clone();
+        let (after, answer) = self
+            .answers
+            .get_mut(kind)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| (0.0, default_answer(kind)));
+        let at = self.now + secs(after);
+        self.at(at, Event::Done { id, answer });
+    }
+
+    /// Run until nothing is due before `until`.
+    fn run(&mut self, until: i64) {
+        while let Some((&(at, order), _)) = self.due.iter().next() {
+            if at > until {
+                break;
+            }
+            let event = self.due.remove(&(at, order)).unwrap();
+            self.now = self.now.max(at);
+            self.step(event);
+        }
+        self.now = self.now.max(until);
+    }
+
+    fn check(self, name: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/group")
+            .join(format!("{name}.json"));
+        let got = json!({ "steps": self.steps, "state": self.group });
+        if std::env::var("MYRIAD_RECORD_G1").as_deref() == Ok("1") {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
+            return;
+        }
+        let want: Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("no trajectory {name}")),
+        )
+        .unwrap();
+        assert_eq!(got, want, "{name} differs from its trajectory");
+        replay(&want);
+    }
+}
+
+fn default_answer(kind: &str) -> Answer {
+    match kind {
+        "claim" => Answer::Claimed { ok: true },
+        "identify" => Answer::Identified {
+            who: Who::Member {
+                user_id: 101,
+                bound: true,
+            },
+            owner: Some(1),
+        },
+        "prepare" => Answer::Prepared { ok: true },
+        "sense" => Answer::Sense { section: None },
+        "ledger" => Answer::LedgerRead { stored: None },
+        "turn" | "stranger" => Answer::Turned {
+            text: Some("嗯嗯".into()),
+            sticker: None,
+            bound: true,
+        },
+        "judge" => Answer::Judged { decision: None },
+        "react" => Answer::Reacted { ok: true },
+        "typing" => Answer::Typed,
+        "ask" => Answer::Asked { raw: None },
+        "send" => Answer::Sent { ok: true },
+        _ => unreachable!("{kind}"),
+    }
+}
+
+/// A trajectory step by step, as an end replays it: each step's state is
+/// the one the step before handed back.
+fn replay(trajectory: &Value) {
+    let mut group = Group::default();
+    for (index, recorded) in trajectory["steps"].as_array().unwrap().iter().enumerate() {
+        let input = &recorded["input"];
+        let event: Event = serde_json::from_value(input["event"].clone()).unwrap();
+        let her: Her = serde_json::from_value(input["her"].clone()).unwrap();
+        let mut at = At {
+            now: input["now"].as_i64().unwrap(),
+            her,
+            rolls: Rolls::new(input["seed"].as_u64().unwrap(), Vec::new()),
+        };
+        // The state as an end keeps it: through its JSON.
+        group = Group::read(serde_json::to_value(&group).unwrap());
+        let out = step(&mut group, &mut at, event);
+        assert_eq!(
+            serde_json::to_value(&out).unwrap(),
+            recorded["output"],
+            "step {index}"
+        );
+    }
+    assert_eq!(serde_json::to_value(&group).unwrap(), trajectory["state"]);
+}
+
+fn heard(end: &mut End, at: f64, message: Message) {
+    let when = BASE + secs(at);
+    end.at(
+        when,
+        Event::Heard {
+            message: message.clone(),
+            restore: None,
+        },
+    );
+    let event = if message.addressed {
+        Event::Called {
+            message,
+            waiter: Some(format!("w{at}")),
+        }
+    } else {
+        Event::Noticed { message }
+    };
+    end.at(when, event);
+}
+
+#[test]
+fn g1_a_member_calls_her() {
+    let mut end = End::new();
+    end.answer(
+        "turn",
+        4.0,
+        Answer::Turned {
+            text: Some("去老地方吧\n便宜又好吃".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    heard(&mut end, 0.0, message(1, 11, "阿明", "周五聚餐吗", false));
+    heard(&mut end, 2.0, message(2, 12, "小红", "我可以", false));
+    heard(
+        &mut end,
+        4.0,
+        message(3, 11, "阿明", "@bot 你推荐哪家", true),
+    );
+    end.run(BASE + secs(900.0));
+    end.check("a_member_calls_her");
+}
+
+#[test]
+fn g1_lines_wait_while_she_is_busy() {
+    let mut end = End::new();
+    end.answer(
+        "turn",
+        20.0,
+        Answer::Turned {
+            text: Some("我先看看".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    heard(&mut end, 0.0, message(1, 11, "阿明", "@bot 周五去哪", true));
+    heard(
+        &mut end,
+        30.0,
+        message(2, 12, "小红", "@bot 你吃火锅吗", true),
+    );
+    heard(&mut end, 31.0, message(3, 12, "小红", "要辣的", false));
+    end.run(BASE + secs(900.0));
+    end.check("lines_wait_while_she_is_busy");
+}
+
+#[test]
+fn g1_she_speaks_up_unasked_and_reacts() {
+    let mut end = End::new();
+    end.answer(
+        "judge",
+        1.0,
+        Answer::Judged {
+            decision: Some(Decision {
+                why: crate::joining::Why::Know,
+                reason: "you know something about it: 那家店周五人多".into(),
+            }),
+        },
+    );
+    end.answer(
+        "judge",
+        1.0,
+        Answer::Judged {
+            decision: Some(Decision {
+                why: crate::joining::Why::React,
+                reason: "😁".into(),
+            }),
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "周五吃那家火锅吧", false),
+    );
+    heard(&mut end, 1.0, message(2, 11, "阿明", "大家觉得呢", false));
+    heard(
+        &mut end,
+        700.0,
+        message(3, 12, "小红", "我把锅烧糊了哈哈", false),
+    );
+    end.run(BASE + secs(2400.0));
+    end.check("she_speaks_up_unasked_and_reacts");
+}
+
+#[test]
+fn g1_an_outsider_calls_her() {
+    let mut end = End::new();
+    end.answer(
+        "identify",
+        0.0,
+        Answer::Identified {
+            who: Who::Stranger,
+            owner: Some(1),
+        },
+    );
+    end.answer(
+        "sense",
+        1.0,
+        Answer::Sense {
+            section: Some("有人第一次来，在问她是谁".into()),
+        },
+    );
+    end.answer(
+        "stranger",
+        2.0,
+        Answer::Turned {
+            text: Some("（回复 路人）我是这里的常客啦".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    heard(&mut end, 0.0, message(1, 31, "路人", "这个bot是谁", false));
+    heard(
+        &mut end,
+        1.0,
+        message(2, 31, "路人", "@bot 你是机器人吗", true),
+    );
+    end.run(BASE + secs(900.0));
+    end.check("an_outsider_calls_her");
+}
+
+#[test]
+fn g1_she_keeps_back_what_no_longer_fits() {
+    let mut end = End::new();
+    end.answer(
+        "turn",
+        10.0,
+        Answer::Turned {
+            text: Some("九点吧\n老地方见".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    end.answer(
+        "ask",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"send":false}"#.into()),
+        },
+    );
+    end.answer(
+        "turn",
+        2.0,
+        Answer::Turned {
+            text: Some("那就十点".into()),
+            sticker: Some(json!({ "number": 1, "meaning": "开心" })),
+            bound: true,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "@bot 周六几点集合", true),
+    );
+    heard(&mut end, 12.0, message(2, 12, "小红", "刚说了十点", false));
+    end.run(BASE + secs(900.0));
+    end.check("she_keeps_back_what_no_longer_fits");
+}
+
+#[test]
+fn g1_muted_away_and_back() {
+    let mut end = End::new();
+    heard(&mut end, 0.0, message(1, 12, "管理员", "安静点", false));
+    end.at(
+        BASE + secs(1.0),
+        Event::Muted {
+            by: "12".into(),
+            mute: Mute::For { seconds: 600 },
+            everyone: false,
+            restore: None,
+        },
+    );
+    heard(&mut end, 2.0, message(2, 11, "阿明", "@bot 你还在吗", true));
+    end.run(BASE + secs(700.0));
+    end.her.away = true;
+    heard(&mut end, 710.0, message(3, 11, "阿明", "@bot 现在呢", true));
+    end.run(BASE + secs(800.0));
+    end.her.away = false;
+    end.at(
+        BASE + secs(801.0),
+        Event::Resumed {
+            why: Resume::Back,
+            past: Vec::new(),
+            up_since: None,
+        },
+    );
+    end.run(BASE + secs(1500.0));
+    end.check("muted_away_and_back");
+}
+
+#[test]
+fn g1_read_back_after_a_restart() {
+    let mut end = End::new();
+    let ago = |minutes: i64| BASE - minutes * 60_000_000;
+    let past = |id: i64, from: i64, minutes: i64, text: &str, hers: bool, addressed: bool| Past {
+        message: message(id, from, if hers { "" } else { "阿明" }, text, addressed),
+        at: ago(minutes),
+        hers,
+    };
+    end.at(
+        BASE,
+        Event::Restored {
+            lines: None,
+            spoke_up: vec![SpokeUp {
+                at: ago(50),
+                taken: true,
+            }],
+        },
+    );
+    end.at(
+        BASE,
+        Event::Resumed {
+            why: Resume::Restart,
+            past: vec![
+                past(1, 11, 90, "@bot 早", false, true),
+                past(2, 0, 89, "早呀", true, false),
+                past(3, 12, 40, "她起了没", false, false),
+                past(4, 11, 30, "@bot 晚上打游戏吗", false, true),
+                past(5, 12, 20, "没回，睡着了吧", false, false),
+            ],
+            up_since: Some(BASE - 5 * 60_000_000),
+        },
+    );
+    end.run(BASE + secs(900.0));
+    end.check("read_back_after_a_restart");
+}
+
+#[test]
+fn g1_pictures_and_what_she_heard() {
+    let mut end = End::new();
+    let picture = |id: i64| {
+        let mut picture = message(id, 11, "阿明", "", false);
+        picture.images = vec![GroupImage {
+            key: "telegram:cat".into(),
+            fetch: ImageFetch::TelegramFile {
+                file_id: "file-cat".into(),
+            },
+            hint: Some("😂".into()),
+            sticker: true,
+        }];
+        picture
+    };
+    heard(&mut end, 0.0, picture(1));
+    heard(&mut end, 1.0, message(2, 12, "小红", "哈哈哈", false));
+    heard(&mut end, 2.0, picture(3));
+    for index in 0..HEARD_EVERY as i64 {
+        heard(
+            &mut end,
+            3.0 + index as f64,
+            message(
+                10 + index,
+                12 + index % 3,
+                "人",
+                &format!("第{index}句"),
+                false,
+            ),
+        );
+    }
+    heard(
+        &mut end,
+        40.0,
+        message(99, 11, "阿明", "@bot 你看这个", true),
+    );
+    end.run(BASE + secs(900.0));
+    end.check("pictures_and_what_she_heard");
+}
+
+#[test]
+fn g1_she_brings_something_up_first_and_a_send_is_refused() {
+    let mut end = End::new();
+    end.answer(
+        "turn",
+        2.0,
+        Answer::Turned {
+            text: Some("今天听到一首好歌\n分享给你们".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    end.answer("send", 0.0, Answer::Sent { ok: true });
+    end.answer("send", 0.0, Answer::Sent { ok: false });
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "最近有什么好歌", false),
+    );
+    end.run(BASE + secs(1800.0));
+    let offered = offer(&end.group, end.now);
+    assert!(offered.is_some(), "a group she is in, quiet a while");
+    end.at(
+        BASE + secs(1800.0),
+        Event::SpeakFirst {
+            reason: "something of yours: 一首歌".into(),
+            owner: Some(1),
+            waiter: "first".into(),
+        },
+    );
+    end.run(BASE + secs(2400.0));
+    end.check("she_brings_something_up_first_and_a_send_is_refused");
+}

@@ -9,13 +9,13 @@
 //! from what she has (her views, what she did, what she heard), numbered, so
 //! the turn that speaks is given the very thing she meant.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const SCHEMA_NAME: &str = "merope_group_chime";
 
 /// Why she would speak.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Why {
     /// They are talking to her, or going on with what she was in.

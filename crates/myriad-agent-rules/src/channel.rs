@@ -1915,7 +1915,7 @@ pub fn parse_telegram_bot_identity(result: &serde_json::Value) -> Option<Telegra
 
 /// The line a group line replies to: who wrote it (or whether it was hers)
 /// and its text, bounded. Attacker-controlled like any group line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QuotedLine {
     pub name: String,
     pub text: String,

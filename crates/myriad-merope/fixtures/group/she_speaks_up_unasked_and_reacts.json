@@ -1,0 +1,1129 @@
+{
+  "state": {
+    "answered": [
+      {
+        "at": 1791957734451269,
+        "from": "11"
+      }
+    ],
+    "busy": false,
+    "called": null,
+    "errands": [],
+    "everyoneMutedUntil": null,
+    "glanceAt": null,
+    "handled": [],
+    "heardUpto": null,
+    "heldBack": false,
+    "judging": false,
+    "lastReply": 1791957734451269,
+    "ledger": [
+      {
+        "at": 1791958300,
+        "bang": false,
+        "by": "6b51d431df5d",
+        "chars": 8,
+        "laugh": true,
+        "mark": false
+      }
+    ],
+    "ledgerHers": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerTheirs": {
+      "messages": 1,
+      "pieces": {
+        "end:了哈哈": 1,
+        "end:哈": 1,
+        "end:哈哈": 1,
+        "start:我": 1,
+        "start:我把": 1
+      }
+    },
+    "ledgerWaits": [],
+    "leftWhileAway": null,
+    "lines": [
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "1",
+        "name": "阿明",
+        "text": "周五吃那家火锅吧"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:01Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "2",
+        "name": "阿明",
+        "text": "大家觉得呢"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:02:14.451269Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "嗯嗯"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:11:40Z",
+        "from": "12",
+        "hers": false,
+        "message_id": "3",
+        "name": "小红",
+        "text": "我把锅烧糊了哈哈"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:11:46Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "（给 小红 那句贴了 😁）"
+      }
+    ],
+    "mutedUntil": null,
+    "next": 20,
+    "paused": {},
+    "pending": null,
+    "pictures": {},
+    "reach": {
+      "addressed": false,
+      "chat": "-100777",
+      "displayName": "小红",
+      "from": "12",
+      "images": [],
+      "messageId": "3",
+      "platform": "telegram",
+      "replyTo": null,
+      "text": "我把锅烧糊了哈哈",
+      "thread": null
+    },
+    "reachKept": 1791958300000000,
+    "readWith": [],
+    "restored": false,
+    "seenBefore": null,
+    "spokeUp": [
+      {
+        "at": 1791957734451269,
+        "taken": false
+      }
+    ],
+    "strangerReplies": null,
+    "takenBack": [],
+    "unjudgedSince": null,
+    "version": 1,
+    "waiting": []
+  },
+  "steps": [
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "周五吃那家火锅吧",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 7806831264735756412
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "周五吃那家火锅吧"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791957600000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "周五吃那家火锅吧"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "1",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "周五吃那家火锅吧",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 9396908728118811419
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 131.0,
+            "key": "g2",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "2",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "大家觉得呢",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957601000000,
+        "seed": 11960119808228829710
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "周五吃那家火锅吧"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "2",
+                "name": "阿明",
+                "text": "大家觉得呢"
+              }
+            ]
+          },
+          {
+            "kind": "jargon",
+            "text": "大家觉得呢"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "2",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "大家觉得呢",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957601000000,
+        "seed": 7062582979898595269
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g2",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 14673421054488193520
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g3",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g3",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957731000000,
+        "seed": 9232803539723513983
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：周五吃那家火锅吧",
+              "阿明：大家觉得呢"
+            ],
+            "here": {
+              "howItWent": null,
+              "lastSpoke": null,
+              "late": null,
+              "share": "Of the last 2 lines here, 0 were yours; one other person said the rest."
+            },
+            "id": "g4",
+            "kind": "judge",
+            "owner": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "decision": {
+              "reason": "you know something about it: 那家店周五人多",
+              "why": "know"
+            },
+            "kind": "judged"
+          },
+          "id": "g4",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 10218303843513747618
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g5",
+            "inbound_id": "group:-100777:2",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g5",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 1206773305466921929
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g6",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g6",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 15490212636682683044
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g7",
+            "kind": "prepare",
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "prepared",
+            "ok": true
+          },
+          "id": "g7",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 3660572683296592931
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：周五吃那家火锅吧",
+              "阿明：大家觉得呢"
+            ],
+            "id": "g8",
+            "kind": "makeSense",
+            "said": "大家觉得呢"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sense",
+            "section": null
+          },
+          "id": "g8",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 13756953107850766454
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g9",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g9",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 9882984339513518093
+      },
+      "output": {
+        "effects": [
+          {
+            "chime": "you know something about it: 那家店周五人多",
+            "differs": null,
+            "first": false,
+            "id": "g10",
+            "input": "大家觉得呢",
+            "kind": "turn",
+            "late": null,
+            "making_sense": null,
+            "room": null,
+            "speaker": "阿明",
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            },
+            "transcript": [
+              {
+                "content": "阿明：周五吃那家火锅吧",
+                "role": "user"
+              },
+              {
+                "content": "阿明：大家觉得呢",
+                "role": "user"
+              }
+            ],
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "嗯嗯"
+          },
+          "id": "g10",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 14456408541175185048
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g11",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g11",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957732000000,
+        "seed": 5848529123618728455
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 2.451269993004906,
+            "key": "g12",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g12",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957734451269,
+        "seed": 4493283409665547658
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g13",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "嗯嗯"
+              }
+            ],
+            "quote": true,
+            "to": {
+              "chat": "-100777",
+              "messageId": "2",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g13",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957734451269,
+        "seed": 13833615605184489617
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:嗯": 1,
+                "start:嗯": 1,
+                "whole:嗯嗯": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791957600,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 8,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791957601,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 5,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791957734,
+                "bang": false,
+                "by": "her",
+                "chars": 2,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 2,
+              "pieces": {
+                "end:吧": 1,
+                "end:呢": 1,
+                "end:得呢": 1,
+                "end:火锅吧": 1,
+                "end:觉得呢": 1,
+                "end:锅吧": 1,
+                "start:周": 1,
+                "start:周五": 1,
+                "start:大": 1,
+                "start:大家": 1
+              }
+            },
+            "waits": []
+          },
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "周五吃那家火锅吧"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "2",
+                "name": "阿明",
+                "text": "大家觉得呢"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:02:14.451269Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "嗯嗯"
+              }
+            ]
+          },
+          {
+            "after": 300.0,
+            "key": "g15",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g15",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958034451269,
+        "seed": 7831313575529992652
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "spokeUp",
+            "line": "嗯嗯",
+            "taken": false
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小红",
+            "from": "12",
+            "images": [],
+            "messageId": "3",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "我把锅烧糊了哈哈",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958300000000,
+        "seed": 10554199195565463083
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "周五吃那家火锅吧"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "2",
+                "name": "阿明",
+                "text": "大家觉得呢"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:02:14.451269Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "嗯嗯"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:11:40Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "3",
+                "name": "小红",
+                "text": "我把锅烧糊了哈哈"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791958300000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "我把锅烧糊了哈哈"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小红",
+            "from": "12",
+            "images": [],
+            "messageId": "3",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "我把锅烧糊了哈哈",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958300000000,
+        "seed": 11485544273845959646
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 5.0,
+            "key": "g17",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g17",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958305000000,
+        "seed": 3748899703585450325
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "12",
+            "id": "g18",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g18",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958305000000,
+        "seed": 15972705296776949824
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：周五吃那家火锅吧",
+              "阿明：大家觉得呢",
+              "you：嗯嗯",
+              "小红：我把锅烧糊了哈哈"
+            ],
+            "here": {
+              "howItWent": "Of the last 1 times you spoke up here unasked, someone took it up 0.",
+              "lastSpoke": "9 minutes ago",
+              "late": null,
+              "share": "Of the last 4 lines here, 1 were yours; 2 other people said the rest."
+            },
+            "id": "g19",
+            "kind": "judge",
+            "owner": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "decision": {
+              "reason": "😁",
+              "why": "react"
+            },
+            "kind": "judged"
+          },
+          "id": "g19",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958306000000,
+        "seed": 18070828864047185039
+      },
+      "output": {
+        "effects": [
+          {
+            "emoji": "😁",
+            "id": "g20",
+            "kind": "react",
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "reacted",
+            "ok": true
+          },
+          "id": "g20",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958306000000,
+        "seed": 10141147297338840946
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "周五吃那家火锅吧"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:01Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "2",
+                "name": "阿明",
+                "text": "大家觉得呢"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:02:14.451269Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "嗯嗯"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:11:40Z",
+                "from": "12",
+                "hers": false,
+                "message_id": "3",
+                "name": "小红",
+                "text": "我把锅烧糊了哈哈"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:11:46Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "（给 小红 那句贴了 😁）"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

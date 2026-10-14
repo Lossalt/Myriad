@@ -19,6 +19,7 @@ pub mod doing;
 pub mod draft;
 pub mod elsewhere;
 pub mod explore;
+pub mod group;
 pub mod heard;
 pub mod inner;
 pub mod jargon;
