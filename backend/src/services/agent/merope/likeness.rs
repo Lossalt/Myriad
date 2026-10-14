@@ -3,6 +3,11 @@
 //! someone else's hands reads wrong within a few lines; she notices as a
 //! friend would, and what she makes of it is hers. Nothing here decides who
 //! may know what: that stays with pairing and who is present.
+//!
+//! Where they type is weighed on its own: lines in private against how they
+//! type in private, lines in a group against how they type in that group.
+//! Someone who fires off short bursts among friends and writes whole
+//! sentences to her alone is not someone else in either place.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -24,7 +29,8 @@ const RECENT: usize = 6;
 /// Looked at again no sooner than this, per person.
 const FRESH_FOR: Duration = Duration::from_secs(60);
 
-static SEEN: LazyLock<Mutex<HashMap<i32, (Instant, Option<f64>)>>> =
+/// Per person and place (`None` in private, else the group).
+static SEEN: LazyLock<Mutex<HashMap<(i32, Option<String>), (Instant, Option<f64>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// What a line says as typed: without the quoted line it replies to, and
@@ -41,22 +47,31 @@ fn as_typed(content: &str) -> Option<String> {
     (!text.is_empty() && !(text.starts_with('[') && text.ends_with(']'))).then(|| text.to_string())
 }
 
-/// How unlike their usual way of typing their last few lines are, in their
-/// own deviations; none when it cannot be told.
-pub async fn unlike_them(db: &DatabaseConnection, user_id: i32) -> Option<f64> {
+/// How unlike their usual way of typing in this place (`venue`: none in
+/// private, else the group) their last few lines there are, in their own
+/// deviations; none when it cannot be told, as when they have typed too
+/// little there.
+pub async fn unlike_them(
+    db: &DatabaseConnection,
+    user_id: i32,
+    venue: Option<&str>,
+) -> Option<f64> {
     if user_id <= 0 {
         return None;
     }
+    let key = (user_id, venue.map(str::to_string));
     if let Some((_, seen)) = SEEN
         .lock()
         .ok()?
-        .get(&user_id)
+        .get(&key)
         .filter(|(at, _)| at.elapsed() < FRESH_FOR)
     {
         return *seen;
     }
     let now = Utc::now();
-    let lines = super::store::their_lines(db, user_id, LINES).await.ok()?;
+    let lines = super::store::their_lines_in(db, user_id, venue, LINES)
+        .await
+        .ok()?;
     let recent: Vec<String> = lines
         .iter()
         .take_while(|(at, _)| now - at.with_timezone(&Utc) < NOW)
@@ -73,14 +88,14 @@ pub async fn unlike_them(db: &DatabaseConnection, user_id: i32) -> Option<f64> {
         if all.len() > 4096 {
             all.clear();
         }
-        all.insert(user_id, (Instant::now(), seen));
+        all.insert(key, (Instant::now(), seen));
     }
     seen
 }
 
-/// The section she reads when their last lines do not read like them.
-pub async fn section(db: &DatabaseConnection, user_id: i32) -> Option<String> {
-    unlike_them(db, user_id)
+/// The section she reads when their last lines here do not read like them.
+pub async fn section(db: &DatabaseConnection, user_id: i32, venue: Option<&str>) -> Option<String> {
+    unlike_them(db, user_id, venue)
         .await
         .filter(|far| *far >= NOTICED_AT)
         .map(|_| myriad_merope::style::NOTICED.to_string())
@@ -98,6 +113,125 @@ mod tests {
         );
         assert_eq!(as_typed("[表情：歪头]"), None);
         assert_eq!(as_typed("  好的  ").as_deref(), Some("好的"));
+    }
+
+    /// Someone who writes whole sentences to her alone and fires off short
+    /// bursts in a group reads like themselves in the group, though the
+    /// same bursts are far from how they write to her in private. On a real
+    /// database (an isolated schema; skipped without a test database).
+    #[tokio::test]
+    async fn lines_in_a_group_are_weighed_against_that_group() {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+            return;
+        };
+        let isolated = crate::db::IsolatedSchema::migrated(&url, "likeness_by_place").await;
+        let db = isolated.db.clone();
+        let user_id: i32 = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "INSERT INTO users (username, display_name) VALUES ('bursts', 'bursts') RETURNING id"
+                    .to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "id")
+            .unwrap();
+        let group = "telegram:-1007788";
+        let said = |venue: Option<&str>, minutes_ago: i64, text: String| {
+            let db = db.clone();
+            let context = match venue {
+                Some(venue) => serde_json::json!({ "mode": "chat", "venue": venue }),
+                None => serde_json::json!({ "mode": "chat" }),
+            };
+            async move {
+                let at = (Utc::now() - chrono::Duration::minutes(minutes_ago)).fixed_offset();
+                let session = uuid::Uuid::new_v4().to_string();
+                db.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "INSERT INTO agent_sessions (id, user_id, title, context, message_count, \
+                     archived, created_at, last_active_at) VALUES ($1, $2, 't', $3, 1, false, $4, $4)",
+                    [
+                        session.clone().into(),
+                        user_id.into(),
+                        context.into(),
+                        at.into(),
+                    ],
+                ))
+                .await
+                .unwrap();
+                db.execute_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "INSERT INTO agent_messages (session_id, role, content, created_at) \
+                     VALUES ($1, 'user', $2, $3)",
+                    [session.into(), text.into(), at.into()],
+                ))
+                .await
+                .unwrap();
+            }
+        };
+        let topics = [
+            "工作",
+            "周末",
+            "那本书",
+            "做饭",
+            "跑步",
+            "搬家",
+            "考试",
+            "天气",
+        ];
+        let bursts = [
+            "哈哈哈哈",
+            "笑死",
+            "草",
+            "绝了",
+            "6",
+            "？？",
+            "好家伙",
+            "离谱",
+        ];
+        for n in 0..120_usize {
+            let topic = topics[n % topics.len()];
+            let private = format!(
+                "我仔细想了一下{topic}的事情，觉得还是应该慢慢来。第{n}次说这个了，你别嫌我啰嗦。"
+            );
+            said(None, 3000 + n as i64, private).await;
+            let burst = bursts[n % bursts.len()];
+            said(
+                Some(group),
+                3000 + n as i64,
+                format!("{burst}{burst} {topic}"),
+            )
+            .await;
+        }
+        let mut recent = Vec::new();
+        for n in 0..6_usize {
+            let burst = bursts[(n * 3) % bursts.len()];
+            let line = format!("{burst}{burst} {}", topics[(n + 2) % topics.len()]);
+            said(Some(group), 5 - n as i64, line.clone()).await;
+            recent.push(line);
+        }
+        let in_group = unlike_them(&db, user_id, Some(group)).await;
+        assert!(
+            in_group.is_some_and(|far| far < NOTICED_AT),
+            "like themselves in the group: {in_group:?}"
+        );
+        let private: Vec<String> = super::super::store::their_lines_in(&db, user_id, None, LINES)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect();
+        assert_eq!(private.len(), 120, "only what they wrote her in private");
+        let against_private = unlike(&private, &recent);
+        assert!(
+            against_private.is_some_and(|far| far >= NOTICED_AT),
+            "the same bursts against how they write in private: {against_private:?}"
+        );
+        // Nothing new in private: nothing to tell there.
+        assert_eq!(unlike_them(&db, user_id, None).await, None);
+        isolated.drop().await;
     }
 }
 

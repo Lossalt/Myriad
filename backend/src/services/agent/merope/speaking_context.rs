@@ -585,7 +585,7 @@ async fn speaking_prompt_from_db(
     } else {
         addressee_speaking_section(&addressee)
     }];
-    sections::who_they_are(db, user_id, turn, group, &mut sections).await;
+    sections::who_they_are(db, user_id, turn, present, &mut sections).await;
     let Ok(state) = get_or_create_state(db, user_id).await else {
         return sections;
     };

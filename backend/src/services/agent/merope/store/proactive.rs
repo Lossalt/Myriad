@@ -220,8 +220,41 @@ pub async fn their_lines(
             [user_id.into(), limit.into()],
         ))
         .await?;
-    Ok(rows
-        .iter()
+    Ok(dated_lines(&rows))
+}
+
+/// [`their_lines`] in one place only: in private (`None`), or in the group
+/// `venue` (`telegram:-100123`). The same person types one way among a
+/// group and another way alone with her.
+pub async fn their_lines_in(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    venue: Option<&str>,
+    limit: i64,
+) -> Result<Vec<(chrono::DateTime<chrono::FixedOffset>, String)>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT m.created_at, m.content FROM agent_messages m \
+             JOIN agent_sessions s ON s.id = m.session_id \
+             WHERE s.user_id = $1 AND m.role = 'user' AND s.context->>'mode' = 'chat' \
+               AND (s.context->>'venue') IS NOT DISTINCT FROM $2 \
+             ORDER BY m.created_at DESC LIMIT $3",
+            [
+                user_id.into(),
+                venue.map(str::to_string).into(),
+                limit.into(),
+            ],
+        ))
+        .await?;
+    Ok(dated_lines(&rows))
+}
+
+fn dated_lines(
+    rows: &[sea_orm::QueryResult],
+) -> Vec<(chrono::DateTime<chrono::FixedOffset>, String)> {
+    rows.iter()
         .filter_map(|row| {
             Some((
                 row.try_get::<chrono::DateTime<chrono::FixedOffset>>("", "created_at")
@@ -229,5 +262,5 @@ pub async fn their_lines(
                 row.try_get::<String>("", "content").ok()?,
             ))
         })
-        .collect())
+        .collect()
 }

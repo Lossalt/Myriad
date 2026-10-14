@@ -9,9 +9,10 @@ pub(super) async fn who_they_are(
     db: &sea_orm::DatabaseConnection,
     user_id: i32,
     turn: Turn<'_>,
-    group: bool,
+    present: &crate::services::agent::memory::unified::Audience,
     sections: &mut Vec<String>,
 ) {
+    let group = present.is_group();
     if !group && let Some(differs) = how_she_differs_with(db, user_id).await {
         sections.push(differs);
     }
@@ -26,9 +27,9 @@ pub(super) async fn who_they_are(
             super::super::clock::now(),
         ));
     }
-    // Whether it reads like them typing.
+    // Whether it reads like them typing, here.
     if matches!(turn, Turn::Chat(_))
-        && let Some(block) = likeness::section(db, user_id).await
+        && let Some(block) = likeness::section(db, user_id, present.group_id()).await
     {
         sections.push(block);
     }
