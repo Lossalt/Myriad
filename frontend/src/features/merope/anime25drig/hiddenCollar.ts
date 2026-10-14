@@ -97,8 +97,10 @@ export function plainHiddenCollars(
         if (backing ? backingCovered(canvasX, canvasY) : neckAlpha(canvasX, canvasY) >= COVERED) covered[y * width + x] = 1
       }
     }
+    // Holes are closed against the whole garment, not only what is hidden: a hole
+    // under the neck's lower edge has the garment that shows below it on one side.
     const drawn = new Uint8Array(width * height)
-    for (let p = 0; p < width * height; p++) drawn[p] = covered[p] && (backing || pixels[p * 4 + 3] > DRAWN) ? 1 : 0
+    for (let p = 0; p < width * height; p++) drawn[p] = (backing ? covered[p] : pixels[p * 4 + 3] > DRAWN) ? 1 : 0
     const hole = Math.max(1, Math.round((HOLE * neck.w) / pixelX))
     const closed = erode(dilate(drawn, width, height, hole), width, height, hole)
     const hidden = new Uint8Array(width * height)
@@ -133,7 +135,7 @@ export function plainHiddenCollars(
   ) <= CLOTH_DISTANCE)
   if (cloth.length < MIN_SAMPLES) return out
   const field = [2, 3, 4].map((k) => fitPlane(cloth, k))
-  garments.forEach(({ layer, image }, index) => {
+  garments.forEach(({ layer, image, backing }, index) => {
     const hidden = hiddenOf[index]
     if (!hidden) return
     const { width, height, pixels } = image
@@ -142,8 +144,14 @@ export function plainHiddenCollars(
     const distance = insideDistance(hidden, width, height)
     const feather = Math.max(1, FEATHER / pixelX)
     const next = new Uint8ClampedArray(pixels)
+    // A hole in the garment (not a backing) takes the garment that shows beside it.
+    const holes = backing ? null : fillHoles(pixels, width, height, hidden, Math.max(1, Math.round((2 * HOLE * neck.w) / pixelX)))
     for (let p = 0; p < width * height; p++) {
       if (!hidden[p]) continue
+      if (holes?.has(p)) {
+        next.set(holes.get(p)!, p * 4)
+        continue
+      }
       const x = p % width
       const y = (p - x) / width
       const u = (layer.x + (x + 0.5) * pixelX - neck.x) / neck.w
@@ -159,6 +167,63 @@ export function plainHiddenCollars(
     out.set(index, { pixels: next, width, height })
   })
   return out
+}
+
+/**
+ * The colours of the hidden pixels the garment left empty, spread in from
+ * the garment that shows (drawn, not hidden) up to `reach` pixels away. Holes
+ * farther than that are left out (they take the collar's cloth).
+ */
+function fillHoles(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  hidden: Uint8Array,
+  reach: number,
+): Map<number, [number, number, number, number]> {
+  const filled = new Map<number, [number, number, number, number]>()
+  const source = (p: number) => !hidden[p] && pixels[p * 4 + 3] > 250
+  let front: number[] = []
+  for (let p = 0; p < width * height; p++) {
+    if (hidden[p] && pixels[p * 4 + 3] <= DRAWN) front.push(p)
+  }
+  for (let pass = 0; pass < reach && front.length; pass++) {
+    const next: number[] = []
+    const found: Array<[number, [number, number, number, number]]> = []
+    for (const p of front) {
+      const x = p % width
+      const y = (p - x) / width
+      let r = 0
+      let g = 0
+      let b = 0
+      let n = 0
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const q = ny * width + nx
+          const known = filled.get(q)
+          if (known) {
+            r += known[0]
+            g += known[1]
+            b += known[2]
+            n++
+          } else if (source(q)) {
+            r += pixels[q * 4]
+            g += pixels[q * 4 + 1]
+            b += pixels[q * 4 + 2]
+            n++
+          }
+        }
+      }
+      if (n) found.push([p, [Math.round(r / n), Math.round(g / n), Math.round(b / n), 255]])
+      else next.push(p)
+    }
+    for (const [p, colour] of found) filled.set(p, colour)
+    front = next
+  }
+  return filled
 }
 
 /** Within the clip's rows (left x, y, right x, y) at rest, between consecutive rows. */

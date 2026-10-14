@@ -70,3 +70,20 @@ test('behind the neck the top is the cloth it shows around the neck, strokes and
   assert.deepEqual(at(clipped, 49, 50), [240, 205, 190, 255])
   assert.ok(at(clipped, 48, 30)[0] > 235)
 })
+
+test('a hole in the top under the neck\'s lower edge takes the top that shows beside it, not the collar cloth', () => {
+  const box = { x: 0, y: 0, w: 100, h: 100 }
+  // A grey collar around the neck (x 40..60, y 0..50); below y 50 the chest skin. The top left
+  // a hole at y 44..52 under the neck's lower edge, which reaches down to y 50.
+  const skin = [240, 205, 190] as const
+  const grey = [80, 75, 80] as const
+  const top = image(100, 100, (x, y) => {
+    if (x >= 42 && x < 58 && y >= 44 && y < 52) return [0, 0, 0, 0]
+    return y >= 46 ? [...skin, 255] : x >= 40 && x < 60 ? [...skin, 255] : [...grey, 255]
+  })
+  const neck = image(100, 100, (x, y) => [...skin, x >= 40 && x < 60 && y < 50 ? 255 : 0])
+  const out = plainHiddenCollars([{ layer: box, image: top }], box, neck).get(0)!
+  const [r, g, b, a] = at(out, 50, 48)
+  assert.equal(a, 255, 'the hole is closed')
+  assert.ok(r > 200 && g > 170 && b > 160, `like the chest beside it: ${[r, g, b]}`)
+})
