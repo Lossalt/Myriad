@@ -8,9 +8,11 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+#[cfg(test)]
+use myriad_merope::jargon::Known;
 use myriad_merope::jargon::{
-    HERE_SCHEMA, Known, USUAL_SCHEMA, Watched, hear, here_input, here_schema, here_system,
-    parse_here, parse_usual, usual_input, usual_schema, usual_system, watch,
+    HERE_SCHEMA, USUAL_SCHEMA, Watched, hear, here_input, here_schema, here_system, parse_here,
+    parse_usual, usual_input, usual_schema, usual_system, watch,
 };
 use sea_orm::DatabaseConnection;
 use serde_json::json;
@@ -27,6 +29,7 @@ const WATCHED_FOR_DAYS: i64 = 30;
 const FADES_AFTER: chrono::Duration = chrono::Duration::days(90);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Words of the groups read back.
+#[cfg(test)]
 const READ_BACK: u64 = 300;
 
 /// Each group's watched words, as last read or written.
@@ -221,6 +224,7 @@ async fn keep(db: &DatabaseConnection, venue: &str, word: &Watched, meaning: &st
 
 /// The groups' own words `text`, said in the group `here` (as sessions keep
 /// it), uses: this group's, and other groups' by their names.
+#[cfg(test)]
 pub async fn section_for(db: &DatabaseConnection, here: &str, text: &str) -> Option<String> {
     let rows = unified::in_other_groups(db, None, "", &[SOURCE], READ_BACK).await;
     let here_stored = unified::Audience::group(here, 0).venue();

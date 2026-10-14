@@ -276,36 +276,36 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 answered(venue, id, Answer::LedgerRead { stored }).await;
             });
         }
-        Effect::Turn {
+        Effect::TurnBegin {
             id,
             user_id,
-            to,
             input,
             transcript,
-            room,
-            differs,
-            making_sense,
-            late,
-            chime,
             speaker,
+            chime,
             first,
         } => {
             tokio::spawn(async move {
-                let turn = MemberTurn {
-                    user_id,
-                    to,
-                    input,
-                    transcript,
-                    room,
-                    differs,
-                    making_sense,
-                    late,
-                    chime,
-                    speaker,
-                    first,
-                };
-                let answer = member_turn(&venue, turn).await;
+                let answer =
+                    turn_begin(&venue, user_id, input, transcript, speaker, chime, first).await;
                 answered(venue, id, answer).await;
+            });
+        }
+        Effect::TurnEnd {
+            id,
+            turn,
+            user_id,
+            said,
+            sticker,
+            first,
+            game,
+        } => {
+            tokio::spawn(async move {
+                let reply =
+                    crate::services::agent::group_turn::end(&turn, said, sticker, game).await;
+                // Unpaired or switched off while she was thinking.
+                let bound = first || still_hers(&venue, user_id).await;
+                answered(venue, id, Answer::TurnEnded { reply, bound }).await;
             });
         }
         Effect::SoupTurn {
@@ -314,11 +314,14 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             asker,
             words,
             owner,
+            turn,
         } => {
             tokio::spawn(async move {
                 use crate::services::agent::merope::group::soup;
+                let table = soup::Table::Group(at);
+                let judged = soup::this_turn_at(&table, Some(&asker), &words, owner);
                 let section =
-                    soup::this_turn_at(&soup::Table::Group(at), Some(&asker), &words, owner).await;
+                    crate::services::agent::group_turn::within(turn.as_deref(), judged).await;
                 answered(venue, id, Answer::Soup { section }).await;
             });
         }
@@ -327,10 +330,14 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             venue: at,
             words,
             owner,
+            turn,
         } => {
             tokio::spawn(async move {
                 use crate::services::agent::merope::group::soup;
-                let opening = soup::start_at(&soup::Table::Group(at), &words, owner).await;
+                let table = soup::Table::Group(at);
+                let started = soup::start_at(&table, &words, owner);
+                let opening =
+                    crate::services::agent::group_turn::within(turn.as_deref(), started).await;
                 answered(venue, id, Answer::SoupOpening { opening }).await;
             });
         }
@@ -371,21 +378,33 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             input,
             schema_name,
             schema,
-            ..
+            turn,
         } => {
             tokio::spawn(async move {
-                let asked = crate::services::agent::merope::group::asking::judge(
-                    how,
-                    &voice,
-                    owner,
-                    &operation,
-                    Duration::from_millis(timeout_ms),
-                    &system,
-                    &input,
-                    &schema_name,
-                    &schema,
-                )
-                .await;
+                let within = Duration::from_millis(timeout_ms);
+                let asked = match turn {
+                    // Within a member's turn: as their Chat turn asks her.
+                    Some(turn) => tokio::time::timeout(
+                        within,
+                        crate::services::agent::group_turn::say(&turn, &input),
+                    )
+                    .await
+                    .unwrap_or(Err("timeout")),
+                    None => {
+                        crate::services::agent::merope::group::asking::judge(
+                            how,
+                            &voice,
+                            owner,
+                            &operation,
+                            within,
+                            &system,
+                            &input,
+                            &schema_name,
+                            &schema,
+                        )
+                        .await
+                    }
+                };
                 let (raw, failure) = match asked {
                     Ok(raw) => (Some(raw), None),
                     Err(failure) => (None, Some(failure.to_string())),

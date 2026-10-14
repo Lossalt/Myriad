@@ -49,7 +49,6 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use futures::StreamExt;
 use myriad_agent_rules::channel::{
     ConnectFailureKind, DiscordGroupMessage, GroupImage, ImageFetch, PairingLookup, QuotedLine,
     TelegramGroupMessage,
@@ -58,7 +57,7 @@ use sea_orm::DatabaseConnection;
 use tracing::{info, warn};
 
 use crate::services::agent::AgentInteractionMode;
-use crate::services::agent::types::{AgentProgressEvent, ConversationMessage};
+use crate::services::agent::types::ConversationMessage;
 use crate::services::channel_pairing::{ChannelBinding, PairingChannel};
 use crate::services::channel_platform::ChannelPlatform;
 
@@ -95,9 +94,6 @@ pub use title::title;
 
 /// Groups she keeps in mind at once.
 const MAX_GROUPS: usize = 256;
-/// Longest she takes over one group reply before giving up on it.
-const TURN_DEADLINE: Duration = Duration::from_secs(90);
-const TYPING_EVERY: Duration = Duration::from_secs(4);
 
 /// Runtime-registry namespace of each group's recent lines: what she keeps
 /// in mind of a group outlives a restart, for as long as she would keep it.

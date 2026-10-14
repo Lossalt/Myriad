@@ -402,6 +402,7 @@ impl Agent {
                 analyzer,
                 speech_delivery.clone(),
                 voice,
+                true,
             )
             .await;
         // The model now and then answers with nothing at all, or the provider
@@ -423,8 +424,33 @@ impl Agent {
             analyzer,
             speech_delivery,
             None,
+            true,
         )
         .await
+    }
+
+    /// Her words to a whole prompt her group mind put together, streamed as
+    /// a chat reply is (wear and music directives acted on as they come);
+    /// the raw text, with any game she starts and sticker she picks left for
+    /// her group mind. Nothing reaches anyone until the reply is whole. An
+    /// empty reply is the empty text; a reply dropped halfway is `cut`.
+    pub(crate) async fn stream_group_reply(
+        &self,
+        request: &UserRequest,
+        prompt: &str,
+    ) -> Result<String, &'static str> {
+        let analyzer = streamed_analyzer().await.map_err(|_| "unavailable")?;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        match self
+            .stream_chat_response_with_analyzer(request, prompt, &tx, analyzer, None, None, false)
+            .await
+        {
+            Ok(text) => Ok(text),
+            Err(error) if error == EMPTY_REPLY => Ok(String::new()),
+            Err(error) if error == CUT_REPLY => Err("cut"),
+            Err(_) => Err("failed"),
+        }
     }
 
     pub(crate) async fn strict_lite_chat_response(
@@ -467,28 +493,13 @@ impl Agent {
         let soul = crate::services::agent::identity::get_speaking_soul()
             .await
             .unwrap_or_default();
-        let venue = request
-            .context
-            .as_ref()
-            .and_then(|context| context.venue.clone());
-        let sections = if let Some(venue) = venue.as_deref() {
-            crate::services::agent::merope::speaking_prompt_in_group(
-                request.user_id,
-                request.raw_input.as_str(),
-                venue,
-                request
-                    .context
-                    .as_ref()
-                    .and_then(|context| context.speaker.as_deref()),
-            )
-            .await
-        } else {
-            crate::services::agent::merope::speaking_prompt_with_query(
-                request.user_id,
-                Some(request.raw_input.as_str()),
-            )
-            .await
-        };
+        // A group turn is her group mind's own (`group_turn`): this is a
+        // private chat's.
+        let sections = crate::services::agent::merope::speaking_prompt_with_query(
+            request.user_id,
+            Some(request.raw_input.as_str()),
+        )
+        .await;
         // How she is this moment goes last, nearest their words: what she
         // answers from, not one more thing among the rest.
         let (moment, sections): (Vec<String>, Vec<String>) = sections
@@ -505,11 +516,10 @@ impl Agent {
             }
         };
         let mut merope_block = crate::services::agent::merope::speaking_prompt_plain(&sections);
-        // A group has no wardrobe of hers to change and no player of theirs to
-        // run, and neither has a chat app: those sections are for a private
-        // chat on the site, where they are really there.
-        if venue.is_none()
-            && request.context.as_ref().is_some_and(|context| {
+        // A chat app has no wardrobe of hers to change and no player of
+        // theirs to run: those sections are for a private chat on the site,
+        // where they are really there.
+        if request.context.as_ref().is_some_and(|context| {
                 context.interaction_mode == crate::services::agent::AgentInteractionMode::Chat
             })
         {
@@ -657,7 +667,7 @@ impl Agent {
                 crate::services::agent::merope::clock::now() - at.with_timezone(&chrono::Utc)
                     >= chrono::Duration::hours(3)
             });
-        if venue.is_none() && came_back {
+        if came_back {
             let openers =
                 crate::services::agent::merope::her_openers(&self.db, request.user_id).await;
             if let Some(section) = myriad_merope::speaking::format_openers_section(&openers) {
@@ -686,98 +696,6 @@ impl Agent {
             } else {
                 format!("{merope_block}\n\n{section}")
             };
-        }
-        // In a group, the groups' own words in the talk.
-        if let Some(here) = venue.as_deref()
-            && let Some(section) =
-                crate::services::agent::merope::jargon::section_for(&self.db, here, &talk).await
-        {
-            merope_block = if merope_block.is_empty() {
-                section
-            } else {
-                format!("{merope_block}\n\n{section}")
-            };
-        }
-        if venue.is_some() {
-            // A turtle soup on in this group, with this line judged; or how
-            // she would start one for the group.
-            let game = match crate::services::agent::merope::soup::this_turn(request).await {
-                Some(section) => Some(section),
-                None => crate::services::agent::merope::soup::offer(request).await,
-            };
-            if let Some(game) = game {
-                merope_block = format!("{merope_block}\n\n{game}");
-            }
-            merope_block = format!(
-                "{merope_block}\n\n{}",
-                myriad_merope::speaking::chat_app_section()
-            );
-            if let Some(room) = request
-                .context
-                .as_ref()
-                .and_then(|context| context.room.as_ref())
-            {
-                merope_block = format!(
-                    "{merope_block}\n\n{}",
-                    myriad_merope::talk_shape::describe(room, "How people type here")
-                );
-            }
-            // What she made of the talk before answering: she answers from it.
-            if let Some(sense) = request
-                .context
-                .as_ref()
-                .and_then(|context| context.making_sense.as_deref())
-            {
-                merope_block = format!("{merope_block}\n\n{sense}");
-            }
-            // She only now sees the line she answers.
-            if let Some(ago) = request
-                .context
-                .as_ref()
-                .and_then(|context| context.late.as_deref())
-            {
-                merope_block = format!(
-                    "{merope_block}\n\n{}",
-                    myriad_merope::joining::seeing_it_late(ago)
-                );
-            }
-            if let Some(differs) = request
-                .context
-                .as_ref()
-                .and_then(|context| context.differs.as_deref())
-            {
-                merope_block = format!("{merope_block}\n\n{differs}");
-            }
-            // Stickers of her: hers, and this group's own.
-            if let Some(stickers) = crate::services::agent::merope::stickers::section(
-                &self.db,
-                &crate::services::agent::merope::stickers::key(request),
-                venue.as_deref(),
-                &request.raw_input,
-            )
-            .await
-            {
-                merope_block = format!("{merope_block}\n\n{stickers}");
-            }
-            // Nobody called her by name: she chose to say something.
-            if let Some(why) = request
-                .context
-                .as_ref()
-                .and_then(|context| context.chime.as_deref())
-            {
-                merope_block = format!(
-                    "{merope_block}\n\n{}",
-                    myriad_merope::joining::speaking_up_section(why.trim())
-                );
-            }
-            // A group turn: the history is the group's transcript, other
-            // people's words included, and nothing she said in private.
-            return crate::services::agent::chat_prompt::build_group_chat_prompt(
-                &soul,
-                &with_moment(merope_block),
-                supplied,
-                &request.raw_input,
-            );
         }
         let history = crate::services::agent::merope::with_said_unprompted(
             &self.db,
@@ -861,6 +779,7 @@ impl Agent {
         analyzer: Option<crate::services::analyzer::AiAnalyzer>,
         speech_delivery: Option<ChatDelivery>,
         voice: Option<HerVoice>,
+        host_games: bool,
     ) -> Result<String, String> {
         let tx = progress_tx.clone();
         let wear = std::sync::Arc::new(std::sync::Mutex::new(WearStreamFilter::new(
@@ -1025,6 +944,11 @@ impl Agent {
                         speech_delivery.as_ref(),
                     )
                     .await;
+                }
+                // Her group mind hosts its own games: the words as she said
+                // them, the game left in.
+                if !host_games {
+                    return Ok(full_text.trim().to_owned());
                 }
                 let started_game = wear
                     .lock()

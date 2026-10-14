@@ -49,10 +49,6 @@ pub(crate) fn build_request_context(mut ctx: ProcessContext) -> RequestContext {
         channel_chat: None,
         chime: None,
         speaker: None,
-        room: None,
-        late: None,
-        differs: None,
-        making_sense: None,
         nobody_said: false,
         on_device: ctx.on_device,
     }

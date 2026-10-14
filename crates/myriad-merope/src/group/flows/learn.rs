@@ -139,6 +139,7 @@ fn digest(cx: &mut Cx, l: &mut Learning, found: String, url: String) -> String {
         input: crate::memes::digest_input(&term, &used, &found),
         schema_name: crate::memes::DIGEST_SCHEMA.into(),
         schema: crate::memes::digest_schema(),
+        turn: None,
     })
 }
 

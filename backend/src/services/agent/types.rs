@@ -94,22 +94,6 @@ pub struct RequestContext {
     /// In a group, who spoke to her, as the group knows them. Server-set only.
     #[serde(skip)]
     pub speaker: Option<String>,
-    /// In a group, how its people type there lately (see
-    /// `myriad_merope::talk_shape`). Server-set only.
-    #[serde(skip)]
-    pub room: Option<myriad_merope::talk_shape::Shape>,
-    /// In a group, how long ago the line she answers was said, when she only
-    /// sees it a while later. Server-set only.
-    #[serde(skip)]
-    pub late: Option<String>,
-    /// How her lines differ from the people's where she is talking (see
-    /// `myriad_merope::contrast`). Server-set only.
-    #[serde(skip)]
-    pub differs: Option<String>,
-    /// What she made of a group's talk before answering, and what it told
-    /// her about herself (see `merope::making_sense`). Server-set only.
-    #[serde(skip)]
-    pub making_sense: Option<String>,
     /// Her saying something first in a group: the input stands in for words
     /// no one said, so nothing is noted as theirs. Server-set only.
     #[serde(skip)]

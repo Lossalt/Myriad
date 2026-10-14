@@ -33,8 +33,6 @@ pub(crate) struct World {
     pub claimed: HashSet<String>,
     /// Answers of the model by operation, in order; none is a failure.
     pub models: HashMap<String, VecDeque<Option<String>>>,
-    /// A member's turn: how long it takes, what she says, the sticker.
-    pub turns: VecDeque<(f64, String, Option<Value>)>,
     /// What she sees in a picture, by its key.
     pub seen: HashMap<String, myriad_merope::seeing::Seen>,
     /// Text sends (counted from 0) the platform refuses.
@@ -57,6 +55,8 @@ pub(crate) struct World {
     pub defined: HashMap<String, (String, String, String)>,
     /// What a search for a query turns up: (text, address).
     pub found: HashMap<String, (String, String)>,
+    /// Turtle-soup surfaces she used lately, in this world.
+    pub recent_surfaces: Vec<String>,
     /// What each group calls itself, as its platform would say.
     pub titles: HashMap<String, String>,
     /// What she says to a whole speaking prompt, by operation, in order:
@@ -82,7 +82,6 @@ impl World {
             unbound_after: HashSet::new(),
             claimed: HashSet::new(),
             models: HashMap::new(),
-            turns: VecDeque::new(),
             seen: HashMap::new(),
             refused: HashSet::new(),
             sends: 0,
@@ -94,6 +93,7 @@ impl World {
             vectors: HashMap::new(),
             defined: HashMap::new(),
             found: HashMap::new(),
+            recent_surfaces: Vec::new(),
             titles: HashMap::new(),
             says: HashMap::new(),
             log: Vec::new(),
@@ -266,15 +266,6 @@ pub(crate) fn model(operation: &str, system: &str, input: &str) -> Option<Option
         })
         .flatten(),
     )
-}
-
-/// A member's group turn (the Chat run it would start): what it was given,
-/// and what she says after the time it takes.
-pub(crate) async fn turn(given: Value) -> Option<(String, Option<Value>)> {
-    note("turn", given);
-    let (seconds, text, sticker) = with(|world| world.turns.pop_front()).flatten()?;
-    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
-    Some((text, sticker))
 }
 
 /// A send to the platform; whether it took it.

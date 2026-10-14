@@ -18,8 +18,9 @@
 //! knows, read as rows; what she did, would tell and is doing, as facts her
 //! host's life gives); looking up the words she is not sure of; her whole
 //! answer to someone from outside, put together from what is read and
-//! asked of her here. What she says to a member is still asked of the end as
-//! a whole step (`turn`); it moves here later.
+//! asked of her here; her answer to a member too, the group's own part put
+//! together here, what she knows of them and how she is given whole by the
+//! end that opens and closes the turn as one of theirs (D2c-8 A, D2c-9 A).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -252,6 +253,9 @@ pub struct Group {
     /// are), so the number she picks is the sticker she saw.
     #[serde(default)]
     pub offered: BTreeMap<String, Vec<String>>,
+    /// The member's turn she shows she is typing for, while it runs.
+    #[serde(default)]
+    pub typing_for: Option<String>,
     /// The last line she took in for what she heard.
     #[serde(default)]
     pub heard_upto: Option<i64>,
@@ -316,6 +320,7 @@ impl Default for Group {
             everyone_muted_until: None,
             stranger_replies: None,
             offered: BTreeMap::new(),
+            typing_for: None,
             heard_upto: None,
             pictures: BTreeMap::new(),
             reach: None,
@@ -545,11 +550,18 @@ pub enum Answer {
         #[serde(default)]
         restore: Option<Restore>,
     },
-    Turned {
+    /// A member's turn opened (none: it may not be had now).
+    TurnBegun {
         #[serde(default)]
-        text: Option<String>,
+        turn: Option<String>,
         #[serde(default)]
-        sticker: Option<Value>,
+        sections: Vec<String>,
+        #[serde(default)]
+        doing: Option<String>,
+    },
+    TurnEnded {
+        #[serde(default)]
+        reply: Option<String>,
         /// Whether whom she answered is still bound to her.
         #[serde(default = "yes")]
         bound: bool,
@@ -785,20 +797,35 @@ pub enum Effect {
     /// What was kept of the group before a restart, read again: her own
     /// line is about to be kept and it could not be read before.
     ReadKept { id: String },
-    /// A member's turn: what she says, in their account.
-    Turn {
+    /// Open a member's turn, as one of theirs in their session in the group
+    /// (their line kept unless she speaks first, their budget reserved, how
+    /// she feels moved by it): what she knows of them and how she is, as the
+    /// end's whole sections (D2c-8 A), and what she is doing on her own.
+    TurnBegin {
         id: String,
         user_id: i32,
-        to: Target,
         input: String,
         transcript: Vec<Spoken>,
-        room: Option<crate::talk_shape::Shape>,
-        differs: Option<String>,
-        making_sense: Option<String>,
-        late: Option<String>,
-        chime: Option<String>,
         speaker: String,
+        chime: Option<String>,
         first: bool,
+    },
+    /// Close it: with what she said (and the sticker she chose), kept in
+    /// their session and taken into her memory, as a Chat turn is (D2c-9 A);
+    /// without, left. Answered with her words as they stand, and whether whom
+    /// she answered is still hers.
+    TurnEnd {
+        id: String,
+        turn: String,
+        user_id: i32,
+        said: Option<String>,
+        sticker: Option<Value>,
+        /// She spoke first: nobody's binding to hold to.
+        first: bool,
+        /// The table whose game this turn may have ended (still the end's
+        /// until the games move into the core): put away after it.
+        #[serde(default)]
+        game: Option<String>,
     },
     /// The group's turtle soup at this turn (the end's until D2c):
     /// `words` from `asker` judged when a game is on, billed to `owner`.
@@ -808,6 +835,9 @@ pub enum Effect {
         asker: String,
         words: String,
         owner: i32,
+        /// A member's turn it is judged within, when it is one.
+        #[serde(default)]
+        turn: Option<String>,
     },
     /// She said she would think one up: the puzzle she brings out.
     SoupStart {
@@ -815,6 +845,8 @@ pub enum Effect {
         venue: String,
         words: String,
         owner: i32,
+        #[serde(default)]
+        turn: Option<String>,
     },
     /// After her reply: a game this turn ended is over, and the group
     /// remembers it.
@@ -839,6 +871,9 @@ pub enum Effect {
         input: String,
         schema_name: String,
         schema: Value,
+        /// A member's turn it is asked within, when it is one.
+        #[serde(default)]
+        turn: Option<String>,
     },
     /// Send one message of hers.
     Send {

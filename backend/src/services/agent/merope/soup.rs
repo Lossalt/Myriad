@@ -175,6 +175,43 @@ pub fn in_game(request: &UserRequest) -> bool {
 /// Surfaces used lately, across conversations, so she does not repeat one.
 static RECENT_SURFACES: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
+/// Surfaces used lately (in a recorded scene, its world's own).
+fn recent_surfaces() -> Vec<String> {
+    #[cfg(test)]
+    if let Some(recent) =
+        crate::services::channel_group::g0::with(|world| world.recent_surfaces.clone())
+    {
+        return recent;
+    }
+    RECENT_SURFACES
+        .lock()
+        .map(|recent| recent.clone())
+        .unwrap_or_default()
+}
+
+/// A surface she used, the latest ten kept.
+fn used_surface(surface: String) {
+    fn keep(recent: &mut Vec<String>, surface: String) {
+        recent.push(surface);
+        let excess = recent.len().saturating_sub(10);
+        recent.drain(..excess);
+    }
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        let mut surface = Some(surface);
+        crate::services::channel_group::g0::with(|world| {
+            keep(
+                &mut world.recent_surfaces,
+                surface.take().unwrap_or_default(),
+            )
+        });
+        return;
+    }
+    if let Ok(mut recent) = RECENT_SURFACES.lock() {
+        keep(&mut recent, surface);
+    }
+}
+
 /// She said she would host one: make it up and return what she says to open
 /// it. If it cannot be made after a retry she says so rather than leave her
 /// word hanging. `None` only when she was not asked (no table).
@@ -240,10 +277,7 @@ async fn make_up(table: &Table, words: &str, billing: i32) -> Option<String> {
     let soul: String = crate::services::agent::identity::get_speaking_soul()
         .await
         .unwrap_or_default();
-    let recent: Vec<String> = RECENT_SURFACES
-        .lock()
-        .map(|recent| recent.clone())
-        .unwrap_or_default();
+    let recent: Vec<String> = recent_surfaces();
     let input = json!({
         "theirWords": words.chars().take(300).collect::<String>(),
         "setting": SETTINGS[setting_index()],
@@ -300,11 +334,7 @@ async fn make_up(table: &Table, words: &str, billing: i32) -> Option<String> {
     {
         return None;
     }
-    if let Ok(mut recent) = RECENT_SURFACES.lock() {
-        recent.push(puzzle.surface.chars().take(120).collect());
-        let excess = recent.len().saturating_sub(10);
-        recent.drain(..excess);
-    }
+    used_surface(puzzle.surface.chars().take(120).collect());
     save(
         table,
         &Game {

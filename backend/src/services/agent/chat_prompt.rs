@@ -124,6 +124,7 @@ pub fn build_chat_lite_prompt_with_perception(
 /// A group chat turn. The transcript is the group's recent lines, each
 /// `name：text`, written by anyone in the group including people outside the
 /// community, so it is fenced as untrusted data.
+#[cfg(test)]
 pub fn build_group_chat_prompt(
     soul: &str,
     merope_block: &str,

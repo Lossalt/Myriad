@@ -1056,7 +1056,25 @@ impl End {
             Effect::Embed { id, .. } => (id, "embed"),
             Effect::ReadLedger { id } => (id, "ledger"),
             Effect::ReadKept { id } => (id, "kept"),
-            Effect::Turn { id, .. } => (id, "turn"),
+            Effect::TurnBegin { id, .. } => (id, "begin"),
+            Effect::TurnEnd { id, said, .. } => {
+                // Closed with what she said, it gives her words back as they
+                // stand, unless the scene says otherwise.
+                let id = id.clone();
+                let scripted = self.answers.get_mut("end").and_then(VecDeque::pop_front);
+                let (after, answer) = scripted.unwrap_or_else(|| {
+                    (
+                        0.0,
+                        Answer::TurnEnded {
+                            reply: said.clone(),
+                            bound: true,
+                        },
+                    )
+                });
+                let at = self.now + secs(after);
+                self.at(at, Event::Done { id, answer });
+                return;
+            }
             Effect::SoupTurn { id, .. } => (id, "soup"),
             Effect::SoupStart { id, .. } => (id, "opening"),
             Effect::React { id, .. } => (id, "react"),
@@ -1071,6 +1089,7 @@ impl End {
                     "group_chime" => "ask:group_chime",
                     "meme" => "ask:meme",
                     "group_stranger" => "ask:group_stranger",
+                    "group_member" => "ask:group_member",
                     _ => "ask",
                 },
             ),
@@ -1154,7 +1173,7 @@ fn default_answer(kind: &str) -> Answer {
         "opening" => Answer::SoupOpening {
             opening: "汤面：……".into(),
         },
-        "ask:group_stranger" => Answer::Asked {
+        "ask:group_stranger" | "ask:group_member" => Answer::Asked {
             raw: Some("嗯嗯".into()),
             failure: None,
         },
@@ -1173,10 +1192,10 @@ fn default_answer(kind: &str) -> Answer {
         "embed" => Answer::Embedded { vector: None },
         "ledger" => Answer::LedgerRead { stored: None },
         "kept" => Answer::Kept { restore: None },
-        "turn" => Answer::Turned {
-            text: Some("嗯嗯".into()),
-            sticker: None,
-            bound: true,
+        "begin" => Answer::TurnBegun {
+            turn: Some("turn-1".into()),
+            sections: vec!["## How you feel toward them\nYou feel at ease with them.".into()],
+            doing: None,
         },
         "react" => Answer::Reacted { ok: true },
         "may" => Answer::MayLookUp { may: May::Tried },
@@ -1241,12 +1260,11 @@ fn heard(end: &mut End, at: f64, message: Message) {
 fn g1_a_member_calls_her() {
     let mut end = End::new();
     end.answer(
-        "turn",
+        "ask:group_member",
         4.0,
-        Answer::Turned {
-            text: Some("去老地方吧\n便宜又好吃".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("去老地方吧\n便宜又好吃".into()),
+            failure: None,
         },
     );
     heard(&mut end, 0.0, message(1, 11, "阿明", "周五聚餐吗", false));
@@ -1264,12 +1282,11 @@ fn g1_a_member_calls_her() {
 fn g1_lines_wait_while_she_is_busy() {
     let mut end = End::new();
     end.answer(
-        "turn",
+        "ask:group_member",
         20.0,
-        Answer::Turned {
-            text: Some("我先看看".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("我先看看".into()),
+            failure: None,
         },
     );
     heard(&mut end, 0.0, message(1, 11, "阿明", "@bot 周五去哪", true));
@@ -1704,12 +1721,11 @@ fn g1_an_outsider_calls_her() {
 fn g1_she_keeps_back_what_no_longer_fits() {
     let mut end = End::new();
     end.answer(
-        "turn",
+        "ask:group_member",
         10.0,
-        Answer::Turned {
-            text: Some("九点吧\n老地方见".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("九点吧\n老地方见".into()),
+            failure: None,
         },
     );
     end.answer(
@@ -1721,12 +1737,11 @@ fn g1_she_keeps_back_what_no_longer_fits() {
         },
     );
     end.answer(
-        "turn",
+        "ask:group_member",
         2.0,
-        Answer::Turned {
-            text: Some("那就十点".into()),
-            sticker: Some(json!({ "number": 1, "meaning": "开心" })),
-            bound: true,
+        Answer::Asked {
+            raw: Some("那就十点\n[[sticker:new|笑着比耶的她|开心]]".into()),
+            failure: None,
         },
     );
     heard(
@@ -1851,12 +1866,11 @@ fn g1_pictures_and_what_she_heard() {
 fn g1_she_brings_something_up_first_and_a_send_is_refused() {
     let mut end = End::new();
     end.answer(
-        "turn",
+        "ask:group_member",
         2.0,
-        Answer::Turned {
-            text: Some("今天听到一首好歌\n分享给你们".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("今天听到一首好歌\n分享给你们".into()),
+            failure: None,
         },
     );
     end.answer("send", 0.0, Answer::Sent { ok: true });
@@ -1901,21 +1915,19 @@ fn g1_her_line_brings_back_what_a_failed_read_missed() {
         },
     );
     end.answer(
-        "turn",
+        "ask:group_member",
         2.0,
-        Answer::Turned {
-            text: Some("记得，你说要来点歌".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("记得，你说要来点歌".into()),
+            failure: None,
         },
     );
     end.answer(
-        "turn",
+        "ask:group_member",
         2.0,
-        Answer::Turned {
-            text: Some("那就放这首".into()),
-            sticker: None,
-            bound: true,
+        Answer::Asked {
+            raw: Some("那就放这首".into()),
+            failure: None,
         },
     );
     heard(

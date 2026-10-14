@@ -553,6 +553,7 @@ fn after_recall(cx: &mut Cx, r: &mut Replying, rows: Vec<MemoryRow>) -> Replied 
                 asker,
                 words,
                 owner,
+                turn: None,
             }))
         }
         _ => Replied::Done(None),
@@ -574,7 +575,7 @@ fn talk(r: &Replying) -> String {
 
 /// The stickers she may send, those their words touch first, then a
 /// group's own, then those she sends most (as read).
-fn offered(stickers: Vec<StickerRow>, words: &str) -> Vec<StickerRow> {
+pub(crate) fn offered(stickers: Vec<StickerRow>, words: &str) -> Vec<StickerRow> {
     let documents: Vec<myriad_agent_rules::memory::lexical::Document> = stickers
         .iter()
         .map(|sticker| myriad_agent_rules::memory::lexical::Document {
@@ -608,7 +609,7 @@ fn offered(stickers: Vec<StickerRow>, words: &str) -> Vec<StickerRow> {
 }
 
 /// Remember what was offered to `who`.
-fn offer(group: &mut Group, who: &str, stickers: &[StickerRow]) {
+pub(crate) fn offer(group: &mut Group, who: &str, stickers: &[StickerRow]) {
     if group.offered.len() >= OFFERS_KEPT && !group.offered.contains_key(who) {
         group.offered.clear();
     }
@@ -893,6 +894,7 @@ fn ask_again(cx: &mut Cx, r: &mut Replying) -> Replied {
         input,
         schema_name: String::new(),
         schema: Value::Null,
+        turn: None,
     }))
 }
 
@@ -923,6 +925,7 @@ fn answered(cx: &mut Cx, r: &mut Replying, raw: &str) -> Replied {
             venue,
             words,
             owner,
+            turn: None,
         }));
     }
     finish(cx, r)

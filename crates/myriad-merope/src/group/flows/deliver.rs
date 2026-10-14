@@ -65,6 +65,7 @@ pub(crate) fn look_over(cx: &mut Cx, to: &Message, d: &mut Deliver) -> Next {
                 input: crate::draft::input(&d.said, &d.reply, &fresh),
                 schema_name: crate::draft::SCHEMA_NAME.into(),
                 schema: crate::draft::schema(),
+                turn: None,
             };
             return Next::Wait(cx.effect(effect));
         }

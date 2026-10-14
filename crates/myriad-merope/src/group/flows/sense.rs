@@ -134,6 +134,7 @@ pub(crate) fn sense_step(cx: &mut Cx, s: &mut Sensing, answer: Option<Answer>) -
                 input,
                 schema_name: rules::SCHEMA_NAME.into(),
                 schema: rules::schema(),
+                turn: None,
             }))
         }
         (SenseStage::Asking, Some(Answer::Asked { raw, .. })) => {

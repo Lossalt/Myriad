@@ -44,11 +44,8 @@ pub struct ProcessContext {
     /// Semantic live-face snapshot. Extra keys are dropped at the sanitizer.
     #[serde(default)]
     pub rig_state: Option<serde_json::Value>,
-    /// A channel group turn. Set only by the server: never read from a
-    /// request body, because it decides whose memories may be said aloud.
-    #[serde(skip)]
-    pub group: Option<GroupTurn>,
-    /// A private IM chat turn. Set only by the server, like `group`.
+    /// A private IM chat turn. Set only by the server: never read from a
+    /// request body.
     #[serde(skip)]
     pub channel_chat: Option<crate::services::agent::types::ChannelChat>,
     /// Work started from a chat app, answered there. Set only by the server.
@@ -58,31 +55,6 @@ pub struct ProcessContext {
     /// there, and its senses are that device's. Set only by the server.
     #[serde(skip)]
     pub on_device: Option<String>,
-}
-
-/// Where a channel group turn happens and what the group said lately.
-#[derive(Debug, Clone)]
-pub struct GroupTurn {
-    /// `telegram:<chat_id>`.
-    pub venue: String,
-    /// Recent group lines, oldest first; others' lines are `name：text`.
-    pub transcript: Vec<crate::services::agent::types::ConversationMessage>,
-    /// Nobody addressed her: she is chiming in, and why.
-    pub chime: Option<String>,
-    /// Who spoke to her, as the group knows them.
-    pub speaker: String,
-    /// How the group's people type there lately, once there is enough.
-    pub room: Option<myriad_merope::talk_shape::Shape>,
-    /// How long ago the line she answers was said, when she sees it late.
-    pub late: Option<String>,
-    /// How her lines differ from the people's there, told as counts.
-    pub differs: Option<String>,
-    /// What she made of the talk before answering, and what the group told
-    /// her about herself.
-    pub making_sense: Option<String>,
-    /// She is saying something first: nobody said anything to her, so there
-    /// is no line of theirs to keep.
-    pub first: bool,
 }
 
 /// 对话消息（API 格式）

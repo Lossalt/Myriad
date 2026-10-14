@@ -287,6 +287,49 @@ fn chat_music_frontend_action(
     Some(value)
 }
 
+/// Her words to a group as they stand once her wear directive, if any, is
+/// acted on and peeled off (see [`publish_model_outfit_overlay`]).
+pub(super) async fn published_reply(
+    db: &sea_orm::DatabaseConnection,
+    request: &UserRequest,
+    reply: &str,
+) -> String {
+    publish_model_outfit_overlay(db, request, reply, None)
+        .await
+        .0
+}
+
+/// [`chat_reply_with_overlay`] for a group turn, the sticker she picked as
+/// her group mind resolved it.
+pub(super) async fn group_reply_data(
+    db: &sea_orm::DatabaseConnection,
+    request: &UserRequest,
+    reply: &str,
+    sticker: Option<Value>,
+) -> Value {
+    let mut data = crate::services::agent::chat_prompt::chat_reply_data(reply, &request.raw_input);
+    if let (Some(value), Some(object)) = (sticker, data.as_object_mut()) {
+        object.insert("sticker".into(), value);
+    }
+    let session_id = request
+        .context
+        .as_ref()
+        .and_then(|context| context.session_id.as_deref())
+        .unwrap_or("");
+    if let Some(object) = data.as_object_mut() {
+        object.insert(
+            "outfitId".into(),
+            match crate::services::agent::merope::overlay_outfit_id(db, request.user_id, session_id)
+                .await
+            {
+                Some(id) => Value::String(id),
+                None => Value::Null,
+            },
+        );
+    }
+    data
+}
+
 async fn chat_reply_with_overlay(
     db: &sea_orm::DatabaseConnection,
     request: &UserRequest,

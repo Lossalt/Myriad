@@ -152,41 +152,19 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
                 seen_late(cx.group, &a.message, now)
             };
             a.stage = AnswerStage::Turning;
-            let effect = |id| Effect::Turn {
-                id,
-                user_id: a.owner.unwrap_or_default(),
-                to: a.message.target(),
-                input: a.said.clone(),
-                transcript: a.transcript.clone(),
-                room: a.room.clone(),
-                differs,
-                making_sense: a.making_sense.clone(),
-                late,
-                chime: a.chime.clone(),
-                speaker: a.message.display_name.clone(),
-                first: a.first,
-            };
-            Next::Wait(cx.effect(effect))
+            let (member, next) = member_start(cx, a, differs, late);
+            a.member = Some(Box::new(member));
+            member_replied(cx, a, next)
         }
-        (
-            AnswerStage::Turning,
-            Some(Answer::Turned {
-                text,
-                sticker,
-                bound,
-            }),
-        ) => {
-            let text = text.map(|text| text.trim().to_string()).unwrap_or_default();
-            if text.is_empty() && sticker.is_none() {
+        (AnswerStage::Turning, answer) => {
+            let Some(mut member) = a.member.take() else {
                 return Next::Done(false);
+            };
+            let next = member_step(cx, &mut member, answer);
+            if matches!(next, MemberNext::Wait(_)) {
+                a.member = Some(member);
             }
-            // Unpaired or switched off while she was thinking.
-            if !bound {
-                return Next::Done(false);
-            }
-            a.reply = without_reply_mark(&text);
-            a.sticker = sticker;
-            say(cx, a)
+            member_replied(cx, a, next)
         }
         (AnswerStage::StrangerLedger, Some(Answer::LedgerRead { stored })) => {
             let differs = differs(cx.group, &a.noted, stored.as_ref());
@@ -413,6 +391,27 @@ fn stranger_replied(cx: &mut Cx, a: &mut Answering, replied: Replied) -> Next {
         Replied::Done(Some((text, sticker))) => {
             let text = text.trim().to_string();
             if text.is_empty() && sticker.is_none() {
+                return Next::Done(false);
+            }
+            a.reply = without_reply_mark(&text);
+            a.sticker = sticker;
+            say(cx, a)
+        }
+    }
+}
+
+/// Her answer to a member, as far as it got.
+fn member_replied(cx: &mut Cx, a: &mut Answering, next: MemberNext) -> Next {
+    match next {
+        MemberNext::Wait(awaiting) => Next::Wait(awaiting),
+        MemberNext::Done(said, bound) => {
+            let (text, sticker) = said.unwrap_or_default();
+            let text = text.trim().to_string();
+            if text.is_empty() && sticker.is_none() {
+                return Next::Done(false);
+            }
+            // Unpaired or switched off while she was thinking.
+            if !bound {
                 return Next::Done(false);
             }
             a.reply = without_reply_mark(&text);

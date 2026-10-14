@@ -272,6 +272,7 @@ pub(crate) fn judge_step(
                 input,
                 schema_name: crate::joining::SCHEMA_NAME.into(),
                 schema: crate::joining::schema(),
+                turn: None,
             }))
         }
         (JudgeStage::Judging, Some(Answer::Asked { raw, .. })) => {

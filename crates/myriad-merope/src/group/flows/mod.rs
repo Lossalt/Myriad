@@ -19,6 +19,7 @@ mod first;
 mod glance;
 mod heard;
 mod learn;
+mod member;
 mod sense;
 mod state;
 mod stranger;
@@ -30,6 +31,7 @@ pub(crate) use first::*;
 pub(crate) use glance::*;
 pub(crate) use heard::*;
 pub(crate) use learn::*;
+pub(crate) use member::*;
 pub(crate) use sense::*;
 pub(crate) use state::*;
 pub(crate) use stranger::*;
@@ -73,6 +75,8 @@ pub enum Kind {
     SpokeUp { at: i64, line: String },
     /// Looking up words she is not sure of, beside whatever else she does.
     Learn,
+    /// Showing she is typing while a member's turn of hers runs.
+    Typer { token: String, to: Target },
     /// Saying something first.
     First {
         waiter: String,
@@ -202,6 +206,9 @@ pub struct Answering {
     /// Her answer to someone from outside, while she puts it together.
     #[serde(default)]
     pub replying: Option<Box<Replying>>,
+    /// Her answer to a member, while she puts it together.
+    #[serde(default)]
+    pub member: Option<Box<MemberReply>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

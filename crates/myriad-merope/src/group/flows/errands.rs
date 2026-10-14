@@ -107,6 +107,7 @@ pub(crate) fn advance(cx: &mut Cx, mut errand: Errand, answer: Option<Answer>) {
                 park_errand(cx, errand, awaiting);
             }
         }
+        Doing::Timing if matches!(errand.kind, Kind::Typer { .. }) => typing_tick(cx, errand),
         Doing::Timing => {
             if let Kind::SpokeUp { at, line } = errand.kind {
                 let taken = cx
@@ -177,6 +178,7 @@ pub(crate) fn start_answer(
         site_owner: None,
         sensing: None,
         replying: None,
+        member: None,
     });
     let owner = match &errand.kind {
         Kind::First { owner, .. } => *owner,
@@ -227,7 +229,7 @@ pub(crate) fn answered_then(cx: &mut Cx, mut errand: Errand, replied: bool) {
                 }
             }
         }
-        Kind::SpokeUp { .. } | Kind::Learn => return,
+        Kind::SpokeUp { .. } | Kind::Learn | Kind::Typer { .. } => return,
     }
     finish(cx, errand, replied);
 }
@@ -306,6 +308,6 @@ pub(crate) fn chain_end(cx: &mut Cx, mut errand: Errand) {
             let (waiter, spoke) = (Some(waiter.clone()), spoke.unwrap_or(false));
             cx.settle(&waiter, spoke);
         }
-        Kind::SpokeUp { .. } | Kind::Learn => {}
+        Kind::SpokeUp { .. } | Kind::Learn | Kind::Typer { .. } => {}
     }
 }

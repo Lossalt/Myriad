@@ -73,13 +73,14 @@
     "search": { "answer": "found{found: [text, url] | null}", "description": "A search for query, with what its first result says." },
     "readLedger": { "answer": "ledgerRead{stored: {theirs, hers}}", "description": "The piece counts the group's ledger kept." },
     "readKept": { "answer": "kept{restore}", "description": "What was kept of the group before a restart, read again because it could not be read when the line came: asked before her own line is kept (her reply, her reaction), so it is kept under what was kept and does not overwrite it." },
-    "turn": { "answer": "turned{text, sticker, bound}", "description": "A member's turn in their account: what she says (still the end's, coarse in D2a)." },
-    "soupTurn": { "answer": "soup{section}", "description": "The group's turtle soup at this turn (the end's until D2c): words from asker judged when a game is on, billed to owner; none when no game is on." },
+    "turnBegin": { "answer": "turnBegun{turn, sections, doing}", "description": "Open a member's turn, as one of theirs in their session in the group (D2c-8 A): their line kept unless first, their budget reserved, how she feels moved by it; sections is what she knows of them and how she is, whole, as the end's own chat mind puts it; doing is what she is doing on her own now. turn is null when it may not be had now." },
+    "turnEnd": { "answer": "turnEnded{reply, bound}", "description": "Close the member's turn (D2c-9 A): with said (and the sticker she chose, as the chat app sends it) kept in their session and taken into her memory, as a Chat turn is; game names the table whose game it may have ended, put away after; without said, left. reply is her words as they stand; bound whether whom she answered is still hers (always when first)." },
+    "soupTurn": { "answer": "soup{section}", "description": "The group's turtle soup at this turn (the end's until D2c): words from asker judged when a game is on, billed to owner (within turn when it is a member's); none when no game is on." },
     "soupStart": { "answer": "soupOpening{opening}", "description": "She said she would think one up: the puzzle she brings out." },
     "soupAfter": { "description": "After her reply: a game this turn ended is over, and the group remembers it." },
     "react": { "answer": "reacted{ok}", "description": "Put emoji on the line `to`." },
     "typing": { "answer": "typed", "description": "Show her typing in `to`." },
-    "ask": { "answer": "asked{raw, failure}", "description": "Ask the model: how (json: a JSON answer to schema with system; say: what she says to the whole prompt in input; look), voice (judge, hers, hersAtLength), owner billed, operation, timeout_ms, system, input, schema_name, schema. failure is unavailable, timeout, cut, invalid or failed; whether to ask again is the core's." },
+    "ask": { "answer": "asked{raw, failure}", "description": "Ask the model: how (json: a JSON answer to schema with system; say: what she says to the whole prompt in input; look); turn, when set, the member's turn it is asked within (their budget, their Chat turn); voice (judge, hers, hersAtLength), owner billed, operation, timeout_ms, system, input, schema_name, schema. failure is unavailable, timeout, cut, invalid or failed; whether to ask again is the core's." },
     "send": { "answer": "sent{ok}", "description": "Send one message of hers to `to`: pieces (text, or mention{id, name}), quoting the line it answers when quote." }
   },
   "end": [

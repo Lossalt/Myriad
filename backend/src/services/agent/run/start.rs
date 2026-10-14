@@ -165,7 +165,6 @@ pub(crate) async fn save_cut_off(
 pub(crate) async fn save_stopped(
     db: &DatabaseConnection,
     session_id: &str,
-    in_group: bool,
     spoken: Option<&crate::services::agent::turn::Spoken>,
     run_id: &str,
 ) {
@@ -173,7 +172,7 @@ pub(crate) async fn save_stopped(
         return;
     };
     if let Some(text) = spoken.stopped() {
-        if !session_id.is_empty() && !in_group {
+        if !session_id.is_empty() {
             save_cut_off(db, session_id, &text, spoken.voice(), run_id).await;
         }
     }
@@ -202,14 +201,6 @@ pub(crate) async fn start(
     } else {
         crate::services::persona_sync::lease::refuse_while_away()?;
     }
-    // Server-set only (`serde(skip)`): a group turn speaks as her, in Chat.
-    let group = req
-        .context
-        .as_mut()
-        .and_then(|context| context.group.take());
-    if group.is_some() && interaction_mode != crate::services::agent::AgentInteractionMode::Chat {
-        return Err(AppError::bad_request("A group turn must be a Chat turn"));
-    }
     let channel_chat = req
         .context
         .as_mut()
@@ -221,9 +212,9 @@ pub(crate) async fn start(
             "A channel chat turn must be a Chat turn",
         ));
     }
-    // Started from a chat app, a group or a device, and answered there.
-    let answered_elsewhere = group.is_some()
-        || channel_chat.is_some()
+    // Started from a chat app or a device, and answered there. (A group
+    // turn is her group mind's own: `group_turn`.)
+    let answered_elsewhere = channel_chat.is_some()
         || req
             .context
             .as_ref()
@@ -254,13 +245,12 @@ pub(crate) async fn start(
         .map(|s| s.to_string());
 
     // 确保会话存在（自动创建或验证已有会话）
-    // A group turn keeps to that group's session; anything else to a private one.
     let session_id = match ensure_session_in(
         &db,
         client_session_id.as_deref(),
         user_id,
         interaction_mode,
-        group.as_ref().map(|group| group.venue.as_str()),
+        None,
     )
     .await
     {
@@ -287,7 +277,6 @@ pub(crate) async fn start(
     // 用户中断走 cancel_task / cancel_task_for_user。
     let run_id_for_meta = format!("run_{}", uuid::Uuid::new_v4().simple());
     let is_chat = interaction_mode == crate::services::agent::AgentInteractionMode::Chat;
-    let in_group = group.is_some();
     // Spoken aloud: the text runs ahead of what they heard.
     let voice = req
         .context
@@ -313,55 +302,48 @@ pub(crate) async fn start(
         None
     };
     if let Some(cut) = chat_claim.as_ref().and_then(|claim| claim.cut_off.as_ref()) {
-        // A group heard nothing until a reply was complete.
-        if has_session && !in_group {
+        if has_session {
             save_cut_off(&db, &session_id, &cut.text, cut.voice, &cut.run_id).await;
         }
     }
 
     // 从数据库加载最近 20 条会话历史（替代前端传入的 conversation_history）。
-    // A group turn answers in the group: its history is the group transcript.
     // A private chat is one talk with the person, whichever window it is in.
-    let conversation_history = if let Some(group) = &group {
-        Some(group.transcript.clone())
-    } else if has_session && interaction_mode == crate::services::agent::AgentInteractionMode::Chat
-    {
-        Some(
-            crate::services::agent::sessions::load_private_chat_history(&db, user_id, 20)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "[Agent API] Failed to load private chat history");
-                    AppError::internal("Could not load Agent session")
-                })?,
-        )
-    } else if has_session {
-        let history = load_session_history(
-            &db,
-            &session_id,
-            20,
-            interaction_mode == crate::services::agent::AgentInteractionMode::Chat,
-        )
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "[Agent API] Failed to load session history");
-            AppError::internal("Could not load Agent session")
-        })?;
-        if !history.is_empty() {
-            tracing::info!(
-                session_id = %session_id,
-                history_count = history.len(),
-                "[Agent API] Loaded conversation history from DB"
-            );
-        }
-        Some(history)
-    } else {
-        None
-    };
+    let conversation_history =
+        if has_session && interaction_mode == crate::services::agent::AgentInteractionMode::Chat {
+            Some(
+                crate::services::agent::sessions::load_private_chat_history(&db, user_id, 20)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(%error, "[Agent API] Failed to load private chat history");
+                        AppError::internal("Could not load Agent session")
+                    })?,
+            )
+        } else if has_session {
+            let history = load_session_history(
+                &db,
+                &session_id,
+                20,
+                interaction_mode == crate::services::agent::AgentInteractionMode::Chat,
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "[Agent API] Failed to load session history");
+                AppError::internal("Could not load Agent session")
+            })?;
+            if !history.is_empty() {
+                tracing::info!(
+                    session_id = %session_id,
+                    history_count = history.len(),
+                    "[Agent API] Loaded conversation history from DB"
+                );
+            }
+            Some(history)
+        } else {
+            None
+        };
 
-    // Saying something first in a group, the words that stand in for
-    // theirs were never said by anyone: they are not kept as theirs.
-    let nobody_said = group.as_ref().is_some_and(|group| group.first);
-    if has_session && !nobody_said {
+    if has_session {
         if let Err(e) =
             require_user_message_persisted(persist_user_message(&db, &session_id, &req.input).await)
         {
@@ -389,14 +371,6 @@ pub(crate) async fn start(
         if let Some(history) = conversation_history {
             ctx.conversation_history = Some(history);
         }
-        ctx.venue = group.as_ref().map(|group| group.venue.clone());
-        ctx.chime = group.as_ref().and_then(|group| group.chime.clone());
-        ctx.speaker = group.as_ref().map(|group| group.speaker.clone());
-        ctx.room = group.as_ref().and_then(|group| group.room.clone());
-        ctx.late = group.as_ref().and_then(|group| group.late.clone());
-        ctx.differs = group.as_ref().and_then(|group| group.differs.clone());
-        ctx.nobody_said = nobody_said;
-        ctx.making_sense = group.as_ref().and_then(|group| group.making_sense.clone());
         ctx.channel_chat = channel_chat.clone();
     } else {
         let mut new_ctx = RequestContext {
@@ -459,7 +433,7 @@ pub(crate) async fn start(
         Some(run_id_for_meta.clone()),
     )
     .await?;
-    // Answered in a chat app, a group or on a device: the site stays quiet
+    // Answered in a chat app or on a device: the site stays quiet
     // about it, from the run's first event.
     let run = crate::services::agent::run_hub::create_run_with_id(
         run_id_for_meta.clone(),
@@ -658,7 +632,7 @@ pub(crate) async fn start(
                             "idle",
                         )
                         .await;
-                        save_stopped(&db_clone, &session_id_clone, in_group, chat_spoken.as_ref(), &run_id_for_meta).await;
+                        save_stopped(&db_clone, &session_id_clone, chat_spoken.as_ref(), &run_id_for_meta).await;
                         let _ = tx
                             .send(crate::services::agent::turn::superseded_turn_event())
                             .await;
@@ -681,7 +655,6 @@ pub(crate) async fn start(
             save_stopped(
                 &db_clone,
                 &session_id_clone,
-                in_group,
                 chat_spoken.as_ref(),
                 &run_id_for_meta,
             )

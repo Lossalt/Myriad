@@ -142,21 +142,6 @@ pub(super) async fn last_group_session(
     .ok()
 }
 
-/// What a member's turn is given.
-pub(super) struct MemberTurn {
-    pub(super) user_id: i32,
-    pub(super) to: Target,
-    pub(super) input: String,
-    pub(super) transcript: Vec<Spoken>,
-    pub(super) room: Option<myriad_merope::talk_shape::Shape>,
-    pub(super) differs: Option<String>,
-    pub(super) making_sense: Option<String>,
-    pub(super) late: Option<String>,
-    pub(super) chime: Option<String>,
-    pub(super) speaker: String,
-    pub(super) first: bool,
-}
-
 pub(super) fn as_conversation(lines: &[Spoken]) -> Vec<ConversationMessage> {
     lines
         .iter()
@@ -168,145 +153,60 @@ pub(super) fn as_conversation(lines: &[Spoken]) -> Vec<ConversationMessage> {
         .collect()
 }
 
-/// A member's turn: a Chat turn under their account, in the group venue.
-pub(super) async fn member_turn(venue: &str, turn: MemberTurn) -> Answer {
-    let Some(line) = line_to(&turn.to) else {
-        return Answer::Turned {
-            text: None,
-            sticker: None,
-            bound: false,
-        };
+/// Open a member's turn, as one of theirs in their session in the group
+/// (see `agent::group_turn`).
+pub(super) async fn turn_begin(
+    venue: &str,
+    user_id: i32,
+    input: String,
+    transcript: Vec<Spoken>,
+    speaker: String,
+    chime: Option<String>,
+    first: bool,
+) -> Answer {
+    let none = Answer::TurnBegun {
+        turn: None,
+        sections: Vec::new(),
+        doing: None,
     };
-    let token = token(venue);
-    let said = run_member_turn(venue, &line, &token, &turn).await;
-    // Unpaired or switched off while she was thinking: say nothing.
-    let bound = if turn.first {
-        true
-    } else {
-        let binding = BINDINGS
-            .lock()
-            .ok()
-            .and_then(|bindings| bindings.get(&(venue.to_string(), turn.user_id)).cloned());
-        match (binding, db()) {
-            (Some(binding), Ok(db)) => still_bound(&db, &binding).await,
-            _ => false,
-        }
+    let Ok(db) = db() else {
+        return none;
     };
-    let (text, sticker) = match said {
-        Some((text, sticker)) => (Some(text), sticker),
-        None => (None, None),
+    let Some(session_id) = SESSIONS
+        .lock()
+        .ok()
+        .and_then(|sessions| sessions.get(&(venue.to_string(), user_id)).cloned())
+    else {
+        return none;
     };
-    Answer::Turned {
-        text,
-        sticker,
-        bound,
+    let start = crate::services::agent::group_turn::Start {
+        user_id,
+        venue: venue.to_string(),
+        session_id,
+        input,
+        transcript: as_conversation(&transcript),
+        speaker,
+        chime,
+        first,
+    };
+    match crate::services::agent::group_turn::begin(&db, start).await {
+        Some(begun) => Answer::TurnBegun {
+            turn: Some(begun.turn),
+            sections: begun.sections,
+            doing: begun.doing,
+        },
+        None => none,
     }
 }
 
-pub(super) async fn run_member_turn(
-    venue: &str,
-    line: &GroupLine,
-    token: &str,
-    turn: &MemberTurn,
-) -> Option<(String, Option<serde_json::Value>)> {
-    // A recording with a database of its own runs her turn as the site does.
-    #[cfg(test)]
-    if g0::on() && g0::database().is_none() {
-        let given = serde_json::json!({
-            "userId": turn.user_id,
-            "input": turn.input,
-            "venue": venue,
-            "transcript": turn.transcript,
-            "room": turn.room,
-            "differs": turn.differs,
-            "makingSense": turn.making_sense,
-            "late": turn.late,
-            "chime": turn.chime,
-            "speaker": turn.speaker,
-            "first": turn.first,
-        });
-        let deadline = tokio::time::sleep(TURN_DEADLINE);
-        tokio::pin!(deadline);
-        let mut typing = tokio::time::interval(TYPING_EVERY);
-        let said = g0::turn(given);
-        tokio::pin!(said);
-        loop {
-            tokio::select! {
-                _ = &mut deadline => return None,
-                _ = typing.tick() => send_typing(line, token).await,
-                done = &mut said => {
-                    let (text, sticker) = done?;
-                    let text = text.trim().to_string();
-                    return (!text.is_empty() || sticker.is_some()).then_some((text, sticker));
-                }
-            }
-        }
-    }
-    let db = db().ok()?;
-    let session_id = SESSIONS
+/// Whether the member she answered is still bound to her.
+pub(super) async fn still_hers(venue: &str, user_id: i32) -> bool {
+    let binding = BINDINGS
         .lock()
         .ok()
-        .and_then(|sessions| sessions.get(&(venue.to_string(), turn.user_id)).cloned())?;
-    let run = crate::services::agent::run::start_for_user(
-        db.clone(),
-        turn.user_id,
-        crate::services::agent::run::ProcessRequest {
-            input: turn.input.clone(),
-            context: Some(crate::services::agent::run::ProcessContext {
-                mode: Some(AgentInteractionMode::Chat),
-                session_id: Some(session_id),
-                group: Some(crate::services::agent::run::GroupTurn {
-                    transcript: as_conversation(&turn.transcript),
-                    room: turn.room.clone(),
-                    differs: turn.differs.clone(),
-                    making_sense: turn.making_sense.clone(),
-                    late: turn.late.clone(),
-                    venue: venue.to_string(),
-                    chime: turn.chime.clone(),
-                    speaker: turn.speaker.clone(),
-                    first: turn.first,
-                }),
-                ..Default::default()
-            }),
-        },
-    )
-    .await
-    .ok()?;
-    let mut events = Box::pin(crate::services::agent::run::agent_run_envelopes(run));
-    let mut typing = tokio::time::interval(TYPING_EVERY);
-    let deadline = tokio::time::sleep(TURN_DEADLINE);
-    tokio::pin!(deadline);
-    loop {
-        tokio::select! {
-            _ = &mut deadline => {
-                warn!(%venue, "[Group] no reply in time; she says nothing");
-                return None;
-            }
-            _ = typing.tick() => send_typing(line, token).await,
-            envelope = events.next() => {
-                match envelope?.event {
-                    AgentProgressEvent::TaskCompleted { success, response, .. } => {
-                        // A superseded or failed turn says nothing in the group.
-                        if !success {
-                            info!(%venue, "[Group] turn superseded or failed; she says nothing");
-                            return None;
-                        }
-                        let text = response
-                            .get("message")
-                            .and_then(|value| value.as_str())
-                            .map(str::trim)
-                            .unwrap_or_default()
-                            .to_string();
-                        let sticker = response.pointer("/data/sticker").cloned();
-                        return (!text.is_empty() || sticker.is_some()).then_some((text, sticker));
-                    }
-                    AgentProgressEvent::Error { .. } => {
-                        warn!(%venue, "[Group] her turn failed; she says nothing");
-                        return None;
-                    }
-                    _ => {}
-                }
-            }
-        }
+        .and_then(|bindings| bindings.get(&(venue.to_string(), user_id)).cloned());
+    match (binding, db()) {
+        (Some(binding), Ok(db)) => still_bound(&db, &binding).await,
+        _ => false,
     }
 }
