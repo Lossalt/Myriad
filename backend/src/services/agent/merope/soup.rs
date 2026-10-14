@@ -211,7 +211,7 @@ async fn bring_out_her_own(table: &Table, words: &str) -> Option<String> {
             found: Vec::new(),
             ending: None,
             solver: None,
-            started: chrono::Utc::now(),
+            started: super::clock::now(),
             last: None,
             made: Some(made.id.clone()),
         },
@@ -219,6 +219,16 @@ async fn bring_out_her_own(table: &Table, words: &str) -> Option<String> {
     .await;
     tracing::info!(table = %table.record_id(), "[Merope] she brought out a turtle soup of her own");
     Some(made.presentation)
+}
+
+/// Where this one could happen: any of the settings, by chance (in a
+/// recorded scene, by its world's roll).
+fn setting_index() -> usize {
+    #[cfg(test)]
+    if let Some(roll) = crate::services::channel_group::g0::roll() {
+        return ((roll * SETTINGS.len() as f64) as usize).min(SETTINGS.len() - 1);
+    }
+    rand::random_range(0..SETTINGS.len())
 }
 
 /// A first try that thinks freely, then one more that thinks little. Both
@@ -236,7 +246,7 @@ async fn make_up(table: &Table, words: &str, billing: i32) -> Option<String> {
         .unwrap_or_default();
     let input = json!({
         "theirWords": words.chars().take(300).collect::<String>(),
-        "setting": SETTINGS[rand::random_range(0..SETTINGS.len())],
+        "setting": SETTINGS[setting_index()],
         "recentSurfaces": recent,
     })
     .to_string();
@@ -249,6 +259,19 @@ async fn make_up(table: &Table, words: &str, billing: i32) -> Option<String> {
         } else {
             super::call::Voice::Hers
         };
+        // A recorded scene answers as its world says.
+        #[cfg(test)]
+        if let Some(answer) =
+            crate::services::channel_group::g0::model("soup_start", &start_system(&soul), &input)
+        {
+            match answer.and_then(|raw| parse::<Puzzle>(&raw)) {
+                Some(made) => {
+                    puzzle = Some(made);
+                    break;
+                }
+                None => continue,
+            }
+        }
         let model = super::call::Ask::new(voice, billing, "soup_start")
             .within(limit)
             .model()
@@ -292,7 +315,7 @@ async fn make_up(table: &Table, words: &str, billing: i32) -> Option<String> {
             found: Vec::new(),
             ending: None,
             solver: None,
-            started: chrono::Utc::now(),
+            started: super::clock::now(),
             last: None,
             made: None,
         },

@@ -130,7 +130,7 @@ pub(super) async fn tried(db: &DatabaseConnection, table: &str, game: &Game) {
     };
     made.tried.push(Tried {
         table: table.to_string(),
-        at: Utc::now(),
+        at: super::clock::now(),
         ending: match game.ending {
             Some(Ending::Solved) => "solved",
             Some(Ending::GaveUp) => "gave_up",

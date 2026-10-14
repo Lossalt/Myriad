@@ -1040,3 +1040,149 @@ async fn g0_she_says_nothing_when_what_she_has_cannot_be_read() {
     wait(1200.0).await;
     done("she_says_nothing_when_what_she_has_cannot_be_read");
 }
+
+/// Someone in a group says, as she would answer them from outside.
+fn said(world: &mut World, seconds: f64, text: &str) {
+    world
+        .says
+        .entry("group_stranger".into())
+        .or_default()
+        .push_back((seconds, Ok(text.to_string())));
+}
+
+/// The turtle soup a group's table has on, as kept, and how a puzzle of
+/// hers went at the tables it was tried at (when they were left out).
+async fn soup_kept(db: &sea_orm::DatabaseConnection, venue: &str) {
+    let on = crate::services::runtime_registry::get::<serde_json::Value>(
+        db,
+        "merope_soup",
+        &format!("g:{venue}"),
+    )
+    .await
+    .unwrap()
+    .map(|mut game| {
+        // When it began is the clock's, not the game's.
+        if let Some(game) = game.as_object_mut() {
+            game.remove("started");
+        }
+        game
+    });
+    g0::note("soupOn", json!(on));
+    let made: Vec<serde_json::Value> =
+        crate::services::agent::memory::unified::own_rows(db, "made_soup", 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| serde_json::from_str(row.evidence.as_deref()?).ok())
+            .collect();
+    g0::note("made", json!(made));
+}
+
+/// A puzzle she made on her own time, brought out when someone in a group
+/// wants to play: each question judged against its truth, and when they get
+/// it, the group remembers the game and the puzzle how it went.
+#[tokio::test(start_paused = true)]
+async fn g0_a_soup_of_her_own_is_played_and_solved() {
+    let chat = -77_107;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "a_soup_of_her_own_is_played_and_solved") else {
+        return;
+    };
+    let base = world.base;
+    let made = json!({
+        "surface": "一个人喝了一口海龟汤，然后哭了。",
+        "truth": "他曾遇海难，同伴骗他吃的是海龟汤，其实是人肉；今天喝到真的海龟汤，他明白了。",
+        "keys": ["曾经遇过海难", "吃过人肉"],
+        "presentation": "汤面：一个人喝了一口海龟汤，然后哭了。你们只能问我是或不是的问题。",
+        "from": "读到一篇海难的故事: 很难过",
+        "tried": []
+    })
+    .to_string();
+    kept_as_hers(
+        &schema.db,
+        "made_soup",
+        "一个人喝了一口海龟汤，然后哭了。",
+        &made,
+        30,
+        base,
+    )
+    .await;
+    said(&mut world, 2.5, "好呀，我这有一个\n[[game:soup]]");
+    said(&mut world, 2.5, "是的");
+    said(&mut world, 2.5, "猜中了！就是这样");
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"yes","found":[0],"solved":false,"gave_up":false}"#,
+    );
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"yes","found":[1],"solved":true,"gave_up":false}"#,
+    );
+    g0::enter(world);
+    hear(line(chat, 1, 31, "路人", "@bot 来玩海龟汤", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 2, 31, "路人", "@bot 他以前遇到过海难吗", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 3, 31, "路人", "@bot 他是不是吃过人肉", true)).await;
+    wait(300.0).await;
+    soup_kept(&schema.db, &venue).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("a_soup_of_her_own_is_played_and_solved", &world.log);
+    schema.drop_schema();
+}
+
+/// A puzzle she makes up when asked: a question judged, then nobody asks for
+/// hours and it is put away unfinished, truth and all; asked again she makes
+/// a different one, and they give up on it.
+#[tokio::test(start_paused = true)]
+async fn g0_a_soup_she_makes_up_is_left_then_given_up() {
+    let chat = -77_108;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.2);
+    let Some(schema) = database(&mut world, "a_soup_she_makes_up_is_left_then_given_up") else {
+        return;
+    };
+    answer(
+        &mut world,
+        "soup_start",
+        r#"{"surface":"电梯停在了十三楼，他却走楼梯下去了。","truth":"他是个侏儒，够不到低楼层的按钮，只能按到十三楼，下雨天带伞才能按到更低的。","keys":["他个子矮","按钮够不到"],"presentation":"汤面：电梯停在十三楼，他却走楼梯下去了。问吧，我只答是或不是。"}"#,
+    );
+    answer(
+        &mut world,
+        "soup_start",
+        r#"{"surface":"她在婚礼上笑着笑着就走了。","truth":"她是婚礼摄影师，拍完了就走。","keys":["她是摄影师"],"presentation":"汤面：她在婚礼上笑着笑着就走了。来问吧。"}"#,
+    );
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"no","found":[],"solved":false,"gave_up":false}"#,
+    );
+    answer(
+        &mut world,
+        "soup_judge",
+        r#"{"verdict":"not_a_question","found":[],"solved":false,"gave_up":true}"#,
+    );
+    said(&mut world, 2.5, "我想一个\n[[game:soup]]");
+    said(&mut world, 2.5, "不是");
+    said(&mut world, 2.5, "在呀");
+    said(&mut world, 2.5, "那换一个\n[[game:soup]]");
+    said(&mut world, 2.5, "好吧，告诉你");
+    g0::enter(world);
+    hear(line(chat, 1, 31, "路人", "@bot 玩个海龟汤", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 2, 31, "路人", "@bot 是人做的吗", true)).await;
+    wait(11_000.0).await;
+    hear(line(chat, 3, 31, "路人", "@bot 还在吗", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 4, 31, "路人", "@bot 再来一个", true)).await;
+    wait(300.0).await;
+    hear(line(chat, 5, 31, "路人", "@bot 不玩了 告诉我答案", true)).await;
+    wait(300.0).await;
+    soup_kept(&schema.db, &venue).await;
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("a_soup_she_makes_up_is_left_then_given_up", &world.log);
+    schema.drop_schema();
+}
