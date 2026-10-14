@@ -111,6 +111,9 @@ pub(super) async fn kept<T: serde::de::DeserializeOwned>(
 ) -> Result<Option<T>, DbErr> {
     #[cfg(test)]
     if g0::on() {
+        if g0::fails("read", namespace, key) {
+            return Err(DbErr::Custom("the recording's database is down".into()));
+        }
         return Ok(g0::kept(namespace, key).and_then(|value| serde_json::from_value(value).ok()));
     }
     crate::services::runtime_registry::get::<T>(db, namespace, key).await
@@ -125,6 +128,9 @@ pub(super) async fn keep<T: serde::Serialize>(
 ) -> Result<(), DbErr> {
     #[cfg(test)]
     if g0::on() {
+        if g0::fails("write", namespace, key) {
+            return Err(DbErr::Custom("the recording's database is down".into()));
+        }
         g0::keep(
             namespace,
             key,

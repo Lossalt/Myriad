@@ -457,8 +457,14 @@ pub enum Event {
     Woke { key: String },
     /// The answer to something she asked the end to do.
     Done { id: String, answer: Answer },
-    /// A sticker she chose went out.
-    StickerSent { meaning: String },
+    /// A sticker she chose went out. `restore` as for `heard`: her line
+    /// about it is kept under what was kept before a restart, if that could
+    /// not be read until now.
+    StickerSent {
+        meaning: String,
+        #[serde(default)]
+        restore: Option<Restore>,
+    },
 }
 
 /// Who wrote a line, as the end knows them.
@@ -499,6 +505,11 @@ pub enum Answer {
     LedgerRead {
         #[serde(default)]
         stored: Option<Pieces>,
+    },
+    /// What was kept before a restart (none when it still cannot be read).
+    Kept {
+        #[serde(default)]
+        restore: Option<Restore>,
     },
     Turned {
         #[serde(default)]
@@ -672,6 +683,9 @@ pub enum Effect {
     },
     /// What the group's ledger has kept of its pieces.
     ReadLedger { id: String },
+    /// What was kept of the group before a restart, read again: her own
+    /// line is about to be kept and it could not be read before.
+    ReadKept { id: String },
     /// A member's turn: what she says, in their account.
     Turn {
         id: String,

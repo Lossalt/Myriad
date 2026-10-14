@@ -86,7 +86,7 @@
     },
     "reachKept": 1791957600000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": null,
@@ -112,7 +112,10 @@
             "text": "周五聚餐吗",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

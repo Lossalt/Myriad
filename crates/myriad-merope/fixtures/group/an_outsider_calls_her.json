@@ -77,7 +77,7 @@
     },
     "reachKept": 1791957600000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": {
@@ -106,7 +106,10 @@
             "text": "这个bot是谁",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

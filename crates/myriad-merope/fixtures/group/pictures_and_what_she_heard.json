@@ -299,7 +299,7 @@
     },
     "reachKept": 1791957600000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": null,
@@ -335,7 +335,10 @@
             "text": "",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

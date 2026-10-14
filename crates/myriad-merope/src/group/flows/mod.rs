@@ -95,6 +95,11 @@ pub enum Doing {
     Reacting {
         emoji: String,
     },
+    /// Her reaction is on the line; before it is kept as hers, what was
+    /// kept before a restart is read back.
+    ReactedRestoring {
+        text: String,
+    },
     Timing,
 }
 
@@ -152,6 +157,10 @@ pub struct Answering {
     pub sticker: Option<Value>,
     #[serde(default)]
     pub deliver: Option<Deliver>,
+    /// What went out, while she reads back what was kept before a restart
+    /// (it could not be read when the line came) before keeping her words.
+    #[serde(default)]
+    pub went_out: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -169,6 +178,7 @@ pub enum AnswerStage {
     StrangerTyping,
     StrangerTurning,
     Delivering,
+    Restoring,
 }
 
 /// Her reply going out, message by message.
@@ -288,7 +298,10 @@ pub(crate) fn step(group: &mut Group, at: &mut At, event: Event, out: &mut Outco
             owner,
             waiter,
         } => speak_first(&mut cx, reason, owner, waiter),
-        Event::StickerSent { meaning } => {
+        Event::StickerSent { meaning, restore } => {
+            if let Some(restore) = restore {
+                restored(&mut cx, restore.lines, restore.spoke_up);
+            }
             let now = cx.now();
             record_hers(cx.group, &format!("（表情包：{meaning}）"), now, cx.out);
         }

@@ -45,6 +45,9 @@ pub(crate) struct World {
     pub spoke_up: HashMap<String, Vec<(chrono::DateTime<chrono::Utc>, bool)>>,
     /// Chats the platform lets her send into (as the configuration would).
     pub sendable: HashSet<String>,
+    /// Reads and writes of the runtime registry that fail, by namespace:
+    /// how many more of each (the database is down for them).
+    pub failing: HashMap<(String, String), u32>,
     pub log: Vec<Value>,
 }
 
@@ -73,6 +76,7 @@ impl World {
             registry: HashMap::new(),
             spoke_up: HashMap::new(),
             sendable: HashSet::new(),
+            failing: HashMap::new(),
             log: Vec::new(),
         }
     }
@@ -366,4 +370,29 @@ pub(crate) fn token_for(
             .then(|| "g0-token".to_string())
     })
     .flatten()
+}
+
+/// Whether this read or write (`what`) of `namespace` fails, as the scene
+/// set it up; one that fails is written down.
+pub(crate) fn fails(what: &str, namespace: &str, key: &str) -> bool {
+    let failed = with(|world| {
+        match world
+            .failing
+            .get_mut(&(what.to_string(), namespace.to_string()))
+        {
+            Some(left) if *left > 0 => {
+                *left -= 1;
+                true
+            }
+            _ => false,
+        }
+    })
+    .unwrap_or(false);
+    if failed {
+        note(
+            "failed",
+            json!({ "what": what, "namespace": namespace, "key": key }),
+        );
+    }
+    failed
 }

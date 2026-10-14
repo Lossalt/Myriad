@@ -100,7 +100,7 @@
     },
     "reachKept": 1791957600000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": null,
@@ -126,7 +126,10 @@
             "text": "@bot 周五去哪",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

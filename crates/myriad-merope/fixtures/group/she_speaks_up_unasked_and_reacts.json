@@ -108,7 +108,7 @@
     },
     "reachKept": 1791958300000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [
       {
@@ -139,7 +139,10 @@
             "text": "周五吃那家火锅吧",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

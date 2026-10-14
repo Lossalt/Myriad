@@ -412,3 +412,40 @@ async fn g0_a_send_is_refused() {
     wait(600.0).await;
     done("a_send_is_refused");
 }
+
+/// The database is down when the first line after a restart comes: what
+/// was kept before is neither read back nor overwritten. Up again by the
+/// time she answers, her own line brings it back, under what was said since.
+#[tokio::test(start_paused = true)]
+async fn g0_her_line_brings_back_what_a_failed_read_missed() {
+    let chat = -77_017;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.5);
+    world.members.insert("11".into(), 101);
+    world
+        .turns
+        .push_back((2.0, "记得，你说要来点歌".into(), None));
+    world.turns.push_back((2.0, "那就放这首".into(), None));
+    let base = world.base;
+    let before = |minutes: i64| (base - chrono::Duration::minutes(minutes)).to_rfc3339();
+    world.registry.insert(
+        ("group_lines".into(), venue.clone()),
+        json!({ "lines": [
+            { "at": before(40), "message_id": "1", "name": "阿明", "from": "11",
+              "text": "来点歌", "hers": false, "addressed": false },
+            { "at": before(39), "message_id": null, "name": "", "text": "放就放", "hers": true },
+        ]}),
+    );
+    world
+        .failing
+        .insert(("read".into(), "group_lines".into()), 1);
+    world
+        .failing
+        .insert(("write".into(), "group_lines".into()), 1);
+    g0::enter(world);
+    hear(line(chat, 3, 11, "阿明", "@bot 还记得我刚才说的吗", true)).await;
+    wait(600.0).await;
+    hear(line(chat, 4, 11, "阿明", "@bot 那放哪首", true)).await;
+    wait(600.0).await;
+    done("her_line_brings_back_what_a_failed_read_missed");
+}

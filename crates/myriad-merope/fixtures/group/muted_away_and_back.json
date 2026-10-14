@@ -96,7 +96,7 @@
     },
     "reachKept": 1791958310000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": null,
@@ -122,7 +122,10 @@
             "text": "安静点",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,

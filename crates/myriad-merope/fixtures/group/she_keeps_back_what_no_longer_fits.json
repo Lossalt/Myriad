@@ -86,7 +86,7 @@
     },
     "reachKept": 1791957600000000,
     "readWith": [],
-    "restored": false,
+    "restored": true,
     "seenBefore": null,
     "spokeUp": [],
     "strangerReplies": null,
@@ -112,7 +112,10 @@
             "text": "@bot 周六几点集合",
             "thread": null
           },
-          "restore": null
+          "restore": {
+            "lines": null,
+            "spokeUp": []
+          }
         },
         "her": {
           "asleepFor": null,
@@ -1039,7 +1042,8 @@
       "input": {
         "event": {
           "kind": "stickerSent",
-          "meaning": "开心"
+          "meaning": "开心",
+          "restore": null
         },
         "her": {
           "asleepFor": null,

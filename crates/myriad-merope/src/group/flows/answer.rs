@@ -243,6 +243,13 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
             a.sticker = sticker;
             say(cx, a)
         }
+        (AnswerStage::Restoring, Some(Answer::Kept { restore })) => {
+            if let Some(restore) = restore {
+                restored(cx, restore.lines, restore.spoke_up);
+            }
+            let went_out = a.went_out.clone().unwrap_or_default();
+            after_saying(cx, a, went_out)
+        }
         (AnswerStage::Delivering, answer) => {
             let Some(mut deliver) = a.deliver.take() else {
                 return Next::Done(false);
@@ -335,6 +342,14 @@ pub(crate) fn after_saying(cx: &mut Cx, a: &mut Answering, went_out: String) -> 
     let mut sent = false;
     if !a.reply.trim().is_empty() {
         sent = !went_out.is_empty();
+        // What was kept before a restart could not be read when the line
+        // came: read again before her words are kept, so they are kept
+        // under it (and do not overwrite it).
+        if sent && !cx.group.restored && a.went_out.is_none() {
+            a.went_out = Some(went_out);
+            a.stage = AnswerStage::Restoring;
+            return Next::Wait(cx.effect(|id| Effect::ReadKept { id }));
+        }
         if sent {
             record_hers(cx.group, &went_out, now, cx.out);
         }

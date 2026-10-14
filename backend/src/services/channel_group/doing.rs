@@ -172,7 +172,8 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             let token = token(&venue);
             tokio::spawn(async move {
                 if let Some(meaning) = send_sticker(&line, &token, &chosen).await {
-                    let out = step(&venue, Event::StickerSent { meaning });
+                    let restore = kept_before(&venue).await;
+                    let out = step(&venue, Event::StickerSent { meaning, restore });
                     execute(venue, out.effects).await;
                 }
             });
@@ -220,6 +221,12 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                     Err(_) => None,
                 };
                 answered(venue, id, Answer::Sense { section }).await;
+            });
+        }
+        Effect::ReadKept { id } => {
+            tokio::spawn(async move {
+                let restore = kept_before(&venue).await;
+                answered(venue, id, Answer::Kept { restore }).await;
             });
         }
         Effect::ReadLedger { id } => {

@@ -47,7 +47,7 @@
     "speakFirst": { "fields": ["reason", "owner?", "waiter"], "description": "Say something first there for reason, billed to owner; settled{waiter, value: whether she said it}." },
     "woke": { "fields": ["key"], "description": "A wake effect's time came." },
     "done": { "fields": ["id", "answer"], "description": "The answer to an effect with an id." },
-    "stickerSent": { "fields": ["meaning"], "description": "A sticker effect went out." }
+    "stickerSent": { "fields": ["meaning", "restore?"], "description": "A sticker effect went out. restore as for heard, when what was kept before a restart has not been read yet." }
   },
   "effects": {
     "wake": { "answer": "woke{key}", "description": "After `after` seconds." },
@@ -67,6 +67,7 @@
     "prepare": { "answer": "prepared{ok}", "description": "Whether userId may talk to her now, with their session in this group ready." },
     "makeSense": { "answer": "sense{section}", "description": "What she makes of the talk before answering (still the end's, coarse in D2a)." },
     "readLedger": { "answer": "ledgerRead{stored: {theirs, hers}}", "description": "The piece counts the group's ledger kept." },
+    "readKept": { "answer": "kept{restore}", "description": "What was kept of the group before a restart, read again because it could not be read when the line came: asked before her own line is kept (her reply, her reaction), so it is kept under what was kept and does not overwrite it." },
     "turn": { "answer": "turned{text, sticker, bound}", "description": "A member's turn in their account: what she says (still the end's, coarse in D2a)." },
     "strangerTurn": { "answer": "turned{text, sticker}", "description": "Her light answer to someone from outside, on the owner's account (coarse in D2a)." },
     "judge": { "answer": "judged{decision}", "description": "Whether she speaks up, billed to owner (coarse in D2a)." },
@@ -78,7 +79,7 @@
   "end": [
     "Keep each group's state as handed back; step one group one event at a time.",
     "Do the effects of a step in order. Those with an id are answered with done{id, answer} when they are done; the rest are done and not answered.",
-    "Before the first heard or muted of a group after a restart, read what was kept and hand it in as restore; for other events, step restored first.",
+    "Before the first heard or muted of a group after a restart, read what was kept and hand it in as restore (and with stickerSent while it is still not read); for other events, step restored first. When it cannot be read, hand in none: the core asks again with readKept before her own line is kept.",
     "Secrets (bot tokens) stay with the end: no event or effect carries one."
   ],
   "storedShapes": {

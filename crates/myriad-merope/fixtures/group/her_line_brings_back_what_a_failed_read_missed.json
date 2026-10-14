@@ -1,0 +1,1257 @@
+{
+  "state": {
+    "answered": [
+      {
+        "at": 1791957619906453,
+        "from": "11"
+      },
+      {
+        "at": 1791958207449371,
+        "from": "11"
+      }
+    ],
+    "busy": false,
+    "called": 1791958204075111,
+    "errands": [],
+    "everyoneMutedUntil": null,
+    "glanceAt": null,
+    "handled": [
+      "3",
+      "4"
+    ],
+    "heardUpto": null,
+    "heldBack": false,
+    "judging": false,
+    "lastReply": 1791958207449371,
+    "ledger": [],
+    "ledgerHers": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerTheirs": {
+      "messages": 0,
+      "pieces": {}
+    },
+    "ledgerWaits": [],
+    "leftWhileAway": null,
+    "lines": [
+      {
+        "addressed": false,
+        "at": "2026-10-14T05:20:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "1",
+        "name": "阿明",
+        "text": "来点歌"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T05:21:00Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "放就放"
+      },
+      {
+        "addressed": true,
+        "at": "2026-10-14T06:00:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "3",
+        "name": "阿明",
+        "text": "@bot 还记得我刚才说的吗"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:00:19.906453Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "记得，你说要来点歌"
+      },
+      {
+        "addressed": true,
+        "at": "2026-10-14T06:10:00Z",
+        "from": "11",
+        "hers": false,
+        "message_id": "4",
+        "name": "阿明",
+        "text": "@bot 那放哪首"
+      },
+      {
+        "addressed": false,
+        "at": "2026-10-14T06:10:07.449371Z",
+        "from": null,
+        "hers": true,
+        "message_id": null,
+        "name": "",
+        "text": "那就放这首"
+      }
+    ],
+    "mutedUntil": null,
+    "next": 23,
+    "paused": {},
+    "pending": null,
+    "pictures": {},
+    "reach": {
+      "addressed": true,
+      "chat": "-100777",
+      "displayName": "阿明",
+      "from": "11",
+      "images": [],
+      "messageId": "4",
+      "platform": "telegram",
+      "replyTo": null,
+      "text": "@bot 那放哪首",
+      "thread": null
+    },
+    "reachKept": 1791958200000000,
+    "readWith": [],
+    "restored": true,
+    "seenBefore": null,
+    "spokeUp": [],
+    "strangerReplies": null,
+    "takenBack": [],
+    "unjudgedSince": null,
+    "version": 1,
+    "waiting": []
+  },
+  "steps": [
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "3",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 还记得我刚才说的吗",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 7806831264735756412
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "@bot 还记得我刚才说的吗"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791957600000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "@bot 还记得我刚才说的吗"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "called",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "3",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 还记得我刚才说的吗",
+            "thread": null
+          },
+          "waiter": "w0"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957600000000,
+        "seed": 9396908728118811419
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 11.57549415463913,
+            "key": "g2",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g2",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 11960119808228829710
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g3",
+            "inbound_id": "group:-100777:3",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g3",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 7062582979898595269
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g4",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g4",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 14673421054488193520
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g5",
+            "kind": "prepare",
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "prepared",
+            "ok": true
+          },
+          "id": "g5",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 9232803539723513983
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：@bot 还记得我刚才说的吗"
+            ],
+            "id": "g6",
+            "kind": "makeSense",
+            "said": "@bot 还记得我刚才说的吗"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sense",
+            "section": null
+          },
+          "id": "g6",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 10218303843513747618
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g7",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g7",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957611575494,
+        "seed": 1206773305466921929
+      },
+      "output": {
+        "effects": [
+          {
+            "chime": null,
+            "differs": null,
+            "first": false,
+            "id": "g8",
+            "input": "@bot 还记得我刚才说的吗",
+            "kind": "turn",
+            "late": null,
+            "making_sense": null,
+            "room": null,
+            "speaker": "阿明",
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            },
+            "transcript": [
+              {
+                "content": "阿明：@bot 还记得我刚才说的吗",
+                "role": "user"
+              }
+            ],
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "记得，你说要来点歌"
+          },
+          "id": "g8",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957613575494,
+        "seed": 15490212636682683044
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g9",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g9",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957613575494,
+        "seed": 3660572683296592931
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 6.330959402808304,
+            "key": "g10",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g10",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957619906453,
+        "seed": 13756953107850766454
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g11",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "记得，你说要来点歌"
+              }
+            ],
+            "quote": true,
+            "to": {
+              "chat": "-100777",
+              "messageId": "3",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g11",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957619906453,
+        "seed": 9882984339513518093
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:来点歌": 1,
+                "end:歌": 1,
+                "end:点歌": 1,
+                "start:记": 1,
+                "start:记得": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791957600,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 14,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791957619,
+                "bang": false,
+                "by": "her",
+                "chars": 9,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 1,
+              "pieces": {
+                "end:吗": 1,
+                "end:的吗": 1,
+                "end:说的吗": 1,
+                "start:@": 1,
+                "start:@b": 1
+              }
+            },
+            "waits": [
+              19.906
+            ]
+          },
+          {
+            "id": "g12",
+            "kind": "readKept"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "kept",
+            "restore": {
+              "lines": [
+                {
+                  "addressed": false,
+                  "at": "2026-10-14T05:20:00Z",
+                  "from": "11",
+                  "hers": false,
+                  "message_id": "1",
+                  "name": "阿明",
+                  "text": "来点歌"
+                },
+                {
+                  "addressed": false,
+                  "at": "2026-10-14T05:21:00Z",
+                  "from": null,
+                  "hers": true,
+                  "message_id": null,
+                  "name": "",
+                  "text": "放就放"
+                }
+              ],
+              "spokeUp": []
+            }
+          },
+          "id": "g12",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957619906453,
+        "seed": 14456408541175185048
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:20:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "来点歌"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:21:00Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "放就放"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "@bot 还记得我刚才说的吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:19.906453Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "记得，你说要来点歌"
+              }
+            ]
+          },
+          {
+            "kind": "settled",
+            "value": true,
+            "waiter": "w0"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "4",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 那放哪首",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958200000000,
+        "seed": 5848529123618728455
+      },
+      "output": {
+        "effects": [
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:20:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "来点歌"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:21:00Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "放就放"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "@bot 还记得我刚才说的吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:19.906453Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "记得，你说要来点歌"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:10:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "4",
+                "name": "阿明",
+                "text": "@bot 那放哪首"
+              }
+            ]
+          },
+          {
+            "kind": "keepReach",
+            "seen_at": 1791958200000000,
+            "thread": null
+          },
+          {
+            "kind": "jargon",
+            "text": "@bot 那放哪首"
+          }
+        ],
+        "fresh": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "called",
+          "message": {
+            "addressed": true,
+            "chat": "-100777",
+            "displayName": "阿明",
+            "from": "11",
+            "images": [],
+            "messageId": "4",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "@bot 那放哪首",
+            "thread": null
+          },
+          "waiter": "w600"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958200000000,
+        "seed": 4493283409665547658
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 4.075111149333676,
+            "key": "g14",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g14",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 13833615605184489617
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g15",
+            "inbound_id": "group:-100777:4",
+            "kind": "claim"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "claimed",
+            "ok": true
+          },
+          "id": "g15",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 7831313575529992652
+      },
+      "output": {
+        "effects": [
+          {
+            "from": "11",
+            "id": "g16",
+            "kind": "identify"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "identified",
+            "owner": 1,
+            "who": {
+              "bound": true,
+              "kind": "member",
+              "user_id": 101
+            }
+          },
+          "id": "g16",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 10554199195565463083
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g17",
+            "kind": "prepare",
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "prepared",
+            "ok": true
+          },
+          "id": "g17",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 11485544273845959646
+      },
+      "output": {
+        "effects": [
+          {
+            "conversation": [
+              "阿明：来点歌",
+              "you：放就放",
+              "阿明：@bot 还记得我刚才说的吗",
+              "you：记得，你说要来点歌",
+              "阿明：@bot 那放哪首"
+            ],
+            "id": "g18",
+            "kind": "makeSense",
+            "said": "@bot 那放哪首"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sense",
+            "section": null
+          },
+          "id": "g18",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 3748899703585450325
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g19",
+            "kind": "readLedger"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "ledgerRead",
+            "stored": null
+          },
+          "id": "g19",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958204075111,
+        "seed": 15972705296776949824
+      },
+      "output": {
+        "effects": [
+          {
+            "chime": null,
+            "differs": null,
+            "first": false,
+            "id": "g20",
+            "input": "@bot 那放哪首",
+            "kind": "turn",
+            "late": null,
+            "making_sense": null,
+            "room": null,
+            "speaker": "阿明",
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            },
+            "transcript": [
+              {
+                "content": "阿明：来点歌",
+                "role": "user"
+              },
+              {
+                "content": "放就放",
+                "role": "assistant"
+              },
+              {
+                "content": "阿明：@bot 还记得我刚才说的吗",
+                "role": "user"
+              },
+              {
+                "content": "记得，你说要来点歌",
+                "role": "assistant"
+              },
+              {
+                "content": "阿明：@bot 那放哪首",
+                "role": "user"
+              }
+            ],
+            "user_id": 101
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "bound": true,
+            "kind": "turned",
+            "sticker": null,
+            "text": "那就放这首"
+          },
+          "id": "g20",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958206075111,
+        "seed": 18070828864047185039
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g21",
+            "kind": "typing",
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "typed"
+          },
+          "id": "g21",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958206075111,
+        "seed": 10141147297338840946
+      },
+      "output": {
+        "effects": [
+          {
+            "after": 1.3742602765895051,
+            "key": "g22",
+            "kind": "wake"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g22",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958207449371,
+        "seed": 11466647087125458521
+      },
+      "output": {
+        "effects": [
+          {
+            "id": "g23",
+            "kind": "send",
+            "pieces": [
+              {
+                "kind": "text",
+                "text": "那就放这首"
+              }
+            ],
+            "quote": true,
+            "to": {
+              "chat": "-100777",
+              "messageId": "4",
+              "platform": "telegram",
+              "thread": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "sent",
+            "ok": true
+          },
+          "id": "g23",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791958207449371,
+        "seed": 7142467642896616948
+      },
+      "output": {
+        "effects": [
+          {
+            "hers": {
+              "messages": 1,
+              "pieces": {
+                "end:放这首": 1,
+                "end:这首": 1,
+                "end:首": 1,
+                "start:那": 1,
+                "start:那就": 1
+              }
+            },
+            "kind": "ledger",
+            "messages": [
+              {
+                "at": 1791958200,
+                "bang": false,
+                "by": "4fc82b26aecb",
+                "chars": 9,
+                "laugh": false,
+                "mark": false
+              },
+              {
+                "at": 1791958207,
+                "bang": false,
+                "by": "her",
+                "chars": 5,
+                "laugh": false,
+                "mark": false
+              }
+            ],
+            "theirs": {
+              "messages": 1,
+              "pieces": {
+                "end:哪首": 1,
+                "end:放哪首": 1,
+                "end:首": 1,
+                "start:@": 1,
+                "start:@b": 1
+              }
+            },
+            "waits": [
+              7.449
+            ]
+          },
+          {
+            "kind": "keepLines",
+            "lines": [
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:20:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "1",
+                "name": "阿明",
+                "text": "来点歌"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T05:21:00Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "放就放"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:00:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "3",
+                "name": "阿明",
+                "text": "@bot 还记得我刚才说的吗"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:00:19.906453Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "记得，你说要来点歌"
+              },
+              {
+                "addressed": true,
+                "at": "2026-10-14T06:10:00Z",
+                "from": "11",
+                "hers": false,
+                "message_id": "4",
+                "name": "阿明",
+                "text": "@bot 那放哪首"
+              },
+              {
+                "addressed": false,
+                "at": "2026-10-14T06:10:07.449371Z",
+                "from": null,
+                "hers": true,
+                "message_id": null,
+                "name": "",
+                "text": "那就放这首"
+              }
+            ]
+          },
+          {
+            "kind": "settled",
+            "value": true,
+            "waiter": "w600"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -912,6 +912,9 @@ struct End {
     /// Answers by effect kind, in order, and how long each takes.
     answers: HashMap<&'static str, VecDeque<(f64, Answer)>>,
     steps: Vec<Value>,
+    /// What was kept of the group before cannot be read now; else the end
+    /// hands in that nothing was kept with the first line, as the site does.
+    unreadable: bool,
 }
 
 impl End {
@@ -925,6 +928,7 @@ impl End {
             order: 0,
             answers: HashMap::new(),
             steps: Vec::new(),
+            unreadable: false,
         }
     }
 
@@ -940,7 +944,15 @@ impl End {
         self.due.insert((at, self.order), event);
     }
 
-    fn step(&mut self, event: Event) {
+    fn step(&mut self, mut event: Event) {
+        if !self.group.restored && !self.unreadable {
+            if let Event::Heard { restore, .. }
+            | Event::Muted { restore, .. }
+            | Event::StickerSent { restore, .. } = &mut event
+            {
+                restore.get_or_insert_with(Restore::default);
+            }
+        }
         self.seed = self
             .seed
             .wrapping_mul(6364136223846793005)
@@ -972,7 +984,13 @@ impl End {
             }
             Effect::Sticker { chosen, .. } => {
                 let meaning = chosen["meaning"].as_str().unwrap_or("贴纸").to_string();
-                self.at(self.now, Event::StickerSent { meaning });
+                self.at(
+                    self.now,
+                    Event::StickerSent {
+                        meaning,
+                        restore: None,
+                    },
+                );
                 return;
             }
             Effect::Claim { id, .. } => (id, "claim"),
@@ -1002,6 +1020,7 @@ impl End {
             Effect::Prepare { id, .. } => (id, "prepare"),
             Effect::MakeSense { id, .. } => (id, "sense"),
             Effect::ReadLedger { id } => (id, "ledger"),
+            Effect::ReadKept { id } => (id, "kept"),
             Effect::Turn { id, .. } => (id, "turn"),
             Effect::StrangerTurn { id, .. } => (id, "stranger"),
             Effect::Judge { id, .. } => (id, "judge"),
@@ -1066,6 +1085,7 @@ fn default_answer(kind: &str) -> Answer {
         "prepare" => Answer::Prepared { ok: true },
         "sense" => Answer::Sense { section: None },
         "ledger" => Answer::LedgerRead { stored: None },
+        "kept" => Answer::Kept { restore: None },
         "turn" | "stranger" => Answer::Turned {
             text: Some("嗯嗯".into()),
             sticker: None,
@@ -1424,4 +1444,64 @@ fn g1_she_brings_something_up_first_and_a_send_is_refused() {
     );
     end.run(BASE + secs(2400.0));
     end.check("she_brings_something_up_first_and_a_send_is_refused");
+}
+
+#[test]
+fn g1_her_line_brings_back_what_a_failed_read_missed() {
+    let mut end = End::new();
+    // The first line after a restart: what was kept cannot be read.
+    end.unreadable = true;
+    let before = |minutes: i64| BASE - minutes * 60_000_000;
+    end.answer(
+        "kept",
+        0.0,
+        Answer::Kept {
+            restore: Some(Restore {
+                lines: Some(vec![
+                    line(before(40), Some("1"), Some("11"), "阿明", "来点歌", false),
+                    line(before(39), None, None, "", "放就放", true),
+                ]),
+                spoke_up: Vec::new(),
+            }),
+        },
+    );
+    end.answer(
+        "turn",
+        2.0,
+        Answer::Turned {
+            text: Some("记得，你说要来点歌".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    end.answer(
+        "turn",
+        2.0,
+        Answer::Turned {
+            text: Some("那就放这首".into()),
+            sticker: None,
+            bound: true,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(3, 11, "阿明", "@bot 还记得我刚才说的吗", true),
+    );
+    end.run(BASE + secs(1.0));
+    // Read again once her own words are about to be kept: up again by then.
+    end.unreadable = false;
+    end.run(BASE + secs(600.0));
+    heard(
+        &mut end,
+        600.0,
+        message(4, 11, "阿明", "@bot 那放哪首", true),
+    );
+    end.run(BASE + secs(1200.0));
+    assert!(end.group.restored);
+    assert_eq!(
+        end.group.lines.front().map(|line| line.text.as_str()),
+        Some("来点歌")
+    );
+    end.check("her_line_brings_back_what_a_failed_read_missed");
 }

@@ -76,10 +76,29 @@ pub(crate) fn advance(cx: &mut Cx, mut errand: Errand, answer: Option<Answer>) {
                 },
             ) = (answer, &errand.kind)
             {
-                let now = cx.now();
                 let text = format!("（给 {} 那句贴了 {emoji}）", message.display_name);
+                // Kept under what was kept before a restart, read again if
+                // it could not be read when the line came.
+                if !cx.group.restored {
+                    let awaiting = cx.effect(|id| Effect::ReadKept { id });
+                    errand.doing = Doing::ReactedRestoring { text };
+                    park_errand(cx, errand, awaiting);
+                    return;
+                }
+                let now = cx.now();
                 record_hers(cx.group, &text, now, cx.out);
             }
+            chain_end(cx, errand);
+        }
+        Doing::ReactedRestoring { text } => {
+            if let Some(Answer::Kept {
+                restore: Some(restore),
+            }) = answer
+            {
+                restored(cx, restore.lines, restore.spoke_up);
+            }
+            let now = cx.now();
+            record_hers(cx.group, &text, now, cx.out);
             chain_end(cx, errand);
         }
         Doing::Timing => {
@@ -148,6 +167,7 @@ pub(crate) fn start_answer(
         reply: String::new(),
         sticker: None,
         deliver: None,
+        went_out: None,
     });
     let owner = match &errand.kind {
         Kind::First { owner, .. } => *owner,

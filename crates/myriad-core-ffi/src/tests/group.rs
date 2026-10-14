@@ -31,6 +31,7 @@ macro_rules! trajectory {
 const TRAJECTORIES: &[(&str, &[u8])] = &[
     trajectory!("a_member_calls_her"),
     trajectory!("an_outsider_calls_her"),
+    trajectory!("her_line_brings_back_what_a_failed_read_missed"),
     trajectory!("lines_wait_while_she_is_busy"),
     trajectory!("muted_away_and_back"),
     trajectory!("pictures_and_what_she_heard"),
