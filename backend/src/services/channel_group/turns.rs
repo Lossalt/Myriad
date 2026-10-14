@@ -338,9 +338,10 @@ pub(super) async fn stranger_turn(
         .chain(std::iter::once(said.clone()))
         .collect::<Vec<_>>()
         .join("\n");
-    // (A recording has no database to read them from.)
+    // (A recording without a database of its own has none to read them
+    // from.)
     #[cfg(test)]
-    let look_up = !g0::on();
+    let look_up = !g0::on() || g0::database().is_some();
     #[cfg(not(test))]
     let look_up = true;
     if look_up {
@@ -351,8 +352,10 @@ pub(super) async fn stranger_turn(
             crate::services::agent::merope::group::jargon::section_for(&db, venue, &talk).await,
         );
     }
+    // A recording with a database of its own puts her reply together as
+    // the site does, down to what she is asked.
     #[cfg(test)]
-    if g0::on() {
+    if g0::on() && g0::database().is_none() {
         let reply = tokio::time::timeout(
             TURN_DEADLINE,
             g0::stranger(serde_json::json!({

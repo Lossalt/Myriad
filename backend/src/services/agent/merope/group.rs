@@ -61,6 +61,12 @@ pub mod strangers {
     };
 }
 
+/// Her memory work queue, driven by a recorded scene.
+#[cfg(test)]
+pub mod memory_jobs {
+    pub(crate) use crate::services::agent::merope::memory_jobs::tick;
+}
+
 pub mod timing {
     pub(crate) use crate::services::agent::merope::timing::{
         asleep_now, typing, until_read, where_she_is,

@@ -74,7 +74,7 @@ pub async fn brought_back(
     let rows = unified::own_rows(db, SOURCE, HELD)
         .await
         .unwrap_or_default();
-    let now = chrono::Utc::now();
+    let now = crate::services::agent::memory::utc_now();
     let mut recalled = Vec::new();
     for row in unified::named_among(db, rows, talk, limit).await {
         let group = row

@@ -22,6 +22,10 @@ static KNOWN: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
 /// calls itself, if its platform says.
 pub async fn title(venue: &str) -> Option<String> {
     let venue = venue.strip_prefix("group:").unwrap_or(venue);
+    #[cfg(test)]
+    if let Some(title) = super::g0::title(venue) {
+        return title;
+    }
     if let Some((name, at)) = KNOWN
         .lock()
         .ok()

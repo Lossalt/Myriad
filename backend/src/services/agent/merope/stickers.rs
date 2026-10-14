@@ -114,7 +114,7 @@ pub async fn section(
         return None;
     }
     offer(key, &stickers);
-    let now = Utc::now();
+    let now = crate::services::agent::memory::utc_now();
     let mut meanings: Vec<String> = Vec::new();
     for sticker in &stickers {
         let line = myriad_merope::stickers::offered_line(

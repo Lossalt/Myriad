@@ -193,17 +193,25 @@ pub async fn reply(
         transcript,
         words,
     );
-    let model = super::call::Ask::new(super::call::Voice::Hers, owner, "group_stranger")
-        .within(REPLY_TIMEOUT)
-        .model()
-        .await
-        .ok()?;
-    // A reply the provider dropped halfway reached no one: ask once more.
-    let mut raw = model.say(&prompt).await;
-    if raw.as_ref().is_err_and(super::call::was_cut) {
-        raw = model.say(&prompt).await;
-    }
-    let raw = raw.ok()?;
+    #[cfg(test)]
+    let recorded = crate::services::channel_group::g0::on();
+    #[cfg(not(test))]
+    let recorded = false;
+    let raw = if recorded {
+        said_in_scene(&prompt).await?
+    } else {
+        let model = super::call::Ask::new(super::call::Voice::Hers, owner, "group_stranger")
+            .within(REPLY_TIMEOUT)
+            .model()
+            .await
+            .ok()?;
+        // A reply the provider dropped halfway reached no one: ask once more.
+        let mut raw = model.say(&prompt).await;
+        if raw.as_ref().is_err_and(super::call::was_cut) {
+            raw = model.say(&prompt).await;
+        }
+        raw.ok()?
+    };
     let (said, started) = super::soup::split_start(&raw);
     let (said, sticker) = myriad_merope::stickers::split_sticker_directive(&said);
     let sticker = match sticker {
@@ -219,6 +227,22 @@ pub async fn reply(
     // A game this line ended is over, and the group remembers it.
     super::soup::after_turn_at(db, &table).await;
     (!text.is_empty() || sticker.is_some()).then_some((text, sticker))
+}
+
+/// [`reply`]'s asking, in a recorded scene: asked once more when cut.
+#[cfg(test)]
+async fn said_in_scene(prompt: &str) -> Option<String> {
+    use crate::services::channel_group::g0;
+    let mut said = g0::say("group_stranger", prompt).await?;
+    if said == Err("cut") {
+        said = g0::say("group_stranger", prompt).await?;
+    }
+    said.ok()
+}
+
+#[cfg(not(test))]
+async fn said_in_scene(_: &str) -> Option<String> {
+    None
 }
 
 /// After she answered someone from outside: count it, and when they pause

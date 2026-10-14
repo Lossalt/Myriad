@@ -143,10 +143,15 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
         } => {
             #[cfg(test)]
             if g0::on() {
-                return g0::note(
+                g0::note(
                     "strangerAfter",
                     serde_json::json!({ "owner": owner, "venue": venue, "who": stranger.who, "said": said, "reply": reply, "messageId": message_id }),
                 );
+                // A scene with a database of its own keeps the exchange for
+                // her note on them, as the site would.
+                if g0::database().is_none() {
+                    return;
+                }
             }
             let Ok(db) = db() else {
                 return;

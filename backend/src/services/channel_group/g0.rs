@@ -58,6 +58,11 @@ pub(crate) struct World {
     pub defined: HashMap<String, (String, String, String)>,
     /// What a search for a query turns up: (text, address).
     pub found: HashMap<String, (String, String)>,
+    /// What each group calls itself, as its platform would say.
+    pub titles: HashMap<String, String>,
+    /// What she says to a whole speaking prompt, by operation, in order:
+    /// how long it takes, and the words or how it failed.
+    pub says: HashMap<String, VecDeque<(f64, Result<String, &'static str>)>>,
     pub log: Vec<Value>,
 }
 
@@ -91,6 +96,8 @@ impl World {
             vectors: HashMap::new(),
             defined: HashMap::new(),
             found: HashMap::new(),
+            titles: HashMap::new(),
+            says: HashMap::new(),
             log: Vec::new(),
         }
     }
@@ -432,6 +439,25 @@ pub(crate) fn look_up(query: &str, slang: bool) -> Option<Option<(String, String
     }
     note("lookUp", json!({ "query": query, "slang": slang }));
     with(|world| world.found.get(query).cloned())
+}
+
+/// What the group `venue` calls itself, in the scene.
+pub(crate) fn title(venue: &str) -> Option<Option<String>> {
+    with(|world| world.titles.get(venue).cloned())
+}
+
+/// What she says to `prompt`, in the scene: written down, and answered
+/// after the time it takes.
+pub(crate) async fn say(operation: &str, prompt: &str) -> Option<Result<String, &'static str>> {
+    if !on() {
+        return None;
+    }
+    note("say", json!({ "operation": operation, "prompt": prompt }));
+    let (seconds, said) = with(|world| world.says.get_mut(operation).and_then(VecDeque::pop_front))
+        .flatten()
+        .unwrap_or((0.0, Err("unavailable")));
+    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+    Some(said)
 }
 
 /// What the embedding model gives for `text`, in the scene.

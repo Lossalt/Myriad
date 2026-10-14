@@ -24,6 +24,10 @@ tokio::task_local! {
 
 /// Now, as this turn is put together.
 pub fn now() -> DateTime<Utc> {
+    #[cfg(test)]
+    if let Some(now) = crate::services::channel_group::g0::now() {
+        return AT.try_with(|at| *at).unwrap_or(now);
+    }
     AT.try_with(|at| *at).unwrap_or_else(|_| Utc::now())
 }
 
@@ -35,6 +39,11 @@ pub fn zone() -> Zone {
     #[cfg(test)]
     if let Ok(zone) = IN_ZONE.try_with(|zone| *zone) {
         return zone;
+    }
+    // A recorded scene's day runs where its world is (+08:00).
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return Zone::Named(chrono_tz::Asia::Shanghai);
     }
     ZONE.read().map(|zone| *zone).unwrap_or(Zone::Site)
 }
