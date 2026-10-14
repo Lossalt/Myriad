@@ -696,3 +696,87 @@ async fn g0_she_speaks_up_from_what_she_has() {
     g0::check("she_speaks_up_from_what_she_has", &world.log);
     schema.drop_schema();
 }
+
+/// Words in the talk she is not sure of, named by her judgment: one she
+/// knows already is left; one the dictionaries have is made into what it
+/// means and kept as hers; one a search turns up but that does not say what
+/// it means here, and one nothing turns up for, she watches as maybe the
+/// group's own. Learned once, a word is known the next time.
+#[tokio::test(start_paused = true)]
+async fn g0_she_learns_words_from_the_talk() {
+    let chat = -77_104;
+    let venue = format!("telegram:{chat}");
+    let mut world = World::new(0.5);
+    let Some(schema) = database(&mut world, "she_learns_words_from_the_talk") else {
+        return;
+    };
+    let base = world.base;
+    world.members.insert("11".into(), 101);
+    kept_as_hers(
+        &schema.db,
+        "meme",
+        &myriad_merope::memes::kept_line("yyds", "形容东西特别好"),
+        "{}",
+        40,
+        base,
+    )
+    .await;
+    world.defined.insert(
+        "烧糊了吧唧".into(),
+        (
+            "烧糊了吧唧".into(),
+            "网络用语，形容东西烧焦了还硬说好吃".into(),
+            "https://dictionary.example/烧糊了吧唧".into(),
+        ),
+    );
+    world.found.insert(
+        myriad_merope::memes::search_query("绝绝子乙"),
+        (
+            "- 绝绝子乙 (https://search.example/1): 一家公司的名字".into(),
+            "https://search.example/1".into(),
+        ),
+    );
+    answer(
+        &mut world,
+        "group_chime",
+        r#"{"speak":"none","about":"","basis":null,"unsure":["yyds","「烧糊了吧唧」","绝绝子乙"]}"#,
+    );
+    answer(
+        &mut world,
+        "meme",
+        r#"{"meaning":"形容东西烧焦了，还硬说好吃"}"#,
+    );
+    answer(&mut world, "meme", r#"{"meaning":null}"#);
+    answer(
+        &mut world,
+        "group_chime",
+        r#"{"speak":"none","about":"","basis":null,"unsure":["烧糊了吧唧","查无此梗"]}"#,
+    );
+    g0::enter(world);
+    hear(line(chat, 1, 11, "阿明", "锅又烧糊了吧唧 yyds", false)).await;
+    wait(1.0).await;
+    hear(line(chat, 2, 12, "小红", "这家绝绝子乙也不错", false)).await;
+    wait(700.0).await;
+    hear(line(chat, 3, 11, "阿明", "查无此梗是什么", false)).await;
+    wait(700.0).await;
+    // What she knows now, and the words she watches there.
+    let known: Vec<(String, Option<String>)> =
+        crate::services::agent::memory::unified::own_rows(&schema.db, "meme", 50)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.content, row.evidence))
+            .collect();
+    let watched = crate::services::runtime_registry::get::<serde_json::Value>(
+        &schema.db,
+        "merope_jargon_watched",
+        &venue,
+    )
+    .await
+    .unwrap();
+    g0::note("known", json!(known));
+    g0::note("watched", json!(watched));
+    let world = g0::leave().expect("the world of the scene");
+    g0::check("she_learns_words_from_the_talk", &world.log);
+    schema.drop_schema();
+}

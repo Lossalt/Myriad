@@ -60,6 +60,10 @@ pub fn spawn_curiosity(
 /// term, else a search and its first result read with the question in mind
 /// (the results alone when the page will not load).
 pub(super) async fn look_up(query: &str, slang: bool) -> Option<(String, String)> {
+    #[cfg(test)]
+    if let Some(found) = crate::services::channel_group::g0::look_up(query, slang) {
+        return found;
+    }
     if slang && let Ok(entry) = super::senses::define(query).await {
         let text = format!("{}\n{}", entry.title, entry.text);
         return Some((clip(&text), entry.url));

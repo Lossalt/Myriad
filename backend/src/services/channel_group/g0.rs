@@ -53,6 +53,11 @@ pub(crate) struct World {
     pub db: Option<sea_orm::DatabaseConnection>,
     /// The vector of each text, as an embedding model would give it.
     pub vectors: HashMap<String, Vec<f32>>,
+    /// What the slang and meme dictionaries have for a term: (title, text,
+    /// address).
+    pub defined: HashMap<String, (String, String, String)>,
+    /// What a search for a query turns up: (text, address).
+    pub found: HashMap<String, (String, String)>,
     pub log: Vec<Value>,
 }
 
@@ -84,6 +89,8 @@ impl World {
             failing: HashMap::new(),
             db: None,
             vectors: HashMap::new(),
+            defined: HashMap::new(),
+            found: HashMap::new(),
             log: Vec::new(),
         }
     }
@@ -407,6 +414,24 @@ pub(crate) fn fails(what: &str, namespace: &str, key: &str) -> bool {
 /// The scene's database, if it has one.
 pub(crate) fn database() -> Option<sea_orm::DatabaseConnection> {
     with(|world| world.db.clone()).flatten()
+}
+
+/// What the dictionaries have for `term`, in the scene.
+pub(crate) fn define(term: &str) -> Option<Option<(String, String, String)>> {
+    if !on() {
+        return None;
+    }
+    note("define", json!({ "term": term }));
+    with(|world| world.defined.get(term).cloned())
+}
+
+/// What a search for `query` turns up, in the scene.
+pub(crate) fn look_up(query: &str, slang: bool) -> Option<Option<(String, String)>> {
+    if !on() {
+        return None;
+    }
+    note("lookUp", json!({ "query": query, "slang": slang }));
+    with(|world| world.found.get(query).cloned())
 }
 
 /// What the embedding model gives for `text`, in the scene.

@@ -223,6 +223,12 @@ pub async fn read(address: &str, about: Option<&str>) -> Result<Taken, String> {
 /// A word, slang or meme, looked up in the dictionaries people keep for
 /// them. Only an entry of that name counts; nothing is guessed.
 pub async fn define(term: &str) -> Result<Taken, String> {
+    #[cfg(test)]
+    if let Some(defined) = crate::services::channel_group::g0::define(term) {
+        return defined
+            .map(|(title, text, url)| Taken { url, title, text })
+            .ok_or_else(|| "no entry for it in the slang and meme dictionaries".into());
+    }
     for entry in meme_entries(term) {
         if let Ok(page) = read(&entry, Some(term)).await {
             return Ok(page);
