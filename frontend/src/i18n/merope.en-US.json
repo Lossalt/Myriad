@@ -758,5 +758,38 @@
     "referenceOf": "Redrawn from “{name}”",
     "referenceGone": "The reference bust is gone or has no portrait; it will be drawn from the design.",
     "referenceNoneNote": "No bust reference; drawn from the design."
+  },
+  "uprightReadFailed": "The portrait could not be checked.",
+  "uprightFailed": "The portrait could not be redrawn.",
+  "upright": {
+    "reading": "Checking whether this portrait suits a moving figure…",
+    "readFailed": "The portrait could not be checked.",
+    "title": "This portrait does not quite suit a moving figure",
+    "reason": {
+      "turned": "The face or body is turned to the side",
+      "backdrop": "The background is not one plain color",
+      "held": "A hand is holding something",
+      "arms": "A hand is raised or in front of the body"
+    },
+    "lead": "Motion is built for a figure facing forward, arms relaxed, on a plain background. It can be redrawn that way from this picture, keeping your art style; or you can keep the original, though splitting it and moving it may go wrong.",
+    "redraw": "Redraw it facing forward",
+    "drawingShort": "Redrawing…",
+    "drawing": "Redrawing, about one to two minutes…",
+    "keep": "Keep the original",
+    "dismiss": "Close",
+    "original": "Original",
+    "redrawn": "Redrawn",
+    "sameCharacter": "Same character",
+    "notSameCharacter": "Clearly different from the original",
+    "sameStyle": "Same art style",
+    "notSameStyle": "The art style changed",
+    "notUpright": "Still not facing forward on a plain background",
+    "changes": "Changes: ",
+    "separator": "; ",
+    "unchecked": "The likeness could not be checked; compare the two yourself.",
+    "use": "Use the redraw",
+    "using": "Switching…",
+    "useFailed": "The redraw could not be used.",
+    "again": "Redraw again"
   }
 }

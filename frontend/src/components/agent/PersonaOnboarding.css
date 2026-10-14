@@ -1900,6 +1900,21 @@ fieldset.merope-ob-field > .merope-ob-field__hint {
   cursor: not-allowed;
 }
 
+/* The picture and, after an upload, whether to redraw it upright. */
+.merope-ob-import__picture {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.merope-ob-import__picture > .merope-ob-import__stage {
+  flex: 1 1 auto;
+  height: auto;
+}
+
 .merope-ob-import__stage {
   position: relative;
   display: grid;
@@ -2029,7 +2044,8 @@ fieldset.merope-ob-field > .merope-ob-field__hint {
 
   .merope-ob-import,
   .merope-ob-import__layout,
-  .merope-ob-import__form {
+  .merope-ob-import__form,
+  .merope-ob-import__picture {
     height: auto;
   }
 

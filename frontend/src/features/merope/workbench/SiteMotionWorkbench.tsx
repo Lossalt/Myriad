@@ -1,7 +1,6 @@
 import type { UpperBodyVisualIdentityKey } from '../../../components/agent/onboarding/onboardingTypes'
 import type { PoseCorrection } from '../anime25drig/poseCorrections'
 import type { RigCharacterHandle } from '../character/RigCharacter'
-import type { WardrobeItem } from '../persona/wardrobe'
 import type { TurnArchiveUse, TurnKeyformsStatus } from '../turnKeyformsApi'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
@@ -23,8 +22,6 @@ import { isAnime25DPlayback } from '../anime25drig/types'
 import {
   saveFullBodyPoseCorrections,
   saveRigPoseCorrections,
-  uploadFullBodyPortrait,
-  uploadOutfitPortrait,
 } from '../api'
 import { commitRigPsdAsset, preflightRigPsdAsset } from '../assets/pipeline'
 import RigCharacter from '../character/RigCharacter'
@@ -40,6 +37,7 @@ import { OutfitDetail } from './OutfitDetail'
 import OutfitWardrobe from './OutfitWardrobe'
 import PersonaFieldHistory from './PersonaFieldHistory'
 import PersonaZoneField from './PersonaZoneField'
+import { portraitUploads } from './portraitUploads'
 import { activeRigMode } from './rigMode'
 import { useAddressee } from './useAddressee'
 import { useAiExpressions } from './useAiExpressions'
@@ -53,7 +51,7 @@ import { useStickerAvatar } from './useStickerAvatar'
 import VisualHistory from './VisualHistory'
 import { wardrobeOverview } from './wardrobeOverview'
 import { WorkbenchOverview } from './WorkbenchOverview'
-import { downloadPicture, reportMeropeError, toMeropeActivity } from './workbenchShared'
+import { downloadPicture, toMeropeActivity } from './workbenchShared'
 import './merope.css'
 import './merope-motion-home.css'
 
@@ -259,29 +257,14 @@ export default function SiteMotionWorkbench({
     await reload()
   }
 
-  /** The owner uploaded a new master portrait for the worn outfit. */
-  const adoptUploadedPortrait = async (url: string) => {
-    reportMeropeError('')
-    await loadFace()
-    await reload()
-    sticker.voided()
-    try {
-      await persona.applyVisualFromPortrait(url)
-    } catch {
-      await loadFace()
-    }
-    notifyFaceUpdated()
-  }
-
-  /** A new set made from the owner's own picture instead of a generated one. */
-  const createOutfitFromUpload = async (item: WardrobeItem, file: File) => {
-    // Added without being worn: a bust keeps the master portrait it has.
-    await persona.addOutfit(item, { wear: false })
-    if (isFullBodyItem(item)) await uploadFullBodyPortrait(item.id, file)
-    else await uploadOutfitPortrait(item.id, file)
-    await reload()
-    persona.setManagingOutfitId(item.id)
-  }
+  const { adoptUploadedPortrait, takeUprightBust, createOutfitFromUpload } = portraitUploads({
+    loadFace,
+    reload,
+    voidSticker: sticker.voided,
+    applyVisualFromPortrait: persona.applyVisualFromPortrait,
+    addOutfit: persona.addOutfit,
+    manage: persona.setManagingOutfitId,
+  })
 
   // The figure on the stage moves, the bust or a staged full body.
   const stageManifest = staged ? staged.manifest : rigManifest
@@ -533,6 +516,7 @@ export default function SiteMotionWorkbench({
       // The server wrote the set's picture or rig.
       onFullBodyChanged={() => void persona.reload()}
       onUploaded={adoptUploadedPortrait}
+      onTakeUpright={(file) => takeUprightBust(managingOutfit, wearingManaged, file)}
       onDesign={(next) => void persona.saveOutfitDesign(managingOutfit.id, next)}
     />
   ) : null

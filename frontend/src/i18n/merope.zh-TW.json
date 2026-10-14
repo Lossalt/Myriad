@@ -758,5 +758,38 @@
     "referenceOf": "照「{name}」重畫",
     "referenceGone": "參考的半身已刪除或沒有立繪，會按設計畫。",
     "referenceNoneNote": "不參考半身，按設計畫。"
+  },
+  "uprightReadFailed": "沒能檢查這張立繪。",
+  "uprightFailed": "沒能重畫這張立繪。",
+  "upright": {
+    "reading": "正在檢查這張立繪適不適合做成會動的形象…",
+    "readFailed": "沒能檢查這張立繪。",
+    "title": "這張立繪不太適合直接做成會動的形象",
+    "reason": {
+      "turned": "臉或身體側著",
+      "backdrop": "背景不是純色",
+      "held": "手裡拿著東西",
+      "arms": "手抬起或擋在身前"
+    },
+    "lead": "動作是按正面、手自然下垂、純色背景來做的。可以照這張畫重畫一張正面的，保留你的畫風；也可以就用原圖，但拆層和動作可能出問題。",
+    "redraw": "照它重畫一張正面的",
+    "drawingShort": "正在重畫…",
+    "drawing": "正在重畫，大約一到兩分鐘…",
+    "keep": "就用原圖",
+    "dismiss": "關閉",
+    "original": "原圖",
+    "redrawn": "重畫",
+    "sameCharacter": "是同一個人",
+    "notSameCharacter": "和原圖有明顯不同",
+    "sameStyle": "畫風一致",
+    "notSameStyle": "畫風有變化",
+    "notUpright": "仍不是正面、純色背景",
+    "changes": "變動：",
+    "separator": "；",
+    "unchecked": "沒能檢查像不像，請自己對照看看。",
+    "use": "用重畫的這張",
+    "using": "正在換上…",
+    "useFailed": "沒能換上重畫的這張。",
+    "again": "再畫一次"
   }
 }

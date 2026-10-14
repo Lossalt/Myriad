@@ -20,6 +20,8 @@ import {
   wardrobeItemLabel,
 } from '../persona/wardrobe'
 import { FullBodyPanel } from './FullBodyPanel'
+import { MASTER_SLOT, useUprightRequested } from './uprightRequests'
+import { UprightSuggestion } from './UprightSuggestion'
 import { reportMeropeError } from './workbenchShared'
 
 interface Props {
@@ -45,6 +47,8 @@ interface Props {
   seeThroughTokenConfigured: boolean
   onSaveSeeThroughToken: (token: string) => Promise<void>
   onUploaded: (url: string) => Promise<void>
+  /** A bust set's picture redrawn upright, taken: put where its upload was. */
+  onTakeUpright: (file: File) => Promise<void>
   onDesign: (next: UpperBodyVisualIdentity) => void
 }
 
@@ -67,9 +71,13 @@ export function OutfitDetail({
   seeThroughTokenConfigured,
   onSaveSeeThroughToken,
   onUploaded,
+  onTakeUpright,
   onDesign,
 }: Props) {
   const { t } = useI18n()
+  // A worn bust's picture is the master portrait.
+  const uprightSlot = wearing ? MASTER_SLOT : outfit.id
+  const uprightAsked = useUprightRequested(uprightSlot)
   const o = t.agentPersona.onboarding
   // A full-body set is never worn; its own panel draws and splits it.
   const standing = isFullBodyItem(outfit)
@@ -301,6 +309,15 @@ export function OutfitDetail({
           ) : (
             <p className="merope-wardrobe__caption">{t.merope.assetEmpty}</p>
           )}
+          {uprightAsked && picture ? (
+            <UprightSuggestion
+              key={picture}
+              slot={uprightSlot}
+              outfitId={wearing ? undefined : outfit.id}
+              originalUrl={siteMediaUrl(picture)}
+              upload={onTakeUpright}
+            />
+          ) : null}
           {design ? <div className="merope-motion-asset__make">{design}</div> : null}
         </>
       )}

@@ -1006,6 +1006,32 @@ pub fn build_full_body_portrait_prompt() -> String {
     )
 }
 
+/// Redraws a picture the owner uploaded the way the rig needs it, in the
+/// picture's own style: only the camera angle, the pose of the arms, what is
+/// held and the backdrop change. Unlike the generated portraits it locks no
+/// house style; the owner's art stays theirs.
+pub fn build_upright_portrait_prompt(profile: CharacterAssetProfile) -> String {
+    let (subject, frame) = match profile {
+        CharacterAssetProfile::Bust => ("one upper-body portrait", upright_bust_frame()),
+        CharacterAssetProfile::FullBody => {
+            ("one full-body standing illustration", full_body_frame())
+        }
+    };
+    format!(
+        "Redraw the character in the source image as {subject} of the same person in the same art style. The source image is the immutable identity and style anchor. Keep its exact rendering style: line weight and line color, coloring and shading method, level of detail, palette and lighting mood; do not restyle it into any other look. Keep the same apparent maturity, gender presentation, face and eye geometry, eye colors, gaze and default expression, hair cut, length, colors and every hair ornament, the costume with its construction, materials, trims and palette, and every accessory. Change only these: the camera, the arms, anything held, and the background. Where the source hides part of the character behind the angle, an object or the crop, complete it in the costume's own design language without new motifs. {frame}"
+    )
+}
+
+/// The bust frame for a redrawn upload: the master portrait's camera and crop
+/// without the house's costume rules (an upload keeps its own neckline).
+fn upright_bust_frame() -> String {
+    let bust = CharacterAssetProfile::Bust.contract();
+    format!(
+        "Frame head and shoulders on a vertical {}:{} canvas. Use a strict centered eye-level frontal view with zero head yaw, roll and pitch: the face and torso are square to the camera, both eyes level, shoulders level. Keep the complete head and hair silhouette inside the frame with a slim near-white top margin and equal side clearance, and crop through the lower chest with both shoulders and the upper arms visible. Arms hang relaxed at the sides; nothing is held and no hand is raised toward the face. Use a seamless plain near-white studio backdrop with no scenery, effects, text or cast shadow, and an opaque finished illustration.",
+        bust.aspect_width, bust.aspect_height,
+    )
+}
+
 /// Framing and pose for every full figure. The pose serves the rig: square to
 /// the camera, arms clear of the body, legs apart, so decomposition gets each
 /// limb whole and the feet stand on one line.
@@ -1172,11 +1198,18 @@ fn affirmed_phrase_matches(text: &str, phrases: &[&str]) -> bool {
             let before = &haystack[..start];
             let after = &haystack[start + phrase.len()..];
             let inside_word = phrase.is_ascii()
-                && (before.chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric())
-                    || after.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()));
+                && (before
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+                    || after
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphanumeric()));
             !inside_word
                 && !negations.iter().any(|negation| before.ends_with(negation))
-                && !(*phrase == "中性" && NEUTRAL_ANATOMY.iter().any(|word| after.starts_with(word)))
+                && !(*phrase == "中性"
+                    && NEUTRAL_ANATOMY.iter().any(|word| after.starts_with(word)))
         })
     })
 }
@@ -1629,6 +1662,20 @@ mod tests {
         assert!(full.contains("short silver bob"));
         assert!(full.contains("layered windcut coat"));
         assert!(build_full_body_portrait_prompt().ends_with(&full_body_frame()));
+        let upright = build_upright_portrait_prompt(CharacterAssetProfile::Bust);
+        assert!(upright.contains("same art style") && upright.contains("frontal"));
+        assert!(
+            !upright.contains(MEROPE_VISUAL_SCHOOL),
+            "an upload keeps its own style"
+        );
+        assert!(
+            !upright.contains("neck from jaw to collarbone"),
+            "nor is its neckline redrawn"
+        );
+        assert!(
+            build_upright_portrait_prompt(CharacterAssetProfile::FullBody)
+                .ends_with(&full_body_frame())
+        );
     }
 
     #[test]
@@ -2016,9 +2063,13 @@ mod tests {
         assert!(high_collar_violation_in("スタンドカラーのコート"));
         assert!(!high_collar_violation_in("sailor collar and open neckline"));
         // A design that says what it leaves out is not doing it.
-        assert!(!high_collar_violation_in("宽开领露出下颌至锁骨，无立领与包颈布"));
+        assert!(!high_collar_violation_in(
+            "宽开领露出下颌至锁骨，无立领与包颈布"
+        ));
         assert!(!high_collar_violation_in("内层衬衫领片平贴、不立领"));
-        assert!(!high_collar_violation_in("an open shirt without a high collar"));
+        assert!(!high_collar_violation_in(
+            "an open shirt without a high collar"
+        ));
         assert!(high_collar_violation_in("不对称立领短外套"));
         assert!(high_collar_violation_in("无袖立领上衣"));
         let identity = json!({

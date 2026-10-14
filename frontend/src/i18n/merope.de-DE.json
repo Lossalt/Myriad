@@ -758,5 +758,38 @@
     "referenceOf": "Nach „{name}“ neu gezeichnet",
     "referenceGone": "Die Büsten-Vorlage fehlt oder hat kein Porträt; es wird nach dem Design gezeichnet.",
     "referenceNoneNote": "Keine Büsten-Vorlage; nach dem Design gezeichnet."
+  },
+  "uprightReadFailed": "Das Porträt konnte nicht geprüft werden.",
+  "uprightFailed": "Das Porträt konnte nicht neu gezeichnet werden.",
+  "upright": {
+    "reading": "Es wird geprüft, ob sich dieses Porträt für eine bewegte Figur eignet…",
+    "readFailed": "Das Porträt konnte nicht geprüft werden.",
+    "title": "Dieses Porträt eignet sich nicht ganz für eine bewegte Figur",
+    "reason": {
+      "turned": "Gesicht oder Körper sind seitlich gedreht",
+      "backdrop": "Der Hintergrund ist nicht einfarbig",
+      "held": "Eine Hand hält etwas",
+      "arms": "Eine Hand ist erhoben oder vor dem Körper"
+    },
+    "lead": "Bewegungen sind für eine Figur von vorn mit locker hängenden Armen vor einfarbigem Hintergrund gedacht. Das Bild kann so neu gezeichnet werden, im eigenen Stil; oder du behältst das Original, wobei Zerlegen und Bewegung schiefgehen können.",
+    "redraw": "Von vorn neu zeichnen",
+    "drawingShort": "Wird neu gezeichnet…",
+    "drawing": "Wird neu gezeichnet, etwa ein bis zwei Minuten…",
+    "keep": "Original behalten",
+    "dismiss": "Schließen",
+    "original": "Original",
+    "redrawn": "Neu gezeichnet",
+    "sameCharacter": "Dieselbe Figur",
+    "notSameCharacter": "Deutlich anders als das Original",
+    "sameStyle": "Gleicher Zeichenstil",
+    "notSameStyle": "Der Zeichenstil hat sich geändert",
+    "notUpright": "Noch nicht von vorn vor einfarbigem Hintergrund",
+    "changes": "Änderungen: ",
+    "separator": "; ",
+    "unchecked": "Die Ähnlichkeit konnte nicht geprüft werden; vergleiche selbst.",
+    "use": "Neu gezeichnetes verwenden",
+    "using": "Wird gewechselt…",
+    "useFailed": "Das neu gezeichnete Bild konnte nicht verwendet werden.",
+    "again": "Noch einmal zeichnen"
   }
 }

@@ -5,6 +5,15 @@ import type {
 } from '../onboardingTypes'
 import { useLayoutEffect, useState } from 'react'
 import { useI18n } from '../../../../contexts/I18nContext'
+import { uploadSitePortrait } from '../../../../features/merope/api'
+import { notifyFaceUpdated } from '../../../../features/merope/events/updates'
+import {
+  MASTER_SLOT,
+  requestUprightCheck,
+  useUprightRequested,
+} from '../../../../features/merope/workbench/uprightRequests'
+import { UprightSuggestion } from '../../../../features/merope/workbench/UprightSuggestion'
+import { siteMediaUrl } from '../../../../utils/siteMediaUrl'
 import { generationFailureMessage } from '../generationError'
 import { structuredPersonaIsComplete } from '../onboardingTypes'
 import { ActionBar, PrimaryButton } from '../ui/Chrome'
@@ -48,6 +57,8 @@ export default function ImportStep({
   const { t } = useI18n()
   const o = t.agentPersona.onboarding
   const [error, setError] = useState('')
+  const uprightAsked = useUprightRequested(MASTER_SLOT)
+  const [uprightBusy, setUprightBusy] = useState(false)
 
   // 不报 onBack：壳走 previousOnboardingStep，上一页是分岔口。自己接会盖掉。
   useLayoutEffect(() => {
@@ -96,21 +107,37 @@ export default function ImportStep({
           {error ? <ErrorNote>{error}</ErrorNote> : null}
         </div>
 
-        <PortraitImportButton
-          disabled={busy}
-          previewUrl={portraitUrl}
-          onError={setError}
-          onUploaded={(url) => {
-            setError('')
-            onPortrait(url)
-          }}
-        />
+        <div className="merope-ob-import__picture">
+          <PortraitImportButton
+            disabled={busy || uprightBusy}
+            previewUrl={portraitUrl}
+            onError={setError}
+            onUploaded={(url) => {
+              setError('')
+              onPortrait(url)
+              requestUprightCheck(MASTER_SLOT)
+            }}
+          />
+          {uprightAsked && portraitUrl ? (
+            <UprightSuggestion
+              key={portraitUrl}
+              slot={MASTER_SLOT}
+              originalUrl={siteMediaUrl(portraitUrl)}
+              onBusyChange={setUprightBusy}
+              upload={async (file) => {
+                const { portraitUrl: url } = await uploadSitePortrait(file)
+                notifyFaceUpdated()
+                onPortrait(url)
+              }}
+            />
+          ) : null}
+        </div>
       </div>
       <ActionBar>
         <PrimaryButton
           label={o.importFinish}
           busy={busy}
-          disabled={!personaReady || !gender || !portraitUrl}
+          disabled={!personaReady || !gender || !portraitUrl || uprightBusy}
           onClick={() => {
             setError('')
             if (!gender) {

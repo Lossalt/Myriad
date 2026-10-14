@@ -758,5 +758,38 @@
     "referenceOf": "照「{name}」重画",
     "referenceGone": "参考的半身已删除或没有立绘，会按设计画。",
     "referenceNoneNote": "不参考半身，按设计画。"
+  },
+  "uprightReadFailed": "没能检查这张立绘。",
+  "uprightFailed": "没能重画这张立绘。",
+  "upright": {
+    "reading": "正在检查这张立绘适不适合做成会动的形象…",
+    "readFailed": "没能检查这张立绘。",
+    "title": "这张立绘不太适合直接做成会动的形象",
+    "reason": {
+      "turned": "脸或身体侧着",
+      "backdrop": "背景不是纯色",
+      "held": "手里拿着东西",
+      "arms": "手抬起或挡在身前"
+    },
+    "lead": "动作是按正面、手自然下垂、纯色背景来做的。可以照这张画重画一张正面的，保留你的画风；也可以就用原图，但拆层和动作可能出问题。",
+    "redraw": "照它重画一张正面的",
+    "drawingShort": "正在重画…",
+    "drawing": "正在重画，大约一到两分钟…",
+    "keep": "就用原图",
+    "dismiss": "关闭",
+    "original": "原图",
+    "redrawn": "重画",
+    "sameCharacter": "是同一个人",
+    "notSameCharacter": "和原图有明显不同",
+    "sameStyle": "画风一致",
+    "notSameStyle": "画风有变化",
+    "notUpright": "仍不是正面、纯色背景",
+    "changes": "变动：",
+    "separator": "；",
+    "unchecked": "没能检查像不像，请自己对照看看。",
+    "use": "用重画的这张",
+    "using": "正在换上…",
+    "useFailed": "没能换上重画的这张。",
+    "again": "再画一次"
   }
 }

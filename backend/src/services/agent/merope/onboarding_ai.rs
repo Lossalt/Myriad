@@ -23,9 +23,11 @@ use super::onboarding_prompts::{
 use super::report_dna::sanitize_onboarding_tags_for_language;
 
 mod names;
+mod upright;
 mod vision;
 
 pub use names::*;
+pub use upright::*;
 pub use vision::*;
 
 /// Keep in sync with `PERSONA_GENERATION_TIMEOUT_MS` / `MEROPE_PROXY_TIMEOUT_MS`.

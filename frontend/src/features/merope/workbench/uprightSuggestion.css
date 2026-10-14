@@ -1,0 +1,95 @@
+/* After an upload: whether the picture should be redrawn upright, and the redraw beside it. */
+.merope-upright {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 34rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--border-color, #d8dbe6) 80%, transparent);
+  border-radius: 14px;
+  background: rgb(var(--surface-rgb, 255 255 255) / 72%);
+  color: var(--text-primary, #171923);
+}
+
+.merope-upright__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.merope-upright__note,
+.merope-upright__status {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary, #667085) 88%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.merope-upright__error {
+  color: var(--color-danger, #c2410c);
+}
+
+.merope-upright__reasons,
+.merope-upright__check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.merope-upright__reasons li,
+.merope-upright__check li {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-color, #d8dbe6) 55%, transparent);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.merope-upright__check li[data-ok='true'] {
+  background: color-mix(in srgb, #16a34a 16%, transparent);
+}
+
+.merope-upright__check li[data-ok='false'] {
+  background: color-mix(in srgb, var(--color-danger, #c2410c) 16%, transparent);
+}
+
+.merope-upright__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.merope-upright__pair figure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.merope-upright__pair img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--border-color, #d8dbe6) 70%, transparent);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.merope-upright__pair figcaption {
+  color: color-mix(in srgb, var(--text-secondary, #667085) 88%, transparent);
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+.merope-upright__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

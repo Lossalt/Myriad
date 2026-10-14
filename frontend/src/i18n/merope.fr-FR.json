@@ -758,5 +758,38 @@
     "referenceOf": "Redessinée d’après « {name} »",
     "referenceGone": "Le buste de référence a disparu ou n’a pas de portrait ; elle sera dessinée d’après le design.",
     "referenceNoneNote": "Sans buste de référence ; dessinée d’après le design."
+  },
+  "uprightReadFailed": "Le portrait n’a pas pu être vérifié.",
+  "uprightFailed": "Le portrait n’a pas pu être redessiné.",
+  "upright": {
+    "reading": "Vérification : ce portrait convient-il à une figure animée…",
+    "readFailed": "Le portrait n’a pas pu être vérifié.",
+    "title": "Ce portrait ne convient pas tout à fait à une figure animée",
+    "reason": {
+      "turned": "Le visage ou le corps est tourné de côté",
+      "backdrop": "Le fond n’est pas d’une seule couleur",
+      "held": "Une main tient quelque chose",
+      "arms": "Une main est levée ou devant le corps"
+    },
+    "lead": "Les mouvements sont prévus pour une figure de face, bras détendus, sur un fond uni. Ce portrait peut être redessiné ainsi en gardant votre style ; vous pouvez aussi garder l’original, mais le découpage et les mouvements risquent de mal se passer.",
+    "redraw": "Le redessiner de face",
+    "drawingShort": "Redessin en cours…",
+    "drawing": "Redessin en cours, une à deux minutes environ…",
+    "keep": "Garder l’original",
+    "dismiss": "Fermer",
+    "original": "Original",
+    "redrawn": "Redessiné",
+    "sameCharacter": "Même personnage",
+    "notSameCharacter": "Nettement différent de l’original",
+    "sameStyle": "Même style",
+    "notSameStyle": "Le style a changé",
+    "notUpright": "Toujours pas de face sur un fond uni",
+    "changes": "Changements : ",
+    "separator": " ; ",
+    "unchecked": "La ressemblance n’a pas pu être vérifiée ; comparez vous-même.",
+    "use": "Utiliser le redessin",
+    "using": "Changement…",
+    "useFailed": "Le redessin n’a pas pu être utilisé.",
+    "again": "Redessiner encore"
   }
 }

@@ -21,6 +21,8 @@ import { decomposeWithTurnKeyforms, resumeTurnKeyforms } from '../turnKeyformsAp
 import { FaceTabs } from './FaceTabs'
 import { RigImportPanel, RigModeTags } from './RigImportPanel'
 import { activeRigMode } from './rigMode'
+import { requestUprightCheck, useUprightRequested } from './uprightRequests'
+import { UprightSuggestion } from './UprightSuggestion'
 import { useRigImport } from './useRigImport'
 import { useServerGeneration } from './useServerGeneration'
 
@@ -93,6 +95,7 @@ export function FullBodyPanel({
   })
 
   const portrait = face?.portraitUrl ?? null
+  const uprightAsked = useUprightRequested(outfitId)
   const fingerprint = face?.generationFingerprint ?? undefined
   const activeMode = activeRigMode(face?.manifest, portrait)
   const rig = useRigImport({
@@ -182,13 +185,20 @@ export function FullBodyPanel({
     }, copy.stanceFailed)
   }
 
+  /** The picture put in place; nothing more read of it. */
+  const replacePortrait = async (file: File) => {
+    await uploadFullBodyPortrait(outfitId, file)
+    await reload()
+    onChanged?.()
+  }
+
   const upload = (file: File) =>
     run(
       'upload',
       async () => {
-        await uploadFullBodyPortrait(outfitId, file)
-        await reload()
-        onChanged?.()
+        await replacePortrait(file)
+        // An upload is read for whether to redraw it upright.
+        requestUprightCheck(outfitId)
       },
       labels.portraitUploadFailed,
     )
@@ -255,6 +265,15 @@ export function FullBodyPanel({
       ) : (
         <p className="merope-motion-rig__hint">{copy.none}</p>
       )}
+      {uprightAsked && portrait ? (
+        <UprightSuggestion
+          key={portrait}
+          slot={outfitId}
+          outfitId={outfitId}
+          originalUrl={siteMediaUrl(portrait)}
+          upload={replacePortrait}
+        />
+      ) : null}
       {children}
       {actionsHost ? createPortal(actions, actionsHost) : (
         <div className="merope-motion-asset__actions">{actions}</div>
