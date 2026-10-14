@@ -1,6 +1,7 @@
 import type { NeckSurfaceContour } from './neckSurfaceContour'
 import type { Anime25DPlaybackAnchors, Anime25DPlaybackLayer } from './types'
 import type { CroppedLayerPixels } from './webglRuntime'
+import { isAnime25DLiningPiece } from '../rig/anime25dLayerSemantics'
 import {
   buildNeckSurfaceContour,
   opaquePixelBounds,
@@ -33,7 +34,7 @@ export function resolveAnime25DNeckSurface(
   const visibleHeight = bounds.bottom - bounds.top
   const visibleWidth = bounds.right - bounds.left
   const candidates: Anime25DNeckSurface[] = []
-  for (const body of layers.filter((l) => l.role === 'topwear')) {
+  for (const body of layers.filter((l) => l.role === 'topwear' && !isAnime25DLiningPiece(l.name))) {
     if (
       body.x >= neck.x + neck.w ||
       body.x + body.w <= neck.x ||

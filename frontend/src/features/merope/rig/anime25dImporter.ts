@@ -27,7 +27,7 @@ import { raiseEarwearOverFrontHair } from './earwearOrder'
 import { synthesizeMissingExpressionAccents } from './expressionAccentLayers'
 import { formatTemplate } from './formatTemplate'
 import { contentFrame, deriveAnchors, semanticAnchors, standingStance } from './importerAnchors'
-import { assignCrossfadeSlots, hasStaticSeeThroughMouth, mirrorLostEyeWhite, preserveStaticMouthAsClosed, splitHandwearIfNeeded, splitLowerLimbsIfNeeded, splitVariantEyesIfNeeded, stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, stackOpenEyesInOrder, tuckBackHairBehindNeck } from './importerLayerSplits'
+import { assignCrossfadeSlots, hasStaticSeeThroughMouth, mirrorLostEyeWhite, preserveStaticMouthAsClosed, splitHandwearIfNeeded, splitLowerLimbsIfNeeded, splitVariantEyesIfNeeded, stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, stackOpenEyesInOrder, tuckBackHairBehindNeck, tuckTopUnderChinBehindNeck } from './importerLayerSplits'
 import { addHiddenArmFragments, anime25DShoulderSeeds } from './linkedHandwear'
 import { findMotionExposure } from './motionExposure'
 import { inferOutfitProfileFromPartIds } from './outfit'
@@ -169,8 +169,9 @@ export async function prepareAnime25DRigPsd(
     })
   }
   // Behind the legs goes what the skirt shows between them once repair has
-  // cut it to the portrait.
-  const tucked = tuckLiningBehindLegs(layers)
+  // cut it to the portrait, and behind the neck what the top draws under the
+  // chin where repair has cut the top off the neck below it.
+  const tucked = tuckTopUnderChinBehindNeck(tuckLiningBehindLegs(layers), visibleInAnalysisReference)
   if (tucked !== layers) {
     layers = tucked
     layers.forEach((layer, index) => {

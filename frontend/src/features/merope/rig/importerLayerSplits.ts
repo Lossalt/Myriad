@@ -173,6 +173,84 @@ export function tuckBackHairBehindNeck(layers: RasterLayer[]): RasterLayer[] {
   return output.toSpliced(neck, 0, layers[hair])
 }
 
+/** Below the jaw, this many rows tell whether the portrait shows the neck there. */
+const UNDER_JAW_ROWS = 6
+const OPAQUE_ALPHA = 128
+
+/**
+ * What a top draws just under the chin (a hood's lining, the back of its
+ * collar) lies behind the neck, yet the top is drawn in front of it. At rest
+ * the face hides it; once the head turns or lifts, it shows as a dark wedge
+ * under the jaw. In each column where the neck shows just below the jaw
+ * (once repair has cut what the top drew over it there), the top's pixels
+ * the face covers over the neck go to a layer of their own just behind the
+ * neck, so the neck shows there as the chin moves off it.
+ */
+export function tuckTopUnderChinBehindNeck(
+  layers: RasterLayer[],
+  visibleAtRest: (layer: RasterLayer) => boolean,
+): RasterLayer[] {
+  const neckIndex = layers.findIndex((layer) => layer.role === 'neck')
+  const face = layers.find((layer) => layer.role === 'face')
+  if (neckIndex < 0 || !face) return layers
+  const neck = layers[neckIndex]
+  const alpha = (layer: RasterLayer, x: number, y: number) => {
+    const col = x - layer.left
+    const row = y - layer.top
+    if (col < 0 || row < 0 || col >= layer.width || row >= layer.height) return 0
+    return layer.data[(row * layer.width + col) * 4 + 3]
+  }
+  const topAt = (x: number, y: number) => {
+    for (let index = layers.length - 1; index >= 0; index -= 1) {
+      if (visibleAtRest(layers[index]) && alpha(layers[index], x, y) >= OPAQUE_ALPHA) return layers[index]
+    }
+    return null
+  }
+  const tops = layers.filter((layer, index) => layer.role === 'topwear' && index > neckIndex)
+  const pieces = new Map<RasterLayer, RasterLayer>()
+  const fronts = new Map<RasterLayer, RasterLayer>()
+  for (let x = face.left; x < face.left + face.width; x += 1) {
+    let jaw = -1
+    for (let y = face.top + face.height - 1; y >= face.top && jaw < 0; y -= 1) {
+      if (alpha(face, x, y) >= OPAQUE_ALPHA) jaw = y
+    }
+    if (jaw < 0) continue
+    let neckRows = 0
+    for (let y = jaw + 2; y < jaw + 2 + UNDER_JAW_ROWS; y += 1) {
+      if (topAt(x, y) === neck) neckRows += 1
+    }
+    if (neckRows * 2 <= UNDER_JAW_ROWS) continue
+    for (const top of tops) {
+      for (let y = Math.max(face.top, top.top); y <= jaw; y += 1) {
+        if (alpha(top, x, y) === 0 || alpha(face, x, y) < OPAQUE_ALPHA || alpha(neck, x, y) < OPAQUE_ALPHA) continue
+        let piece = pieces.get(top)
+        let front = fronts.get(top)
+        if (!piece || !front) {
+          piece = { ...top, data: new Uint8ClampedArray(top.data.length) }
+          front = { ...top, data: new Uint8ClampedArray(top.data) }
+          pieces.set(top, piece)
+          fronts.set(top, front)
+        }
+        const at = ((y - top.top) * top.width + x - top.left) * 4
+        piece.data.set(top.data.subarray(at, at + 4), at)
+        front.data[at + 3] = 0
+      }
+    }
+  }
+  if (!pieces.size) return layers
+  const ids = new Set(layers.map((layer) => layer.id))
+  const output: RasterLayer[] = []
+  layers.forEach((layer, index) => {
+    if (index === neckIndex) {
+      for (const [top, piece] of pieces) output.push(trimRaster({ ...piece, id: uniquePartId(`${top.id}-lining`, ids) }))
+    }
+    const front = fronts.get(layer)
+    if (!front) output.push(layer)
+    else if (rasterBounds(front)) output.push(front)
+  })
+  return output
+}
+
 /**
  * The same depth guess, on a small head in a full figure, can put a choker
  * and its pendant behind the neck and the top they lie on, leaving a faint

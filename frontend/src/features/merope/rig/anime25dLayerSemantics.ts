@@ -142,9 +142,10 @@ export function resolveAnime25DLayerSemantics<
 }
 
 /**
- * A garment's lining the import tucked behind the legs (skirtLining) is a
- * piece of that garment, not the garment: what looks for the top or the
- * skirt itself (its box, the torso the arms are sewn to) passes it by.
+ * A garment's lining the import tucked behind the legs (skirtLining) or the
+ * neck (tuckTopUnderChinBehindNeck) is a piece of that garment, not the
+ * garment: what looks for the top or the skirt itself (its box, the torso
+ * the arms are sewn to, the body the neck meets) passes it by.
  */
 export function isAnime25DLiningPiece(name: string): boolean {
   return /-lining(?:-\d+)?$/.test(name)

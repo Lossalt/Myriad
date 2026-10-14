@@ -1,7 +1,7 @@
 import type { RasterLayer } from './anime25dImportTypes'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, tuckBackHairBehindNeck } from './importerLayerSplits'
+import { stackArmsByReference, stackHeadwearByReference, stackLowerLimbsByReference, stackNeckwearByReference, tuckBackHairBehindNeck, tuckTopUnderChinBehindNeck } from './importerLayerSplits'
 
 const SIZE = 20
 
@@ -174,4 +174,25 @@ test('back hair put over a neck drawn over the top goes just behind the neck, st
   assert.equal(tuckBackHairBehindNeck(behind), behind)
   const under = [neck, topwear, hair, face]
   assert.equal(tuckBackHairBehindNeck(under), under)
+})
+
+test('what a top draws under the chin, in front of a neck that shows below the jaw, goes behind the neck', () => {
+  // A face down to y 10, the neck from y 4 down, a hood in front of the neck with a hole below the jaw.
+  const neck = solid('neck', 'neck', [240, 210, 200], { left: 6, top: 4, width: 8, height: 16 })
+  const hood = solid('topwear', 'topwear', [40, 30, 30], { left: 0, top: 6, width: SIZE, height: 14 })
+  for (let y = 11; y < 20; y += 1) {
+    for (let x = 7; x < 13; x += 1) hood.data[((y - 6) * SIZE + x) * 4 + 3] = 0
+  }
+  const face = solid('face', 'face', [250, 225, 215], { left: 4, top: 0, width: 12, height: 11 })
+  const out = tuckTopUnderChinBehindNeck([neck, hood, face], () => true)
+  assert.deepEqual(out.map((l) => l.id), ['topwear-lining', 'neck', 'topwear', 'face'])
+  const [lining, , front] = out
+  // Under the chin over the neck, the hood's pixel is behind the neck now; beside the neck it stays.
+  assert.equal(front.data[((8 - 6) * SIZE + 9) * 4 + 3], 0)
+  assert.equal(lining.data[((8 - lining.top) * lining.width + 9 - lining.left) * 4 + 3], 255)
+  assert.equal(front.data[((8 - 6) * SIZE + 2) * 4 + 3], 255)
+  // A top the portrait shows right under the jaw (a closed collar) stays in front.
+  const closed = solid('topwear', 'topwear', [40, 30, 30], { left: 0, top: 6, width: SIZE, height: 14 })
+  const kept = [neck, closed, face]
+  assert.equal(tuckTopUnderChinBehindNeck(kept, () => true), kept)
 })
