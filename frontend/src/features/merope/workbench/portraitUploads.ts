@@ -11,6 +11,7 @@ interface Workbench {
   voidSticker: () => void
   applyVisualFromPortrait: (url: string) => Promise<unknown>
   addOutfit: (item: WardrobeItem, options: { wear: boolean }) => Promise<unknown>
+  deleteOutfit: (id: string) => Promise<unknown>
   manage: (id: string) => void
 }
 
@@ -50,9 +51,17 @@ export function portraitUploads(workbench: Workbench) {
     createOutfitFromUpload: async (item: WardrobeItem, file: File) => {
       // Added without being worn: a bust keeps the master portrait it has.
       await workbench.addOutfit(item, { wear: false })
-      const { uprightReasons } = isFullBodyItem(item)
-        ? await uploadFullBodyPortrait(item.id, file)
-        : await uploadOutfitPortrait(item.id, file)
+      let uprightReasons
+      try {
+        ;({ uprightReasons } = isFullBodyItem(item)
+          ? await uploadFullBodyPortrait(item.id, file)
+          : await uploadOutfitPortrait(item.id, file))
+      } catch (reason) {
+        // A picture not taken (one refused as not an illustration among them)
+        // leaves no empty set behind.
+        await workbench.deleteOutfit(item.id).catch(() => undefined)
+        throw reason
+      }
       await workbench.reload()
       requestUprightCheck(item.id, uprightReasons)
       workbench.manage(item.id)

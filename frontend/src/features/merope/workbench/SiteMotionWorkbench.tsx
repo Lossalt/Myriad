@@ -263,6 +263,7 @@ export default function SiteMotionWorkbench({
     voidSticker: sticker.voided,
     applyVisualFromPortrait: persona.applyVisualFromPortrait,
     addOutfit: persona.addOutfit,
+    deleteOutfit: persona.deleteOutfit,
     manage: persona.setManagingOutfitId,
   })
 
