@@ -20,6 +20,7 @@ use crate::Failure;
 mod affect;
 mod archive;
 mod chat;
+mod group;
 mod memory;
 mod outfit;
 mod own;
@@ -58,6 +59,11 @@ const CALLS: &[(&str, Call)] = &[
     ("diary.compact_summary", memory::compact_summary),
     ("diary.redact", memory::redact),
     ("diary.should_write_chat", memory::should_write_chat_diary),
+    ("group.kept_as_heard", group::kept_as_heard),
+    ("group.ledger_who", group::ledger_who),
+    ("group.merge_ledger", group::merge_ledger),
+    ("group.offer", group::offer),
+    ("group.step", group::step),
     ("library.csv_records", serial::csv_records),
     ("library.from_aozora", serial::from_aozora),
     ("library.from_gutenberg", serial::from_gutenberg),

@@ -8,6 +8,7 @@ use super::*;
 mod archive;
 mod books;
 mod games;
+mod group;
 mod habits;
 mod mood;
 mod own;
@@ -102,6 +103,7 @@ fn every_call_is_tested_and_version_lists_them() {
     .chain(archive::TESTED.iter().copied())
     .chain(books::TESTED.iter().copied())
     .chain(games::TESTED.iter().copied())
+    .chain(group::TESTED.iter().copied())
     .chain(habits::TESTED.iter().copied())
     .chain(mood::TESTED.iter().copied())
     .chain(own::TESTED.iter().copied())
