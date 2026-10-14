@@ -65,7 +65,10 @@
     "look": { "answer": "looked{seen}", "description": "Look at pictures, on the site owner's account; a sticker she would send is kept." },
     "identify": { "answer": "identified{who, owner}", "description": "Who wrote the line: member{userId, bound}, stranger or unknown; and the site's owner." },
     "prepare": { "answer": "prepared{ok}", "description": "Whether userId may talk to her now, with their session in this group ready." },
-    "makeSense": { "answer": "sense{section}", "description": "What she makes of the talk before answering (still the end's, coarse in D2a)." },
+    "read": { "answer": "soul{text} | rows{rows} | cues{cues} | vectors{vectors, known}", "description": "Read something kept; of is hers (her host) or others (the site, H4-g2). what: soul; venueRows{venue, source, newest: updated|created, limit} (memories still standing, newest first, each {id, content, concepts, source, createdAt, accessCount, lastAccessedAt}); cues{ids}; vectors{rows: [[id, text]], fill} (vectors kept under the model in use, giving up to fill of the rest one behind the reply; known false when there is no model or they could not be read). What comes to mind of what is read is worked out in the core (myriad_agent_rules::memory::rank)." },
+    "embed": { "answer": "embedded{vector}", "description": "The vector of text, as the embedding model in use gives it; none when there is none or it did not answer in time." },
+    "write": { "description": "Keep something; of as for read. what: rememberInVenue{venue, content, evidence, source}." },
+    "learn": { "description": "Words or memes in the talk she is not sure of: hers to look up (still the end's in D2b-1)." },
     "readLedger": { "answer": "ledgerRead{stored: {theirs, hers}}", "description": "The piece counts the group's ledger kept." },
     "readKept": { "answer": "kept{restore}", "description": "What was kept of the group before a restart, read again because it could not be read when the line came: asked before her own line is kept (her reply, her reaction), so it is kept under what was kept and does not overwrite it." },
     "turn": { "answer": "turned{text, sticker, bound}", "description": "A member's turn in their account: what she says (still the end's, coarse in D2a)." },
@@ -73,7 +76,7 @@
     "judge": { "answer": "judged{decision}", "description": "Whether she speaks up, billed to owner (coarse in D2a)." },
     "react": { "answer": "reacted{ok}", "description": "Put emoji on the line `to`." },
     "typing": { "answer": "typed", "description": "Show her typing in `to`." },
-    "ask": { "answer": "asked{raw}", "description": "Ask the model: voice (judge), owner billed, operation, timeoutMs, system, input, schemaName, schema." },
+    "ask": { "answer": "asked{raw, failure}", "description": "Ask the model: how (json, say or look), voice (judge, hers, hersAtLength), owner billed, operation, timeoutMs, system, input, schemaName, schema. failure is unavailable, timeout, cut, invalid or failed; whether to ask again is the core's." },
     "send": { "answer": "sent{ok}", "description": "Send one message of hers to `to`: pieces (text, or mention{id, name}), quoting the line it answers when quote." }
   },
   "end": [

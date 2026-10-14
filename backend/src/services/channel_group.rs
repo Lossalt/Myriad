@@ -71,6 +71,7 @@ mod ledger;
 mod line;
 mod mind;
 mod platform;
+mod reads;
 mod title;
 mod turns;
 
@@ -80,6 +81,7 @@ use io::*;
 use ledger::*;
 use mind::*;
 use platform::*;
+use reads::*;
 use turns::*;
 
 pub use first::{come_back, share_first};

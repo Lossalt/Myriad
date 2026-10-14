@@ -6,5 +6,6 @@
 
 pub mod association;
 pub mod lexical;
+pub mod rank;
 pub mod recall;
 pub mod strength;

@@ -18,6 +18,7 @@ mod errands;
 mod first;
 mod glance;
 mod heard;
+mod sense;
 mod state;
 
 pub(crate) use answer::*;
@@ -26,6 +27,7 @@ pub(crate) use errands::*;
 pub(crate) use first::*;
 pub(crate) use glance::*;
 pub(crate) use heard::*;
+pub(crate) use sense::*;
 pub(crate) use state::*;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -161,6 +163,12 @@ pub struct Answering {
     /// (it could not be read when the line came) before keeping her words.
     #[serde(default)]
     pub went_out: Option<String>,
+    /// The site's owner, who hosts her there.
+    #[serde(default)]
+    pub site_owner: Option<i32>,
+    /// Her reading of the talk, while she does it.
+    #[serde(default)]
+    pub sensing: Option<Box<Sensing>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

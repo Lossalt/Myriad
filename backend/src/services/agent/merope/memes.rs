@@ -84,7 +84,7 @@ pub(super) async fn lines_for(db: &DatabaseConnection, text: &str) -> Vec<String
 /// allowance, held to how it was used there. One she could not look up, or
 /// whose meaning did not fit, she watches as maybe the group's own (see
 /// `jargon`).
-pub(super) fn learn(owner: i32, venue: &str, terms: Vec<String>, conversation: &[String]) {
+pub(crate) fn learn(owner: i32, venue: &str, terms: Vec<String>, conversation: &[String]) {
     let terms: Vec<(String, Vec<String>)> = terms
         .into_iter()
         .map(|term| {

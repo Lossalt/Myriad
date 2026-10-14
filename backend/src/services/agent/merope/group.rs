@@ -31,13 +31,7 @@ pub mod joining {
 }
 
 pub mod memes {
-    pub(crate) use crate::services::agent::merope::memes::section_for;
-}
-
-pub mod making_sense {
-    pub(crate) use crate::services::agent::merope::making_sense::{
-        read, remember_told, told_section,
-    };
+    pub(crate) use crate::services::agent::merope::memes::{learn, section_for};
 }
 
 pub mod others {

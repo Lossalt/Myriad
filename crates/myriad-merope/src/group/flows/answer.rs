@@ -78,44 +78,47 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
             apply_seen(cx, seen);
             identify(cx, a)
         }
-        (AnswerStage::Identifying, Some(Answer::Identified { who, owner })) => match who {
-            Who::Member { user_id, bound } => {
-                if !bound {
-                    return Next::Done(false);
+        (AnswerStage::Identifying, Some(Answer::Identified { who, owner })) => {
+            a.site_owner = owner;
+            match who {
+                Who::Member { user_id, bound } => {
+                    if !bound {
+                        return Next::Done(false);
+                    }
+                    a.user_id = Some(user_id);
+                    a.owner = Some(user_id);
+                    a.began = now;
+                    a.stage = AnswerStage::Preparing;
+                    Next::Wait(cx.effect(|id| Effect::Prepare { id, user_id }))
                 }
-                a.user_id = Some(user_id);
-                a.owner = Some(user_id);
-                a.began = now;
-                a.stage = AnswerStage::Preparing;
-                Next::Wait(cx.effect(|id| Effect::Prepare { id, user_id }))
-            }
-            Who::Stranger => {
-                let today = cx.at.her.today.clone();
-                if !count_today(
-                    &mut cx.group.stranger_replies,
-                    &today,
-                    STRANGER_REPLIES_PER_DAY,
-                ) {
-                    return Next::Done(false);
+                Who::Stranger => {
+                    let today = cx.at.her.today.clone();
+                    if !count_today(
+                        &mut cx.group.stranger_replies,
+                        &today,
+                        STRANGER_REPLIES_PER_DAY,
+                    ) {
+                        return Next::Done(false);
+                    }
+                    let Some(owner) = owner else {
+                        return Next::Done(false);
+                    };
+                    a.owner = Some(owner);
+                    a.stranger = Some(Stranger {
+                        who: format!("{}:{}", a.message.platform, a.message.from),
+                        name: a.message.display_name.chars().take(40).collect(),
+                    });
+                    let read = reading(cx.group, &a.message, now);
+                    a.transcript = read.transcript;
+                    a.said = read.said;
+                    a.room = room(cx.group, now);
+                    a.noted = noted(cx.group);
+                    a.stage = AnswerStage::StrangerLedger;
+                    Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
                 }
-                let Some(owner) = owner else {
-                    return Next::Done(false);
-                };
-                a.owner = Some(owner);
-                a.stranger = Some(Stranger {
-                    who: format!("{}:{}", a.message.platform, a.message.from),
-                    name: a.message.display_name.chars().take(40).collect(),
-                });
-                let read = reading(cx.group, &a.message, now);
-                a.transcript = read.transcript;
-                a.said = read.said;
-                a.room = room(cx.group, now);
-                a.noted = noted(cx.group);
-                a.stage = AnswerStage::StrangerLedger;
-                Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
+                Who::Unknown => Next::Done(false),
             }
-            Who::Unknown => Next::Done(false),
-        },
+        }
         (AnswerStage::Preparing, Some(Answer::Prepared { ok })) => {
             if !ok {
                 return Next::Done(false);
@@ -132,21 +135,15 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
             a.transcript = read.transcript;
             a.said = read.said;
             a.stage = AnswerStage::Sensing;
-            let conversation = conversation(&a.transcript);
-            let said = a.said.clone();
-            Next::Wait(cx.effect(|id| Effect::MakeSense {
-                id,
-                conversation,
-                said,
-            }))
+            match start_sensing(cx, a) {
+                Sensed::Wait(awaiting) => Next::Wait(awaiting),
+                Sensed::Done(section) => sensed_member(cx, a, section),
+            }
         }
-        (AnswerStage::Sensing, Some(Answer::Sense { section })) => {
-            a.making_sense = section;
-            a.room = room(cx.group, now);
-            a.noted = noted(cx.group);
-            a.stage = AnswerStage::LedgerForTurn;
-            Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
-        }
+        (AnswerStage::Sensing, answer) => match sensing_step(cx, a, answer) {
+            Sensed::Wait(awaiting) => Next::Wait(awaiting),
+            Sensed::Done(section) => sensed_member(cx, a, section),
+        },
         (AnswerStage::LedgerForTurn, Some(Answer::LedgerRead { stored })) => {
             let differs = differs(cx.group, &a.noted, stored.as_ref());
             let late = if a.first {
@@ -203,20 +200,15 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
             .flatten()
             .collect();
             a.stage = AnswerStage::StrangerSensing;
-            let conversation = conversation(&a.transcript);
-            let said = a.said.clone();
-            Next::Wait(cx.effect(|id| Effect::MakeSense {
-                id,
-                conversation,
-                said,
-            }))
+            match start_sensing(cx, a) {
+                Sensed::Wait(awaiting) => Next::Wait(awaiting),
+                Sensed::Done(section) => sensed_stranger(cx, a, section),
+            }
         }
-        (AnswerStage::StrangerSensing, Some(Answer::Sense { section })) => {
-            a.sections.extend(section);
-            a.stage = AnswerStage::StrangerTyping;
-            let to = a.message.target();
-            Next::Wait(cx.effect(|id| Effect::Typing { id, to }))
-        }
+        (AnswerStage::StrangerSensing, answer) => match sensing_step(cx, a, answer) {
+            Sensed::Wait(awaiting) => Next::Wait(awaiting),
+            Sensed::Done(section) => sensed_stranger(cx, a, section),
+        },
         (AnswerStage::StrangerTyping, Some(Answer::Typed)) => {
             a.began = now;
             a.stage = AnswerStage::StrangerTurning;
@@ -376,4 +368,48 @@ pub(crate) fn after_saying(cx: &mut Cx, a: &mut Answering, went_out: String) -> 
         }
     }
     Next::Done(sent)
+}
+
+/// Begin reading the talk before answering it (see `sense`).
+fn start_sensing(cx: &mut Cx, a: &mut Answering) -> Sensed {
+    let conversation = conversation(&a.transcript);
+    let (sensing, sensed) = sense_start(
+        cx,
+        a.message.venue(),
+        conversation,
+        a.said.clone(),
+        a.site_owner,
+    );
+    a.sensing = Some(Box::new(sensing));
+    sensed
+}
+
+fn sensing_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>) -> Sensed {
+    let Some(mut sensing) = a.sensing.take() else {
+        return Sensed::Done(None);
+    };
+    let sensed = sense_step(cx, &mut sensing, answer);
+    if matches!(sensed, Sensed::Wait(_)) {
+        a.sensing = Some(sensing);
+    }
+    sensed
+}
+
+/// Her reading done, a member's turn goes on: how people type there and
+/// how her lines differ, from the ledger.
+fn sensed_member(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> Next {
+    let now = cx.now();
+    a.making_sense = section;
+    a.room = room(cx.group, now);
+    a.noted = noted(cx.group);
+    a.stage = AnswerStage::LedgerForTurn;
+    Next::Wait(cx.effect(|id| Effect::ReadLedger { id }))
+}
+
+/// Her reading done, the answer to someone from outside goes on: typing.
+fn sensed_stranger(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> Next {
+    a.sections.extend(section);
+    a.stage = AnswerStage::StrangerTyping;
+    let to = a.message.target();
+    Next::Wait(cx.effect(|id| Effect::Typing { id, to }))
 }

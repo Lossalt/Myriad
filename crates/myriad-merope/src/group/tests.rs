@@ -1018,7 +1018,16 @@ impl End {
             }
             Effect::Identify { id, .. } => (id, "identify"),
             Effect::Prepare { id, .. } => (id, "prepare"),
-            Effect::MakeSense { id, .. } => (id, "sense"),
+            Effect::Read { id, what, .. } => (
+                id,
+                match what {
+                    ToRead::Soul => "soul",
+                    ToRead::VenueRows { .. } => "rows",
+                    ToRead::Cues { .. } => "cues",
+                    ToRead::Vectors { .. } => "vectors",
+                },
+            ),
+            Effect::Embed { id, .. } => (id, "embed"),
             Effect::ReadLedger { id } => (id, "ledger"),
             Effect::ReadKept { id } => (id, "kept"),
             Effect::Turn { id, .. } => (id, "turn"),
@@ -1026,7 +1035,13 @@ impl End {
             Effect::Judge { id, .. } => (id, "judge"),
             Effect::React { id, .. } => (id, "react"),
             Effect::Typing { id, .. } => (id, "typing"),
-            Effect::Ask { id, .. } => (id, "ask"),
+            Effect::Ask { id, operation, .. } => (
+                id,
+                match operation.as_str() {
+                    "group_making_sense" => "ask:group_making_sense",
+                    _ => "ask",
+                },
+            ),
             Effect::Send { id, .. } => (id, "send"),
             _ => return,
         };
@@ -1083,7 +1098,18 @@ fn default_answer(kind: &str) -> Answer {
             owner: Some(1),
         },
         "prepare" => Answer::Prepared { ok: true },
-        "sense" => Answer::Sense { section: None },
+        "soul" => Answer::Soul {
+            text: "你是测试里的她。".into(),
+        },
+        "rows" => Answer::Rows { rows: Vec::new() },
+        "cues" => Answer::Cues {
+            cues: HashMap::new(),
+        },
+        "vectors" => Answer::Vectors {
+            vectors: Vec::new(),
+            known: false,
+        },
+        "embed" => Answer::Embedded { vector: None },
         "ledger" => Answer::LedgerRead { stored: None },
         "kept" => Answer::Kept { restore: None },
         "turn" | "stranger" => Answer::Turned {
@@ -1094,7 +1120,10 @@ fn default_answer(kind: &str) -> Answer {
         "judge" => Answer::Judged { decision: None },
         "react" => Answer::Reacted { ok: true },
         "typing" => Answer::Typed,
-        "ask" => Answer::Asked { raw: None },
+        "ask" | "ask:group_making_sense" => Answer::Asked {
+            raw: None,
+            failure: Some("unavailable".into()),
+        },
         "send" => Answer::Sent { ok: true },
         _ => unreachable!("{kind}"),
     }
@@ -1241,10 +1270,14 @@ fn g1_an_outsider_calls_her() {
         },
     );
     end.answer(
-        "sense",
+        "ask:group_making_sense",
         1.0,
-        Answer::Sense {
-            section: Some("有人第一次来，在问她是谁".into()),
+        Answer::Asked {
+            raw: Some(
+                r#"{"goingOn":"有人第一次来","theyMean":"在问她是谁","aboutYou":"说她像机器人"}"#
+                    .into(),
+            ),
+            failure: None,
         },
     );
     end.answer(
@@ -1283,6 +1316,7 @@ fn g1_she_keeps_back_what_no_longer_fits() {
         1.0,
         Answer::Asked {
             raw: Some(r#"{"send":false}"#.into()),
+            failure: None,
         },
     );
     end.answer(

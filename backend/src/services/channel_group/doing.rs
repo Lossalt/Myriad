@@ -210,18 +210,33 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                 answered(venue, id, Answer::Prepared { ok }).await;
             });
         }
-        Effect::MakeSense {
-            id,
-            conversation,
-            said,
-        } => {
+        Effect::Read { id, what, .. } => {
             tokio::spawn(async move {
-                let section = match db() {
-                    Ok(db) => make_sense(&db, &venue, &conversation, &said).await,
-                    Err(_) => None,
-                };
-                answered(venue, id, Answer::Sense { section }).await;
+                let answer = read(&venue, what).await;
+                answered(venue, id, answer).await;
             });
+        }
+        Effect::Embed { id, text } => {
+            tokio::spawn(async move {
+                let vector = crate::services::agent::memory::meaning::embed_asked(&text).await;
+                answered(venue, id, Answer::Embedded { vector }).await;
+            });
+        }
+        Effect::Write { what, .. } => write(what).await,
+        Effect::Learn {
+            terms,
+            conversation,
+        } => {
+            if let Ok(db) = db()
+                && let Some(owner) = owner(&db).await
+            {
+                crate::services::agent::merope::group::memes::learn(
+                    owner,
+                    &venue,
+                    terms,
+                    &conversation,
+                );
+            }
         }
         Effect::ReadKept { id } => {
             tokio::spawn(async move {
@@ -325,6 +340,7 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
         }
         Effect::Ask {
             id,
+            voice,
             owner,
             operation,
             timeout_ms,
@@ -335,7 +351,8 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             ..
         } => {
             tokio::spawn(async move {
-                let raw = crate::services::agent::merope::group::asking::judge(
+                let asked = crate::services::agent::merope::group::asking::judge(
+                    &voice,
                     owner,
                     &operation,
                     Duration::from_millis(timeout_ms),
@@ -345,7 +362,11 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
                     &schema,
                 )
                 .await;
-                answered(venue, id, Answer::Asked { raw }).await;
+                let (raw, failure) = match asked {
+                    Ok(raw) => (Some(raw), None),
+                    Err(failure) => (None, Some(failure.to_string())),
+                };
+                answered(venue, id, Answer::Asked { raw, failure }).await;
             });
         }
         Effect::Send {

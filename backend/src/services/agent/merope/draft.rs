@@ -9,7 +9,9 @@ const LOOK_FOR: Duration = Duration::from_secs(8);
 /// A look her group mind asks for (see `myriad_merope::group`): its prompt
 /// as the core put it, on the judging model, billed to `owner`. The raw
 /// answer, or none when it gave none in time.
+#[allow(clippy::too_many_arguments)]
 pub async fn ask(
+    voice: &str,
     owner: i32,
     operation: &str,
     within: Duration,
@@ -17,16 +19,29 @@ pub async fn ask(
     input: &str,
     schema_name: &str,
     schema: &serde_json::Value,
-) -> Option<String> {
+) -> Result<String, &'static str> {
+    use super::call::{Failure, Voice};
     let operation: &'static str = match operation {
         "draft_still" => "draft_still",
+        "group_making_sense" => "group_making_sense",
         _ => "group_mind",
     };
-    super::call::Ask::new(super::call::Voice::Judge, owner, operation)
+    let voice = match voice {
+        "hers" => Voice::Hers,
+        "hersAtLength" => Voice::HersAtLength,
+        _ => Voice::Judge,
+    };
+    super::call::Ask::new(voice, owner, operation)
         .within(within)
         .json_raw(system, input, schema_name, schema)
         .await
-        .ok()
+        .map_err(|failure| match failure {
+            Failure::Unavailable => "unavailable",
+            Failure::Timeout => "timeout",
+            Failure::StreamInterrupted => "cut",
+            Failure::InvalidOutput => "invalid",
+            _ => "failed",
+        })
 }
 
 /// Whether `draft`, her answer to `said`, still fits now that `came` arrived

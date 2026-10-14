@@ -3,19 +3,6 @@
 use super::*;
 use myriad_agent_rules::memory::recall::{concept_counts, thinly_known};
 
-/// Share of a recalled memory's rank that comes from being named directly;
-/// the rest is its activation after spreading.
-pub(super) const DIRECT_WEIGHT: f64 = 0.6;
-
-/// Activation an unnamed memory needs before it comes to mind at all.
-pub(super) const ASSOCIATED_MIN: f64 = 0.15;
-
-/// Share of a memory's activation still there one turn later.
-pub(super) const PRIMING_FADE: f64 = 0.5;
-
-/// How many memories stay on the mind between turns.
-pub(super) const PRIMING_KEPT: usize = 16;
-
 /// How far one bout of mind-wandering drifts.
 pub(super) const WANDER_STEPS: usize = 3;
 
@@ -55,13 +42,6 @@ pub(super) fn readiness(
     }
     super::super::strength::of_row(row.created_at, row.access_count, row.last_accessed_at, now)
 }
-
-/// How much a memory's readiness counts in recall: named or brought to mind,
-/// an old untouched one still comes, a little behind a fresh one.
-pub(super) const READINESS_WEIGHT: f64 = 0.3;
-
-/// Readiness in steps this wide ranks alike, newest first.
-pub(super) const READINESS_STEP: f64 = 0.05;
 
 /// Activation left over from recent turns, by memory id: what was on the
 /// person's mind a moment ago. It seeds the next recall, so a topic carries
@@ -202,41 +182,7 @@ pub(super) fn rank_primed(
     (chosen.into_iter().map(|(row, _)| row).collect(), next)
 }
 
-/// How named each memory is, by its words and by its meaning together: each
-/// stands by its place among those its words matched and among those that
-/// stand out by meaning, so one found both ways comes first; the first
-/// counts 1.
-pub(super) fn named_by_words_or_meaning(words: &[f64], meaning: &[f64]) -> Vec<f64> {
-    /// How much a place matters against being found both ways (as in
-    /// `myriad_merope::remembering::merged`).
-    const FUSED_AT: f64 = 6.0;
-    let places = |values: &[f64]| {
-        let mut order: Vec<usize> = (0..values.len()).filter(|i| values[*i] > 0.0).collect();
-        order.sort_by(|left, right| values[*right].total_cmp(&values[*left]));
-        let mut place = vec![None; values.len()];
-        for (rank, index) in order.into_iter().enumerate() {
-            place[index] = Some(rank);
-        }
-        place
-    };
-    let (by_words, by_meaning) = (places(words), places(meaning));
-    let fused: Vec<f64> = by_words
-        .iter()
-        .zip(&by_meaning)
-        .map(|(words, meaning)| {
-            [words, meaning]
-                .into_iter()
-                .flatten()
-                .map(|rank| 1.0 / (FUSED_AT + *rank as f64))
-                .sum()
-        })
-        .collect();
-    let top = fused.iter().copied().fold(0.0, f64::max);
-    if top <= 0.0 {
-        return fused;
-    }
-    fused.into_iter().map(|value| value / top).collect()
-}
+pub(super) use myriad_agent_rules::memory::rank::named_by_words_or_meaning;
 
 /// [`rank_primed`], marking each row that came to mind by association with
 /// what was named rather than being named itself. `by_meaning` holds the
@@ -252,170 +198,44 @@ pub(super) fn rank_marked(
     breadth: f64,
     by_meaning: &std::collections::HashMap<String, f64>,
 ) -> (Vec<(agent_memories::Model, bool)>, Priming, Vec<String>) {
-    // Blank and repeated legacy rows must not spend the recall budget.
-    let mut seen = std::collections::HashSet::new();
-    let rows: Vec<agent_memories::Model> = rows
-        .into_iter()
-        .filter(|row| {
-            let content = normalize_content(&row.content);
-            !content.is_empty() && seen.insert(content)
-        })
-        .collect();
+    use myriad_agent_rules::memory::rank;
     let concepts: Vec<Vec<Concept>> = rows.iter().map(concepts_of).collect();
-    let documents: Vec<super::super::lexical::Document> = rows
+    let view: Vec<rank::Row> = rows
         .iter()
         .zip(&concepts)
-        .map(|(row, concepts)| super::super::lexical::Document {
-            text: &row.content,
+        .map(|(row, concepts)| rank::Row {
+            id: &row.id,
+            content: &row.content,
             concepts,
+            source: &row.source,
+            created_at: row.created_at,
+            access_count: row.access_count,
+            last_accessed_at: row.last_accessed_at,
         })
         .collect();
-    let scores = super::super::lexical::score_all(query.unwrap_or(""), &documents);
-    let strongest = scores
-        .iter()
-        .filter(|score| score.strong)
-        .map(|score| score.value)
-        .fold(0.0, f64::max);
-    let named: Vec<f64> = scores
-        .iter()
-        .map(|score| {
-            if score.strong {
-                score.value / strongest
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    let (named, strongest) = if by_meaning.is_empty() {
-        (named, strongest)
-    } else {
-        let meaning: Vec<f64> = rows
-            .iter()
-            .map(|row| by_meaning.get(&row.id).copied().unwrap_or(0.0))
-            .collect();
-        let named = named_by_words_or_meaning(&named, &meaning);
-        let strongest = named.iter().copied().fold(0.0, f64::max);
-        (named, strongest)
-    };
-    let residual: Vec<f64> = rows.iter().map(|row| priming.of(&row.id)).collect();
     let now = super::super::utc_now().fixed_offset();
-    let ready: Vec<f64> = rows.iter().map(|row| readiness(row, now)).collect();
-    // By weak evidence, then how readily each comes to mind, then recency
-    // (stable: newest-first from the query).
-    let mut by_recency: Vec<(f64, usize)> = scores
+    let ranked = rank::rank_marked(
+        &view,
+        query,
+        limit,
+        &priming.by_id,
+        breadth,
+        by_meaning,
+        now,
+    );
+    drop(view);
+    let filler = ranked
+        .filler
         .iter()
-        .enumerate()
-        .map(|(index, score)| (score.value, index))
-        // Noted in passing (a game they played) or looked up: recalled when
-        // the talk really comes to it (named, by words or by meaning), not
-        // as the recent context or on a word or two in common.
-        .filter(|(_, index)| {
-            named[*index] > 0.0 || !RECALLED_WHEN_NAMED.contains(&rows[*index].source.as_str())
-        })
+        .map(|index| rows[*index].id.clone())
         .collect();
-    let step = |index: usize| (ready[index] / READINESS_STEP).floor();
-    by_recency.sort_by(|left, right| {
-        right
-            .0
-            .total_cmp(&left.0)
-            .then_with(|| step(right.1).total_cmp(&step(left.1)))
-    });
-    if named.iter().chain(&residual).all(|seed| *seed <= 0.0) {
-        // Nothing named and nothing on the mind: no association starts from
-        // a guess.
-        let mut rows: Vec<Option<agent_memories::Model>> = rows.into_iter().map(Some).collect();
-        let chosen = by_recency
-            .into_iter()
-            .take(limit)
-            .filter_map(|(_, index)| rows[index].take())
-            .map(|row| (row, false))
-            .collect::<Vec<_>>();
-        let filler = chosen.iter().map(|(row, _)| row.id.clone()).collect();
-        return (chosen, Priming::default(), filler);
-    }
-    let seeds: Vec<f64> = named
-        .iter()
-        .zip(&residual)
-        .map(|(named, residual)| f64::max(*named, *residual))
-        .collect();
-    let nodes: Vec<super::super::association::Node> = rows
-        .iter()
-        .zip(&concepts)
-        .map(|(row, concepts)| super::super::association::Node {
-            concepts,
-            at: row.created_at,
-        })
-        .collect();
-    let activation = super::super::association::spread(&seeds, &nodes);
-    let next = next_priming(&rows, &activation);
-    let mut scored: Vec<(f64, bool, usize)> = named
-        .iter()
-        .zip(&activation)
-        .enumerate()
-        .filter(|(_, (named, activation))| **named > 0.0 || **activation >= ASSOCIATED_MIN)
-        .map(|(index, (named, activation))| {
-            (
-                (DIRECT_WEIGHT * named + (1.0 - DIRECT_WEIGHT) * activation)
-                    * (1.0 - READINESS_WEIGHT + READINESS_WEIGHT * ready[index]),
-                *named > 0.0,
-                index,
-            )
-        })
-        .collect();
-    scored.sort_by(|left, right| right.0.total_cmp(&left.0));
-    // What the query named comes first in number; association fills in, up
-    // to half the budget when thought is free to wander.
-    let wander = breadth.clamp(0.0, 1.0);
-    let mut associated_left = if wander > 0.0 {
-        ((limit as f64 * 0.5 * wander).floor() as usize).max(1)
-    } else {
-        0
-    };
-    let picked: Vec<(bool, usize)> = scored
-        .into_iter()
-        .filter(|(_, direct, _)| {
-            *direct
-                || (associated_left > 0 && {
-                    associated_left -= 1;
-                    true
-                })
-        })
-        .map(|(_, direct, index)| (direct, index))
-        .take(limit)
-        .collect();
-    // Brought to mind only when something was actually named; a topic merely
-    // lingering from before is not a new association.
-    let brought: std::collections::HashSet<usize> = picked
-        .iter()
-        .filter(|(direct, _)| !direct && strongest > 0.0)
-        .map(|(_, index)| *index)
-        .collect();
-    let mut order: Vec<usize> = picked.into_iter().map(|(_, index)| index).collect();
-    let mut filled = std::collections::HashSet::new();
-    if strongest <= 0.0 {
-        // Only the lingering topic came to mind: the rest of the budget is
-        // the ordinary recent context, as when nothing is on the mind.
-        for (_, index) in by_recency {
-            if order.len() == limit {
-                break;
-            }
-            if !order.contains(&index) {
-                order.push(index);
-                filled.insert(index);
-            }
-        }
-    }
-    let filler = filled.iter().map(|index| rows[*index].id.clone()).collect();
     let mut rows: Vec<Option<agent_memories::Model>> = rows.into_iter().map(Some).collect();
-    let chosen = order
+    let chosen = ranked
+        .chosen
         .into_iter()
-        .filter_map(|index| {
-            rows[index]
-                .take()
-                .map(|row| (row, brought.contains(&index)))
-        })
+        .filter_map(|(index, brought)| rows[index].take().map(|row| (row, brought)))
         .collect();
-    (chosen, next, filler)
+    (chosen, Priming { by_id: ranked.next }, filler)
 }
 
 /// Of `rows`, at most `limit` that `query` names by their words or their
@@ -551,23 +371,4 @@ pub(super) fn gap_in(rows: &[agent_memories::Model], query: &str) -> Option<(Str
         })
         .collect();
     myriad_agent_rules::memory::recall::gap_in(&documents, query)
-}
-
-/// What stays on the mind for the next turn: the most active memories, each
-/// fading by half per turn and dropped once it no longer clears the bar.
-pub(super) fn next_priming(rows: &[agent_memories::Model], activation: &[f64]) -> Priming {
-    let mut active: Vec<(f64, &str)> = activation
-        .iter()
-        .zip(rows)
-        .map(|(activation, row)| (activation * PRIMING_FADE, row.id.as_str()))
-        .filter(|(activation, _)| *activation >= ASSOCIATED_MIN)
-        .collect();
-    active.sort_by(|left, right| right.0.total_cmp(&left.0));
-    Priming {
-        by_id: active
-            .into_iter()
-            .take(PRIMING_KEPT)
-            .map(|(activation, id)| (id.to_string(), activation))
-            .collect(),
-    }
 }

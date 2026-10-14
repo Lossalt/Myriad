@@ -65,12 +65,6 @@ const LEARNED_ABOUT_SOMEONE: [&str; 4] = ["chat", "chat_note", "event", "lookup"
 /// What she heard from others, or was put on to (see `merope::heard`).
 const LEARNED_HEARD: &str = "heard";
 
-/// Sources recalled only when the talk comes to them, never as the recent
-/// context: what she noted about someone in passing (what they played,
-/// games she played with them), and what she looked up (one search, put
-/// before her every turn, became a story she kept retelling).
-pub const RECALLED_WHEN_NAMED: [&str; 3] = ["presence", "game", "lookup"];
-
 /// People she keeps memories of from private talk, most remembered first.
 pub async fn people_remembered<C: ConnectionTrait>(db: &C, limit: i64) -> Result<Vec<i32>, DbErr> {
     let rows = db

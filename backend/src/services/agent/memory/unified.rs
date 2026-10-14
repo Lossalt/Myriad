@@ -30,7 +30,7 @@ mod recall;
 mod upkeep;
 mod venue;
 
-pub use cues::{keep_cues, without_cues};
+pub use cues::{cues_of, keep_cues, without_cues};
 pub use evidence::*;
 pub use lookup::*;
 pub use own::*;

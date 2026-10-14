@@ -56,6 +56,7 @@ pub(crate) fn look_over(cx: &mut Cx, to: &Message, d: &mut Deliver) -> Next {
             d.stage = DeliverStage::Fitting;
             let effect = |id| Effect::Ask {
                 id,
+                how: AskKind::Json,
                 voice: "judge".into(),
                 owner: d.owner,
                 operation: "draft_still".into(),
@@ -122,7 +123,7 @@ pub(crate) fn deliver_step(
             Next::Wait(cx.wake(d.left))
         }
         (DeliverStage::Typing, None) => look_over(cx, to, d),
-        (DeliverStage::Fitting, Some(Answer::Asked { raw })) => {
+        (DeliverStage::Fitting, Some(Answer::Asked { raw, .. })) => {
             let send = raw.as_deref().and_then(crate::draft::parse).unwrap_or(true);
             if !send {
                 cx.group.held_back = true;

@@ -141,58 +141,6 @@ pub(super) async fn last_group_session(
     .ok()
 }
 
-/// Before answering, she reads the talk: what is going on, what it means,
-/// what people are telling her about herself (kept). With what the group
-/// told her before, as the sections her reply starts from.
-pub(super) async fn make_sense(
-    db: &DatabaseConnection,
-    venue: &str,
-    conversation: &[String],
-    said: &str,
-) -> Option<String> {
-    use crate::services::agent::merope::group::making_sense;
-    let stored = unified_venue(venue);
-    let owner = owner(db).await?;
-    let sense = making_sense::read(owner, venue, conversation).await;
-    if let Some(told) = sense.as_ref().and_then(|sense| sense.about_you.as_deref()) {
-        #[cfg(test)]
-        if g0::on() && !g0::has_db() {
-            g0::note(
-                "told",
-                serde_json::json!({ "venue": stored, "told": told, "line": said }),
-            );
-        }
-        #[cfg(test)]
-        let skip = g0::on() && !g0::has_db();
-        #[cfg(not(test))]
-        let skip = false;
-        if !skip {
-            making_sense::remember_told(db, &stored, told, said).await;
-        }
-    }
-    #[cfg(test)]
-    let told = if g0::on() && !g0::has_db() {
-        None
-    } else {
-        making_sense::told_section(db, &stored, said).await
-    };
-    #[cfg(not(test))]
-    let told = making_sense::told_section(db, &stored, said).await;
-    let sections: Vec<String> = [
-        told,
-        sense.as_ref().map(myriad_merope::making_sense::section),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    (!sections.is_empty()).then(|| sections.join("\n\n"))
-}
-
-/// A group's venue as memories store it (`group:telegram:-100123`).
-pub(super) fn unified_venue(venue: &str) -> String {
-    crate::services::agent::memory::unified::Audience::group(venue, 0).venue()
-}
-
 /// What a member's turn is given.
 pub(super) struct MemberTurn {
     pub(super) user_id: i32,

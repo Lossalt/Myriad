@@ -30,12 +30,8 @@ use crate::services::retained_cache::RetainedCache;
 const ASK_WITHIN: Duration = Duration::from_secs(2);
 /// Memories without a vector embedded in one batch.
 const FILL_PER_ASK: usize = 63;
-/// A memory stands out by meaning when it is this many deviations above how
-/// close the rest of them are: what closeness means differs by model, how
-/// far above the rest does not.
-pub const STANDS_OUT: f64 = 2.0;
 /// Fewer memories with vectors than this give no sense of the rest.
-const AT_LEAST: usize = 8;
+use myriad_agent_rules::memory::rank::AT_LEAST;
 
 /// The embedding model in use, when one is set.
 pub struct Meaning {
@@ -59,6 +55,38 @@ impl Meaning {
 }
 
 type Vector = Arc<Vec<f32>>;
+
+/// A memory as its meaning is kept: which, and the text embedded.
+pub trait Text: Clone {
+    fn id(&self) -> &str;
+    fn content(&self) -> &str;
+}
+
+impl Text for agent_memories::Model {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+/// A memory's id and the text embedded for it (with its cues, as recall
+/// reads it), as her group mind hands it over.
+#[derive(Debug, Clone)]
+pub struct Memo {
+    pub id: String,
+    pub content: String,
+}
+
+impl Text for Memo {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
+}
 
 /// What was asked lately, by model and text: a message and its cues are
 /// embedded once, then recalled with many times.
@@ -123,23 +151,7 @@ fn from_bytes(bytes: &[u8]) -> Option<Vec<f32>> {
     })
 }
 
-pub fn cosine(left: &[f32], right: &[f32]) -> f64 {
-    if left.len() != right.len() || left.is_empty() {
-        return 0.0;
-    }
-    let (mut dot, mut l, mut r) = (0.0f64, 0.0f64, 0.0f64);
-    for (a, b) in left.iter().zip(right) {
-        let (a, b) = (f64::from(*a), f64::from(*b));
-        dot += a * b;
-        l += a * a;
-        r += b * b;
-    }
-    if l == 0.0 || r == 0.0 {
-        0.0
-    } else {
-        dot / (l.sqrt() * r.sqrt())
-    }
-}
+pub use myriad_agent_rules::memory::rank::cosine;
 
 /// Embed `texts` not yet asked, together: the message and its cues before
 /// recall goes through them one by one.
@@ -165,15 +177,15 @@ pub async fn warm(texts: &[String]) {
 
 /// Vectors already kept for `rows` under `model`, where the text is still
 /// the one embedded.
-async fn stored<C: ConnectionTrait>(
+async fn stored<C: ConnectionTrait, T: Text>(
     db: &C,
     model: &str,
-    rows: &[agent_memories::Model],
+    rows: &[T],
 ) -> Result<HashMap<String, Vector>, DbErr> {
     if rows.is_empty() {
         return Ok(HashMap::new());
     }
-    let ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<String> = rows.iter().map(|row| row.id().to_string()).collect();
     let found = db
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
@@ -184,7 +196,7 @@ async fn stored<C: ConnectionTrait>(
         .await?;
     let digests: HashMap<&str, String> = rows
         .iter()
-        .map(|row| (row.id.as_str(), digest(&row.content)))
+        .map(|row| (row.id(), digest(&row.content())))
         .collect();
     Ok(found
         .iter()
@@ -198,10 +210,10 @@ async fn stored<C: ConnectionTrait>(
         .collect())
 }
 
-async fn store<C: ConnectionTrait>(
+async fn store<C: ConnectionTrait, T: Text>(
     db: &C,
     model: &str,
-    row: &agent_memories::Model,
+    row: &T,
     vector: &[f32],
 ) -> Result<(), DbErr> {
     db.execute_raw(Statement::from_sql_and_values(
@@ -211,9 +223,9 @@ async fn store<C: ConnectionTrait>(
          ON CONFLICT (memory_id) DO UPDATE SET model = EXCLUDED.model, \
          digest = EXCLUDED.digest, vector = EXCLUDED.vector, created_at = EXCLUDED.created_at",
         [
-            row.id.clone().into(),
+            row.id().to_string().into(),
             model.into(),
-            digest(&row.content).into(),
+            digest(&row.content()).into(),
             to_bytes(vector).into(),
         ],
     ))
@@ -262,27 +274,27 @@ static FILLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 const FILL_BEHIND_WITHIN: Duration = Duration::from_secs(30);
 
 /// Embed `missing` together and keep each vector; the vectors, by memory id.
-async fn embed_and_keep<C: ConnectionTrait>(
+async fn embed_and_keep<C: ConnectionTrait, T: Text>(
     db: &C,
     meaning: &Meaning,
-    missing: &[agent_memories::Model],
+    missing: &[T],
     within: Duration,
 ) -> HashMap<String, Vector> {
     let model = meaning.model.as_str();
     let texts: Vec<String> = missing
         .iter()
-        .map(|row| row.content.trim().to_string())
+        .map(|row| row.content().trim().to_string())
         .collect();
     let mut vectors = HashMap::new();
     match tokio::time::timeout(within, meaning.analyzer.embed(&texts)).await {
         Ok(Ok(embedded)) => {
             for (row, vector) in missing.iter().zip(embedded) {
                 let vector = Arc::new(vector);
-                keep(&KNOWN, model, &digest(&row.content), vector.clone());
+                keep(&KNOWN, model, &digest(&row.content()), vector.clone());
                 if let Err(error) = store(db, model, row, &vector).await {
                     tracing::warn!(%error, "a memory's meaning could not be kept; it is worked out again next time");
                 }
-                vectors.insert(row.id.clone(), vector);
+                vectors.insert(row.id().to_string(), vector);
             }
         }
         _ => tracing::debug!("memories not embedded this time; they are next time"),
@@ -292,7 +304,7 @@ async fn embed_and_keep<C: ConnectionTrait>(
 
 /// Give `missing` vectors behind the reply, unless a batch is already on
 /// its way.
-fn fill_behind(missing: Vec<agent_memories::Model>) {
+fn fill_behind<T: Text + Send + Sync + 'static>(missing: Vec<T>) {
     use std::sync::atomic::Ordering;
     if missing.is_empty() || FILLING.swap(true, Ordering::AcqRel) {
         return;
@@ -446,30 +458,9 @@ pub async fn fill<C: ConnectionTrait>(db: &C, rows: &[agent_memories::Model]) {
     }
 }
 
-/// How much each memory stands out by meaning from the rest, for the
-/// closeness of all of them: `(closeness - mean) / deviation`, only those
-/// at least `STANDS_OUT`.
-pub fn standing_out(closeness: &HashMap<String, f64>) -> HashMap<String, f64> {
-    if closeness.len() < AT_LEAST {
-        return HashMap::new();
-    }
-    let count = closeness.len() as f64;
-    let mean = closeness.values().sum::<f64>() / count;
-    let deviation = (closeness
-        .values()
-        .map(|value| (value - mean).powi(2))
-        .sum::<f64>()
-        / count)
-        .sqrt();
-    if deviation <= f64::EPSILON {
-        return HashMap::new();
-    }
-    closeness
-        .iter()
-        .map(|(id, value)| (id.clone(), (value - mean) / deviation))
-        .filter(|(_, z)| *z >= STANDS_OUT)
-        .collect()
-}
+/// How much each memory stands out by meaning from the rest (see
+/// `myriad_agent_rules::memory::rank::standing_out`).
+pub use myriad_agent_rules::memory::rank::standing_out;
 
 /// `FILL_PER_ASK` for callers outside.
 pub const FILL: usize = FILL_PER_ASK;
@@ -520,5 +511,86 @@ mod tests {
         // Too few to know what the rest are like.
         let few: HashMap<String, f64> = [("a".to_string(), 0.9), ("b".to_string(), 0.1)].into();
         assert!(standing_out(&few).is_empty());
+    }
+}
+
+/// The vectors kept for `rows` under the model in use, by memory id; up to
+/// `fill` of those still without one are given one behind the reply. None
+/// when there is no model or the vectors could not be read.
+pub async fn vectors_of<C: ConnectionTrait>(
+    db: &C,
+    rows: &[Memo],
+    fill: usize,
+) -> Option<HashMap<String, Vec<f32>>> {
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        let _ = (db, fill);
+        return Some(
+            rows.iter()
+                .filter_map(|row| {
+                    let vector = crate::services::channel_group::g0::vector(row.content.trim())?;
+                    Some((row.id.clone(), vector))
+                })
+                .collect(),
+        );
+    }
+    let meaning = Meaning::current().await?;
+    let model = meaning.model.as_str();
+    let mut vectors: HashMap<String, Vector> = HashMap::new();
+    let mut unknown: Vec<Memo> = Vec::new();
+    for row in rows {
+        match cached(&KNOWN, model, &digest(&row.content)) {
+            Some(vector) => {
+                vectors.insert(row.id.clone(), vector);
+            }
+            None => unknown.push(row.clone()),
+        }
+    }
+    let kept = stored(db, model, &unknown).await.ok()?;
+    for row in &unknown {
+        if let Some(vector) = kept.get(&row.id) {
+            keep(&KNOWN, model, &digest(&row.content), vector.clone());
+            vectors.insert(row.id.clone(), vector.clone());
+        }
+    }
+    // Rows come newest first: the newest without a vector are embedded first.
+    let missing: Vec<Memo> = unknown
+        .into_iter()
+        .filter(|row| !vectors.contains_key(&row.id))
+        .take(fill)
+        .collect();
+    fill_behind(missing);
+    Some(
+        vectors
+            .into_iter()
+            .map(|(id, vector)| (id, vector.as_ref().clone()))
+            .collect(),
+    )
+}
+
+/// The vector of what was asked, under the model in use; none when there is
+/// none or it did not answer in time.
+pub async fn embed_asked(query: &str) -> Option<Vec<f32>> {
+    let query = query.trim();
+    #[cfg(test)]
+    if crate::services::channel_group::g0::on() {
+        return crate::services::channel_group::g0::vector(query);
+    }
+    let meaning = Meaning::current().await?;
+    let model = meaning.model.as_str();
+    if let Some(vector) = cached(&ASKED, model, query) {
+        return Some(vector.as_ref().clone());
+    }
+    match tokio::time::timeout(ASK_WITHIN, meaning.analyzer.embed(&[query.to_string()])).await {
+        Ok(Ok(mut embedded)) if !embedded.is_empty() => {
+            let vector = Arc::new(embedded.swap_remove(0));
+            keep(&ASKED, model, query, vector.clone());
+            Some(vector.as_ref().clone())
+        }
+        _ => {
+            FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!("embedding what was asked failed or timed out; recalling by words");
+            None
+        }
     }
 }

@@ -409,11 +409,6 @@ pub(crate) fn database() -> Option<sea_orm::DatabaseConnection> {
     with(|world| world.db.clone()).flatten()
 }
 
-/// Whether the scene has a database of its own.
-pub(crate) fn has_db() -> bool {
-    database().is_some()
-}
-
 /// What the embedding model gives for `text`, in the scene.
 pub(crate) fn vector(text: &str) -> Option<Vec<f32>> {
     with(|world| world.vectors.get(text).cloned()).flatten()

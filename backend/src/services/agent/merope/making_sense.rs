@@ -1,100 +1,19 @@
-//! Making sense of a group chat before answering in it, and carrying what
-//! people there told her about herself (see `myriad_merope::making_sense`).
-
-use std::time::Duration;
+//! What people told her about herself in private, and letting old tellings
+//! fade (see `myriad_merope::making_sense`). In a group her reading of the
+//! talk, and what the group told her, is her group mind's
+//! (`myriad_merope::group`).
 
 use sea_orm::DatabaseConnection;
 
-use super::call::{self, Voice};
 use crate::services::agent::memory::unified;
-use myriad_merope::making_sense::{SCHEMA_NAME, Sense, input, parse, schema, system};
 
 pub const SOURCE: &str = "about_me";
-/// Reading is done while she would be reading anyway; past this she answers
-/// without it.
-const READ_WITHIN: Duration = Duration::from_secs(8);
 /// What she was told stays with her this long unless it comes up again.
 const FADE_AFTER: chrono::Duration = chrono::Duration::days(60);
 /// The same thing, still on the screen, is read again every turn: once in
 /// this long is being told once.
 const TOLD_ONCE_WITHIN: chrono::Duration = chrono::Duration::minutes(30);
 const TOLD_SHOWN: u64 = 3;
-/// Older tellings the talk can bring back besides those.
-const TOLD_BROUGHT_BACK: usize = 2;
-
-/// The words a judgment's answer says she is not sure of.
-fn unsure_in(raw: &str) -> Vec<String> {
-    myriad_agent_rules::extract_json_object_from_ai_response(raw.trim())
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-        .map(|value| myriad_merope::memes::unsure_terms(&value))
-        .unwrap_or_default()
-}
-
-/// What she makes of a group's talk (`venue` as sessions keep it):
-/// `conversation` is its recent lines, hers as `you：…`, the one she answers
-/// last. Billed to `owner`.
-pub async fn read(owner: i32, venue: &str, conversation: &[String]) -> Option<Sense> {
-    let soul = crate::services::agent::identity::get_speaking_soul()
-        .await
-        .unwrap_or_default();
-    let raw = call::Ask::new(Voice::Judge, owner, "group_making_sense")
-        .within(READ_WITHIN)
-        .json_raw(&system(&soul), &input(conversation), SCHEMA_NAME, &schema())
-        .await
-        .ok()?;
-    // Words or memes in the talk she is not sure of: hers to look up.
-    super::memes::learn(owner, venue, unsure_in(&raw), conversation);
-    parse(&raw)
-}
-
-/// Keep what people in the group at `venue` (stored form, `group:…`) told
-/// her about herself, unless she was told something there just now.
-pub async fn remember_told(db: &DatabaseConnection, venue: &str, told: &str, line: &str) {
-    let lately = unified::latest_in_venue(db, venue, SOURCE, 1)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .any(|row| {
-            crate::services::agent::memory::utc_now().fixed_offset() - row.created_at
-                < TOLD_ONCE_WITHIN
-        });
-    if lately {
-        return;
-    }
-    let evidence = serde_json::json!({ "line": line }).to_string();
-    match unified::remember_in_venue(db, venue, told, &evidence, SOURCE).await {
-        Ok(Some(_)) => {
-            tracing::info!(%venue, "[Merope] kept what the group told her about herself")
-        }
-        Ok(None) => {}
-        Err(error) => tracing::warn!(%error, "[Merope] could not keep what she was told"),
-    }
-}
-
-/// What people in the group told her about herself, latest first, and any
-/// older telling what was `said` brings back, as a section, if anything.
-pub async fn told_section(db: &DatabaseConnection, venue: &str, said: &str) -> Option<String> {
-    let rows = unified::fresh_and_brought(
-        db,
-        venue,
-        SOURCE,
-        TOLD_SHOWN as usize,
-        Some(said),
-        TOLD_BROUGHT_BACK,
-    )
-    .await;
-    let now = crate::services::agent::memory::utc_now();
-    let told: Vec<(String, String)> = rows
-        .into_iter()
-        .map(|row| {
-            (
-                row.content,
-                myriad_merope::doing::ago_text(now - row.created_at.with_timezone(&chrono::Utc)),
-            )
-        })
-        .collect();
-    myriad_merope::making_sense::told_section(&told)
-}
 
 /// Keep what someone told her about herself in private, unless they told
 /// her something just now.

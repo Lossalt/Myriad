@@ -498,9 +498,34 @@ pub enum Answer {
     Prepared {
         ok: bool,
     },
-    Sense {
+    /// Her speaking soul.
+    Soul {
         #[serde(default)]
-        section: Option<String>,
+        text: String,
+    },
+    /// Memories read (none when they could not be).
+    Rows {
+        #[serde(default)]
+        rows: Vec<MemoryRow>,
+    },
+    /// The cues kept for memories, one per line, by memory id.
+    Cues {
+        #[serde(default)]
+        cues: std::collections::HashMap<String, String>,
+    },
+    /// The vectors of memories that have one, by memory id.
+    Vectors {
+        #[serde(default)]
+        vectors: Vec<(String, Vec<f32>)>,
+        /// False when there is no embedding model or the vectors could not
+        /// be read: what was asked is then not embedded either.
+        #[serde(default)]
+        known: bool,
+    },
+    /// The vector of what was asked (none when the model gave none).
+    Embedded {
+        #[serde(default)]
+        vector: Option<Vec<f32>>,
     },
     LedgerRead {
         #[serde(default)]
@@ -531,6 +556,10 @@ pub enum Answer {
     Asked {
         #[serde(default)]
         raw: Option<String>,
+        /// Why there is no answer: unavailable, timeout, cut (the stream
+        /// broke off), invalid, or failed.
+        #[serde(default)]
+        failure: Option<String>,
     },
     Sent {
         ok: bool,
@@ -675,11 +704,16 @@ pub enum Effect {
     Identify { id: String, from: String },
     /// Whether `user_id` may talk to her now, and their session here.
     Prepare { id: String, user_id: i32 },
-    /// What she makes of the talk before answering it.
-    MakeSense {
-        id: String,
+    /// Read something kept: hers (on her host) or others' (on the site).
+    Read { id: String, of: Of, what: ToRead },
+    /// The vector of `text`, as the embedding model gives it.
+    Embed { id: String, text: String },
+    /// Keep something: hers or others'.
+    Write { of: Of, what: ToWrite },
+    /// Words or memes in the talk she is not sure of: hers to look up.
+    Learn {
+        terms: Vec<String>,
         conversation: Vec<String>,
-        said: String,
     },
     /// What the group's ledger has kept of its pieces.
     ReadLedger { id: String },
@@ -728,6 +762,8 @@ pub enum Effect {
     /// Ask the model.
     Ask {
         id: String,
+        #[serde(default)]
+        how: AskKind,
         voice: String,
         owner: i32,
         operation: String,
@@ -744,6 +780,106 @@ pub enum Effect {
         pieces: Vec<Piece>,
         quote: bool,
     },
+}
+
+/// How a model is asked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AskKind {
+    /// For a JSON answer to `schema`, with `system`.
+    #[default]
+    Json,
+    /// What she says to a whole prompt (`input`), streamed.
+    Say,
+    /// What she makes of pictures.
+    Look,
+}
+
+/// Whose a thing read or kept is: hers lives on her host, others' on the
+/// site (H4-g2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Of {
+    Hers,
+    Others,
+}
+
+/// Which memories come first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Newest {
+    Updated,
+    Created,
+}
+
+/// What to read. The reads are plain: which rows, newest first, how many;
+/// what comes to mind of them is worked out here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ToRead {
+    Soul,
+    /// Memories of one source kept in one venue, still standing.
+    VenueRows {
+        venue: String,
+        source: String,
+        newest: Newest,
+        limit: u64,
+    },
+    Cues {
+        ids: Vec<String>,
+    },
+    /// The vectors kept for these memories (as read, with their cues), by
+    /// the model in use; up to `fill` of those without one are given one
+    /// behind the reply.
+    Vectors {
+        rows: Vec<(String, String)>,
+        fill: usize,
+    },
+}
+
+/// What to keep.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ToWrite {
+    /// Something kept in one group, about no account.
+    RememberInVenue {
+        venue: String,
+        content: String,
+        evidence: String,
+        source: String,
+    },
+}
+
+/// A memory as it is read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryRow {
+    pub id: String,
+    pub content: String,
+    #[serde(default)]
+    pub concepts: Vec<myriad_agent_rules::Concept>,
+    pub source: String,
+    /// µs.
+    pub created_at: i64,
+    #[serde(default)]
+    pub access_count: i32,
+    #[serde(default)]
+    pub last_accessed_at: Option<i64>,
+}
+
+impl MemoryRow {
+    pub(crate) fn view(&self) -> myriad_agent_rules::memory::rank::Row<'_> {
+        let at = |micros: i64| lines::time(micros).fixed_offset();
+        myriad_agent_rules::memory::rank::Row {
+            id: &self.id,
+            content: &self.content,
+            concepts: &self.concepts,
+            source: &self.source,
+            created_at: at(self.created_at),
+            access_count: self.access_count,
+            last_accessed_at: self.last_accessed_at.map(at),
+        }
+    }
 }
 
 /// What one step came to.
