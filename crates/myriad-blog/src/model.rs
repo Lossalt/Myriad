@@ -39,6 +39,8 @@ pub struct BlogPost {
     pub authors: Vec<String>,
     /// 封面地址。和正文第一张图相同时不写进 front matter。
     pub cover: Option<String>,
+    /// 库里已有这篇的 AI 注释或播客。只有这时页面才挂伴读岛。
+    pub companion: bool,
 }
 
 /// 友情链接。字段按纯文本处理，导出时再转义。

@@ -100,6 +100,7 @@ fn build_in(root: &Path, hugo: &str, theme_id: &str, theme_dir: Option<&Path>) {
         category: Some("技术".to_string()),
         authors: vec!["站长".to_string()],
         cover: Some("/media/assets/abc123/cover.jpg".to_string()),
+        companion: true,
     };
     let links = [FriendLink {
         name: "示例友站".to_string(),
@@ -174,6 +175,10 @@ fn build_in(root: &Path, hugo: &str, theme_id: &str, theme_dir: Option<&Path>) {
     assert!(
         page.contains("/embed/comments/42"),
         "theme={theme_id} 缺少评论 iframe\n{page}"
+    );
+    assert!(
+        page.contains("src=\"/embed/companion/42\""),
+        "theme={theme_id} 缺少伴读岛\n{page}"
     );
 
     let cleaned = postprocess_html(&page);

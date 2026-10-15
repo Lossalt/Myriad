@@ -36,7 +36,24 @@ fn post() -> BlogPost {
         category: Some("随笔".to_string()),
         authors: vec!["站长".to_string(), "  ".to_string(), "乙".to_string()],
         cover: None,
+        companion: false,
     }
+}
+
+#[test]
+fn the_companion_island_is_only_on_posts_that_have_one() {
+    let mut note = post();
+    let (_, file) = render_post_file(&site(), &note, DEFAULT_THEME_ID);
+    assert!(!file.contains("myriad-island"), "{file}");
+
+    note.companion = true;
+    let (_, file) = render_post_file(&site(), &note, DEFAULT_THEME_ID);
+    assert!(file.contains("<details class=\"myriad-island\">"), "{file}");
+    assert!(file.contains("src=\"/embed/companion/42\""), "{file}");
+    let island = &file[file.find("<details class=\"myriad-island\">").unwrap()..];
+    assert!(!island.contains("loading=\"lazy\""), "{island}");
+    assert!(NOTES_CSS.contains(".myriad-island__panel{"));
+    assert!(NOTES_CSS.contains("mark.myriad-annot{"));
 }
 
 fn front_matter(file: &str) -> Value {

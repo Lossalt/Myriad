@@ -66,6 +66,14 @@ pub fn prepare_content_html(html: &str, origin: &str, item_id: i32) -> String {
     )
 }
 
+/// 伴读岛：页底的药丸，展开是同源 iframe。页面不跑脚本，开合靠 `<details>`。
+/// iframe 不能懒加载：收起时它也要加载，正文里的注释高亮由它来画。
+pub fn companion_island_html(item_id: i32) -> String {
+    format!(
+        "<details class=\"myriad-island\"><summary class=\"myriad-island__pill\"><span class=\"myriad-island__dot\" aria-hidden=\"true\"></span><span class=\"myriad-island__label\">AI 伴读</span></summary><iframe class=\"myriad-island__panel\" src=\"/embed/companion/{item_id}\" title=\"AI 伴读\"></iframe></details>\n"
+    )
+}
+
 /// 正文里第一张 `<img>` 的 `src`。封面去重用它，不把 `<source>` 算进去。
 pub fn first_content_image(html: &str) -> Option<String> {
     let mut first = None;

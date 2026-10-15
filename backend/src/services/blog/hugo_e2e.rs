@@ -62,6 +62,7 @@ async fn papermod_zip_build_strips_scripts_and_keeps_notes_css() {
         category: None,
         authors: vec!["站长".to_string()],
         cover: None,
+        companion: true,
     }];
     let friends = [FriendLink {
         name: "友站".to_string(),
@@ -84,6 +85,7 @@ async fn papermod_zip_build_strips_scripts_and_keeps_notes_css() {
     let page =
         fs::read_to_string(layout.current_dir().join("posts/hello/index.html")).expect("post page");
     assert!(page.contains("/embed/comments/7"), "{page}");
+    assert!(page.contains("src=\"/embed/companion/7\""), "{page}");
     assert!(page.contains(myriad_blog::NOTES_CSS_HREF), "{page}");
     assert!(
         layout.current_dir().join("_myriad/notes.css").is_file(),

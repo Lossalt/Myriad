@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::config::{render_hugo_config, resolved_description, resolved_site_title};
 use crate::cover::{absolutize_cover, cover_front_matter, covers_same_asset};
 use crate::model::{BlogPost, BlogSettings, BlogSite, FriendLink};
-use crate::rewrite::prepare_content_html;
+use crate::rewrite::{companion_island_html, prepare_content_html};
 use crate::slug::{fallback_slug, validate_slug};
 use crate::summary::summarize;
 use crate::urlutil::{escape_html, is_javascript_url};
@@ -17,7 +17,10 @@ pub fn render_post_file(site: &BlogSite, post: &BlogPost, theme_id: &str) -> (St
     } else {
         fallback_slug(post.item_id)
     };
-    let body = prepare_content_html(&post.content_html, &site.origin, post.item_id);
+    let mut body = prepare_content_html(&post.content_html, &site.origin, post.item_id);
+    if post.companion {
+        body.push_str(&companion_island_html(post.item_id));
+    }
     let summary_source = if post.summary_source.trim().is_empty() {
         post.content_html.as_str()
     } else {

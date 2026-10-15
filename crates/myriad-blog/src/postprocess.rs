@@ -19,6 +19,29 @@ math[display=block]{margin:1em 0;font-size:1.15em}\n\
 .myriad-comments,.myriad-friend-apply{display:block;width:100%;border:0;margin-top:2rem}\n\
 .myriad-comments{height:420px}\n\
 .myriad-friend-apply{height:760px}\n\
+.myriad-island{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));z-index:2147483000;transform:translateX(-50%);margin:0;padding:0;color-scheme:light dark;font:500 13px/1 ui-sans-serif,system-ui,sans-serif}\n\
+.myriad-island__pill{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:999px;list-style:none;cursor:pointer;user-select:none;white-space:nowrap;color:#fafaf9;background:rgba(24,24,27,.84);-webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5);box-shadow:0 10px 30px rgba(0,0,0,.22),inset 0 0 0 1px rgba(255,255,255,.1);transition:transform .2s ease}\n\
+.myriad-island__pill::-webkit-details-marker{display:none}\n\
+.myriad-island__pill::marker{content:\"\"}\n\
+.myriad-island__pill:hover{transform:translateY(-1px)}\n\
+.myriad-island__pill:focus-visible{outline:2px solid #a78bfa;outline-offset:3px}\n\
+.myriad-island__dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#38bdf8)}\n\
+.myriad-island[data-state=playing] .myriad-island__dot{animation:myriad-island-pulse 1.4s ease-in-out infinite}\n\
+.myriad-island__panel{position:absolute;left:50%;bottom:calc(100% + 12px);width:min(420px,calc(100vw - 24px));max-width:none;height:min(560px,calc(100vh - 110px));transform:translateX(-50%);margin:0;border:0;border-radius:24px;background:rgba(250,250,249,.88);-webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4);box-shadow:0 24px 60px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.06)}\n\
+@media (prefers-color-scheme:dark){.myriad-island__panel{background:rgba(24,24,27,.88);box-shadow:0 24px 60px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08)}}\n\
+@keyframes myriad-island-pulse{50%{transform:scale(1.6);opacity:.55}}\n\
+mark.myriad-annot{color:inherit;background:none;border-bottom:1.5px dashed var(--myriad-annot,#f97316);border-radius:2px;cursor:help;transition:background-color .2s}\n\
+mark.myriad-annot:hover,mark.myriad-annot:focus-visible,mark.myriad-annot.is-flash{outline:none;background:color-mix(in srgb,var(--myriad-annot,#f97316) 22%,transparent)}\n\
+mark.myriad-annot[data-type=reference]{--myriad-annot:#3b82f6}\n\
+mark.myriad-annot[data-type=implicit]{--myriad-annot:#a855f7}\n\
+mark.myriad-annot[data-type=context]{--myriad-annot:#22c55e}\n\
+mark.myriad-annot[data-type=abbreviation]{--myriad-annot:#ec4899}\n\
+.myriad-annot-tip{position:fixed;z-index:2147483001;max-width:min(320px,calc(100vw - 24px));padding:10px 12px;border-radius:14px;color:#f5f5f4;background:rgba(24,24,27,.94);box-shadow:0 12px 32px rgba(0,0,0,.28);font:13px/1.55 ui-sans-serif,system-ui,sans-serif;pointer-events:none}\n\
+.myriad-annot-tip[hidden]{display:none}\n\
+.myriad-annot-tip small{display:block;margin-bottom:4px;font-size:11px;opacity:.65}\n\
+.myriad-annot-tip b{display:block;margin-bottom:2px;font-weight:600}\n\
+@media (prefers-reduced-motion:reduce){.myriad-island__pill,mark.myriad-annot{transition:none}.myriad-island[data-state=playing] .myriad-island__dot{animation:none}}\n\
+@media print{.myriad-island,.myriad-annot-tip{display:none}}\n\
 ";
 
 /// `/blog/*` 响应头。脚本全部不允许；样式允许内联，是因为主题把 CSS 写在标签上。
