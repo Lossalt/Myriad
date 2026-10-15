@@ -11,10 +11,11 @@ pub struct BlogLayout {
 }
 
 impl BlogLayout {
+    /// Hugo 在站点目录里运行，相对路径会被它按那里解析，所以一律转成绝对路径。
     pub fn from_data_paths(paths: &DataPaths) -> Self {
         Self {
-            root: paths.blog.clone(),
-            hugo_cache: paths.cache.join("blog-hugo"),
+            root: absolute(&paths.blog),
+            hugo_cache: absolute(&paths.cache.join("blog-hugo")),
         }
     }
 
@@ -42,6 +43,10 @@ impl BlogLayout {
 
 pub fn layout() -> BlogLayout {
     BlogLayout::from_data_paths(crate::services::data_paths::paths())
+}
+
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// 把 `fresh` 换成当前输出，然后删掉旧目录。失败时尽量把旧目录放回去。
@@ -78,6 +83,31 @@ pub fn publish_tree(current: &Path, fresh: &Path) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_data_dirs_become_absolute() {
+        let data = PathBuf::from("data");
+        let cache = PathBuf::from("cache");
+        let paths = DataPaths {
+            root: data.clone(),
+            phantasi: data.join("phantasi"),
+            phantasi_icons: data.join("phantasi/icons"),
+            tapps: data.join("tapps"),
+            agent: data.join("agent"),
+            cache: cache.clone(),
+            cache_platforms: cache.join("platforms"),
+            cache_raw: cache.join("raw"),
+            cache_images: cache.join("images"),
+            widget_fonts: data.join("site/widget-fonts"),
+            media: data.join("media"),
+            blog: data.join("blog"),
+        };
+        let layout = BlogLayout::from_data_paths(&paths);
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(layout.root, cwd.join("data/blog"));
+        assert_eq!(layout.hugo_cache, cwd.join("cache/blog-hugo"));
+        assert!(layout.work_dir().is_absolute());
+    }
 
     #[test]
     fn publish_replaces_and_deletes_the_previous_tree() {
