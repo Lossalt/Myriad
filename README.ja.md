@@ -113,8 +113,8 @@ Chat / Work · パネル
 </td>
 <td width="33%" valign="top">
 
-**Phantasi**（手帳）`/journal`
-RSS · Notion · RSSHub
+**Phantasi** · ブログ `/blog`
+RSS · Notion · RSSHub · Hugo
 
 </td>
 <td width="33%" valign="top">
@@ -279,9 +279,7 @@ Page：Canvas / WebGL、パッケージ内アセット、音声、任意のホ�
 
 ## Phantasi
 
-内部名。ユーザー向けの製品名は**手帳**（en: Journal）。RSS、Notion、RSSHub、任意の AI 強化。既定は誰でも閲覧可。ログインユーザーは既読を記録でき、スターとソース管理は管理者専用。管理者は `/journal/workbench` でソースを管理。相互リンクはホームページに出せる。
-
-ボード：`/journal`（購読）、`/journal/notes`、`/journal/friends`。スター：`/journal/starred`。自身の記事：`/journal/articles/...`。ノート RSS（`/journal/notes.xml`）は管理者が有効化するまで非公開。ノートは TeX 数式、共同著者、本文カラム、本文ウィジェットに対応。クローラは HTML シェル、ブラウザはアプリ。
+購読・ノート・コメントのバックエンド。RSS、Notion、RSSHub、任意の AI 強化。公開済みノートはインストール済みの任意の Hugo テーマで静的ブログになり、`/blog`（記事は `/blog/posts/{slug}/`）に置かれる。ページはスクリプトを実行せず、コメントと相互リンク申請は同一オリジンの埋め込みページ。管理者は `/studio` で書く。購読は内蔵の「購読」リーダーアプリで読む。ノート RSS（`/api/phantasi/notes.xml`）は管理者が有効化するまで非公開。ノートは TeX 数式、共同著者、本文カラム、本文ウィジェットに対応。
 
 ---
 

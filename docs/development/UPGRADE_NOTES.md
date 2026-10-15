@@ -1,5 +1,15 @@
 # 升级说明
 
+## 手帐访客界面下线，笔记改由博客发布（破坏性变更）
+
+访客侧 `/journal` 整棵树下线，**不做 301**：板块、阅读器、收藏、主题流、朋友们与工作台都不再有前端地址，爬虫薄壳和 sitemap 里的手帐条目一并删除。
+
+- **博客：** 已发布笔记由 Hugo 生成静态站，挂在 `/blog`，文章地址 `/blog/posts/{slug}/`。镜像自带 Hugo extended 与 Dart Sass；本机直接跑后端时需要 `hugo` 在 `PATH` 上（或设 `HUGO_BIN`），没有 Hugo 时博客显示为不可用，不挡启动。
+- **slug：** 启动时给已发布笔记补 slug，并把库里笔记行上旧的 `/journal...` 链接改成博客地址。联邦对象 ID 仍是 `/phantasi/articles/{id}`。
+- **创作台：** 笔记编辑与创作侧管理搬到 `/studio`，仅站长可见；订阅源管理不再有内置界面，改用示例应用「订阅」（RSS reader TAPP）。
+- **RSS：** `/journal/notes.xml` 删除，只剩 `/api/phantasi/notes.xml`。
+- **反代：** 自带 proxy 把 `/blog` 转给后端；自己按路径分流到后端和前端的反代，也要把 `/blog` 交给后端。`/embed/*` 是 SPA 页面，只允许同源 iframe。
+
 ## 最低支持版本 0.6.1
 
 早于 0.6.1 的库不能直接升到本版本：`Migrator::up` 在任何改动之前拒绝启动，并提示先升到

@@ -111,8 +111,8 @@ Chat / Work · panel
 </td>
 <td width="33%" valign="top">
 
-**Phantasi** (Journal) `/journal`  
-RSS · Notion · RSSHub
+**Phantasi** · blog `/blog`  
+RSS · Notion · RSSHub · Hugo
 
 </td>
 <td width="33%" valign="top">
@@ -277,9 +277,7 @@ Owner persona, Bot pairing, and heartbeat live at `/agent/settings` — not `/co
 
 ## Phantasi
 
-Internal name for the Journal (zh: 手帐, ja/zh-TW: 手帳, ko: 수첩). RSS, Notion, RSSHub, optional AI enrichment. Default: anyone can read. Signed-in users mark read; starred items and source management are admin-only. Admins manage sources from `/journal/workbench`. Friend links can appear on the homepage.
-
-Boards: `/journal` (feeds), `/journal/notes`, `/journal/friends`. Starred: `/journal/starred`. Own articles: `/journal/articles/...`. Notes RSS (`/journal/notes.xml`) is off until an admin enables it. Notes support TeX math, co-authors, columns, and in-body widgets. Crawlers receive an HTML shell; browsers receive the app.
+Feeds, notes and comments backend. RSS, Notion, RSSHub, optional AI enrichment. Published notes become a static Hugo site at `/blog` (posts at `/blog/posts/{slug}/`) using any installed Hugo theme; pages run no scripts, and comments and friend-link applications are same-origin embeds. The owner writes in `/studio`. Subscriptions are read in the built-in RSS reader app. Notes RSS (`/api/phantasi/notes.xml`) is off until an admin enables it. Notes support TeX math, co-authors, columns, and in-body widgets.
 
 ---
 

@@ -113,8 +113,8 @@ Chat / Work · 面板
 </td>
 <td width="33%" valign="top">
 
-**Phantasi**（手帐）`/journal`  
-RSS · Notion · RSSHub
+**Phantasi** · 博客 `/blog`  
+RSS · Notion · RSSHub · Hugo
 
 </td>
 <td width="33%" valign="top">
@@ -279,9 +279,7 @@ Page：Canvas / WebGL、包内资源、音频、可选宿主注入的 [Three.js]
 
 ## Phantasi
 
-内部名；用户界面叫**手帐**（en: Journal）。RSS、Notion、RSSHub，可选 AI 增强。默认任何人可读。登录用户可标记已读；收藏与源管理仅限管理员。管理员在 `/journal/workbench` 管理源。友情链接可出现在首页。
-
-板块：`/journal`（订阅）、`/journal/notes`、`/journal/friends`。收藏：`/journal/starred`。自有文章：`/journal/articles/...`。笔记 RSS（`/journal/notes.xml`）默认关闭，管理员开启后才公开。笔记支持 TeX 公式、联合作者、正文分栏与正文小组件。爬虫获得 HTML 壳，浏览器进入应用。
+订阅、笔记与评论的后端。RSS、Notion、RSSHub，可选 AI 增强。已发布笔记用任意已安装的 Hugo 主题生成静态博客，挂在 `/blog`（文章 `/blog/posts/{slug}/`）；页面不跑脚本，评论与友联申请是同源嵌入页。站长在 `/studio` 写作。订阅在内置的「订阅」阅读器应用里读。笔记 RSS（`/api/phantasi/notes.xml`）默认关闭，管理员开启后才公开。笔记支持 TeX 公式、联合作者、正文分栏与正文小组件。
 
 ---
 

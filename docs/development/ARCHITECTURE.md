@@ -75,7 +75,7 @@ outstanding request.
 ## Backend surfaces (high level)
 
 - **Platforms / profiles**：GitHub、Bilibili、Steam、网易云、YouTube、Bangumi、Discord、X、MAL、Xbox、PSN 等同步与资料库
-- **Phantasi**（用户界面「手帐」，地址 `/journal`）：RSS / Notion / RSSHub / 笔记 / 工作台；笔记 RSS 默认关闭
+- **Phantasi**：RSS / Notion / RSSHub / 笔记 / 评论；已发布笔记由 Hugo 生成静态博客，挂在 `/blog`；笔记 RSS 默认关闭
 - **Agent**（项目名 Arael）：Chat / Work / 记忆 / MCP；人设 / 频道 / 心跳在 `/agent/settings`，MCP 服务器列表仍在 `/config` 高级配置
   - `backend/src/persona/` owns initialization and supervised background drivers. Autonomy and speech ticks are serial within independent drivers; heartbeat runs one reserved batch with two active executions. `persona-worker` hosts this runtime together with Agent/speech/rig APIs, run hubs, cancellation, notification SSE, TAPP interaction callbacks, four channel bot connections and their recovery loop. Web excludes this domain; seven fixed first-party capabilities call authenticated private web RPC to reach web-owned schedulers/processors.
   - MCP runtime lives in `crates/myriad-mcp` (no DB or backend dependency); backend injects host transport policy and status notifications. Production blocks local stdio; operator-configured Streamable HTTP gateway connections support bounded JSON/SSE, session headers and non-retryable ambiguous calls. The optional fixed-container gateway deployment adds bubblewrap namespaces, cgroup limits and bounded guest destruction without a Docker socket.
@@ -92,7 +92,8 @@ Schema 权威在 `backend/migrations/`（SeaORM），不是独立 `database/` SQ
 ## Frontend surfaces (high level)
 
 - 首页可编排 widgets（欢迎、音乐、天气、访客、游戏 Presence、Report Card、社交网络、Tapp 等）
-- Library / Phantasi（`/journal`）/ Reports / Config / Agent 设置（`/agent/settings`）/ Tapp Store
+- Library / 创作台（`/studio`，仅站长）/ Reports / Config / Agent 设置（`/agent/settings`）/ Tapp Store
+- 博客的评论与友联申请是同源嵌入页（`/embed/*`），由 `/blog` 静态页框住
 - i18n：`zh-CN` / `zh-TW` / `en-US` / `ja-JP` / `ko-KR` / `fr-FR` / `de-DE`
 
 ## Frontend conventions

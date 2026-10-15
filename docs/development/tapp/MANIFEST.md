@@ -79,7 +79,7 @@ Page/Widget 模板必须是 `.html`；代码与模板类声明资源必须是安
 | 字段 | 类型 | 必填 | 说明 |
 | ---- | ---- | ---- | ---- |
 | `id` | string | ✅ | 稳定 id，供 SDK 引用（1–64，字母数字与 `._-`） |
-| `url` | string | ✅ | 基址：**HTTPS**；仅 `localhost` / `127.0.0.1` / `::1` 允许 `http`；禁止凭据与 `#fragment`。`match: same-origin` 时改为**根相对路径**（如 `/journal`） |
+| `url` | string | ✅ | 基址：**HTTPS**；仅 `localhost` / `127.0.0.1` / `::1` 允许 `http`；禁止凭据与 `#fragment`。`match: same-origin` 时改为**根相对路径**（如 `/library`） |
 | `match` | string | ❌ | `exact`（默认）/ `prefix` / `origin` / `same-origin` |
 
 匹配规则：
@@ -120,8 +120,8 @@ await Tapp.ui.openUrl({ id: "status" });
 // → https://status.example.com/health
 
 // same-origin：在任何自托管域名下都解析到当前站点
-await Tapp.ui.openUrl({ id: "self", path: "/journal/notes/1" });
-// → https://<当前站点域名>/journal/notes/1
+await Tapp.ui.openUrl({ id: "self", path: "/blog/posts/hello/" });
+// → https://<当前站点域名>/blog/posts/hello/
 
 // 未声明 id 或逃出 prefix → 失败
 await Tapp.ui.openUrl({ id: "docs", path: "../evil" }); // reject
