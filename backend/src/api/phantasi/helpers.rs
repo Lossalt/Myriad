@@ -651,7 +651,6 @@ mod tests {
         for (src, name) in [
             (include_str!("reading_mark.rs"), "update_item_state"),
             (include_str!("reading_mark.rs"), "mark_all_read"),
-            (include_str!("reading_sync.rs"), "sync_states"),
             (include_str!("comments.rs"), "create_comment"),
             (include_str!("comments.rs"), "update_comment"),
             (include_str!("comments.rs"), "delete_comment"),

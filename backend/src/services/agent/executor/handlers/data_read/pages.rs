@@ -369,7 +369,6 @@ pub(super) async fn execute_phantasi_page_content(
                 "readerState": {
                     "isRead": user_state.as_ref().map(|s| s.is_read).unwrap_or(false),
                     "isStarred": user_state.as_ref().map(|s| s.is_starred).unwrap_or(false),
-                    "readProgress": user_state.as_ref().and_then(|s| s.read_progress),
                     "readAt": user_state.as_ref().and_then(|s| s.read_at.map(|t| t.to_string()))
                 },
                 "navigation": {
@@ -384,7 +383,7 @@ pub(super) async fn execute_phantasi_page_content(
                 },
                 "actions": {
                     "available": [
-                        "markAsRead", "toggleStar", "updateProgress",
+                        "markAsRead", "toggleStar",
                         "fetchFulltext", "shareArticle"
                     ]
                 }

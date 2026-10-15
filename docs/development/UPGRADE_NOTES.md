@@ -66,7 +66,7 @@ Brew 内部名改为 Phantasi，用户界面改为 **手帐**（en: Journal）�
 
 - **TAPP：** 批准列里的 `brew:read|write|manage|commentWrite` 会被改写成 `phantasi:*`。包内 Manifest 或源码仍声明 `brew:*` / 调用 `Tapp.brewList` 的安装校验与签发 fail-closed，站长必须改 Manifest 后更新或重装。退役串 `brew:comment` 不映射。
 - **卫星品牌：** `source_type=brewlia` 改为 `phantasiai`（界面「AI 增强」）；导出格式改为 `.pipack`。本机旧 `.brewpack` 不再能导入，从库重新导出。
-- **阅读器：** 当时的用户地址是 `/journal/articles/{id}`，不是 `/phantasi/item/{id}`；它已随手帐下线删除，文章现在是 `/blog/posts/{slug}/`。协同仍走 `/api/phantasi/ws`。浏览器里的 `brew-reader-settings` 不双读。无 301。
+- **阅读器：** 当时的用户地址是 `/journal/articles/{id}`，不是 `/phantasi/item/{id}`；它已随手帐下线删除，文章现在是 `/blog/posts/{slug}/`。阅读进度同步 `POST /api/phantasi/sync-states` 与新条目推送 `GET /api/phantasi/ws` 也已删除，依赖它们的外部客户端需要改用逐条的 `/items/{id}/read` 等接口。浏览器里的 `brew-reader-settings` 不双读。无 301。
 - **联邦：** 对象 ID 仍是 `/phantasi/articles/{id}`。本实例不再认对端的 `brew-article` / `brew-recommend`。
 - **RSS：** `/brew/notes.xml` 当时改为 `/journal/notes.xml`，后者已随手帐下线删除，现在只有 `/api/phantasi/notes.xml`，默认关闭。无 301。旧 `/phantasi/notes.xml` 不是用户地址。
 - **磁盘：** 启动时若存在 `data/brew` 且没有 `data/phantasi`，会改名过去。

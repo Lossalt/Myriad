@@ -13,10 +13,8 @@ use sea_orm::{
     DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect,
     Statement, TransactionTrait, Value as SeaValue, sea_query::OnConflict,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
-use tokio::sync::broadcast;
 
 use crate::services::jobs::{Every, JobHandle, JobRunner};
 
@@ -516,35 +514,12 @@ const NOTE_SCHEDULE_INTERVAL_SECS: u64 = 15;
 /// 抓取 tick 的随机延后上限，错开共享同一张租约表的副本。
 const FEED_TICK_JITTER_SECS: u64 = 5;
 
-/// 通知广播通道容量
-const NOTIFICATION_CHANNEL_SIZE: usize = 100;
-
-/// 新文章通知消息
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NewItemsNotification {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    /// 所属用户；WebSocket 和持久通知必须据此隔离。
-    pub user_id: i32,
-    /// 订阅源 ID
-    pub source_id: i32,
-    /// 订阅源名称
-    pub source_name: String,
-    /// 新文章数量
-    pub new_count: i32,
-    /// 新文章标题列表（最多 5 个）
-    pub titles: Vec<String>,
-    pub timestamp: i64,
-}
-
 /// Phantasi 调度引擎
 pub struct PhantasiSchedulerEngine {
     db: DatabaseConnection,
     parser: FeedParser,
     notion_service: NotionService,
     rsshub_service: RsshubService,
-    /// 前端通知通道
-    notification_tx: broadcast::Sender<NewItemsNotification>,
     /// 抓取与定时发布两个循环在进程 job runner 里的句柄；空表示未运行。
     jobs: std::sync::Mutex<Vec<JobHandle>>,
 }
@@ -561,20 +536,13 @@ enum FetchOutcome {
 impl PhantasiSchedulerEngine {
     /// 创建调度引擎
     pub fn new(db: DatabaseConnection) -> Self {
-        let (notification_tx, _) = broadcast::channel(NOTIFICATION_CHANNEL_SIZE);
         Self {
             rsshub_service: RsshubService::new(db.clone()),
             db,
             parser: FeedParser::new(),
             notion_service: NotionService::new(),
-            notification_tx,
             jobs: std::sync::Mutex::new(Vec::new()),
         }
-    }
-
-    /// 获取通知订阅
-    pub fn subscribe_notifications(&self) -> broadcast::Receiver<NewItemsNotification> {
-        self.notification_tx.subscribe()
     }
 
     /// 启动调度引擎：订阅源抓取与手帐定时发布各是进程 job runner 上的一个循环，
@@ -608,7 +576,6 @@ impl PhantasiSchedulerEngine {
             },
         ));
         let feed_db = self.db.clone();
-        let notification_tx = self.notification_tx.clone();
         jobs.push(
             runner.periodic(
                 "phantasi feeds",
@@ -616,9 +583,8 @@ impl PhantasiSchedulerEngine {
                     .jitter(Duration::from_secs(FEED_TICK_JITTER_SECS)),
                 move || {
                     let db = feed_db.clone();
-                    let notification_tx = notification_tx.clone();
                     async move {
-                        if let Err(e) = Self::tick(&db, &notification_tx).await {
+                        if let Err(e) = Self::tick(&db).await {
                             tracing::error!("[PhantasiScheduler] Tick error: {}", e);
                         }
                     }
@@ -643,10 +609,7 @@ impl PhantasiSchedulerEngine {
     }
 
     /// 主调度循环 tick
-    async fn tick(
-        db: &DatabaseConnection,
-        notification_tx: &broadcast::Sender<NewItemsNotification>,
-    ) -> Result<(), String> {
+    async fn tick(db: &DatabaseConnection) -> Result<(), String> {
         let now = Utc::now();
         tracing::debug!("[PhantasiScheduler] Tick at {}", now);
 
@@ -668,7 +631,6 @@ impl PhantasiSchedulerEngine {
         // 并发处理，最多 MAX_CONCURRENT_FETCHES 个同时运行。
         // 收集本 tick 内新增了分类内容的 user_id，批末触发 phantasi-recommend 环网同步。
         let db_ref = db.clone();
-        let tx_ref = notification_tx.clone();
         let ring_users = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::<
             i32,
         >::new()));
@@ -676,12 +638,11 @@ impl PhantasiSchedulerEngine {
         stream::iter(due_sources)
             .map(|source| {
                 let db = db_ref.clone();
-                let tx = tx_ref.clone();
                 let ring_users = ring_users.clone();
                 async move {
                     let user_id = source.user_id;
                     let source_category = source.category.clone();
-                    let result = Self::process_source(&db, &tx, source, now).await;
+                    let result = Self::process_source(&db, source, now).await;
                     if let Ok(new_count) = &result {
                         if *new_count > 0
                             && source_category
@@ -717,7 +678,6 @@ impl PhantasiSchedulerEngine {
     /// Returns the number of newly inserted items on success (0 if none).
     async fn process_source(
         db: &DatabaseConnection,
-        notification_tx: &broadcast::Sender<NewItemsNotification>,
         source: phantasi_sources::Model,
         now: chrono::DateTime<Utc>,
     ) -> Result<i32, String> {
@@ -741,14 +701,8 @@ impl PhantasiSchedulerEngine {
         let parser = FeedParser::new();
         let notion_service = NotionService::new();
         let rsshub_service = RsshubService::new(db.clone());
-        match Self::fetch_and_apply(
-            db,
-            notification_tx,
-            (&parser, &notion_service, &rsshub_service),
-            source,
-            now,
-        )
-        .await?
+        match Self::fetch_and_apply(db, (&parser, &notion_service, &rsshub_service), source, now)
+            .await?
         {
             FetchOutcome::Fetched { new_count, .. } => Ok(new_count),
             FetchOutcome::Failed(_) => Ok(0),
@@ -765,14 +719,12 @@ impl PhantasiSchedulerEngine {
     /// and a storage failure releases it best-effort.
     async fn fetch_and_apply(
         db: &DatabaseConnection,
-        notification_tx: &broadcast::Sender<NewItemsNotification>,
         services: (&FeedParser, &NotionService, &RsshubService),
         source: phantasi_sources::Model,
         now: chrono::DateTime<Utc>,
     ) -> Result<FetchOutcome, String> {
         let source_id = source.id;
-        let outcome =
-            Self::fetch_and_apply_leased(db, notification_tx, services, source, now).await;
+        let outcome = Self::fetch_and_apply_leased(db, services, source, now).await;
         if outcome.is_err() {
             release_fetch_lease(db, source_id).await;
         }
@@ -781,7 +733,6 @@ impl PhantasiSchedulerEngine {
 
     async fn fetch_and_apply_leased(
         db: &DatabaseConnection,
-        notification_tx: &broadcast::Sender<NewItemsNotification>,
         (parser, notion_service, rsshub_service): (&FeedParser, &NotionService, &RsshubService),
         source: phantasi_sources::Model,
         now: chrono::DateTime<Utc>,
@@ -851,8 +802,7 @@ impl PhantasiSchedulerEngine {
                     .await
                     .map_err(|error| phantasi_store_failed("update source", error))?;
 
-                let new_count =
-                    Self::save_items(db, &updated_source, &feed, notification_tx).await?;
+                let new_count = Self::save_items(db, &updated_source, &feed).await?;
 
                 if new_count > 0 {
                     tracing::info!(
@@ -941,26 +891,16 @@ impl PhantasiSchedulerEngine {
         }
     }
 
-    /// 存储新文章并通知前端。
+    /// 存储新文章并发站内通知。
     async fn save_items(
         db: &DatabaseConnection,
         source: &phantasi_sources::Model,
         feed: &ParsedFeed,
-        notification_tx: &broadcast::Sender<NewItemsNotification>,
     ) -> Result<i32, String> {
         let inserted = store_feed_items(db, source, feed).await?;
         let new_count = i32::try_from(inserted.len()).unwrap_or(i32::MAX);
         if new_count > 0 {
-            let notification = NewItemsNotification {
-                msg_type: "phantasi:new_items".to_string(),
-                user_id: source.user_id,
-                source_id: source.id,
-                source_name: source.name.clone(),
-                new_count,
-                titles: inserted.iter().map(|m| m.title.clone()).take(5).collect(),
-                timestamp: Utc::now().timestamp_millis(),
-            };
-
+            let titles: Vec<String> = inserted.iter().map(|m| m.title.clone()).take(5).collect();
             if let Some(manager) = crate::services::agent::notifications::get_notification_manager()
             {
                 manager
@@ -969,13 +909,9 @@ impl PhantasiSchedulerEngine {
                         source.id,
                         &source.name,
                         new_count,
-                        &notification.titles,
+                        &titles,
                     )
                     .await;
-            }
-
-            if let Err(e) = notification_tx.send(notification) {
-                tracing::debug!("[PhantasiScheduler] No notification subscribers: {}", e);
             }
         }
 
@@ -1058,7 +994,6 @@ impl PhantasiSchedulerEngine {
 
         match Self::fetch_and_apply(
             &self.db,
-            &self.notification_tx,
             (&self.parser, &self.notion_service, &self.rsshub_service),
             source,
             Utc::now(),

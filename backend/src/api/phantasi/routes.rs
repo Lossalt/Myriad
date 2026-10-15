@@ -11,7 +11,7 @@ use crate::services::data_paths::paths;
 
 use super::{
     applications, comments, feeds_list, feeds_opml, feeds_sources, note_docs, notes, reading_item,
-    reading_mark, reading_stats, reading_sync, reading_sync_ws,
+    reading_mark, reading_stats,
 };
 
 /// 创建 Phantasi API 路由
@@ -159,8 +159,6 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
             "/comments/{id}/replies",
             get(comments::list_comment_replies),
         )
-        // 离线同步
-        .route("/sync-states", post(reading_sync::sync_states))
         // 统计信息
         .route("/stats", get(reading_stats::get_stats))
         // RSSHub 实例管理
@@ -190,7 +188,7 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
             crate::middleware::auth::optional_current_admin_auth_middleware,
         ));
 
-    // 不读凭据的路由（RSS、静态图标、图片缓存）和自带必需认证的 WebSocket
+    // 不读凭据的路由（RSS、静态图标、图片缓存）和自带必需认证的协同编辑 WebSocket
     // 不挂可选认证：过期 cookie 不能让订阅器或图片请求 401。
     Router::<crate::state::AppState>::new()
         .merge(api)
@@ -201,14 +199,6 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
             get(note_docs::note_doc_websocket).route_layer(from_fn_with_state(
                 app_state.clone(),
                 crate::middleware::auth::admin_middleware,
-            )),
-        )
-        // WebSocket（通知）
-        .route(
-            "/ws",
-            get(reading_sync_ws::phantasi_websocket).route_layer(from_fn_with_state(
-                app_state.clone(),
-                crate::middleware::auth::auth_middleware,
             )),
         )
         // 图标静态文件：Cache-Control max-age=86400；本层无 CompressionLayer
@@ -243,7 +233,6 @@ mod tests {
         assert!(routes.contains("comments::list_comments"));
         assert!(routes.contains("super::rsshub::list_rsshub_instances"));
         assert!(include_str!("reading_item.rs").contains("pub(crate) async fn get_item"));
-        assert!(!include_str!("reading_sync_ws.rs").contains("pub(crate) async fn get_item"));
         let comments = include_str!("comments.rs")
             .split("#[cfg(test)]")
             .next()
@@ -279,7 +268,6 @@ mod tests {
                 .with_state(state);
             for path in [
                 "/api/phantasi/notes.xml",
-                "/api/phantasi/ws",
                 "/api/phantasi/notes/docs/1/ws",
                 "/api/phantasi/icons/example.png",
                 "/api/phantasi/image-cache/a/b.png",
@@ -401,8 +389,6 @@ mod tests {
                 (Method::POST, "/api/phantasiai/items/1/podcast/regenerate"),
                 (Method::POST, "/api/phantasiai/sources/1/style-tags"),
                 (Method::GET, "/api/phantasi/notes/docs/1/ws"),
-                // auth_middleware
-                (Method::GET, "/api/phantasi/ws"),
             ] {
                 let (status, body) = call(&app, method, path, None).await;
                 assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");

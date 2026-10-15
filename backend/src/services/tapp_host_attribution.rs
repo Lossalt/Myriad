@@ -186,7 +186,7 @@ pub fn speech_permission(method: &str, path: &str) -> Option<TappPermission> {
 }
 
 /// Route → permission map for `/api/phantasi` (mirrors sandbox `phantasiList.*` actions).
-/// Host-only phantasi paths (WebSocket, RSSHub instance admin, offline sync) stay unmapped so grant-bearing requests to them are rejected.
+/// Host-only phantasi paths (RSSHub instance admin) stay unmapped so grant-bearing requests to them are rejected.
 pub fn phantasi_permission(method: &str, path: &str) -> Option<TappPermission> {
     permission_for(HostDomain::Phantasi, method, path)
 }
@@ -426,11 +426,6 @@ mod tests {
         assert_eq!(
             phantasi_permission("POST", "/api/phantasi/sources"),
             Some(TappPermission::PhantasiManage)
-        );
-        assert_eq!(phantasi_permission("GET", "/api/phantasi/ws"), None);
-        assert_eq!(
-            phantasi_permission("POST", "/api/phantasi/sync-states"),
-            None
         );
         assert_eq!(
             phantasi_permission("GET", "/api/phantasi/rsshub/instances"),

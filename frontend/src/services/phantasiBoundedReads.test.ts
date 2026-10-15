@@ -1,34 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { phantasiSubject } from '../utils/phantasiSubject'
-import { getCommentReplies, getComments, syncReadingStates } from './phantasiApi'
-
-it('chunks sync and merges all per-item outcomes without losing prior confirmations', async () => {
-  const original = globalThis.fetch
-  const storage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
-  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: () => null, setItem: () => {}, removeItem: () => {} } })
-  const sizes: number[] = []
-  globalThis.fetch = async (input, init) => {
-    if (String(input).includes('csrf-token')) return Response.json({ csrf_token: null })
-    const { states } = JSON.parse(String(init?.body))
-    sizes.push(states.length)
-    const ids = states.map((s: { item_id: number }) => s.item_id)
-    return Response.json({ synced: ids.length - 1, confirmed: ids.slice(1), failed: [ids[0]], revisions: Object.fromEntries(ids.slice(1).map((id: number) => [id, 2])), conflicts: [{ item_id: ids[0], server_revision: 3, server_updated_at: 1, client_updated_at: 0 }] })
-  }
-  try {
-    const result = await syncReadingStates(Array.from({ length: 205 }, (_, i) => ({ item_id: i + 1, updated_at: 0 })))
-    assert.deepEqual(sizes, [100, 100, 5])
-    assert.equal(result.synced, 202)
-    assert.deepEqual(result.failed, [1, 101, 201])
-    assert.equal(result.confirmed?.length, 202)
-    assert.equal(result.revisions?.[205], 2)
-    assert.equal(result.conflicts.length, 3)
-  } finally {
-    globalThis.fetch = original
-    if (storage) Object.defineProperty(globalThis, 'sessionStorage', storage)
-    else Reflect.deleteProperty(globalThis, 'sessionStorage')
-  }
-})
+import { getCommentReplies, getComments } from './phantasiApi'
 
 it('collects comment and reply pages while preserving display order and cancellation', async () => {
   const original = globalThis.fetch
@@ -54,32 +27,6 @@ it('collects comment and reply pages while preserving display order and cancella
   } finally { globalThis.fetch = original }
 })
 
-it('preserves committed sync outcomes when a later batch fails and stops sending', async () => {
-  const original = globalThis.fetch
-  const storage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
-  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: () => null, setItem: () => {}, removeItem: () => {} } })
-  let calls = 0
-  globalThis.fetch = async (input, init) => {
-    if (String(input).includes('csrf-token')) return Response.json({ csrf_token: null })
-    calls++
-    if (calls === 2) return Response.json({ error: 'Sync unavailable' }, { status: 503 })
-    const { states } = JSON.parse(String(init?.body))
-    return Response.json({ synced: states.length, confirmed: states.map((s: { item_id: number }) => s.item_id), failed: [], conflicts: [], revisions: { 1: 2 } })
-  }
-  try {
-    const result = await syncReadingStates(Array.from({ length: 205 }, (_, i) => ({ item_id: i + 1, updated_at: 0 })))
-    assert.equal(calls, 2)
-    assert.equal(result.synced, 100)
-    assert.equal(result.confirmed?.length, 100)
-    assert.deepEqual(result.revisions, { 1: 2 })
-    assert.deepEqual(result.failed, Array.from({ length: 105 }, (_, i) => i + 101))
-  } finally {
-    globalThis.fetch = original
-    if (storage) Object.defineProperty(globalThis, 'sessionStorage', storage)
-    else Reflect.deleteProperty(globalThis, 'sessionStorage')
-  }
-})
-
 it('stops on repeated pagination cursors and on cancellation between pages', async () => {
   const original = globalThis.fetch
   let calls = 0
@@ -97,30 +44,6 @@ it('stops on repeated pagination cursors and on cancellation between pages', asy
     }
     await assert.rejects(getComments(1, undefined, { signal: controller.signal }), { name: 'AbortError' })
   } finally { globalThis.fetch = original }
-})
-
-it('rejects a subject switch during a later sync batch instead of returning partial success', async () => {
-  const original = globalThis.fetch
-  const storage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
-  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: () => null, setItem: () => {}, removeItem: () => {} } })
-  const before = phantasiSubject.getSnapshot()
-  let calls = 0
-  globalThis.fetch = async (input, init) => {
-    if (String(input).includes('csrf-token')) return Response.json({ csrf_token: null })
-    calls++
-    if (calls === 2) phantasiSubject.change('user:other')
-    const { states } = JSON.parse(String(init?.body))
-    return Response.json({ synced: states.length, confirmed: states.map((s: { item_id: number }) => s.item_id), conflicts: [] })
-  }
-  try {
-    await assert.rejects(syncReadingStates(Array.from({ length: 205 }, (_, i) => ({ item_id: i + 1, updated_at: 0 }))), { name: 'AbortError' })
-    assert.equal(calls, 2)
-  } finally {
-    globalThis.fetch = original
-    if (storage) Object.defineProperty(globalThis, 'sessionStorage', storage)
-    else Reflect.deleteProperty(globalThis, 'sessionStorage')
-    phantasiSubject.change(before.key, before.active)
-  }
 })
 
 it('pins the subject across comment pages and never requests the next page after a switch', async () => {

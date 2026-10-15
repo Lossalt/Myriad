@@ -27,9 +27,7 @@ import { parseFeedTopicCards } from '../components/phantasi/logic/feedTopicCards
 import { API_URL } from '../config'
 import { KeyedWrites } from '../utils/keyedWrites'
 import { phantasiItemState } from '../utils/phantasiItemState'
-import { PhantasiRevisionChain } from '../utils/phantasiRevisionChain'
 import { phantasiSubject } from '../utils/phantasiSubject'
-import { PhantasiSyncConflictError } from '../utils/phantasiSyncConflict'
 import { requestCache } from '../utils/requestCache'
 import { httpStatusMessage, isUselessErrorText } from '../utils/userFacingError'
 import { ApiError, apiService, parseApiErrorBody } from './api'
@@ -840,7 +838,6 @@ function invalidateItemCache(id: number): void {
   requestCache.delete(phantasiCacheKeys.item(id))
 }
 
-let localRevisions = new PhantasiRevisionChain()
 let itemWrites = new KeyedWrites()
 let writesGeneration = -1
 function currentWrites() {
@@ -848,7 +845,6 @@ function currentWrites() {
   if (subject.generation !== writesGeneration) {
     writesGeneration = subject.generation
     itemWrites = new KeyedWrites()
-    localRevisions = new PhantasiRevisionChain()
   }
   return { subject, writes: itemWrites }
 }
@@ -866,11 +862,10 @@ export async function markRead(
   attributionHeaders?: PhantasiAttributionHeaders,
 ): Promise<void> {
   return writeItem(itemId, async () => {
-  const saved = await request<{ previous_revision?: number; revision?: number }>(`/items/${itemId}/read`, {
+  await request(`/items/${itemId}/read`, {
     method: 'POST',
     headers: attributionHeaders,
   })
-  localRevisions.record(itemId, saved.previous_revision, saved.revision)
   phantasiItemState.commit(itemId, { is_read: true })
   invalidateItemCache(itemId)
   invalidateStatsCache()
@@ -882,11 +877,10 @@ export async function markUnread(
   attributionHeaders?: PhantasiAttributionHeaders,
 ): Promise<void> {
   return writeItem(itemId, async () => {
-  const saved = await request<{ previous_revision?: number; revision?: number }>(`/items/${itemId}/unread`, {
+  await request(`/items/${itemId}/unread`, {
     method: 'POST',
     headers: attributionHeaders,
   })
-  localRevisions.record(itemId, saved.previous_revision, saved.revision)
   phantasiItemState.commit(itemId, { is_read: false })
   invalidateItemCache(itemId)
   invalidateStatsCache()
@@ -898,11 +892,10 @@ export async function starItem(
   attributionHeaders?: PhantasiAttributionHeaders,
 ): Promise<void> {
   return writeItem(itemId, async () => {
-  const saved = await request<{ previous_revision?: number; revision?: number }>(`/items/${itemId}/star`, {
+  await request(`/items/${itemId}/star`, {
     method: 'POST',
     headers: attributionHeaders,
   })
-  localRevisions.record(itemId, saved.previous_revision, saved.revision)
   invalidateStatsCache()
   phantasiItemState.commit(itemId, { is_starred: true })
   invalidateItemCache(itemId)
@@ -914,11 +907,10 @@ export async function unstarItem(
   attributionHeaders?: PhantasiAttributionHeaders,
 ): Promise<void> {
   return writeItem(itemId, async () => {
-  const saved = await request<{ previous_revision?: number; revision?: number }>(`/items/${itemId}/unstar`, {
+  await request(`/items/${itemId}/unstar`, {
     method: 'POST',
     headers: attributionHeaders,
   })
-  localRevisions.record(itemId, saved.previous_revision, saved.revision)
   invalidateStatsCache()
   phantasiItemState.commit(itemId, { is_starred: false })
   invalidateItemCache(itemId)
@@ -946,7 +938,6 @@ export async function markAllRead(
     },
   )
   for (const change of data.changes ?? []) {
-    localRevisions.record(change.item_id, change.previous_revision, change.revision)
     phantasiItemState.commit(change.item_id, { is_read: true })
     invalidateItemCache(change.item_id)
   }
@@ -981,135 +972,6 @@ export async function getStats(
   )
   options?.signal?.throwIfAborted()
   return stats
-}
-
-interface PhantasiSyncStateItem {
-  expected_revision?: number
-  item_id: number
-  is_read?: boolean
-  is_starred?: boolean
-  /** 0–100 */
-  read_progress?: number
-  /** epoch ms */
-  updated_at: number
-}
-
-interface PhantasiSyncStatesResponse {
-  revisions?: Record<number, number>
-  confirmed?: number[]
-  failed?: number[]
-  synced: number
-  conflicts: Array<{
-    item_id: number
-    server_revision?: number
-    server_updated_at: number
-    client_updated_at: number
-  }>
-}
-
-export async function syncReadingStates(
-  states: PhantasiSyncStateItem[],
-  attributionHeaders?: PhantasiAttributionHeaders,
-): Promise<PhantasiSyncStatesResponse> {
-  const subject = phantasiSubject.capture()
-  const ids = new Set<number>()
-  for (const state of states) {
-    if (!Number.isInteger(state.item_id) || state.item_id <= 0 || ids.has(state.item_id)) {
-      throw new Error('Invalid or duplicate article ID in sync batch')
-    }
-    if (state.expected_revision !== undefined && (!Number.isSafeInteger(state.expected_revision) || state.expected_revision < 0)) {
-      throw new Error('Invalid state revision')
-    }
-    ids.add(state.item_id)
-  }
-  if (states.length === 0) {
-    return { synced: 0, conflicts: [] }
-  }
-  // Keep transactions bounded; validate the entire input above before the first write.
-  const merged: PhantasiSyncStatesResponse = { synced: 0, conflicts: [] }
-  for (let offset = 0; offset < states.length; offset += 100) {
-    phantasiSubject.assert(subject)
-    let result: PhantasiSyncStatesResponse
-    try {
-      result = await request<PhantasiSyncStatesResponse>('/sync-states', {
-        method: 'POST',
-        signal: subject.signal,
-        headers: { 'Content-Type': 'application/json', ...attributionHeaders },
-        body: JSON.stringify({ states: states.slice(offset, offset + 100) }),
-      })
-      phantasiSubject.assert(subject)
-    } catch (error) {
-      phantasiSubject.assert(subject)
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      if (offset === 0) throw error
-      // Earlier batches committed. Keep their confirmations and leave the rest retryable.
-      merged.failed = [...(merged.failed ?? []), ...states.slice(offset).map(state => state.item_id)]
-      return merged
-    }
-    merged.synced += result.synced
-    merged.conflicts.push(...result.conflicts)
-    if (result.confirmed) merged.confirmed = [...(merged.confirmed ?? []), ...result.confirmed]
-    if (result.failed) merged.failed = [...(merged.failed ?? []), ...result.failed]
-    if (result.revisions) merged.revisions = { ...merged.revisions, ...result.revisions }
-  }
-  phantasiSubject.assert(subject)
-  return merged
-}
-
-export async function updateReadProgress(
-  itemId: number,
-  progress: number,
-  opts?: { isRead?: boolean; expectedRevision?: number; observedAt?: number; attributionHeaders?: PhantasiAttributionHeaders },
-): Promise<number | undefined> {
-  return writeItem(itemId, async () => {
-  const clamped = Math.max(0, Math.min(100, Math.round(progress)))
-  const result = await syncReadingStates(
-    [
-      {
-        item_id: itemId,
-        read_progress: clamped,
-        expected_revision: localRevisions.advance(itemId, opts?.expectedRevision),
-        is_read: opts?.isRead,
-        updated_at: opts?.observedAt ?? Date.now(),
-      },
-    ],
-    opts?.attributionHeaders,
-  )
-  const conflict = result.conflicts.find(value => value.item_id === itemId)
-  if (conflict) throw new PhantasiSyncConflictError(itemId, conflict.server_revision)
-  if (result.synced !== 1 || result.conflicts.length > 0 || (result.failed?.length ?? 0) > 0 || (result.confirmed !== undefined && !result.confirmed.includes(itemId))) {
-    throw new Error('Reading progress was not saved')
-  }
-  if (typeof opts?.isRead === 'boolean') {
-    phantasiItemState.commit(itemId, { is_read: opts.isRead })
-  }
-  invalidateItemCache(itemId)
-  return result.revisions?.[itemId]
-  })
-}
-
-export function createPhantasiWebSocket(
-  onMessage: (notification: any) => void,
-  onError?: (error: Event) => void,
-): WebSocket {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${window.location.host}/api/phantasi/ws`)
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      onMessage(data)
-    } catch (e) {
-      console.error('Failed to parse WebSocket message:', e)
-    }
-  }
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
-    onError?.(error)
-  }
-
-  return ws
 }
 
 interface CommentsResponse {

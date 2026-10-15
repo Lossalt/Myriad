@@ -17,10 +17,7 @@ mod notes;
 mod notes_rss;
 mod reading_item;
 mod reading_mark;
-mod reading_state;
 mod reading_stats;
-mod reading_sync;
-mod reading_sync_ws;
 mod routes;
 mod rsshub;
 
