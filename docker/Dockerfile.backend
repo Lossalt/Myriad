@@ -62,6 +62,37 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp "target/${CARGO_PROFILE}/myriad-backend" /build/myriad-backend \
     && strip /build/myriad-backend
 
+# Blog site generator. Pinned with checksums from the upstream releases
+# (hugo_<ver>_checksums.txt; Dart Sass asset digests on GitHub). Themes that
+# compile SCSS need Dart Sass; Hugo's extended edition is what most themes ask for.
+FROM debian:bookworm-slim AS blog-tools
+ARG TARGETARCH
+ARG HUGO_VERSION=0.168.0
+ARG HUGO_SHA256_AMD64=787f100057328824f38c6ad7c87ff10d6451ae0a7bc39cedaad0dd2bcde17e53
+ARG HUGO_SHA256_ARM64=b975ba150a464f57115bdf6cbf6638224906461fdcf863821ec983f8602a442c
+ARG DART_SASS_VERSION=1.105.1
+ARG DART_SASS_SHA256_AMD64=9046fdd4a31a524a0020298c55d9e155d4c22363ef268e8992574335a72c6a6f
+ARG DART_SASS_SHA256_ARM64=7f53a2a77ef4aaf24a9f2f8c826759ed93b38954430a2e32130921a2e16a4a1c
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) hugo_arch=amd64; sass_arch=x64; hugo_sha="${HUGO_SHA256_AMD64}"; sass_sha="${DART_SASS_SHA256_AMD64}" ;; \
+      arm64) hugo_arch=arm64; sass_arch=arm64; hugo_sha="${HUGO_SHA256_ARM64}"; sass_sha="${DART_SASS_SHA256_ARM64}" ;; \
+      *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/hugo.tgz \
+      "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-${hugo_arch}.tar.gz"; \
+    echo "${hugo_sha}  /tmp/hugo.tgz" | sha256sum -c -; \
+    mkdir -p /out/bin; \
+    tar -xzf /tmp/hugo.tgz -C /out/bin hugo; \
+    curl -fsSL -o /tmp/sass.tgz \
+      "https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-${sass_arch}.tar.gz"; \
+    echo "${sass_sha}  /tmp/sass.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/sass.tgz -C /out; \
+    /out/bin/hugo version; \
+    /out/dart-sass/sass --version
+
 # Runtime stage - minimal image
 FROM debian:bookworm-slim AS runtime
 
@@ -89,6 +120,10 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY --from=builder /build/myriad-backend /app/myriad-backend
+COPY --from=blog-tools /out/bin/hugo /usr/local/bin/hugo
+COPY --from=blog-tools /out/dart-sass /opt/dart-sass
+ENV HUGO_BIN=/usr/local/bin/hugo
+ENV DART_SASS_DIR=/opt/dart-sass
 COPY docker/backend-entrypoint.sh /usr/local/bin/myriad-backend-entrypoint
 
 # Create cache directory
