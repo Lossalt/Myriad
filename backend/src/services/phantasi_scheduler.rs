@@ -25,6 +25,9 @@ use crate::services::notion_service::{NotionConfig, NotionService};
 use crate::services::phantasi_parser::{FeedParser, ParsedFeed, calculate_reading_stats};
 use crate::services::rsshub_service::RsshubService;
 
+#[path = "phantasi_feed_images.rs"]
+mod phantasi_feed_images;
+
 fn phantasi_store_failed(context: &'static str, error: impl std::fmt::Display) -> String {
     tracing::error!(%error, context, "phantasi store failed");
     format!("Failed to {context}")
@@ -65,7 +68,7 @@ pub(crate) async fn insert_feed_items(
     Ok(inserted)
 }
 
-/// 把一次抓取结果里的新条目入库：按 guid 跳过已有条目、封面走图片缓存、
+/// 把一次抓取结果里的新条目入库：按 guid 跳过已有条目、封面和正文图片走图片缓存、
 /// 统一的字数/阅读时长算法、`ON CONFLICT DO NOTHING` 批量插入、AI 主题建议、
 /// `item_count` 原子自增。调度抓取与 Agent 订阅首批条目共用，返回真正插入的行。
 pub(crate) async fn store_feed_items(
@@ -92,12 +95,13 @@ pub(crate) async fn store_feed_items(
     let mut new_items: Vec<phantasi_items::ActiveModel> = Vec::new();
 
     let image_cache = crate::services::image_cache::ImageCacheService::new();
-    let newcomers: Vec<_> = feed
+    let mut newcomers: Vec<_> = feed
         .items
         .iter()
         .filter(|item| !existing_guids.contains(&item.guid))
         .cloned()
         .collect();
+    cache_content_images(&image_cache, &mut newcomers).await;
     let mut processed_images: Vec<_> = stream::iter(newcomers.iter().cloned().enumerate())
         .map(|(index, item)| {
             let image_cache = image_cache.clone();
@@ -203,6 +207,93 @@ pub(crate) async fn store_feed_items(
     .map_err(|error| phantasi_store_failed("update source counts", error))?;
 
     Ok(inserted)
+}
+
+/// 正文和摘要里的 `<img>` 外链换成同源缓存地址。每篇和整批都有上限，失败的地址留在 HTML 里。
+///
+/// 这一步在 `insert_feed_items`（里面的 `bind_rss_item`）之前。缓存路径会被当成
+/// 本地引用扫到，但 RSS 绑定是 `Authority::External` + `Unresolved::Skip`：
+/// 可淘汰的图片缓存不会导入媒体目录，已经公开的资产仍会绑上。
+async fn cache_content_images(
+    cache: &crate::services::image_cache::ImageCacheService,
+    items: &mut [crate::services::phantasi_parser::ParsedItem],
+) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut planned: Vec<(usize, Vec<String>)> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let urls = phantasi_feed_images::plan_item_image_urls(
+            item.content.as_deref(),
+            item.summary.as_deref(),
+            &item.link,
+        );
+        if !urls.is_empty() {
+            planned.push((index, urls));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut fetch = Vec::new();
+    let mut batch_full = false;
+    for (_, urls) in &planned {
+        if batch_full {
+            break;
+        }
+        for url in urls {
+            if !seen.insert(url.clone()) {
+                continue;
+            }
+            if crate::federation::types::is_internal_url(url) {
+                continue;
+            }
+            if fetch.len() >= phantasi_feed_images::MAX_CONTENT_IMAGES_PER_BATCH {
+                batch_full = true;
+                break;
+            }
+            fetch.push(url.clone());
+        }
+    }
+    if fetch.is_empty() {
+        return;
+    }
+
+    let fetched: Vec<(String, Option<String>)> = stream::iter(fetch)
+        .map(|url| {
+            let cache = cache.clone();
+            async move {
+                let processed = cache.process_image_url(Some(&url)).await;
+                let cached_path =
+                    processed.filter(|value| value.starts_with("/api/phantasi/image-cache/"));
+                (url, cached_path)
+            }
+        })
+        .buffer_unordered(phantasi_feed_images::CONTENT_IMAGE_CONCURRENCY)
+        .collect()
+        .await;
+    let map: HashMap<String, String> = fetched
+        .into_iter()
+        .filter_map(|(url, path)| path.map(|path| (url, path)))
+        .collect();
+    if map.is_empty() {
+        return;
+    }
+
+    for (index, _) in planned {
+        let base = items[index].link.trim();
+        let base = (!base.is_empty()).then_some(base);
+        if let Some(html) = items[index].content.as_deref() {
+            let next = phantasi_feed_images::rewrite_content_images(html, base, &map);
+            if next != html {
+                items[index].content = Some(next);
+            }
+        }
+        if let Some(html) = items[index].summary.as_deref() {
+            let next = phantasi_feed_images::rewrite_content_images(html, base, &map);
+            if next != html {
+                items[index].summary = Some(next);
+            }
+        }
+    }
 }
 
 // 调度器常量

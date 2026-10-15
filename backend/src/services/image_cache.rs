@@ -1,8 +1,7 @@
 //! 图片缓存服务
 //!
-//! 用于缓存外部图片（特别是 Notion 的临时 URL）
-//! Notion 托管的文件 URL 是带签名的临时链接
-//! 此服务会下载并本地缓存这些图片
+//! 把订阅封面和正文里的外链图片下载到本站，按同源地址提供。
+//! Notion 这类带签名的临时链接过期后也还能看。
 
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
@@ -58,24 +57,6 @@ impl ImageCacheService {
     #[cfg(test)]
     pub fn at(cache_dir: PathBuf) -> Self {
         Self { cache_dir }
-    }
-
-    /// 检查 URL 是否像 Notion / S3 临时文件（含 `notion.so/image` 与 `X-Amz-*`）
-    pub fn is_notion_temporary_url(url: &str) -> bool {
-        let patterns = [
-            "prod-files-secure.s3",
-            "secure.notion-static.com",
-            "notion.so/image",
-            "s3.us-west-2.amazonaws.com",
-            "X-Amz-Algorithm",
-            "X-Amz-Credential",
-            "X-Amz-Signature",
-        ];
-
-        let url_lower = url.to_lowercase();
-        patterns
-            .iter()
-            .any(|p| url_lower.contains(&p.to_lowercase()))
     }
 
     /// 生成 URL 的缓存文件名（基于 SHA256 哈希）
@@ -377,28 +358,41 @@ impl ImageCacheService {
         Ok((bytes, mime.to_string()))
     }
 
-    /// 处理图片 URL - 如果是 Notion 临时 URL 则缓存，否则返回原 URL
+    /// 把 http(s) 外链下载成本地 `/api/phantasi/image-cache/...`。
+    ///
+    /// 空串返回 `None`。已是缓存地址、非 http(s)、或 URL 里带了用户信息时原样返回。
+    /// 下载失败保留原地址。日志只记失败原因，不记 URL：查询串里常有签名。
     pub async fn process_image_url(&self, url: Option<&str>) -> Option<String> {
-        let url = url?;
-
+        let url = url?.trim();
         if url.is_empty() {
             return None;
         }
-
-        // 如果是 Notion 临时 URL，尝试缓存
-        if Self::is_notion_temporary_url(url) {
-            match self.cache_image(url).await {
-                Ok(cached_url) => Some(cached_url),
-                Err(e) => {
-                    tracing::warn!("Failed to cache Notion image: {} - {}", url, e);
-                    // 缓存失败时返回原 URL（至少在短期内还能用）
-                    Some(url.to_string())
-                }
+        if !should_cache_remote_image(url) {
+            return Some(url.to_string());
+        }
+        match self.cache_image(url).await {
+            Ok(cached_url) => Some(cached_url),
+            Err(error) => {
+                tracing::warn!(error = %error, "image cache missed; keeping original url");
+                Some(url.to_string())
             }
-        } else {
-            Some(url.to_string())
         }
     }
+}
+
+/// 封面和正文图片共用：只有公网 http(s) 才值得去拉。
+/// 用户信息留在原地址上，避免把口令交给缓存请求。
+pub(crate) fn should_cache_remote_image(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return false;
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    !parsed.path().starts_with("/api/phantasi/image-cache/")
 }
 
 fn image_cache_path(url: &str) -> Option<&str> {
@@ -410,29 +404,6 @@ fn image_cache_path(url: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_notion_temporary_url() {
-        // Notion S3 URL
-        assert!(ImageCacheService::is_notion_temporary_url(
-            "https://prod-files-secure.s3.us-west-2.amazonaws.com/xxx/xxx.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-        ));
-
-        // Notion static URL
-        assert!(ImageCacheService::is_notion_temporary_url(
-            "https://s3.us-west-2.amazonaws.com/secure.notion-static.com/xxx.png"
-        ));
-
-        // Regular URL
-        assert!(!ImageCacheService::is_notion_temporary_url(
-            "https://example.com/image.jpg"
-        ));
-
-        // Other CDN
-        assert!(!ImageCacheService::is_notion_temporary_url(
-            "https://images.unsplash.com/photo-xxx"
-        ));
-    }
 
     #[test]
     fn test_generate_cache_filename() {
@@ -485,6 +456,26 @@ mod tests {
             std::io::Error::new(ErrorKind::StorageFull, "No space left on device"),
         );
         assert_eq!(full, "Failed to write cache file: not enough disk space");
+    }
+
+    #[test]
+    fn remote_http_images_are_cache_candidates() {
+        assert!(should_cache_remote_image("https://cdn.example/a.jpg"));
+        assert!(should_cache_remote_image(
+            "https://prod-files-secure.s3.us-west-2.amazonaws.com/x.jpg?X-Amz-Signature=1"
+        ));
+        assert!(!should_cache_remote_image(""));
+        assert!(!should_cache_remote_image("data:image/png;base64,aaaa"));
+        assert!(!should_cache_remote_image("javascript:alert(1)"));
+        assert!(!should_cache_remote_image(
+            "/api/phantasi/image-cache/aa/bbbb.png"
+        ));
+        assert!(!should_cache_remote_image(
+            "https://cdn.example/api/phantasi/image-cache/aa/bbbb.png"
+        ));
+        assert!(!should_cache_remote_image(
+            "https://user:secret@cdn.example/a.jpg"
+        ));
     }
 
     #[test]

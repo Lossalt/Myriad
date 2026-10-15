@@ -143,6 +143,8 @@ md5 = "0.8"
 quick-xml = "0.42"
 serde_yaml = "0.9.34"
 scraper = "0.27"                                        # HTML parsing for web.scrape capability
+html5ever = "0.39"                                      # rewrite feed <img> attributes; already locked via scraper
+ego-tree = "0.11"                                       # walk the scraper tree; already locked via scraper
 prost = "0.14"                                          # Feishu long-connection Frame (pbbp2)
 
 [dev-dependencies]
