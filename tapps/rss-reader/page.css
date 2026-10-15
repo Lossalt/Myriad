@@ -1,0 +1,198 @@
+.rss-app {
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: calc(12px * var(--tapp-scale, 1));
+  color: var(--tapp-text, #1f2937);
+  background: var(--tapp-bg, #f8fafc);
+  font-size: calc(14px * var(--tapp-font-scale, 1));
+  line-height: 1.5;
+}
+
+.rss-app *,
+.rss-app *::before,
+.rss-app *::after {
+  box-sizing: border-box;
+}
+
+.rss-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.rss-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.rss-stats,
+.rss-status {
+  margin: 0;
+  color: var(--tapp-subtext, #6b7280);
+  font-size: 0.85rem;
+}
+
+.rss-status {
+  min-height: 1.2em;
+  margin-top: 8px;
+}
+
+.rss-filters,
+.rss-categories,
+.rss-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rss-app button,
+.rss-app input,
+.rss-app select {
+  font: inherit;
+  color: inherit;
+  background: var(--tapp-input-bg, #fff);
+  border: 1px solid var(--tapp-border, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.rss-app button {
+  cursor: pointer;
+}
+
+.rss-app button[aria-pressed="true"],
+.rss-app button.is-on {
+  background: var(--tapp-primary, #0f766e);
+  color: #fff;
+  border-color: transparent;
+}
+
+.rss-app input,
+.rss-app select {
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.rss-columns {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(220px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.rss-panel {
+  background: var(--tapp-card-bg, rgba(255, 255, 255, 0.7));
+  border: 1px solid var(--tapp-border, rgba(0, 0, 0, 0.06));
+  border-radius: 12px;
+  padding: 10px;
+  min-height: 12rem;
+}
+
+.rss-panel h2 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tapp-subtext, #6b7280);
+}
+
+.rss-source,
+.rss-item {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+
+.rss-item {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.rss-item.is-unread strong {
+  font-weight: 700;
+}
+
+.rss-badge {
+  min-width: 1.4em;
+  text-align: center;
+  border-radius: 999px;
+  background: rgba(var(--tapp-primary-rgb, 15, 118, 110), 0.15);
+  padding: 0 6px;
+  font-size: 0.75rem;
+}
+
+.rss-meta {
+  color: var(--tapp-subtext, #6b7280);
+  font-size: 0.8rem;
+}
+
+.rss-reader-body {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rss-reader-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.rss-reader-body pre {
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--tapp-input-bg, rgba(0, 0, 0, 0.04));
+}
+
+.rss-reader-body [data-external] {
+  color: var(--tapp-primary, #0f766e);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rss-url {
+  display: block;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.rss-manage {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.rss-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.rss-form input[type="text"],
+.rss-form input[type="url"],
+.rss-form input[type="number"] {
+  min-width: 12rem;
+  flex: 1;
+}
+
+.rss-app [hidden] {
+  display: none !important;
+}
+
+@media (max-width: 860px) {
+  .rss-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .rss-columns.is-reading .rss-sources,
+  .rss-columns.is-reading .rss-items {
+    display: none;
+  }
+}

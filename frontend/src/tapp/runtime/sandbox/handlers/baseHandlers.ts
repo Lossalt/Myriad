@@ -33,6 +33,29 @@ import { registerFullKvHandlers } from './kvHandlers'
 
 const openUrlRateLimiter = new OpenUrlRateLimiter(8, 10_000)
 
+/** 与 `ui.openUrl` 共用频率桶，并用同样的新标签打开方式。 */
+export function openHostExternalTab(
+  tappId: string,
+  url: string,
+): { ok: true } | { ok: false; error: string } {
+  if (!openUrlRateLimiter.allow(tappId)) {
+    return { ok: false, error: 'openUrl rate limit exceeded' }
+  }
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.target = '_blank'
+    anchor.rel = 'noopener noreferrer'
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: userFacingError(error) }
+  }
+}
+
 export function registerLifecycleHandlers(
   bridge: TappBridge,
   tappInstance: TappInstance,
@@ -154,10 +177,6 @@ export function registerUIHandlers(
       return { success: false, error: 'openUrl requires { id, path?, query? }' }
     }
 
-    if (!openUrlRateLimiter.allow(tappInstance.id)) {
-      return { success: false, error: 'openUrl rate limit exceeded' }
-    }
-
     const hostOrigin =
       typeof window !== 'undefined' ? window.location.origin : undefined
     const resolved = resolveOpenUrl(
@@ -169,29 +188,17 @@ export function registerUIHandlers(
       return { success: false, error: resolved.error }
     }
 
-    try {
-      const anchor = document.createElement('a')
-      anchor.href = resolved.url
-      anchor.target = '_blank'
-      anchor.rel = 'noopener noreferrer'
-      anchor.style.display = 'none'
-      document.body.appendChild(anchor)
-      anchor.click()
-      document.body.removeChild(anchor)
-      return {
-        success: true,
-        data: {
-          id: resolved.id,
-          url: resolved.url,
-          match: resolved.match,
-        },
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error:
-          userFacingError(error),
-      }
+    const opened = openHostExternalTab(tappInstance.id, resolved.url)
+    if (!opened.ok) {
+      return { success: false, error: opened.error }
+    }
+    return {
+      success: true,
+      data: {
+        id: resolved.id,
+        url: resolved.url,
+        match: resolved.match,
+      },
     }
   })
 

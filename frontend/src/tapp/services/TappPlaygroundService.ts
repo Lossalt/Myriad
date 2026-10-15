@@ -18,6 +18,8 @@ export interface TappPlaygroundCode {
   pageCSS?: string
   i18n?: Record<string, unknown>
   assets?: Record<string, string>
+  /** 层入口 `require` 到的其它包内脚本，键是相对安装根的 `.js` 路径。 */
+  packageModules?: Record<string, string>
 }
 
 export interface TappPlaygroundProject {

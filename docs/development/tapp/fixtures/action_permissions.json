@@ -33,6 +33,11 @@
     },
     {
       "domain": "phantasi",
+      "action": "phantasiList.openOriginal",
+      "permission": "phantasi:read"
+    },
+    {
+      "domain": "phantasi",
       "action": "phantasiList.sources",
       "permission": "phantasi:read"
     },
@@ -139,6 +144,11 @@
     {
       "domain": "phantasi",
       "action": "phantasiList.createCategory",
+      "permission": "phantasi:manage"
+    },
+    {
+      "domain": "phantasi",
+      "action": "phantasiList.updateCategory",
       "permission": "phantasi:manage"
     },
     {

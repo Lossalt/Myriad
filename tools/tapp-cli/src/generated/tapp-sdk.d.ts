@@ -498,11 +498,13 @@ export interface TappSdk {
     markAllRead(...args: unknown[]): Promise<unknown> // permission: phantasi:write
     markRead(...args: unknown[]): Promise<unknown> // permission: phantasi:write
     markUnread(...args: unknown[]): Promise<unknown> // permission: phantasi:write
+    openOriginal(...args: unknown[]): Promise<unknown> // permission: phantasi:read
     refreshSource(...args: unknown[]): Promise<unknown> // permission: phantasi:manage
     sources(...args: unknown[]): Promise<unknown> // permission: phantasi:read
     star(...args: unknown[]): Promise<unknown> // permission: phantasi:write
     stats(...args: unknown[]): Promise<unknown> // permission: phantasi:read
     unstar(...args: unknown[]): Promise<unknown> // permission: phantasi:write
+    updateCategory(...args: unknown[]): Promise<unknown> // permission: phantasi:manage
     updateComment(...args: unknown[]): Promise<unknown> // permission: phantasi:commentWrite
     updateSource(...args: unknown[]): Promise<unknown> // permission: phantasi:manage
   }

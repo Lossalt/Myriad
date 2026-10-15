@@ -9,6 +9,25 @@ import {
   resolveTappListInstallRequest,
 
 } from '../../../utils/tappListInstallRequest'
+import { openHostExternalTab } from './baseHandlers'
+
+/** 只接受宿主数据里的 http(s) 绝对地址。不接受调用方拼出来的 URL。 */
+function hostArticleHref(link: unknown): string | null {
+  if (typeof link !== 'string') return null
+  const value = link.trim()
+  if (!value || value.length > 2048) return null
+  if (/[\u0000-\u001F\u007F]/.test(value) || /\s/.test(value)) return null
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  if (url.username || url.password) return null
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  if (!url.hostname) return null
+  return url.href
+}
 
 function fail(error: unknown) {
   return {
@@ -217,20 +236,56 @@ export function registerTappListHandlers(
   })
 }
 
+/** 源写入只转发编辑字段。extra_config 里的令牌不进沙箱请求。 */
+function sourceWrite(raw: Record<string, unknown> | undefined) {
+  const req: {
+    url?: string
+    name?: string
+    category?: string
+    description?: string
+    icon?: string
+    site_url?: string
+    update_interval?: number
+    enabled?: boolean
+  } = {}
+  if (!raw) return req
+  for (const key of ['url', 'name', 'category', 'description', 'icon', 'site_url'] as const) {
+    if (typeof raw[key] === 'string') req[key] = raw[key]
+  }
+  if (typeof raw.update_interval === 'number' && Number.isFinite(raw.update_interval)) {
+    req.update_interval = raw.update_interval
+  }
+  if (typeof raw.enabled === 'boolean') req.enabled = raw.enabled
+  return req
+}
+
 export function registerPhantasiListHandlers(
   bridge: TappBridge,
-  _tappInstance: TappInstance,
+  tappInstance: TappInstance,
 ): void {
   bridge.registerHandler('phantasiList.list', async (message) => {
     const [options = {}] = getArgs(message) as [Record<string, unknown>?]
     try {
       const { getItemPreviews } = await import('../../../../services/phantasiApi')
+      const cursor =
+        typeof options.cursor === 'string' && options.cursor.trim()
+          ? options.cursor.trim()
+          : undefined
       const data = await getItemPreviews(
         {
-          per_page: (options.limit as number) || 30,
-          page: (options.page as number) || 1,
+          per_page: (options.limit as number) || (options.per_page as number) || 30,
+          page: cursor ? undefined : (options.page as number) || 1,
+          cursor,
           filter: (options.filter as 'all' | 'unread' | 'starred') || 'all',
           source_id: options.source_id as number | undefined,
+          category:
+            typeof options.category === 'string' && options.category.trim()
+              ? options.category.trim()
+              : undefined,
+          sort_order:
+            options.sort_order === 'asc' || options.sort_order === 'desc'
+              ? options.sort_order
+              : undefined,
         },
         await bridge.hostAttributionHeaders(),
       )
@@ -239,6 +294,7 @@ export function registerPhantasiListHandlers(
         data: {
           items: data.items.map((item) => ({
             id: item.id,
+            source_id: item.source_id,
             title: item.title,
             link: item.link,
             summary: item.summary || '',
@@ -251,6 +307,9 @@ export function registerPhantasiListHandlers(
             is_starred: item.is_starred,
           })),
           total: data.total,
+          page: data.page,
+          per_page: data.per_page,
+          next_cursor: data.next_cursor ?? null,
         },
       }
     } catch (error) {
@@ -267,6 +326,7 @@ export function registerPhantasiListHandlers(
         success: true,
         data: {
           id: item.id,
+          source_id: item.source_id,
           title: item.title,
           link: item.link,
           summary: item.summary || '',
@@ -285,12 +345,63 @@ export function registerPhantasiListHandlers(
     }
   })
 
-  bridge.registerHandler('phantasiList.sources', async () => {
+  bridge.registerHandler('phantasiList.openOriginal', async (message) => {
+    if (!tappInstance.grantedPermissions?.includes('phantasi:read')) {
+      return { success: false, error: 'Missing permission: phantasi:read' }
+    }
+    const [rawId] = getArgs(message) as [unknown]
+    const itemId = typeof rawId === 'number' ? rawId : Number.NaN
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return { success: false, error: 'article id is required' }
+    }
+    try {
+      const { getItem } = await import('../../../../services/phantasiApi')
+      const item = await getItem(
+        itemId,
+        await bridge.hostAttributionHeaders(),
+      )
+      const href = hostArticleHref(item.link)
+      if (!href) {
+        return { success: false, error: 'article link cannot be opened' }
+      }
+      const opened = openHostExternalTab(tappInstance.id, href)
+      if (!opened.ok) {
+        return { success: false, error: opened.error }
+      }
+      return { success: true }
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
+  bridge.registerHandler('phantasiList.sources', async (message) => {
+    const [options = {}] = getArgs(message) as [Record<string, unknown>?]
     try {
       const { getSources } = await import('../../../../services/phantasiApi')
-      const sources = await getSources(await bridge.hostAttributionHeaders(), {
-        view: 'catalog',
-      })
+      // 缺省保持 view=catalog（源行，没有未读覆盖）。阅读器要真实未读数时传
+      // board: "feeds" | "notes" | "sites"，那条路径才会做未读聚合。
+      const board = options.board
+      const sourceQuery: {
+        view?: 'catalog'
+        category?: string
+        board?: 'feeds' | 'notes' | 'sites'
+      } = {}
+      if (board === 'feeds' || board === 'notes' || board === 'sites') {
+        sourceQuery.board = board
+      }
+      if (typeof options.category === 'string' && options.category.trim()) {
+        sourceQuery.category = options.category.trim()
+      }
+      if (
+        options.view === 'catalog' ||
+        (sourceQuery.board == null && options.view == null)
+      ) {
+        sourceQuery.view = 'catalog'
+      }
+      const sources = await getSources(
+        await bridge.hostAttributionHeaders(),
+        sourceQuery,
+      )
       return {
         success: true,
         data: sources.map((s) => ({
@@ -300,8 +411,14 @@ export function registerPhantasiListHandlers(
           icon: s.icon || '',
           description: s.description || '',
           category: s.category || '',
+          source_type: s.source_type || '',
+          feed_type: s.feed_type || '',
+          site_url: s.site_url || '',
+          update_interval: s.update_interval,
+          enabled: s.enabled,
           item_count: s.item_count,
           unread_count: s.unread_count,
+          last_error: s.last_error || '',
         })),
       }
     } catch (error) {
@@ -519,10 +636,14 @@ export function registerPhantasiListHandlers(
   })
 
   bridge.registerHandler('phantasiList.addSource', async (message) => {
-    const [req] = getArgs(message) as [{ url: string; category?: string }]
+    const [req] = getArgs(message) as [Record<string, unknown>]
     try {
       const { addSource } = await import('../../../../services/phantasiApi')
-      const source = await addSource(req, await bridge.hostAttributionHeaders())
+      const written = sourceWrite(req)
+      const source = await addSource(
+        { ...written, url: written.url || '' },
+        await bridge.hostAttributionHeaders(),
+      )
       return {
         success: true,
         data: { id: source.id, name: source.name, url: source.url },
@@ -533,15 +654,12 @@ export function registerPhantasiListHandlers(
   })
 
   bridge.registerHandler('phantasiList.updateSource', async (message) => {
-    const [id, req] = getArgs(message) as [
-      number,
-      { name?: string; category?: string },
-    ]
+    const [id, req] = getArgs(message) as [number, Record<string, unknown>]
     try {
       const { updateSource } = await import('../../../../services/phantasiApi')
       const source = await updateSource(
         id,
-        req,
+        sourceWrite(req),
         await bridge.hostAttributionHeaders(),
       )
       return { success: true, data: { id: source.id, name: source.name } }
@@ -584,6 +702,24 @@ export function registerPhantasiListHandlers(
         await bridge.hostAttributionHeaders(),
       )
       return { success: true, data: result }
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
+  bridge.registerHandler('phantasiList.updateCategory', async (message) => {
+    const [id, req] = getArgs(message) as [
+      number,
+      { name?: string; icon?: string; color?: string; sort_order?: number },
+    ]
+    try {
+      const { updateCategory } = await import('../../../../services/phantasiApi')
+      const category = await updateCategory(
+        id,
+        req,
+        await bridge.hostAttributionHeaders(),
+      )
+      return { success: true, data: { id: category.id, name: category.name } }
     } catch (error) {
       return fail(error)
     }

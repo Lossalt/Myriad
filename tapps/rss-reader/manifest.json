@@ -1,0 +1,34 @@
+{
+  "id": "com.myriad.rss-reader",
+  "name": "订阅",
+  "version": "1.0.0",
+  "description": "阅读站点已经抓取的订阅。这个应用只有界面，抓取仍由站点完成。",
+  "category": "productivity",
+  "author": { "name": "Myriad" },
+  "icon": "📰",
+  "themeColor": "#0f766e",
+  "locales": {
+    "zh-CN": {
+      "name": "订阅",
+      "description": "阅读站点已经抓取的订阅。这个应用只有界面，抓取仍由站点完成。"
+    },
+    "en-US": {
+      "name": "Subscriptions",
+      "description": "Read feeds this site has already fetched. This app is only the interface; the site still does the fetching."
+    },
+    "ja-JP": {
+      "name": "購読",
+      "description": "このサイトが取得済みの購読を読みます。アプリは画面だけで、取得はサイトが行います。"
+    }
+  },
+  "page": {
+    "entry": "page/index.js",
+    "template": "page.html",
+    "styles": "page.css"
+  },
+  "permissions": [
+    "phantasi:read",
+    "phantasi:write",
+    "phantasi:manage"
+  ]
+}

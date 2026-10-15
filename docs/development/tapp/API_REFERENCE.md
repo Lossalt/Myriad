@@ -1450,21 +1450,37 @@ await Tapp.tappList.export("com.example.app");
 
 | 权限 | 典型方法（与 `fixtures/action_permissions.json` / `PERMISSION_MAP` 对齐） |
 | ---- | -------- |
-| `phantasi:read` | `list`, `get`, `sources`, `categories`, `stats`, `exportOpml`, `getComments`, `getReplies` |
+| `phantasi:read` | `list`, `get`, `openOriginal`, `sources`, `categories`, `stats`, `exportOpml`, `getComments`, `getReplies` |
 | `phantasi:write` | `markRead`, `markUnread`, `markAllRead`, `star`, `unstar` |
 | `phantasi:commentWrite` | `createComment`, `updateComment`, `deleteComment`, `createReply` |
-| `phantasi:manage` | `discover`, `addSource`, `updateSource`, `deleteSource`, `refreshSource`, `importOpml`, `createCategory`, `deleteCategory` |
+| `phantasi:manage` | `discover`, `addSource`, `updateSource`, `deleteSource`, `refreshSource`, `importOpml`, `createCategory`, `updateCategory`, `deleteCategory` |
 
 Playground **临时预览不注册** phantasi handlers。完整 SDK（`Tapp.phantasiList`）仅在安装后可用：
 
 ```javascript
-const items = await Tapp.phantasiList.list({ /* filters optional */ });
+const items = await Tapp.phantasiList.list({
+  filter: "unread",       // all | unread | starred
+  source_id: 1,           // 可选
+  category: "News",       // 可选，按源分类
+  cursor: "…",            // 可选；有 cursor 时不再传 page
+  limit: 30,              // 或 per_page
+  sort_order: "desc",     // asc | desc
+});
+// data: { items, total, page, per_page, next_cursor }
+// items[] 含 source_id。游标页的 total 由宿主决定（首屏才计数）。
+
 const one = await Tapp.phantasiList.get(itemId);
+// 打开原文：沙箱只交文章 id。宿主按当前身份重读 item.link，校验 http(s) 后再开新标签。
+await Tapp.phantasiList.openOriginal(itemId);
 const cats = await Tapp.phantasiList.categories();
 const sources = await Tapp.phantasiList.sources();
+// 缺省 view=catalog：源行，没有真实未读覆盖。
+const feeds = await Tapp.phantasiList.sources({ board: "feeds", category: "News" });
+// board=feeds|notes|sites 走未读聚合；feeds 不含入口型和笔记源。
 
 // 用户文件夹分类（需 phantasi:manage）
 await Tapp.phantasiList.createCategory({ name: "Later" });
+await Tapp.phantasiList.updateCategory(categoryId, { name: "Read later" });
 await Tapp.phantasiList.deleteCategory(categoryId);
 
 await Tapp.phantasiList.markRead(itemId);

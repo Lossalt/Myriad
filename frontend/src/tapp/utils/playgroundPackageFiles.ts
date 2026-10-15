@@ -25,6 +25,10 @@ export function buildPlaygroundModules(
   }
   if (code.page?.trim()) modules[PLAYGROUND_PAGE_ENTRY] = code.page
   if (code.widget?.trim()) modules[PLAYGROUND_WIDGET_ENTRY] = code.widget
+  for (const [path, source] of Object.entries(code.packageModules || {})) {
+    if (!path.endsWith('.js') || path.includes('..') || path.startsWith('/')) continue
+    modules[path] = source
+  }
   return modules
 }
 

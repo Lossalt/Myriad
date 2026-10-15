@@ -651,7 +651,8 @@ function phantasiListNamespace(): string {
     phantasiList: {
       list: (o) => sendRequest('phantasiList', 'list', [o]),
       get: (id) => sendRequest('phantasiList', 'get', [id]),
-      sources: () => sendRequest('phantasiList', 'sources', []),
+      openOriginal: (id) => sendRequest('phantasiList', 'openOriginal', [id]),
+      sources: (o) => sendRequest('phantasiList', 'sources', [o || {}]),
       categories: () => sendRequest('phantasiList', 'categories', []),
       stats: () => sendRequest('phantasiList', 'stats', []),
       discover: (url) => sendRequest('phantasiList', 'discover', [url]),
@@ -673,6 +674,7 @@ function phantasiListNamespace(): string {
       refreshSource: (id) => sendRequest('phantasiList', 'refreshSource', [id]),
       importOpml: (opml) => sendRequest('phantasiList', 'importOpml', [opml]),
       createCategory: (req) => sendRequest('phantasiList', 'createCategory', [req]),
+      updateCategory: (id, req) => sendRequest('phantasiList', 'updateCategory', [id, req]),
       deleteCategory: (id) => sendRequest('phantasiList', 'deleteCategory', [id]),
     },`
 }
