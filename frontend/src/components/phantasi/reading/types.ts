@@ -13,18 +13,12 @@ export interface ThemeConfig {
   icon: string
 }
 
-type FontLabelKey = 'fontSerif' | 'fontSans' | 'fontSystem'
-
-type LayoutLabelKey = 'layoutNarrow' | 'layoutWide'
-
 export interface FontOption {
   id: string
-  labelKey: FontLabelKey
   family: string
 }
 
 export interface LayoutOption {
   id: LayoutKey
-  labelKey: LayoutLabelKey
   width: string
 }

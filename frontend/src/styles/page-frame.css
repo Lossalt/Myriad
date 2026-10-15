@@ -1,8 +1,5 @@
-/* Shared content bounds for the home dashboard and Phantasi. */
-.home-shell,
-.phantasi-shell,
-#phantasi-peek-copy,
-.phantasi-peek-air__copy {
+/* Content bounds for the home dashboard. */
+.home-shell {
   --page-pad-x: 0.75rem;
   --page-stage-pad: 0.5rem;
   --page-max-width: 80rem;
@@ -11,28 +8,14 @@
 }
 
 @media (width >= 375px) {
-  .home-shell,
-  .phantasi-shell,
-  #phantasi-peek-copy,
-  .phantasi-peek-air__copy {
+  .home-shell {
     --page-pad-x: 1rem;
   }
 }
 
 @media (width >= 640px) {
-  .home-shell,
-  .phantasi-shell,
-  #phantasi-peek-copy,
-  .phantasi-peek-air__copy {
+  .home-shell {
     --page-pad-x: 1.5rem;
   }
 }
 
-.phantasi-shell__inner {
-  padding: var(--page-pad-top) var(--page-pad-x) var(--page-pad-bottom);
-}
-
-.phantasi-shell__stage {
-  max-width: var(--page-max-width);
-  padding: var(--page-stage-pad);
-}

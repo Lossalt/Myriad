@@ -3,17 +3,14 @@ import type { FontOption, LayoutOption, ThemeConfig, ThemeKey } from './types'
 export const FONT_OPTIONS: FontOption[] = [
   {
     id: 'serif',
-    labelKey: 'fontSerif',
     family: '"Noto Serif SC", "Source Han Serif SC", "Songti SC", serif',
   },
   {
     id: 'sans',
-    labelKey: 'fontSans',
     family: '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", sans-serif',
   },
   {
     id: 'system',
-    labelKey: 'fontSystem',
     family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
 ]
@@ -64,41 +61,6 @@ export const THEMES: Record<ThemeKey, ThemeConfig> = {
 export const THEME_ORDER: ThemeKey[] = ['light', 'sepia', 'dark', 'night']
 
 export const LAYOUT_OPTIONS: LayoutOption[] = [
-  { id: 'narrow', labelKey: 'layoutNarrow', width: 'max-w-3xl' },
-  { id: 'wide', labelKey: 'layoutWide', width: 'max-w-4xl' },
+  { id: 'narrow', width: 'max-w-3xl' },
+  { id: 'wide', width: 'max-w-4xl' },
 ]
-
-export const DATE_FORMAT_SHORT: Intl.DateTimeFormatOptions = {
-  month: 'short',
-  day: 'numeric',
-}
-
-export const DATE_FORMAT_FULL: Intl.DateTimeFormatOptions = {
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-}
-
-// WebKit：will-change 提示 GPU。
-export const STYLE_READER_CONTAINER = {
-  transformOrigin: 'center bottom',
-  willChange: 'opacity, transform',
-} as const
-export const STYLE_SCROLL_SMOOTH = {
-  scrollBehavior: 'smooth' as const,
-} as const
-export const STYLE_MAX_HEIGHT_320 = { maxHeight: 'min(320px, 60vh)' } as const
-export const STYLE_MAX_HEIGHT_60VH = { maxHeight: '60vh' } as const
-
-export const READER_COMMENTS_PANEL_ID = 'phantasi-comments-panel'
-export const READER_COMMENTS_TITLE_ID = 'phantasi-comments-title'
-export const READER_TOOL_SHEET_ID = 'phantasi-reader-tool-sheet'
-export const READER_TOOL_TITLE_ID = 'phantasi-reader-tool-title'
-export const READER_TOC_PANEL_ID = 'phantasi-reader-toc-panel'
-export const READER_TOC_TITLE_ID = 'phantasi-reader-toc-title'
-export const READER_ANNOTATIONS_PANEL_ID = 'phantasi-reader-annotations-panel'
-export const READER_ANNOTATIONS_TITLE_ID = 'phantasi-reader-annotations-title'
-export const READER_PODCAST_PANEL_ID = 'phantasi-reader-podcast-panel'
-export const READER_PODCAST_TITLE_ID = 'phantasi-reader-podcast-title'
-export const READER_MOBILE_CONTROLS_ID = 'phantasi-reader-mobile-controls'

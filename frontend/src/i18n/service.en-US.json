@@ -42,7 +42,6 @@
   "phantasi": {
     "addSuccess": "Added successfully!",
     "boardFeeds": "Feeds",
-    "embedSteamStore": "Open in the Steam store",
     "errorAddFailed": "Could not add.",
     "errorDiscoverFailed": "Detection failed, please check network or URL",
     "errorImportFailed": "Could not import.",
@@ -55,7 +54,6 @@
     "noteSchedulePast": "That time has already passed",
     "noteTitleRequired": "A title is required",
     "noteTitleTooLong": "Titles can be at most {max, plural, one {# character} other {# characters}} (this one is {chars})",
-    "repoLoadFailed": "Failed to load repository",
     "smartReadingList": "Smart reading list",
     "uncategorized": "Uncategorized"
   },

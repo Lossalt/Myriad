@@ -22,8 +22,6 @@ export {
 export {
   getPhantasiTransition,
   phantasiAnimationPresets,
-  playPhantasiVeilEnter,
-  playPhantasiVeilExit,
   usePhantasiAnimationConfig,
 } from './pages/phantasi'
 

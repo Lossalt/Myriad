@@ -28,13 +28,10 @@ describe('pageIdFromPath', () => {
   it('同页换子路径不跑离页清理，进场也不按整段 pathname 重开', () => {
     const scheduler = readFileSync(join(dir, 'useRouteScheduler.ts'), 'utf8')
     const view = readFileSync(join(dir, '../../components/AnimatedView.tsx'), 'utf8')
-    const page = readFileSync(join(dir, 'pages/phantasi.ts'), 'utf8')
     assert.match(scheduler, /pageId === lastPageIdRef.current/)
     assert.match(scheduler, /from ['"]\.\/pageId['"]/)
     assert.match(view, /pageIdFromPath\(location.pathname\)/)
     assert.doesNotMatch(view, /pathname.replaceAll/)
     assert.match(view, /\[pageId, onEnterComplete\]/)
-    assert.match(page, /phantasiMotionReset/)
-    assert.match(page, /playPhantasiVeilExit/)
   })
 })

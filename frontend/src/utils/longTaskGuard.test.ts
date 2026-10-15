@@ -115,11 +115,7 @@ describe('long-task guards', () => {
     assert.match(routes, /await yieldToMain\(\)/)
   })
 
-  it('slices RSS sanitizing and whole-document visual HTML', () => {
-    const rss = readFileSync(
-      new URL('./rssContentProcessor.ts', import.meta.url),
-      'utf8',
-    )
+  it('slices whole-document visual HTML', () => {
     const visual = readFileSync(
       new URL('../components/phantasi/notes/noteVisual.ts', import.meta.url),
       'utf8',
@@ -131,8 +127,6 @@ describe('long-task guards', () => {
       ),
       'utf8',
     )
-    assert.match(rss, /export async function processRssContentAsync/)
-    assert.match(rss, /yieldIfSliceExceeded/)
     assert.match(visual, /export async function markdownToVisualHtmlAsync/)
     assert.match(visual, /VISUAL_HTML_SYNC_CHARS/)
     assert.match(preview, /markdownToVisualHtmlAsync/)
