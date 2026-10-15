@@ -91,7 +91,7 @@ export function useNoteEditorSession({
   onCloudId,
 }: NoteEditorProps) {
   const { t, format, locale } = useI18n()
-  const { user } = useAuth()
+  const { user, isAdmin } = useAuth()
   const {
     isDark,
     currentTheme,
@@ -719,6 +719,8 @@ export function useNoteEditorSession({
       setSlug(wire)
     },
     articleHref: articleHref ?? (docStatus === 'published' ? publishedNoteHref({ slug }) : null),
+    /** 只有管理员能生成 AI 注释和播客，且只对已发布的文章。 */
+    companionItemId: isAdmin && docStatus === 'published' ? itemId : null,
     loading,
     saving,
     uploading,

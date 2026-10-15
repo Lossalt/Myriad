@@ -61,5 +61,15 @@
   "notesRssHint": "켜면 공개한 노트를 다른 사람이 리더로 구독할 수 있어요.",
   "notesRssPrivate": "블로그가 모든 방문자에게 열려 있지 않아서, 아직은 구독할 수 없어요.",
   "notesRssFeed": "피드 주소",
-  "notesRssLoadFailed": "노트 RSS 설정을 불러오지 못했어요."
+  "notesRssLoadFailed": "노트 RSS 설정을 불러오지 못했어요.",
+  "companionTitle": "AI 함께 읽기",
+  "companionHint": "생성하면 블로그가 다시 빌드되고, 글 아래쪽에 함께 읽기 섬이 나타나요.",
+  "companionAnnotations": "주석: {count}개",
+  "companionAnnotationsNone": "주석: 아직 없음",
+  "companionPodcastReady": "팟캐스트: 생성됨",
+  "companionPodcastNone": "팟캐스트: 아직 없음",
+  "companionGenerate": "생성",
+  "companionRegenerate": "다시 생성",
+  "companionFailed": "생성하지 못했어요.",
+  "companionLoadFailed": "AI 함께 읽기 상태를 불러오지 못했어요."
 }

@@ -1009,6 +1009,7 @@ export function NoteFootBar({ chars, pane, onPaneChange, aiActions }: NoteFootBa
 
 interface NoteSettingsDrawerProps {
   editorSettings?: React.ReactNode
+  companion?: React.ReactNode
   open: boolean
   onClose: () => void
   docStatus: NoteEditorDocStatus
@@ -1045,6 +1046,7 @@ interface NoteSettingsDrawerProps {
 /** 分类 / 时间 / 封面 / 定时 / 删除。写作时收起来。 */
 export function NoteSettingsDrawer({
   editorSettings,
+  companion,
   open,
   onClose,
   docStatus,
@@ -1207,6 +1209,8 @@ export function NoteSettingsDrawer({
           <span className="note-btn__label">{t.studio.viewArticle}</span>
         </a>
       ) : null}
+
+      {companion}
 
       <NoteField label={t.phantasi.notePublishedAt} htmlFor="note-published-at">
         <NoteDateInput

@@ -61,5 +61,15 @@
   "notesRssHint": "Activez pour que les notes publiées puissent être suivies dans n’importe quel lecteur.",
   "notesRssPrivate": "Le blog n’est pas ouvert à tous les visiteurs, les autres ne peuvent pas encore s’abonner.",
   "notesRssFeed": "Adresse du flux",
-  "notesRssLoadFailed": "Impossible de charger le réglage RSS des notes."
+  "notesRssLoadFailed": "Impossible de charger le réglage RSS des notes.",
+  "companionTitle": "Lecture IA",
+  "companionHint": "Après la génération, le blog est reconstruit et l’îlot de lecture apparaît en bas de l’article.",
+  "companionAnnotations": "{count, plural, one {Notes : # terme} other {Notes : # termes}}",
+  "companionAnnotationsNone": "Notes : aucune pour l’instant",
+  "companionPodcastReady": "Podcast : prêt",
+  "companionPodcastNone": "Podcast : pas encore",
+  "companionGenerate": "Générer",
+  "companionRegenerate": "Régénérer",
+  "companionFailed": "Impossible de générer.",
+  "companionLoadFailed": "Impossible de charger l’état de la lecture IA."
 }

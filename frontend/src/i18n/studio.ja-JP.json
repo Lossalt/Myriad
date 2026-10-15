@@ -61,5 +61,15 @@
   "notesRssHint": "オンにすると、公開したノートをほかの人がリーダーで購読できる。",
   "notesRssPrivate": "ブログはすべての訪問者に開いていないので、まだ購読できない。",
   "notesRssFeed": "フィード URL",
-  "notesRssLoadFailed": "ノート RSS の設定を読み込めなかった。"
+  "notesRssLoadFailed": "ノート RSS の設定を読み込めなかった。",
+  "companionTitle": "AI 伴読",
+  "companionHint": "生成するとブログが再構築され、記事ページの下に伴読アイランドが出る。",
+  "companionAnnotations": "注釈：{count} 件",
+  "companionAnnotationsNone": "注釈：まだない",
+  "companionPodcastReady": "ポッドキャスト：生成済み",
+  "companionPodcastNone": "ポッドキャスト：まだない",
+  "companionGenerate": "生成",
+  "companionRegenerate": "再生成",
+  "companionFailed": "生成できなかった。",
+  "companionLoadFailed": "AI 伴読の状態を読み込めなかった。"
 }

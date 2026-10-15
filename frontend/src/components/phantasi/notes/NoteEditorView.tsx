@@ -33,6 +33,7 @@ import { Spinner } from '../../Spinner'
 import { widgetDisplayLabel } from '../../widgetLibraryModel'
 import { WidgetInstanceSettings } from '../../widgets/shared/WidgetInstanceSettings'
 import { NoteAiPanel } from './NoteAiPanel'
+import { NoteCompanionSection } from './NoteCompanionSection'
 import { NoteButton } from './NoteControls'
 import {
   hardBreak,
@@ -128,6 +129,7 @@ export function NoteEditorView({
   slugInvalid,
   onSlugInput,
   articleHref,
+  companionItemId,
   loading,
   saving,
   uploading,
@@ -910,6 +912,7 @@ export function NoteEditorView({
             onRestore={restoreHistory}
             busy={saving || loading}
                                          /> : null}
+          companion={companionItemId != null ? <NoteCompanionSection itemId={companionItemId} /> : null}
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           docStatus={docStatus}

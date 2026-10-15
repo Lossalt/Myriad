@@ -61,5 +61,15 @@
   "notesRssHint": "Einschalten, damit veröffentlichte Notizen in jedem Reader abonniert werden können.",
   "notesRssPrivate": "Der Blog ist nicht für alle Besucher offen, andere können noch nicht abonnieren.",
   "notesRssFeed": "Feed-Adresse",
-  "notesRssLoadFailed": "Die Notizen-RSS-Einstellung konnte nicht geladen werden."
+  "notesRssLoadFailed": "Die Notizen-RSS-Einstellung konnte nicht geladen werden.",
+  "companionTitle": "KI-Begleiter",
+  "companionHint": "Nach dem Erzeugen wird der Blog neu gebaut, und unten im Beitrag erscheint die Begleiter-Insel.",
+  "companionAnnotations": "{count, plural, one {Notizen: # Begriff} other {Notizen: # Begriffe}}",
+  "companionAnnotationsNone": "Notizen: noch keine",
+  "companionPodcastReady": "Podcast: erzeugt",
+  "companionPodcastNone": "Podcast: noch keiner",
+  "companionGenerate": "Erzeugen",
+  "companionRegenerate": "Neu erzeugen",
+  "companionFailed": "Konnte nicht erzeugt werden.",
+  "companionLoadFailed": "Der Status des KI-Begleiters konnte nicht geladen werden."
 }

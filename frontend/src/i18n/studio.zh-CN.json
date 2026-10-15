@@ -61,5 +61,15 @@
   "notesRssHint": "打开后，已发布的笔记可以被别人用阅读器订阅。",
   "notesRssPrivate": "博客目前不对所有访客开放，别人还订不到。",
   "notesRssFeed": "订阅地址",
-  "notesRssLoadFailed": "没能读取笔记 RSS 设置。"
+  "notesRssLoadFailed": "没能读取笔记 RSS 设置。",
+  "companionTitle": "AI 伴读",
+  "companionHint": "生成后博客会自动重建，文章页底部就会出现伴读岛。",
+  "companionAnnotations": "注释：{count} 条",
+  "companionAnnotationsNone": "注释：还没有",
+  "companionPodcastReady": "播客：已生成",
+  "companionPodcastNone": "播客：还没有",
+  "companionGenerate": "生成",
+  "companionRegenerate": "重新生成",
+  "companionFailed": "没能生成。",
+  "companionLoadFailed": "没能读取 AI 伴读状态。"
 }

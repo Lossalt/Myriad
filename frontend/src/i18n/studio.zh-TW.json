@@ -61,5 +61,15 @@
   "notesRssHint": "打開後，已發布的筆記可以被別人用閱讀器訂閱。",
   "notesRssPrivate": "部落格目前不對所有訪客開放，別人還訂不到。",
   "notesRssFeed": "訂閱網址",
-  "notesRssLoadFailed": "沒能讀取筆記 RSS 設定。"
+  "notesRssLoadFailed": "沒能讀取筆記 RSS 設定。",
+  "companionTitle": "AI 伴讀",
+  "companionHint": "產生後部落格會自動重建，文章頁底部就會出現伴讀島。",
+  "companionAnnotations": "註釋：{count} 條",
+  "companionAnnotationsNone": "註釋：還沒有",
+  "companionPodcastReady": "播客：已產生",
+  "companionPodcastNone": "播客：還沒有",
+  "companionGenerate": "產生",
+  "companionRegenerate": "重新產生",
+  "companionFailed": "沒能產生。",
+  "companionLoadFailed": "沒能讀取 AI 伴讀狀態。"
 }
