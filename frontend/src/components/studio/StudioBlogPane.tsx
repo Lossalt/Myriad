@@ -11,6 +11,8 @@ import {
   parseBlogParams,
   sameBlogSettings,
 } from '../../services/blogState'
+import { getNotesRssSettings, setNotesRssEnabled } from '../../services/phantasiApi'
+import { useModuleVisibilityPreferences } from '../../utils/moduleVisibility'
 import { userFacingError } from '../../utils/userFacingError'
 import { WorkbenchPage } from '../phantasi/skin/PhantasiWorkbenchChrome'
 import { PhantasiWorkbenchIcon } from '../phantasi/ui/PhantasiWorkbenchIcon'
@@ -190,6 +192,7 @@ export function StudioBlogPane({ back }: { back: ReactNode }) {
               />
             </label>
             <p className="studio-blog__note">{copy.languageNote}</p>
+            <NotesRssToggle />
             <section>
               <h3>{copy.themes}</h3>
               <ul className="studio-blog__themes">
@@ -300,6 +303,61 @@ export function StudioBlogPane({ back }: { back: ReactNode }) {
         ) : null}
       </div>
     </WorkbenchPage>
+  )
+}
+
+/** 后端要开关打开且博客对所有访客开放，`/api/phantasi/notes.xml` 才存在。 */
+function NotesRssToggle() {
+  const { t } = useI18n()
+  const copy = t.studio
+  const { preferences } = useModuleVisibilityPreferences()
+  const open = preferences.modules.phantasi === 'all'
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void getNotesRssSettings().then((settings) => {
+      if (!cancelled) setEnabled(settings.enabled)
+    }).catch((err: unknown) => {
+      if (!cancelled) setError(userFacingError(err, copy.notesRssLoadFailed))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [copy.notesRssLoadFailed])
+
+  const toggle = async (next: boolean) => {
+    setSaving(true)
+    setError('')
+    try {
+      setEnabled(await setNotesRssEnabled(next))
+    } catch (err) {
+      setError(userFacingError(err, copy.saveFailed))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const feedUrl = `${window.location.origin}/api/phantasi/notes.xml`
+  return (
+    <section>
+      <label className="studio-blog__toggle">
+        <input
+          type="checkbox"
+          checked={enabled ?? false}
+          disabled={enabled == null || saving}
+          onChange={(event) => { void toggle(event.target.checked) }}
+        />
+        {copy.notesRss}
+      </label>
+      <p className="studio-blog__note">
+        {enabled && !open ? copy.notesRssPrivate : copy.notesRssHint}
+      </p>
+      {enabled && open ? <a href={feedUrl}>{feedUrl}</a> : null}
+      {error ? <p className="studio-blog__error" role="alert">{error}</p> : null}
+    </section>
   )
 }
 

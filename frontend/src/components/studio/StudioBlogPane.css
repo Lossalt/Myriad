@@ -67,3 +67,9 @@
   overflow: auto;
   font-size: 0.75rem;
 }
+
+.studio-blog label.studio-blog__toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
