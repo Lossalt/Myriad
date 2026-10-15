@@ -1,0 +1,82 @@
+/* 只用本机字体。博客响应的 CSP 不允许加载外站字体。 */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f5f2;
+  --text: #1c1917;
+  --muted: #57534e;
+  --line: #e7e5e4;
+  --link: #9a3412;
+  --code: #f0eeeb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1917;
+    --text: #fafaf9;
+    --muted: #a8a29e;
+    --line: #44403c;
+    --link: #fdba74;
+    --code: #292524;
+  }
+}
+* { box-sizing: border-box; }
+html { font-size: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "PMingLiU", serif;
+  line-height: 1.75;
+  word-break: break-word;
+}
+.site-header, main, .site-footer {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+}
+.site-title {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+nav a { margin-left: 1rem; }
+a { color: var(--link); }
+img, video, svg { max-width: 100%; height: auto; }
+pre, code {
+  font-family: ui-monospace, "SFMono-Regular", "Source Han Mono SC", "Noto Sans Mono CJK SC", monospace;
+}
+pre {
+  overflow: auto;
+  padding: 0.85rem 1rem;
+  background: var(--code);
+  border-radius: 6px;
+  line-height: 1.5;
+}
+blockquote {
+  margin: 1em 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+table { border-collapse: collapse; width: 100%; }
+th, td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.meta, .posts time { color: var(--muted); font-size: 0.92rem; }
+.posts, .terms, .friend-links { list-style: none; padding: 0; }
+.posts li, .terms li, .friend-links li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.cover img, .friend-links img { border-radius: 8px; }
+.friend-links img { width: 2.5rem; height: 2.5rem; object-fit: cover; }
+.site-footer { color: var(--muted); font-size: 0.9rem; }

@@ -1,0 +1,8 @@
+name = "Myriad Default"
+license = "MIT"
+description = "Myriad 内置的极简博客主题，不加载任何脚本。"
+min_version = "0.146.0"
+tags = ["blog", "minimal"]
+
+[author]
+name = "Myriad"

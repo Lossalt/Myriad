@@ -24,6 +24,7 @@ members = [
     "crates/myriad-runtime-registry",
     "crates/myriad-listening",
     "crates/myriad-phantasi-notes",
+    "crates/myriad-blog",
     "crates/myriad-agent-rules",
     "crates/myriad-core-ffi",
     "crates/myriad-persona-sync",

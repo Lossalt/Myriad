@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="{{ or site.Language.Locale site.Language.Lang "zh-cn" }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ with .Title }}{{ . }} · {{ end }}{{ site.Title }}</title>
+  {{- with .Description }}
+  <meta name="description" content="{{ . }}">
+  {{- end }}
+  <link rel="stylesheet" href="{{ "css/style.css" | relURL }}">
+</head>
+<body class="myriad">
+  <header class="site-header">
+    <a class="site-title" href="{{ site.Home.RelPermalink }}">{{ site.Title }}</a>
+    <nav>
+      {{- range site.Menus.main }}
+      {{- $href := .URL }}
+      {{- /* 配置里写的是站内路径 /friends/。挂在 /blog/ 下时改用页面永久链接，避免链到站点根。 */ -}}
+      {{- if or (eq .URL "/friends/") (eq .URL "/friends") }}
+        {{- with site.GetPage "/friends" }}
+          {{- $href = .RelPermalink }}
+        {{- else }}
+          {{- with site.GetPage "friends" }}
+            {{- $href = .RelPermalink }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      <a href="{{ $href }}">{{ .Name }}</a>
+      {{- end }}
+    </nav>
+  </header>
+  <main>
+    {{ block "main" . }}{{ end }}
+  </main>
+  <footer class="site-footer"><p>{{ site.Title }}</p></footer>
+</body>
+</html>

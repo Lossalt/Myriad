@@ -1,0 +1,26 @@
+{{ define "main" }}
+<article class="myriad-post">
+  <header class="article-header">
+    <h1>{{ .Title }}</h1>
+    <p class="meta">
+      {{- if not .Date.IsZero }}
+      <time datetime="{{ .Date.Format `2006-01-02T15:04:05Z07:00` }}">{{ .Date.Format `2006年1月2日` }}</time>
+      {{- end }}
+      {{- with .Params.authors }}
+      <span class="authors">{{ delimit . "、" }}</span>
+      {{- end }}
+      {{- with .Params.categories }}
+      {{- range . }}
+      <span class="cat">{{ . }}</span>
+      {{- end }}
+      {{- end }}
+    </p>
+  </header>
+  {{- with .Params.image }}
+  <figure class="cover"><img src="{{ . }}" alt=""></figure>
+  {{- end }}
+  <div class="content">
+    {{ .Content }}
+  </div>
+</article>
+{{ end }}

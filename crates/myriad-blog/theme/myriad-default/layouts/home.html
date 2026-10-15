@@ -1,0 +1,14 @@
+{{ define "main" }}
+{{ with .Content }}<div class="intro">{{ . }}</div>{{ end }}
+{{ with where site.RegularPages "Section" "posts" }}
+<ul class="posts">
+  {{ range . }}
+  <li>
+    <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+    {{ if not .Date.IsZero }}<time datetime="{{ .Date.Format `2006-01-02` }}">{{ .Date.Format `2006年1月2日` }}</time>{{ end }}
+    {{ with .Summary }}<p>{{ . }}</p>{{ end }}
+  </li>
+  {{ end }}
+</ul>
+{{ end }}
+{{ end }}
