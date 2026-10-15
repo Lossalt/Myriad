@@ -25,7 +25,8 @@ pub use archive::{
 pub use config::{HUGO_THEMES_DIR, POSTS_PERMALINK, blog_base_url, render_hugo_config};
 pub use cover::{cover_front_matter, covers_same_asset};
 pub use inspect::{
-    MAX_THEME_BYTES, MAX_THEME_FILES, ThemeFile, ThemeInfo, ThemeInspectError, inspect_theme,
+    MAX_THEME_ARCHIVE_BYTES, MAX_THEME_ARCHIVE_ENTRIES, MAX_THEME_BYTES, MAX_THEME_FILES,
+    ThemeFile, ThemeInfo, ThemeInspectError, inspect_theme, is_theme_archive_noise,
 };
 pub use model::{
     BLOG_SETTINGS_KEY, BlogPost, BlogSettings, BlogSite, DEFAULT_THEME_ID, FriendLink,

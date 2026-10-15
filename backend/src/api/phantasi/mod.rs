@@ -8,6 +8,8 @@ mod feeds_list;
 mod feeds_opml;
 mod feeds_sources;
 mod helpers;
+
+pub(crate) use helpers::require_phantasi_module_access;
 mod note_collab;
 mod note_docs;
 mod note_editor;

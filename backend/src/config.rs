@@ -809,6 +809,14 @@ pub struct DynamicConfig {
     pub gemini_base_url: Option<String>,
     /// GitHub API Base URL（用于使用 GitHub 镜像服务）
     pub github_api_base_url: Option<String>,
+
+    /// 博客设置 JSON。缺字段和脏数据由 `blog_settings_from_value` 收成默认。
+    #[serde(default = "default_blog_settings_value")]
+    pub blog_settings: serde_json::Value,
+}
+
+fn default_blog_settings_value() -> serde_json::Value {
+    myriad_blog::blog_settings_to_value(&myriad_blog::BlogSettings::default())
 }
 
 impl Default for DynamicConfig {
@@ -1033,6 +1041,7 @@ impl Default for DynamicConfig {
             outbound_fake_ip_ranges: Vec::new(),
             gemini_base_url: None,     // 默认使用官方 API
             github_api_base_url: None, // 默认使用官方 API
+            blog_settings: default_blog_settings_value(),
         }
     }
 }

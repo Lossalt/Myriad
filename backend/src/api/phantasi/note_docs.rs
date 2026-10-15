@@ -475,6 +475,9 @@ pub(crate) async fn update_note_doc(
     txn.commit()
         .await
         .map_err(|e| phantasi_store_http("commit note doc save", e))?;
+    if req.slug.is_some() {
+        crate::services::blog::request_rebuild();
+    }
     broadcast_saved_doc(&saved, user_id, req.client_request_id);
     Ok(Json(json!({
         "success": true,
@@ -634,6 +637,7 @@ pub(crate) async fn publish_note_doc(
     txn.commit()
         .await
         .map_err(|e| phantasi_store_http("commit note publish", e))?;
+    crate::services::blog::request_rebuild();
     broadcast_saved_doc(&saved, user_id, req.client_request_id);
     Ok(Json(json!({
         "success": true,

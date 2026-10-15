@@ -10,6 +10,7 @@ pub mod auth_local;
 pub mod avatar_source; // 画像源选择（本人 + 管理员代改）
 pub mod bangumi;
 pub mod bilibili;
+pub mod blog;
 pub mod cache;
 pub mod config;
 pub mod diagnostics;

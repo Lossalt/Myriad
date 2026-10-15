@@ -3085,6 +3085,7 @@ dependencies = [
  "migration",
  "mimalloc",
  "myriad-agent-rules",
+ "myriad-blog",
  "myriad-data-key",
  "myriad-error",
  "myriad-image-proxy",

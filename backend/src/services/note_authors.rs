@@ -185,6 +185,9 @@ pub async fn add_note_author(
     }
     ensure_note_author(db, doc_id, user_id, owner_id).await?;
     sync_published_author_line(db, item_id, doc_id).await?;
+    if item_id.is_some() {
+        crate::services::blog::request_rebuild();
+    }
     let mut map = load_authors_for_docs(db, &[doc_id]).await?;
     Ok(map.remove(&doc_id).unwrap_or_default())
 }
@@ -211,6 +214,9 @@ pub async fn remove_note_author(
         ));
     }
     sync_published_author_line(db, item_id, doc_id).await?;
+    if item_id.is_some() {
+        crate::services::blog::request_rebuild();
+    }
     let mut map = load_authors_for_docs(db, &[doc_id]).await?;
     Ok(map.remove(&doc_id).unwrap_or_default())
 }

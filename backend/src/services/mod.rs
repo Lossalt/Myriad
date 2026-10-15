@@ -20,6 +20,7 @@ pub mod analyzer;
 pub mod audio_tags; // MP3/FLAC/Ogg embedded tags for local music
 pub mod avatar; // 头像来源枚举/解析（单一解析处；HTTP JSON 走代理，联邦 Actor 不经代理 URL）
 pub mod background_processor;
+pub mod blog;
 pub mod config_service;
 pub mod content_databases; // Preset anime/game/artist databases
 pub mod data_key; // Config-key / federation private-key envelope

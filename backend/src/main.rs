@@ -525,6 +525,9 @@ async fn run_server(role: runtime_role::RuntimeRole) -> anyhow::Result<()> {
                 services::phantasi_scheduler::init_phantasi_scheduler(db.clone());
                 tracing::info!("✅ Phantasi scheduler engine initialized");
 
+                // Hugo 缺失时博客状态为不可用，不挡住启动。输出目录空着就排一次构建。
+                services::blog::start(db.clone());
+
                 // Process-global DB must be wired before persona boot recovery.
                 services::process_db::set_process_database(db.clone());
 

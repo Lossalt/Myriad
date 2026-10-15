@@ -168,7 +168,8 @@ pub(crate) async fn start_unified_server(
             GLOBAL_DYNAMIC_CONFIG.clone(),
         );
         let routes = base::build_base_api_router(app_state.clone())
-            .merge(authenticated::build_authenticated_router(app_state.clone()));
+            .merge(authenticated::build_authenticated_router(app_state.clone()))
+            .merge(crate::api::blog::router(app_state.clone()));
         let routes = if role == crate::runtime_role::RuntimeRole::All {
             routes
                 .merge(build_federation_router(app_state.clone()))

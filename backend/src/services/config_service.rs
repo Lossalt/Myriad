@@ -821,6 +821,12 @@ impl ConfigService {
             }
         }
 
+        // 博客设置：缺行保持默认；库里的 JSON 一律走 blog_settings_from_value。
+        if let Some(value) = map.get("blog_settings") {
+            config.blog_settings =
+                myriad_blog::blog_settings_to_value(&myriad_blog::blog_settings_from_value(value));
+        }
+
         config
     }
 
@@ -1033,6 +1039,39 @@ mod tests {
         );
         let unread: Vec<_> = written.difference(&read).collect();
         assert!(unread.is_empty(), "saved but never read back: {unread:?}");
+        assert!(
+            read.contains("blog_settings"),
+            "blog_settings must be read back from the database"
+        );
+
+        let missing = super::ConfigService::parse_config(std::collections::HashMap::new());
+        assert_eq!(
+            myriad_blog::blog_settings_from_value(&missing.blog_settings),
+            myriad_blog::BlogSettings::default()
+        );
+        let stored = serde_json::json!({
+            "theme_id": "PaperMod",
+            "site_title": " 标题 ",
+            "description": "说明",
+            "params": {"k": 1},
+        });
+        let round = super::ConfigService::parse_config(std::collections::HashMap::from([(
+            "blog_settings".to_string(),
+            stored,
+        )]));
+        let settings = myriad_blog::blog_settings_from_value(&round.blog_settings);
+        assert_eq!(settings.theme_id, "PaperMod");
+        assert_eq!(settings.site_title, "标题");
+        assert_eq!(settings.description, "说明");
+        assert_eq!(settings.params["k"], 1);
+        let dirty = super::ConfigService::parse_config(std::collections::HashMap::from([(
+            "blog_settings".to_string(),
+            serde_json::json!("nope"),
+        )]));
+        assert_eq!(
+            myriad_blog::blog_settings_from_value(&dirty.blog_settings),
+            myriad_blog::BlogSettings::default()
+        );
     }
 
     /// CLAUDE.md: a new configuration field needs its database read-back

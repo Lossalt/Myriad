@@ -11,6 +11,18 @@ pub const MAX_THEME_FILES: usize = 10_000;
 /// 主题包解压后的总字节数上限。
 pub const MAX_THEME_BYTES: u64 = 64 * 1024 * 1024;
 
+/// zip 本身的大小上限。GitHub 打包会带上示例站，比主题本身大得多。
+pub const MAX_THEME_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// zip 目录表最多读这么多条。跳过示例站之前先挡住超大的目录表。
+pub const MAX_THEME_ARCHIVE_ENTRIES: usize = 100_000;
+
+/// 版本库、CI、示例站和 macOS 打包残留。主题构建用不到，不解压也不计入上限。
+pub fn is_theme_archive_noise(path: &str) -> bool {
+    path.split(['/', '\\'])
+        .any(|part| matches!(part, ".git" | ".github" | "exampleSite" | "__MACOSX"))
+}
+
 /// 一个已解压条目。`body` 只在 `theme.toml` / `hugo.toml` / `config.toml` 上需要。
 pub struct ThemeFile<'a> {
     pub path: &'a str,
@@ -292,6 +304,21 @@ mod tests {
             )]),
             Err(ThemeInspectError::TooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn repository_and_example_site_entries_are_noise() {
+        assert!(is_theme_archive_noise(
+            "blowfish-main/exampleSite/content/a.md"
+        ));
+        assert!(is_theme_archive_noise("blowfish-main/.git/config"));
+        assert!(is_theme_archive_noise(".github/workflows/ci.yml"));
+        assert!(is_theme_archive_noise("__MACOSX/theme/._theme.toml"));
+        assert!(!is_theme_archive_noise(
+            "blowfish-main/layouts/_default/single.html"
+        ));
+        assert!(!is_theme_archive_noise("theme/assets/.gitkeep"));
+        assert!(!is_theme_archive_noise("theme/static/example-site.png"));
     }
 
     #[test]

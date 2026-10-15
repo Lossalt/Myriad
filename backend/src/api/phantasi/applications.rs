@@ -494,6 +494,7 @@ async fn approve_pending_application(
             txn.commit()
                 .await
                 .map_err(|error| phantasi_store_http("commit application approval", error))?;
+            crate::services::blog::request_rebuild();
             Ok(reviewed)
         }
         Err(error) => {

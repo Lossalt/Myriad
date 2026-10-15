@@ -505,6 +505,7 @@ pub async fn delete_note_with_doc(
             txn.commit()
                 .await
                 .map_err(|e| phantasi_store_http("commit note delete", e))?;
+            crate::services::blog::request_rebuild();
             Ok(())
         }
         Err(error) => {
@@ -593,6 +594,9 @@ pub async fn update_note_doc_topic(
             txn.commit()
                 .await
                 .map_err(|e| phantasi_store_http("commit note topic update", e))?;
+            if doc.item_id.is_some() {
+                crate::services::blog::request_rebuild();
+            }
             Ok(doc)
         }
         Err(error) => {
@@ -742,6 +746,7 @@ pub async fn publish_due_note_docs(db: &DatabaseConnection) -> Result<usize, Str
         match committed {
             Ok(true) => {
                 published += 1;
+                crate::services::blog::request_rebuild();
             }
             Ok(false) => {}
             Err(error) => {
@@ -924,6 +929,7 @@ pub async fn write_note_with_doc(
             txn.commit()
                 .await
                 .map_err(|e| phantasi_store_http("commit note write", e))?;
+            crate::services::blog::request_rebuild();
             Ok(item)
         }
         Err(error) => {

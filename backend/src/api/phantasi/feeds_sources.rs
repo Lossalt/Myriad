@@ -126,6 +126,25 @@ fn is_catalog_view(view: Option<&str>) -> bool {
     view == Some("catalog")
 }
 
+pub(crate) fn source_affects_blog(source: &phantasi_sources::Model) -> bool {
+    source.source_type == phantasi_sources::SourceType::Note
+        || listed_board_keeps(
+            &source.source_type,
+            source.category.as_deref(),
+            source.admin_only,
+            "sites",
+        )
+}
+
+fn rebuild_blog_if_source_changed(
+    before: Option<&phantasi_sources::Model>,
+    after: Option<&phantasi_sources::Model>,
+) {
+    if before.is_some_and(source_affects_blog) || after.is_some_and(source_affects_blog) {
+        crate::services::blog::request_rebuild();
+    }
+}
+
 fn retain_listed_sources_for_board(
     sources: &mut Vec<phantasi_sources::Model>,
     board: Option<&str>,
@@ -657,6 +676,7 @@ pub(crate) async fn add_source(
                 .map_err(|error| phantasi_store_http("reload source", error))?
                 .ok_or_else(|| phantasi_store_http("reload source", "missing after save"))?;
 
+            rebuild_blog_if_source_changed(None, Some(&updated_source));
             let response: phantasi_sources::SourceResponse = updated_source.into();
             Ok(Json(json!({ "success": true, "source": response })))
         }
@@ -675,6 +695,7 @@ pub(crate) async fn update_source(
 
     match source {
         Ok(Some(source)) => {
+            let previous = source.clone();
             let source_is_note = source.source_type == phantasi_sources::SourceType::Note;
             let requested_type = req.source_type.as_deref();
             let changes_note_transport = req.url.is_some()
@@ -799,6 +820,7 @@ pub(crate) async fn update_source(
 
             match active.update(&db).await {
                 Ok(updated) => {
+                    rebuild_blog_if_source_changed(Some(&previous), Some(&updated));
                     let response: phantasi_sources::SourceResponse = updated.into();
                     Ok(Json(json!({ "success": true, "source": response })))
                 }
@@ -854,6 +876,7 @@ pub(crate) async fn delete_source(
                     txn.commit()
                         .await
                         .map_err(|e| phantasi_store_http("commit source delete", e))?;
+                    rebuild_blog_if_source_changed(Some(&source), None);
                     Ok(Json(json!({ "success": true })))
                 }
                 Err(e) => {

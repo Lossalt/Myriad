@@ -34,6 +34,8 @@ pub struct DataPaths {
     pub widget_fonts: PathBuf,
     /// Persistent media files (default: "data/media"). Not cache.
     pub media: PathBuf,
+    /// Blog themes, Hugo workspace, and the published site (default: "data/blog").
+    pub blog: PathBuf,
 }
 
 impl DataPaths {
@@ -53,6 +55,7 @@ impl DataPaths {
             cache_images: cache_root.join("images"),
             widget_fonts: root.join("site/widget-fonts"),
             media: root.join("media"),
+            blog: root.join("blog"),
             root,
             cache: cache_root,
         }
@@ -158,6 +161,7 @@ fn verify_storage_layout_writable(data_paths: &DataPaths) -> io::Result<()> {
     verify_directory_writable(&data_paths.widget_fonts)?;
     verify_directory_writable(&data_paths.media)?;
     verify_directory_writable(&data_paths.media.join("tmp"))?;
+    verify_directory_writable(&data_paths.blog)?;
 
     let entries = fs::read_dir(&data_paths.tapps)
         .map_err(|error| storage_error("list Tapp owner directories", &data_paths.tapps, error))?;
@@ -251,6 +255,7 @@ mod tests {
             cache_images: base.join("cache/images"),
             widget_fonts: base.join("data/site/widget-fonts"),
             media: base.join("data/media"),
+            blog: base.join("data/blog"),
         };
         fs::create_dir_all(data_paths.tapps.join("1")).unwrap();
         fs::create_dir_all(data_paths.tapps.join("not-an-owner")).unwrap();
@@ -295,6 +300,7 @@ mod tests {
             cache_images: base.join("cache/images"),
             widget_fonts: data_file.join("site/widget-fonts"),
             media: data_file.join("media"),
+            blog: data_file.join("blog"),
         };
 
         let error = verify_storage_layout_writable(&data_paths).unwrap_err();
@@ -328,6 +334,7 @@ mod tests {
             cache_images: base.join("cache/images"),
             widget_fonts: base.join("data/site/widget-fonts"),
             media: base.join("data/media"),
+            blog: base.join("data/blog"),
         };
         fs::create_dir_all(&data_paths.tapps).unwrap();
         fs::create_dir_all(&outside).unwrap();
