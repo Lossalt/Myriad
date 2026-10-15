@@ -153,7 +153,8 @@ impl Engine {
             .await
             .take()
             .expect("blog builder starts once");
-        // 输出随后端版本的导出与后处理而变，启动时的数据修补也不发重建信号，所以每次启动都重建一次。
+        // 启动时的数据修补不发重建信号，后端换版本也会改变导出与后处理，所以启动总要检查一次。
+        // 输入指纹没变时不跑 Hugo，见 `build::render_and_build`。
         PENDING.store(false, Ordering::Release);
         let _ = self.tx.send(());
         let mut armed = false;
@@ -221,8 +222,11 @@ impl Engine {
         match build::render_and_build(&layout::layout(), &site, &settings, &posts, &friends).await {
             Ok(built) => {
                 let mut state = self.state.lock().await;
+                if built.reused {
+                    tracing::debug!("blog inputs unchanged; kept the existing output");
+                }
                 state.status = "ok";
-                state.last_built_at = Some(chrono::Utc::now().to_rfc3339());
+                state.last_built_at = Some(built.built_at);
                 state.last_error = None;
                 state.log_tail = Some(built.log_tail);
                 if built.hugo_version.is_some() {
@@ -327,6 +331,10 @@ pub async fn save_settings(
         params,
     };
     let stored = myriad_blog::blog_settings_to_value(&settings);
+    let previous = myriad_blog::blog_settings_to_value(&content::load_settings(db).await);
+    if stored == previous {
+        return Ok(snapshot(db).await);
+    }
     ConfigService::new(db.clone())
         .update_config(myriad_blog::BLOG_SETTINGS_KEY, stored)
         .await
@@ -342,7 +350,11 @@ pub async fn save_settings(
     Ok(snapshot(db).await)
 }
 
-pub async fn install_archive(bytes: Vec<u8>) -> Result<ThemeJson, (&'static str, u16)> {
+/// 新装的主题要站长点「使用」才进构建；只有覆盖了正在用的主题时才重建。
+pub async fn install_archive(
+    db: &DatabaseConnection,
+    bytes: Vec<u8>,
+) -> Result<ThemeJson, (&'static str, u16)> {
     let layout = layout::layout();
     let engine = engine();
     let _guard = engine.files.lock().await;
@@ -351,11 +363,20 @@ pub async fn install_archive(bytes: Vec<u8>) -> Result<ThemeJson, (&'static str,
         .map_err(|_| ("Could not store the theme", 500))?
         .map_err(|error| (error.message, error.status))?;
     drop(_guard);
-    request_rebuild();
+    if content::load_settings(db)
+        .await
+        .theme_id
+        .eq_ignore_ascii_case(&record.id)
+    {
+        request_rebuild();
+    }
     Ok(theme_json(record))
 }
 
-pub async fn install_from_url(url: &str) -> Result<ThemeJson, (&'static str, u16)> {
+pub async fn install_from_url(
+    db: &DatabaseConnection,
+    url: &str,
+) -> Result<ThemeJson, (&'static str, u16)> {
     let url = url.trim();
     if url.is_empty() {
         return Err(("A theme URL is required", 400));
@@ -376,7 +397,7 @@ pub async fn install_from_url(url: &str) -> Result<ThemeJson, (&'static str, u16
     )
     .await
     .map_err(|_| ("Theme archive is too large", 413))?;
-    install_archive(bytes).await
+    install_archive(db, bytes).await
 }
 
 pub async fn remove_theme(db: &DatabaseConnection, id: &str) -> Result<(), (&'static str, u16)> {
@@ -408,7 +429,9 @@ pub async fn remove_theme(db: &DatabaseConnection, id: &str) -> Result<(), (&'st
         }
     }
     drop(_guard);
-    request_rebuild();
+    if removing_current {
+        request_rebuild();
+    }
     Ok(())
 }
 

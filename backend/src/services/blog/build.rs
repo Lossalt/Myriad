@@ -9,6 +9,8 @@ use myriad_blog::{
     BlogPost, BlogSettings, BlogSite, FriendLink, NOTES_CSS, export_site_files, is_script_asset,
     postprocess_html,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -22,6 +24,17 @@ const HTML_BYTE_CAP: usize = 20 * 1024 * 1024;
 pub struct BuiltSite {
     pub log_tail: String,
     pub hugo_version: Option<String>,
+    pub built_at: String,
+    /// 输入指纹跟上次成功构建一致，没跑 Hugo，沿用现有输出。
+    pub reused: bool,
+}
+
+/// 上次成功构建的输入指纹。`built_at` 和 `log_tail` 一起存，沿用输出时状态面板还能显示原来那次。
+#[derive(Serialize, Deserialize)]
+struct BuildStamp {
+    fingerprint: String,
+    built_at: String,
+    log_tail: String,
 }
 
 #[derive(Debug)]
@@ -93,6 +106,24 @@ pub async fn render_and_build(
     copy_theme_into(layout, &theme_id, &site_dir.join("themes").join(&theme_id))
         .map_err(|_| failed("Could not prepare the theme", ""))?;
 
+    let version = hugo_version_line().await;
+    let fingerprint = version
+        .as_deref()
+        .and_then(|version| input_fingerprint(&site_dir, version).ok());
+    if let Some(fingerprint) = fingerprint.as_deref()
+        && let Some(stamp) = read_stamp(&layout.stamp_path())
+        && stamp.fingerprint == fingerprint
+        && layout.current_dir().join("index.html").is_file()
+    {
+        let _ = fs::remove_dir_all(&work);
+        return Ok(BuiltSite {
+            log_tail: stamp.log_tail,
+            hugo_version: version,
+            built_at: stamp.built_at,
+            reused: true,
+        });
+    }
+
     let log = match run_hugo(&site_dir, &public, &home, &tmp, &layout.hugo_cache).await {
         Ok(log) => log,
         Err(problem) => {
@@ -109,11 +140,96 @@ pub async fn render_and_build(
         failed(message, &log)
     })?;
     let _ = fs::remove_dir_all(&work);
-    let version = hugo_version_line().await;
+    let built_at = chrono::Utc::now().to_rfc3339();
+    if let Some(fingerprint) = fingerprint {
+        write_stamp(
+            &layout.stamp_path(),
+            &BuildStamp {
+                fingerprint,
+                built_at: built_at.clone(),
+                log_tail: log.clone(),
+            },
+        );
+    }
     Ok(BuiltSite {
         log_tail: log,
         hugo_version: version,
+        built_at,
+        reused: false,
     })
+}
+
+/// Hugo 的全部输入：准备好的站点目录（导出内容、配置、主题拷贝）、Hugo 版本、Dart Sass，
+/// 以及后端可执行文件本身。后处理规则和 notes.css 都编在可执行文件里，换了版本就要重跑。
+fn input_fingerprint(site_dir: &Path, hugo_version: &str) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"myriad-blog-build/1\0");
+    hasher.update(executable_identity().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(hugo_version.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(
+        std::env::var("DART_SASS_DIR")
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hasher.update(b"\0");
+    hash_tree(site_dir, site_dir, &mut hasher)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn executable_identity() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return String::new();
+    };
+    let Ok(meta) = fs::metadata(&path) else {
+        return path.to_string_lossy().into_owned();
+    };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}:{}:{modified}", path.to_string_lossy(), meta.len())
+}
+
+fn hash_tree(root: &Path, dir: &Path, hasher: &mut Sha256) -> std::io::Result<()> {
+    let mut entries = fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort();
+    for path in entries {
+        let meta = fs::symlink_metadata(&path)?;
+        let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
+        if meta.is_dir() {
+            hasher.update(b"d\0");
+            hasher.update(rel.as_bytes());
+            hasher.update(b"\0");
+            hash_tree(root, &path, hasher)?;
+        } else if meta.is_file() {
+            let body = fs::read(&path)?;
+            hasher.update(b"f\0");
+            hasher.update(rel.as_bytes());
+            hasher.update(b"\0");
+            hasher.update((body.len() as u64).to_le_bytes());
+            hasher.update(&body);
+        }
+    }
+    Ok(())
+}
+
+fn read_stamp(path: &Path) -> Option<BuildStamp> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn write_stamp(path: &Path, stamp: &BuildStamp) {
+    let Ok(body) = serde_json::to_vec(stamp) else {
+        return;
+    };
+    if let Err(error) = fs::write(path, body) {
+        tracing::warn!(%error, "failed to record the blog build stamp");
+    }
 }
 
 async fn run_hugo(
@@ -349,5 +465,31 @@ mod tests {
         assert!(cleaned.contains("DATABASE_URL=[redacted]"));
         assert!(!cleaned.contains("postgres://"));
         assert!(cleaned.contains("PATH=/bin"));
+    }
+
+    #[test]
+    fn fingerprint_follows_file_contents_paths_and_hugo_version() {
+        let root = std::env::temp_dir().join(format!(
+            "myriad-blog-fingerprint-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(root.join("content/posts")).unwrap();
+        fs::write(root.join("hugo.toml"), "title = 'a'").unwrap();
+        fs::write(root.join("content/posts/a.md"), "one").unwrap();
+        let first = input_fingerprint(&root, "hugo v0.168.0").unwrap();
+        assert_eq!(first, input_fingerprint(&root, "hugo v0.168.0").unwrap());
+        assert_ne!(first, input_fingerprint(&root, "hugo v0.169.0").unwrap());
+
+        fs::write(root.join("content/posts/a.md"), "two").unwrap();
+        let edited = input_fingerprint(&root, "hugo v0.168.0").unwrap();
+        assert_ne!(first, edited);
+
+        fs::rename(
+            root.join("content/posts/a.md"),
+            root.join("content/posts/b.md"),
+        )
+        .unwrap();
+        assert_ne!(edited, input_fingerprint(&root, "hugo v0.168.0").unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 }

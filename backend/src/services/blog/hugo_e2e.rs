@@ -72,7 +72,15 @@ async fn papermod_zip_build_strips_scripts_and_keeps_notes_css() {
     let built = render_and_build(&layout, &site, &settings, &posts, &friends)
         .await
         .unwrap_or_else(|error| panic!("build failed: {error:?}"));
-    let _ = built;
+    assert!(!built.reused);
+    let again = render_and_build(&layout, &site, &settings, &posts, &friends)
+        .await
+        .unwrap_or_else(|error| panic!("second build failed: {error:?}"));
+    assert!(
+        again.reused,
+        "unchanged inputs should keep the existing output"
+    );
+    assert_eq!(again.built_at, built.built_at);
     let page =
         fs::read_to_string(layout.current_dir().join("posts/hello/index.html")).expect("post page");
     assert!(page.contains("/embed/comments/7"), "{page}");

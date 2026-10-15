@@ -33,6 +33,11 @@ impl BlogLayout {
     pub fn current_dir(&self) -> PathBuf {
         self.root.join("site").join("current")
     }
+
+    /// 放在 `current` 外面，不会被 `/blog/` 当静态文件发出去。
+    pub fn stamp_path(&self) -> PathBuf {
+        self.root.join("site").join("stamp.json")
+    }
 }
 
 pub fn layout() -> BlogLayout {

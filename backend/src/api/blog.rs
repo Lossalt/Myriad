@@ -90,7 +90,11 @@ struct ThemeUrl {
     url: String,
 }
 
-async fn post_theme(_admin: AdminClaims, request: Request) -> Result<Json<Value>, HttpError> {
+async fn post_theme(
+    State(db): State<DatabaseConnection>,
+    _admin: AdminClaims,
+    request: Request,
+) -> Result<Json<Value>, HttpError> {
     let content_type = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -129,7 +133,7 @@ async fn post_theme(_admin: AdminClaims, request: Request) -> Result<Json<Value>
         let Some(bytes) = collected else {
             return Err(blog_error(400, "A theme file is required"));
         };
-        blog::install_archive(bytes)
+        blog::install_archive(&db, bytes)
             .await
             .map_err(|(message, status)| blog_error(status, message))?
     } else {
@@ -138,7 +142,7 @@ async fn post_theme(_admin: AdminClaims, request: Request) -> Result<Json<Value>
             .map_err(|_| blog_error(400, "A theme URL is required"))?;
         let body: ThemeUrl = serde_json::from_slice(&bytes)
             .map_err(|_| blog_error(400, "A theme URL is required"))?;
-        blog::install_from_url(&body.url)
+        blog::install_from_url(&db, &body.url)
             .await
             .map_err(|(message, status)| blog_error(status, message))?
     };
