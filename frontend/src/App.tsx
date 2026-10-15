@@ -76,6 +76,7 @@ const {
   studio: Studio,
   embedComments: EmbedComments,
   embedFriend: EmbedFriend,
+  embedCompanion: EmbedCompanion,
   reports: Reports,
   config: Config,
   agentSettings: AgentSettings,
@@ -761,6 +762,14 @@ function EmbedRoutes() {
         element={
           <NamespacedPage names={['embed']}>
             <EmbedFriend />
+          </NamespacedPage>
+        }
+      />
+      <Route
+        path="/embed/companion/:itemId"
+        element={
+          <NamespacedPage names={['embed']}>
+            <EmbedCompanion />
           </NamespacedPage>
         }
       />

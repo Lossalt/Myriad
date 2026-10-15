@@ -140,6 +140,22 @@ export async function regenerateAnnotations(
   )
 }
 
+export interface CompanionStatus {
+  success: boolean
+  /** Cloud voice cache is keyed by source and article. */
+  source_id: number
+  annotations: number
+  podcast: boolean
+}
+
+/** What the article's companion already has. Never generates. */
+export async function getCompanion(
+  itemId: number,
+  signal?: AbortSignal,
+): Promise<CompanionStatus> {
+  return request<CompanionStatus>(`/items/${itemId}/companion`, { signal })
+}
+
 export interface PodcastDialogue {
   speaker: 'host_a' | 'host_b'
   text: string
