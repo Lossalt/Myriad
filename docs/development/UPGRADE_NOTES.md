@@ -6,7 +6,7 @@
 
 - **博客：** 已发布笔记由 Hugo 生成静态站，挂在 `/blog`，文章地址 `/blog/posts/{slug}/`。镜像自带 Hugo extended 与 Dart Sass；本机直接跑后端时需要 `hugo` 在 `PATH` 上（或设 `HUGO_BIN`），没有 Hugo 时博客显示为不可用，不挡启动。
 - **slug：** 启动时给已发布笔记补 slug，并把库里笔记行上旧的 `/journal...` 链接改成博客地址。联邦对象 ID 仍是 `/phantasi/articles/{id}`。
-- **创作台：** 笔记编辑与创作侧管理搬到 `/studio`，仅站长可见；订阅源管理不再有内置界面，改用示例应用「订阅」（RSS reader TAPP）。
+- **创作台：** 笔记编辑与创作侧管理搬到 `/studio`，仅站长可见；订阅源管理不再有内置界面，改用示例应用「订阅」（RSS reader TAPP）。已安装的「订阅」要重新安装才会带上新声明的 `storage:read` / `storage:write`；不装的话阅读偏好只在当次有效。
 - **RSS：** `/journal/notes.xml` 删除，只剩 `/api/phantasi/notes.xml`。
 - **反代：** 自带 proxy 把 `/blog` 转给后端；自己按路径分流到后端和前端的反代，也要把 `/blog` 交给后端。`/embed/*` 是 SPA 页面，只允许同源 iframe。
 - **AI 注释与播客：** 改在博客文章页的伴读岛里显示。非管理员读 `/api/phantasiai/items/{id}/annotations` 和 `/podcast` 现在只限博客上的文章（非 `admin_only` 的笔记源），并受博客模块可见性约束，其余返回 404；新增只读的 `/api/phantasiai/items/{id}/companion`。站长在创作台的发布设置里生成，生成或重新生成后博客自动重建。

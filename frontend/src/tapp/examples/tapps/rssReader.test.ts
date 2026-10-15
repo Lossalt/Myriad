@@ -16,6 +16,10 @@ interface TappStub {
     onLocaleChange: (callback: () => void) => void
   }
   file: { download: (...args: unknown[]) => Promise<void> }
+  storage?: {
+    get: (key: string) => Promise<unknown>
+    set: (key: string, value: unknown) => Promise<void>
+  }
   phantasiList: {
     sources: () => Promise<unknown[]>
     categories: () => Promise<unknown[]>
@@ -165,6 +169,10 @@ function installTapp(permissions: string[]) {
       onLocaleChange: () => {},
     },
     file: { download: async () => {} },
+    storage: {
+      get: async () => ({}),
+      set: async () => {},
+    },
     phantasiList: {
       sources: async () => [],
       categories: async () => [],
@@ -200,6 +208,30 @@ describe('rss reader sandbox page', () => {
     start(managed)
     await new Promise((resolve) => setTimeout(resolve, 0))
     assert.ok(managed.querySelector('[data-action="toggle-manage"]'))
+  })
+
+  it('opens on unread and restores a stored filter', async () => {
+    installDocument()
+    installTapp(['phantasi:read'])
+    const { start } = require(join(pageDir, 'app.js')) as {
+      start: (root: FakeNode) => void
+    }
+    const root = document.getElementById('rss-app') as unknown as FakeNode
+    start(root)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(root.querySelector('[data-role="stream-title"]')?.textContent, 'filterUnread')
+
+    installTapp(['phantasi:read', 'storage:read', 'storage:write'])
+    assert.ok(host.Tapp)
+    host.Tapp.storage = {
+      get: async () => ({ filter: 'starred', category: '', sourceId: null }),
+      set: async () => {},
+    }
+    const restored = document.getElementById('rss-app') as unknown as FakeNode
+    restored.children = []
+    start(restored)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(restored.querySelector('[data-role="stream-title"]')?.textContent, 'filterStarred')
   })
 
   it('asks the host to open an article by id', async () => {
