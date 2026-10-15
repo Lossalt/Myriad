@@ -1,6 +1,11 @@
 import { statSync } from 'node:fs'
 import path from 'node:path'
-import { DOCUMENT_PERMISSIONS_POLICY, STATIC_ASSET_PATTERN } from './constants.mjs'
+import {
+  DOCUMENT_PERMISSIONS_POLICY,
+  EMBED_FRAME_HEADERS,
+  isEmbedDocumentPath,
+  STATIC_ASSET_PATTERN,
+} from './constants.mjs'
 
 /** Document policy and missing-asset guard; Vite owns history fallback. */
 export function spaFallbackPlugin() {
@@ -11,6 +16,9 @@ export function spaFallbackPlugin() {
       }
       let pathname
       try { pathname = decodeURIComponent((req.url || '').split('?')[0]) } catch { next(); return }
+      if (isEmbedDocumentPath(pathname)) {
+        for (const [name, value] of Object.entries(EMBED_FRAME_HEADERS)) res.setHeader(name, value)
+      }
       // Transformed modules belong to Vite, including imports outside the root.
       if (/^\/(?:@|src\/|node_modules\/)/.test(pathname) || !STATIC_ASSET_PATTERN.test(pathname)) {
         next()

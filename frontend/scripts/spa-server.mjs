@@ -17,7 +17,12 @@ import {
   stampDocumentHtml,
   stampWebManifest,
 } from './siteBrandingStamp.mjs'
-import { STATIC_ASSET_PATTERN as ASSET_EXT, DOCUMENT_PERMISSIONS_POLICY } from './vite/constants.mjs'
+import {
+  STATIC_ASSET_PATTERN as ASSET_EXT,
+  DOCUMENT_PERMISSIONS_POLICY,
+  EMBED_FRAME_HEADERS,
+  isEmbedDocumentPath,
+} from './vite/constants.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.resolve(process.env.DIST_DIR || path.join(HERE, '..', 'dist'))
@@ -242,6 +247,7 @@ async function handle(req, res) {
     let body = raw
     if (found.stampHtml) {
       headers['Permissions-Policy'] = DOCUMENT_PERMISSIONS_POLICY
+      if (isEmbedDocumentPath(urlPath)) Object.assign(headers, EMBED_FRAME_HEADERS)
       if (brand) body = Buffer.from(stampDocumentHtml(raw.toString('utf8'), brand))
     } else if (found.stampManifest && brand) {
       const parsed = JSON.parse(raw.toString('utf8'))

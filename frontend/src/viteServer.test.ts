@@ -59,7 +59,7 @@ it('Vite serves deep links while backend routing precedes stamping and history f
   try {
     await server.listen()
     const origin = `http://127.0.0.1:${(server.httpServer!.address() as AddressInfo).port}`
-    for (const path of ['/', '/journal/articles/12?keep=1', '/tapp/run/abc', '/agent/settings']) {
+    for (const path of ['/', '/studio/notes?keep=1', '/tapp/run/abc', '/agent/settings']) {
       const response = await fetch(origin + path, { headers: { accept: 'text/html' } })
       assert.equal(response.status, 200)
       assert.match(response.headers.get('permissions-policy')!, /microphone=\(self\)/)
@@ -70,7 +70,7 @@ it('Vite serves deep links while backend routing precedes stamping and history f
     }
     const manifest = await fetch(`${origin}/manifest.webmanifest`)
     assert.equal((await manifest.json()).name, 'Fixture Brand')
-    for (const path of ['/api/example', '/robots.txt', '/sitemap.xml', '/journal/notes.xml', '/.well-known/webfinger']) {
+    for (const path of ['/api/example', '/robots.txt', '/sitemap.xml', '/blog', '/blog/posts/hello/', '/.well-known/webfinger']) {
       assert.equal(await (await fetch(origin + path)).text(), `backend:${path}`)
     }
     const media = await fetch(`${origin}${mediaPath}?version=1`)
@@ -82,8 +82,12 @@ it('Vite serves deep links while backend routing precedes stamping and history f
     assert.equal((await head.arrayBuffer()).byteLength, 0)
     assert.equal((await fetch(`${origin}/media/assets/missing/photo.png`)).status, 404)
     const crawler = { accept: 'text/html', 'user-agent': 'Googlebot' }
-    assert.equal(await (await fetch(`${origin}/journal/articles/12`, { headers: crawler })).text(), 'backend:/journal/articles/12')
-    assert.match(await (await fetch(`${origin}/journal/articles/12?_spa=1`, { headers: crawler })).text(), /id="app-root"/)
+    assert.equal(await (await fetch(`${origin}/blog/posts/hello/`, { headers: crawler })).text(), 'backend:/blog/posts/hello/')
+    assert.equal(await (await fetch(`${origin}/blog/posts/hello/`, { headers: { accept: 'text/html' } })).text(), 'backend:/blog/posts/hello/')
+    const embed = await fetch(`${origin}/embed/comments/12`, { headers: { accept: 'text/html' } })
+    assert.match(await embed.text(), /id="app-root"/)
+    assert.equal(embed.headers.get('x-frame-options'), 'SAMEORIGIN')
+    assert.equal(embed.headers.get('content-security-policy'), "frame-ancestors 'self'")
     assert.equal((await fetch(`${origin}/assets/missing.js`, { headers: { accept: '*/*' } })).status, 404)
     const response = await fetch(`${origin}/api/agent/process/stream`)
     const reader = response.body!.getReader()

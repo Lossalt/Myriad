@@ -7,6 +7,12 @@ fn is_blog_path(path: &str) -> bool {
     path == "/blog" || path.starts_with("/blog/")
 }
 
+/// `/embed/*` 是给本站 `/blog` 页面用 iframe 嵌的评论和友链申请页，只允许同源框住。
+fn is_embed_path(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    path == "/embed" || path.starts_with("/embed/")
+}
+
 /// Security headers middleware - adds CSP and other security headers.
 ///
 /// `/blog` 的 CSP 由页面自己定（`script-src 'none'`，但允许同源 iframe）。
@@ -44,6 +50,8 @@ pub(crate) fn finish_security_headers(
         // would also permit data-adjacent exotic schemes) while keeping dual-path working.
         // See docs/deployment/SECURITY_HEADERS.md §CSP img-src dual-path.
         const IMG_SRC: &str = "img-src 'self' data: blob: https: http:";
+        let embed = is_embed_path(path);
+        let frame_ancestors = if embed { "'self'" } else { "'none'" };
 
         let csp = if is_production {
             // PRODUCTION: connect-src list from CSP_CONNECT_SRC (fallback to default)
@@ -63,12 +71,12 @@ pub(crate) fn finish_security_headers(
             object-src 'none'; \
             base-uri 'self'; \
             form-action 'self'; \
-            frame-ancestors 'none'; \
+            frame-ancestors {}; \
             frame-src 'none'; \
             worker-src 'self' blob:; \
             manifest-src 'self'; \
             upgrade-insecure-requests; ",
-                allowed_api_origins
+                allowed_api_origins, frame_ancestors
             )
         } else {
             // DEVELOPMENT: Relaxed CSP for hot reload and dev tools
@@ -107,8 +115,9 @@ pub(crate) fn finish_security_headers(
             tracing::debug!("CSP disabled in development mode (set ENABLE_CSP_DEV=true to enable)");
         }
 
-        // X-Frame-Options: 防止点击劫持。博客页用 SAMEORIGIN，和 frame-ancestors 'self' 一致。
-        headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+        // X-Frame-Options: 防止点击劫持。嵌入页用 SAMEORIGIN，和 frame-ancestors 'self' 一致。
+        let frame_options = if embed { "SAMEORIGIN" } else { "DENY" };
+        headers.insert(header::X_FRAME_OPTIONS, frame_options.parse().unwrap());
     }
 
     // X-Content-Type-Options: 防止MIME类型嗅探
@@ -199,6 +208,28 @@ mod tests {
         let mut near = HeaderMap::new();
         finish_security_headers("/blogger", &mut near, false, false);
         assert!(near.get(header::CONTENT_SECURITY_POLICY).is_none());
+    }
+
+    #[test]
+    fn embed_pages_may_only_be_framed_by_this_origin() {
+        let mut embed = HeaderMap::new();
+        finish_security_headers("/embed/comments/12", &mut embed, true, false);
+        let csp = embed
+            .get(header::CONTENT_SECURITY_POLICY)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("frame-ancestors 'self'"));
+        assert!(csp.contains("script-src 'self';"));
+        assert_eq!(embed.get(header::X_FRAME_OPTIONS).unwrap(), "SAMEORIGIN");
+
+        let mut dev = HeaderMap::new();
+        finish_security_headers("/embed/friend-apply", &mut dev, false, false);
+        assert_eq!(dev.get(header::X_FRAME_OPTIONS).unwrap(), "SAMEORIGIN");
+
+        let mut near = HeaderMap::new();
+        finish_security_headers("/embedded", &mut near, true, false);
+        assert_eq!(near.get(header::X_FRAME_OPTIONS).unwrap(), "DENY");
     }
 
     #[tokio::test]
