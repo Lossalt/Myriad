@@ -151,6 +151,11 @@ globalThis.addEventListener('fetch', (event) => {
     return
   }
 
+  if (url.pathname === '/blog' || url.pathname.startsWith('/blog/')) {
+    // 博客是后端生成的静态站，每次重建或换主题都会改样式表与图片，缓存只听响应头。
+    return
+  }
+
   // 图片仅 GET：Cache API 不能 put HEAD；图床探活 HEAD 必须直通。
   if (
     request.destination === 'image' ||
