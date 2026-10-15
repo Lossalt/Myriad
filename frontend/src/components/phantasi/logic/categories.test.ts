@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  addCategoryPart,
   canUseCategoryName,
   categoryMatchesPage,
   categoryUsedOnOtherPage,
   collectWorkbenchCategoryPageRows,
   collectWorkbenchCategoryRows,
   formatCategoryFullNotice,
-  listPickerCategories,
   noteMatchesCategory,
   pickerCategoryName,
   removeCategoryPart,
@@ -17,25 +15,31 @@ import {
   samePickerCategory,
 } from './categories.ts'
 
-describe('addCategoryPart', () => {
+describe('resolveAddCategoryPart', () => {
   it('空的可加；普通分类也能再叠一个，满两项或已有则跳过', () => {
-    assert.equal(addCategoryPart(null, '工程'), '工程')
-    assert.equal(addCategoryPart('工程', '工程'), null)
-    assert.equal(addCategoryPart('工程', '旅行'), '工程, 旅行')
-    assert.equal(addCategoryPart('友情链接', '工程'), '友情链接, 工程')
-    assert.equal(addCategoryPart('友情链接, 工程', '生活'), null)
-    assert.equal(addCategoryPart('friend_links', '工程'), 'friend_links, 工程')
-    assert.deepEqual(resolveAddCategoryPart('工程', '旅行'), {
+    assert.deepEqual(resolveAddCategoryPart(null, '工程'), {
       kind: 'next',
-      value: '工程, 旅行',
+      value: '工程',
     })
     assert.deepEqual(resolveAddCategoryPart('工程', '工程'), {
       kind: 'skip',
       reason: 'duplicate',
     })
-    assert.deepEqual(resolveAddCategoryPart('工程, 旅行', '生活'), {
+    assert.deepEqual(resolveAddCategoryPart('工程', '旅行'), {
+      kind: 'next',
+      value: '工程, 旅行',
+    })
+    assert.deepEqual(resolveAddCategoryPart('友情链接', '工程'), {
+      kind: 'next',
+      value: '友情链接, 工程',
+    })
+    assert.deepEqual(resolveAddCategoryPart('友情链接, 工程', '生活'), {
       kind: 'skip',
       reason: 'full',
+    })
+    assert.deepEqual(resolveAddCategoryPart('friend_links', '工程'), {
+      kind: 'next',
+      value: 'friend_links, 工程',
     })
     assert.equal(
       formatCategoryFullNotice('{name}分类已满', '春天的草稿'),
@@ -151,19 +155,8 @@ describe('noteMatchesCategory', () => {
   })
 })
 
-describe('listPickerCategories', () => {
-  it('预置只留官网名，别名和重复不占行', () => {
-    assert.deepEqual(
-      listPickerCategories([
-        'friend_links',
-        '友情链接',
-        'mine',
-        '我',
-        '工程',
-        ' 工程 ',
-      ]),
-      ['友情链接', '我', '工程'],
-    )
+describe('pickerCategoryName', () => {
+  it('别名收成官网名', () => {
     assert.equal(pickerCategoryName('friend-links'), '友情链接')
     assert.equal(pickerCategoryName('own'), '我')
     assert.equal(samePickerCategory('friend_links', '友情链接'), true)

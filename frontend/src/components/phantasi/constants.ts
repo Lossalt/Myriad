@@ -49,33 +49,6 @@ export function phantasiCategoryParts(
     .filter(Boolean)
 }
 
-/** 本地笔记或 category 含「我」的公开源才算自有，可做文章级 SEO。 */
-export function isOwnPhantasiSource(source: {
-  source_type?: string | null
-  category?: string | null
-  admin_only?: boolean
-} | null | undefined): boolean {
-  if (!source) return false
-  // admin_only 源不公开收录
-  if (source.admin_only) return false
-  if (source.source_type === 'note') return true
-  return phantasiCategoryParts(source.category).some(isMineCategory)
-}
-
-/** 忽略预置分类后的第一个真实分类；排序与分类页标题共用。 */
-export function phantasiMainCategory(
-  category: string | null | undefined,
-  fallback: string,
-): string {
-  const parts = phantasiCategoryParts(category)
-  const main = parts.find(
-    (c) => !isFriendLinkCategory(c) && !isMineCategory(c),
-  )
-  return main || fallback
-}
-
-export const DEFAULT_THEME_COLOR = '#6b7280'
-
 const phantasiImageUrls = new Map<string, string | null>()
 const PHANTASI_IMAGE_URL_CAP = 400
 
@@ -99,38 +72,4 @@ export function getIconUrl(iconUrl: string | null): string | null {
 /** 规则同 getIconUrl。 */
 export function getImageUrl(imageUrl: string | null): string | null {
   return resolvePhantasiImageUrl(imageUrl)
-}
-
-const plainCache = new Map<string, string>()
-const PLAIN_CACHE_CAP = 400
-
-export function getPlainText(html: string | null, max = 200): string {
-  if (!html) return ''
-  const key = max === 200 ? html : `${max}\0${html}`
-  const hit = plainCache.get(key)
-  if (hit != null) return hit
-  const text = html.replaceAll(/<[^>]*>/g, '').slice(0, max)
-  if (plainCache.size >= PLAIN_CACHE_CAP) {
-    const first = plainCache.keys().next().value
-    if (first != null) plainCache.delete(first)
-  }
-  plainCache.set(key, text)
-  return text
-}
-
-/** 只产出 #rrggbb，`${color}30` 才是合法 CSS。 */
-export function normalizeThemeColor(
-  color: string | null | undefined,
-  fallback = DEFAULT_THEME_COLOR,
-): string {
-  if (!color || typeof color !== 'string') return fallback
-  const t = color.trim()
-  if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(t)) {
-    if (t.length === 4) {
-      // #rgb → #rrggbb
-      return `#${t[1]}${t[1]}${t[2]}${t[2]}${t[3]}${t[3]}`.toLowerCase()
-    }
-    return t.slice(0, 7).toLowerCase() // drop #rrggbbaa alpha
-  }
-  return fallback
 }

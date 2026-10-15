@@ -26,16 +26,6 @@ export function phantasiErrorIsQuiet(err: unknown): boolean {
   return err instanceof ApiError && err.status === 429
 }
 
-export function reportPhantasiError(
-  err: unknown,
-  fallback: string,
-  setError: (message: string) => void,
-): void {
-  if (phantasiErrorIsQuiet(err)) return
-  console.error(fallback, err)
-  setError(userFacingError(err, fallback))
-}
-
 export async function showPhantasiError(
   err: unknown,
   fallback: string,

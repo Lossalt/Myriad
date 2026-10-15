@@ -70,14 +70,6 @@ export function resolveAddCategoryPart(
   return { kind: 'next', value: [...parts, add].join(', ') }
 }
 
-export function addCategoryPart(
-  category: string | null | undefined,
-  name: string,
-): string | null {
-  const result = resolveAddCategoryPart(category, name)
-  return result.kind === 'next' ? result.value : null
-}
-
 export function formatCategoryFullNotice(
   template: string,
   name: string,
@@ -199,20 +191,4 @@ export function samePickerCategory(a: string, b: string): boolean {
   const left = pickerCategoryName(a)
   const right = pickerCategoryName(b)
   return !!left && left === right
-}
-
-/** 下拉只出官网名。friend_links / mine 这些历史别名不单独占一行。 */
-export function listPickerCategories(
-  existing: readonly string[] = [],
-): string[] {
-  const extra: string[] = []
-  const seen = new Set<string>([CANON_FRIEND_CATEGORY, CANON_MINE_CATEGORY])
-  for (const raw of existing) {
-    const name = pickerCategoryName(raw)
-    if (!name || seen.has(name)) continue
-    seen.add(name)
-    extra.push(name)
-  }
-  extra.sort((a, b) => a.localeCompare(b, 'zh'))
-  return [CANON_FRIEND_CATEGORY, CANON_MINE_CATEGORY, ...extra]
 }
