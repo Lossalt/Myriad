@@ -15,6 +15,8 @@ const NAMESPACES = [
   'config',
   'tapp',
   'phantasi',
+  'studio',
+  'embed',
   'merope',
   'errors',
   'agentCaps',

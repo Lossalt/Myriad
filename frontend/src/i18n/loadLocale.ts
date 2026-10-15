@@ -1,6 +1,7 @@
 import type {
   LocaleAgentCaps,
   LocaleConfig,
+  LocaleEmbed,
   LocaleMerope,
   LocalePhantasi,
   LocaleStudio,
@@ -141,6 +142,16 @@ const meropeLoader = createLocaleLoader<LocaleMerope>({
   'de-DE': () => import('./merope.de-DE.json').then(module => module.default),
 })
 
+const embedLoader = createLocaleLoader<LocaleEmbed>({
+  'zh-CN': () => import('./embed.zh-CN.json').then(module => module.default),
+  'zh-TW': () => import('./embed.zh-TW.json').then(module => module.default),
+  'en-US': () => import('./embed.en-US.json').then(module => module.default),
+  'ja-JP': () => import('./embed.ja-JP.json').then(module => module.default),
+  'ko-KR': () => import('./embed.ko-KR.json').then(module => module.default),
+  'fr-FR': () => import('./embed.fr-FR.json').then(module => module.default),
+  'de-DE': () => import('./embed.de-DE.json').then(module => module.default),
+})
+
 const agentCapsLoader = createLocaleLoader<LocaleAgentCaps>({
   'zh-CN': () => import('./agentCaps.zh-CN.json').then(module => module.default),
   'zh-TW': () => import('./agentCaps.zh-TW.json').then(module => module.default),
@@ -155,6 +166,7 @@ const namespaceLoaders = {
   tapp: tappLoader,
   phantasi: phantasiLoader,
   studio: studioLoader,
+  embed: embedLoader,
   merope: meropeLoader,
   agentCaps: agentCapsLoader,
 } as const
@@ -167,7 +179,7 @@ export class LocaleNamespaceError extends Error {
 }
 
 async function loadFullPack(locale: Locale): Promise<TranslationKeys> {
-  const [shell, config, tapp, phantasi, studio, merope, agentCaps] = await Promise.all([
+  const [shell, config, tapp, phantasi, studio, embed, merope, agentCaps] = await Promise.all([
     shellLoader.load(locale),
     configLoader.load(locale).catch((cause) => {
       throw new LocaleNamespaceError(locale, cause)
@@ -175,10 +187,11 @@ async function loadFullPack(locale: Locale): Promise<TranslationKeys> {
     tappLoader.load(locale),
     phantasiLoader.load(locale),
     studioLoader.load(locale),
+    embedLoader.load(locale),
     meropeLoader.load(locale),
     agentCapsLoader.load(locale),
   ])
-  return { ...shell, config, tapp, phantasi, studio, merope, agentCaps }
+  return { ...shell, config, tapp, phantasi, studio, embed, merope, agentCaps }
 }
 
 const loader = createLocaleLoader<TranslationKeys>({

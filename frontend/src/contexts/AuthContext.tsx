@@ -17,6 +17,7 @@ import { authSubjectKey } from '../utils/authSubject'
 import { clearCSRFToken } from '../utils/csrf'
 import { HOST_SESSION_RECHECK_EVENT } from '../utils/hostSessionFailure'
 import { beginIdentityChange, finishIdentityChange, settleIdentity } from '../utils/identity'
+import { consumeLoginReturn } from '../utils/safeReturnPath'
 import {
   clearSessionHint,
   hasSessionHint,
@@ -318,6 +319,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           })
         },
       )
+      const stored = consumeLoginReturn(window.location.origin)
+      if (stored) {
+        window.location.assign(stored)
+        return
+      }
       urlParams.delete('auth')
       const next = urlParams.toString()
       const path = window.location.pathname

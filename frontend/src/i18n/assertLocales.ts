@@ -13,6 +13,12 @@ import configKo from './config.ko-KR.json' with { type: 'json' }
 import configZh from './config.zh-CN.json' with { type: 'json' }
 import configTw from './config.zh-TW.json' with { type: 'json' }
 import de from './de-DE.json' with { type: 'json' }
+import embedDe from './embed.de-DE.json' with { type: 'json' }
+import embedFr from './embed.fr-FR.json' with { type: 'json' }
+import embedJa from './embed.ja-JP.json' with { type: 'json' }
+import embedKo from './embed.ko-KR.json' with { type: 'json' }
+import embedZh from './embed.zh-CN.json' with { type: 'json' }
+import embedTw from './embed.zh-TW.json' with { type: 'json' }
 import errorsDe from './errors.de-DE.json' with { type: 'json' }
 import errorsFr from './errors.fr-FR.json' with { type: 'json' }
 import errorsJa from './errors.ja-JP.json' with { type: 'json' }
@@ -54,6 +60,7 @@ const _zh: TranslationKeys = assembleLocale(zh, {
   tapp: tappZh,
   phantasi: phantasiZh,
   studio: studioZh,
+  embed: embedZh,
   merope: meropeZh,
   errors: errorsZh,
   agentCaps: agentCapsZh,
@@ -63,6 +70,7 @@ const _tw: TranslationKeys = assembleLocale(tw, {
   tapp: tappTw,
   phantasi: phantasiTw,
   studio: studioTw,
+  embed: embedTw,
   merope: meropeTw,
   errors: errorsTw,
   agentCaps: agentCapsTw,
@@ -72,6 +80,7 @@ const _ja: TranslationKeys = assembleLocale(ja, {
   tapp: tappJa,
   phantasi: phantasiJa,
   studio: studioJa,
+  embed: embedJa,
   merope: meropeJa,
   errors: errorsJa,
   agentCaps: agentCapsJa,
@@ -81,6 +90,7 @@ const _ko: TranslationKeys = assembleLocale(ko, {
   tapp: tappKo,
   phantasi: phantasiKo,
   studio: studioKo,
+  embed: embedKo,
   merope: meropeKo,
   errors: errorsKo,
   agentCaps: agentCapsKo,
@@ -90,6 +100,7 @@ const _fr: TranslationKeys = assembleLocale(fr, {
   tapp: tappFr,
   phantasi: phantasiFr,
   studio: studioFr,
+  embed: embedFr,
   merope: meropeFr,
   errors: errorsFr,
   agentCaps: agentCapsFr,
@@ -99,6 +110,7 @@ const _de: TranslationKeys = assembleLocale(de, {
   tapp: tappDe,
   phantasi: phantasiDe,
   studio: studioDe,
+  embed: embedDe,
   merope: meropeDe,
   errors: errorsDe,
   agentCaps: agentCapsDe,

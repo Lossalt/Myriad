@@ -90,6 +90,10 @@ export const routeComponents = {
 
   studio: lazyWithPreload(() => import('../views/Studio')),
 
+  embedComments: lazyWithPreload(() => import('../views/EmbedComments')),
+
+  embedFriend: lazyWithPreload(() => import('../views/EmbedFriendApply')),
+
   reports: lazyWithPreload(() => import('../views/Reports')),
 
   config: lazyWithPreload(() => import('../views/Config')),

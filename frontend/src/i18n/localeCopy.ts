@@ -60,6 +60,10 @@ function assembleServiceCopy(
     getCachedShellNamespace('studio', locale) ??
     getCachedShellNamespace('studio', 'en-US') ??
     {}
+  const embed =
+    getCachedShellNamespace('embed', locale) ??
+    getCachedShellNamespace('embed', 'en-US') ??
+    {}
   const merope =
     getCachedShellNamespace('merope', locale) ??
     getCachedShellNamespace('merope', 'en-US') ??
@@ -73,6 +77,7 @@ function assembleServiceCopy(
     tapp,
     phantasi,
     studio,
+    embed,
     merope,
     agentCaps,
   } as ShellTranslationKeys

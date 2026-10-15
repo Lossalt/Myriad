@@ -279,7 +279,7 @@ function I18nNamespaceReady({
       ...context,
       t: { ...context.t, ...extras },
     }),
-    [context, extras.tapp, extras.phantasi, extras.studio, extras.merope, extras.agentCaps],
+    [context, extras.tapp, extras.phantasi, extras.studio, extras.embed, extras.merope, extras.agentCaps],
   )
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }

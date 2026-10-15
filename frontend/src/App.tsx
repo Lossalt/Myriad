@@ -5,6 +5,7 @@ import React, {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useRef,
   useSyncExternalStore,
 } from 'react'
@@ -28,6 +29,7 @@ import {
 import { BackgroundTappHost, RouteWarmup } from './components/ApplicationStartup'
 import CustomScrollbar from './components/CustomScrollbar'
 import { DocumentReady } from './components/DocumentReady'
+import { isEmbedPath } from './components/embed/embedRoutes'
 import { RenderErrorBoundary } from './components/RenderErrorBoundary'
 import RouteLoader from './components/RouteLoader'
 import { AnimationPreferenceProvider } from './contexts/AnimationPreferenceContext'
@@ -59,6 +61,7 @@ import {
 } from './utils/moduleVisibility'
 import { isDocumentReady } from './utils/pageLoader'
 import { usePermissionConfig } from './utils/permissionConfig'
+import { safeSameOriginPath } from './utils/safeReturnPath'
 import './styles/fonts.css'
 import './styles/theme.css'
 import './styles/animations.css'
@@ -73,6 +76,8 @@ const {
   library: Library,
   phantasi: Phantasi,
   studio: Studio,
+  embedComments: EmbedComments,
+  embedFriend: EmbedFriend,
   reports: Reports,
   config: Config,
   agentSettings: AgentSettings,
@@ -140,15 +145,29 @@ function RequireAuth({
   return children
 }
 
+/** `/blog` 不在 SPA 路由里，回跳必须整页导航。 */
+function FullPageReturn({ to }: { to: string }) {
+  useEffect(() => {
+    window.location.replace(to)
+  }, [to])
+  return null
+}
+
 /** 已登录去首页。解析中不要闪表单。OAuth 错误由 AppLayout toast，重定向不要再带 query。 */
 function GuestOnly({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hasChecked } = useAuth()
+  const location = useLocation()
 
   if (!hasChecked) {
     return null
   }
 
   if (isAuthenticated) {
+    const requested = safeSameOriginPath(
+      new URLSearchParams(location.search).get('return'),
+      window.location.origin,
+    )
+    if (requested) return <FullPageReturn to={requested} />
     return <Navigate to="/" replace />
   }
 
@@ -732,6 +751,96 @@ function AppRoutes() {
   )
 }
 
+function useEmbedFrame() {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    const previous = root.className
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const apply = () => {
+      root.classList.add('embed-frame')
+      root.classList.toggle('dark', media.matches)
+      root.classList.toggle('light', !media.matches)
+    }
+    apply()
+    media.addEventListener('change', apply)
+    return () => {
+      media.removeEventListener('change', apply)
+      root.className = previous
+    }
+  }, [])
+}
+
+function EmbedRoutes() {
+  useEmbedFrame()
+  return (
+    <Routes>
+      <Route
+        path="/embed/comments/:itemId"
+        element={
+          <NamespacedPage names={['embed']}>
+            <EmbedComments />
+          </NamespacedPage>
+        }
+      />
+      <Route
+        path="/embed/friend-apply"
+        element={
+          <NamespacedPage names={['embed']}>
+            <EmbedFriend />
+          </NamespacedPage>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
+
+function AppOrEmbed() {
+  const { pathname } = useLocation()
+  if (isEmbedPath(pathname)) return <EmbedRoutes />
+  return (
+    <MusicPlayerProvider>
+      <NavigationProvider>
+        <PageContentProvider>
+          <ReadingListProvider>
+            <Suspense fallback={null}>
+              <AgentGlobalActions />
+            </Suspense>
+            {/* open_window 全局回退；多窗挂载时 typed handler 覆盖 */}
+            <GlobalAgentWindowHandler />
+            <AgentAccessGate>
+              <AgentPresenceHost />
+              <I18nNamespace names={['merope', 'agentCaps']}>
+                <AgentSessionHost>
+                  <Suspense fallback={null}>
+                    <AgentEngine />
+                    <AgentPanel />
+                  </Suspense>
+                </AgentSessionHost>
+              </I18nNamespace>
+            </AgentAccessGate>
+            <RouteLoader />
+            <CustomScrollbar />
+            <BackgroundTappHost />
+            <RouteWarmup />
+            <TappDataExchangeConsentGate />
+            <AppLayout>
+              <RouteErrorBoundary>
+                <AppRoutes />
+              </RouteErrorBoundary>
+            </AppLayout>
+            {import.meta.env.DEV && (
+              <Suspense fallback={null}>
+                <PerformanceMonitor />
+              </Suspense>
+            )}
+          </ReadingListProvider>
+        </PageContentProvider>
+      </NavigationProvider>
+    </MusicPlayerProvider>
+  )
+}
+
 export function App() {
   return (
     <BrowserRouter>
@@ -739,45 +848,7 @@ export function App() {
         <AnimationPreferenceProvider>
           <AuthProvider>
             <LocaleAccountSync />
-            <MusicPlayerProvider>
-              <NavigationProvider>
-                <PageContentProvider>
-                  <ReadingListProvider>
-                    <Suspense fallback={null}>
-                      <AgentGlobalActions />
-                    </Suspense>
-                    {/* open_window 全局回退；多窗挂载时 typed handler 覆盖 */}
-                    <GlobalAgentWindowHandler />
-                    <AgentAccessGate>
-                      <AgentPresenceHost />
-                      <I18nNamespace names={['merope', 'agentCaps']}>
-                        <AgentSessionHost>
-                          <Suspense fallback={null}>
-                            <AgentEngine />
-                            <AgentPanel />
-                          </Suspense>
-                        </AgentSessionHost>
-                      </I18nNamespace>
-                    </AgentAccessGate>
-                    <RouteLoader />
-                    <CustomScrollbar />
-                    <BackgroundTappHost />
-                    <RouteWarmup />
-                    <TappDataExchangeConsentGate />
-                    <AppLayout>
-                      <RouteErrorBoundary>
-                        <AppRoutes />
-                      </RouteErrorBoundary>
-                    </AppLayout>
-                    {import.meta.env.DEV && (
-                      <Suspense fallback={null}>
-                        <PerformanceMonitor />
-                      </Suspense>
-                    )}
-                  </ReadingListProvider>
-                </PageContentProvider>
-              </NavigationProvider>
-            </MusicPlayerProvider>
+            <AppOrEmbed />
           </AuthProvider>
         </AnimationPreferenceProvider>
       </I18nProvider>

@@ -9,6 +9,7 @@ import { fetchJson } from '../utils/apiHelper'
 import { emitAppEvent } from '../utils/appEvents'
 import { sanitizeUsername } from '../utils/inputSanitizer'
 import { normalizeOAuthIconUrl, preloadOAuthIcons } from '../utils/oauthIcons'
+import { rememberLoginReturn, safeSameOriginPath } from '../utils/safeReturnPath'
 import { setSessionHint } from '../utils/sessionDetection'
 import { userFacingError } from '../utils/userFacingError'
 import OAuthIconImage from './OAuthIconImage'
@@ -43,6 +44,13 @@ const LoginForm: FC = () => {
   const [allowRegister, setAllowRegister] = useState(false)
 
   // oauth_error 由 useAuthUrlFeedback 以 toast 展示，GuestOnly 从 /login 重定向后仍能看见。
+  // OAuth 回调固定落到 /?auth=success，回跳只能先记在 sessionStorage。
+  useEffect(() => {
+    rememberLoginReturn(safeSameOriginPath(
+      new URLSearchParams(window.location.search).get('return'),
+      window.location.origin,
+    ))
+  }, [])
 
   useEffect(() => {
     void (async () => {
@@ -144,7 +152,12 @@ const LoginForm: FC = () => {
           })
 
       setTimeout(() => {
-        window.location.href = '/'
+        const requested = safeSameOriginPath(
+          new URLSearchParams(window.location.search).get('return'),
+          window.location.origin,
+        )
+        rememberLoginReturn(null)
+        window.location.href = requested ?? '/'
       }, 100)
     } catch (err: unknown) {
       // 登录限流带重试秒数（Retry-After），比通用 rate_limited 文案更具体。
