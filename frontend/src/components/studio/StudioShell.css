@@ -1,0 +1,14 @@
+/* 与设置页同一套页面骨架：居中、限宽，侧栏吸在顶栏下方。 */
+.studio-page > .phantasi-workbench {
+  max-width: 82rem;
+  margin: 0 auto;
+  padding: 0;
+  overflow: visible;
+}
+
+@media (width >= 1024px) {
+  .studio-page > .phantasi-workbench > .config-sidebar {
+    top: 5rem;
+    max-height: calc(100dvh - 8rem);
+  }
+}

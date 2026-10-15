@@ -2,6 +2,7 @@ import type { WorkbenchPane } from '../components/phantasi/logic/board'
 import type { StudioSection } from '../components/studio/studioRoutes'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import AnimatedView from '../components/AnimatedView'
 import { workbenchPendingReviews } from '../components/phantasi/logic/workbenchHome'
 import { useNoteTransfer } from '../components/phantasi/manager/useNoteTransfer'
 import { usePhantasiCategories } from '../components/phantasi/usePhantasiCategories'
@@ -118,76 +119,78 @@ function StudioDesk({ section }: { section: StudioSection }) {
   })
   const failed = t.studio.openFailed
   return (
-    <StudioShell
-      section={section}
-      docs={workbench.docs}
-      media={workbench.media}
-      mediaTotal={workbench.mediaTotal}
-      mediaFilter={workbench.mediaFilter}
-      onMediaFilter={workbench.setMediaFilter}
-      mediaHasMore={workbench.mediaHasMore}
-      onLoadMoreMedia={workbench.loadMoreMedia}
-      comments={workbench.comments}
-      applications={workbench.applications}
-      notesLoading={workbench.notesLoading}
-      mediaLoading={workbench.mediaLoading}
-      commentsLoading={workbench.commentsLoading}
-      applicationsLoading={workbench.applicationsLoading}
-      busy={workbench.busy}
-      noteCategories={categories.noteRows.map((row) => row.name)}
-      categoryRows={categories.noteRows}
-      categoriesLoading={categories.loading}
-      categoriesBusy={categories.busy}
-      onCreateCategory={categories.create}
-      onRenameCategory={(from, to) => categories.rename(from, to)}
-      onDeleteCategory={(name) => categories.remove(name)}
-      notesBusy={notesIo.loading}
-      notesKind={notesIo.activeKind}
-      notesProgress={
-        notesIo.progress
-          ? `${notesIo.progress.step}${
-              notesIo.progress.total > 0
-                ? ` ${notesIo.progress.current}/${notesIo.progress.total}`
-                : ''
-            }`
-          : null
-      }
-      onWrite={() => {
-        void openStudioNote(navigate, { kind: 'new' })
-      }}
-      onOpenNote={(open) => {
-        void openStudioNote(navigate, open, setError, failed)
-      }}
-      onDeleteNotes={async (docs) => workbench.removeNotes(docs)}
-      onUnschedule={workbench.unschedule}
-      onAssignNotes={(docs, name) => {
-        void categories.assign(docs.map((doc) => doc.id), name)
-      }}
-      onDeleteComments={(ids) => {
-        void workbench.removeComments(ids)
-      }}
-      onOpenCommentItem={(id) => {
-        void openPublishedItem(id, setError, failed)
-      }}
-      onApproveApplication={workbench.approveApplication}
-      onRejectApplication={(id) => {
-        void workbench.rejectApplication(id)
-      }}
-      onDeleteApplications={(ids) => {
-        void workbench.removeApplications(ids)
-      }}
-      onUpload={workbench.upload}
-      onDeleteMedia={workbench.removeMedia}
-      onMediaSaved={() => {
-        workbench.acceptMedia()
-      }}
-      onExportNotes={(kind) => {
-        void notesIo.exportKind(kind)
-      }}
-      onImportNotes={(kind, file) => {
-        void notesIo.importKind(kind, file)
-      }}
-      pendingReviews={workbenchPendingReviews(workbench.applications).length}
-    />
+    <AnimatedView className="studio-page min-h-screen px-4 sm:px-6 pt-20 pb-24 md:pb-12">
+      <StudioShell
+        section={section}
+        docs={workbench.docs}
+        media={workbench.media}
+        mediaTotal={workbench.mediaTotal}
+        mediaFilter={workbench.mediaFilter}
+        onMediaFilter={workbench.setMediaFilter}
+        mediaHasMore={workbench.mediaHasMore}
+        onLoadMoreMedia={workbench.loadMoreMedia}
+        comments={workbench.comments}
+        applications={workbench.applications}
+        notesLoading={workbench.notesLoading}
+        mediaLoading={workbench.mediaLoading}
+        commentsLoading={workbench.commentsLoading}
+        applicationsLoading={workbench.applicationsLoading}
+        busy={workbench.busy}
+        noteCategories={categories.noteRows.map((row) => row.name)}
+        categoryRows={categories.noteRows}
+        categoriesLoading={categories.loading}
+        categoriesBusy={categories.busy}
+        onCreateCategory={categories.create}
+        onRenameCategory={(from, to) => categories.rename(from, to)}
+        onDeleteCategory={(name) => categories.remove(name)}
+        notesBusy={notesIo.loading}
+        notesKind={notesIo.activeKind}
+        notesProgress={
+          notesIo.progress
+            ? `${notesIo.progress.step}${
+                notesIo.progress.total > 0
+                  ? ` ${notesIo.progress.current}/${notesIo.progress.total}`
+                  : ''
+              }`
+            : null
+        }
+        onWrite={() => {
+          void openStudioNote(navigate, { kind: 'new' })
+        }}
+        onOpenNote={(open) => {
+          void openStudioNote(navigate, open, setError, failed)
+        }}
+        onDeleteNotes={async (docs) => workbench.removeNotes(docs)}
+        onUnschedule={workbench.unschedule}
+        onAssignNotes={(docs, name) => {
+          void categories.assign(docs.map((doc) => doc.id), name)
+        }}
+        onDeleteComments={(ids) => {
+          void workbench.removeComments(ids)
+        }}
+        onOpenCommentItem={(id) => {
+          void openPublishedItem(id, setError, failed)
+        }}
+        onApproveApplication={workbench.approveApplication}
+        onRejectApplication={(id) => {
+          void workbench.rejectApplication(id)
+        }}
+        onDeleteApplications={(ids) => {
+          void workbench.removeApplications(ids)
+        }}
+        onUpload={workbench.upload}
+        onDeleteMedia={workbench.removeMedia}
+        onMediaSaved={() => {
+          workbench.acceptMedia()
+        }}
+        onExportNotes={(kind) => {
+          void notesIo.exportKind(kind)
+        }}
+        onImportNotes={(kind, file) => {
+          void notesIo.importKind(kind, file)
+        }}
+        pendingReviews={workbenchPendingReviews(workbench.applications).length}
+      />
+    </AnimatedView>
   )
 }

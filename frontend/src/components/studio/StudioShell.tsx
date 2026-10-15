@@ -26,6 +26,7 @@ import { StudioBlogPane } from './StudioBlogPane'
 import { studioSectionPath } from './studioRoutes'
 import '../ConfigForm.css'
 import '../phantasi/ui/css/workbench.css'
+import './StudioShell.css'
 
 const RAIL: Array<{
   section: StudioSection
