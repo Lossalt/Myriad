@@ -72,6 +72,8 @@ pub fn create_phantasiai_routes(
             crate::middleware::auth::admin_middleware,
         ));
     Router::<crate::state::AppState>::new()
+        // 伴读岛：这篇有几条注释、有没有播客。只读，不生成
+        .route("/items/{item_id}/companion", get(get_companion))
         // 获取文章注释：缓存命中即返回；无缓存仅管理员生成
         .route("/items/{item_id}/annotations", get(get_annotations))
         // AI 播客：生成对话式文稿
@@ -139,6 +141,89 @@ pub struct PodcastResponse {
     pub estimated_duration: i32,
 }
 
+fn article_not_found() -> axum::response::Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(AppError::fail_json("Article not found")),
+    )
+        .into_response()
+}
+
+/// Same rule as the blog's post list: notes outside admin-only sources.
+fn on_the_blog(
+    source_type: &crate::models::entities::phantasi_sources::SourceType,
+    admin_only: bool,
+) -> bool {
+    *source_type == crate::models::entities::phantasi_sources::SourceType::Note && !admin_only
+}
+
+/// The article's source, once the viewer may read its AI companion. Others
+/// read it only where the blog shows the article: a note outside admin-only
+/// sources, behind the Phantasi module visibility.
+async fn companion_source(
+    db: &DatabaseConnection,
+    viewer: &OptionalViewer,
+    item_id: i32,
+) -> Result<i32, axum::response::Response> {
+    use crate::models::entities::{phantasi_items, phantasi_sources};
+    crate::api::phantasi::get_phantasi_viewer(viewer, db)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    let source_id = match phantasi_items::Entity::find_by_id(item_id)
+        .select_only()
+        .column(phantasi_items::Column::SourceId)
+        .into_tuple::<i32>()
+        .one(db)
+        .await
+    {
+        Ok(Some(source_id)) => source_id,
+        Ok(None) => return Err(article_not_found()),
+        Err(e) => return Err(phantasiai_store_failed("load article", e)),
+    };
+    if viewer.is_admin {
+        return Ok(source_id);
+    }
+    match phantasi_sources::Entity::find_by_id(source_id)
+        .one(db)
+        .await
+    {
+        Ok(Some(source)) if on_the_blog(&source.source_type, source.admin_only) => Ok(source_id),
+        Ok(_) => Err(article_not_found()),
+        Err(e) => Err(phantasiai_store_failed("load article source", e)),
+    }
+}
+
+/// 这篇有几条注释、有没有播客，不生成任何东西。
+async fn get_companion(
+    State(db): State<DatabaseConnection>,
+    viewer: OptionalViewer,
+    Path(item_id): Path<i32>,
+) -> axum::response::Response {
+    use sea_orm::PaginatorTrait;
+    let source_id = match companion_source(&db, &viewer, item_id).await {
+        Ok(source_id) => source_id,
+        Err(response) => return response,
+    };
+    let annotations = phantasi_annotations::Entity::find()
+        .filter(phantasi_annotations::Column::ItemId.eq(item_id))
+        .count(&db)
+        .await;
+    let podcasts = phantasi_podcasts::Entity::find()
+        .filter(phantasi_podcasts::Column::ItemId.eq(item_id))
+        .count(&db)
+        .await;
+    match (annotations, podcasts) {
+        (Ok(annotations), Ok(podcasts)) => Json(json!({
+            "success": true,
+            "source_id": source_id,
+            "annotations": annotations,
+            "podcast": podcasts > 0,
+        }))
+        .into_response(),
+        (Err(e), _) | (_, Err(e)) => phantasiai_store_failed("load companion", e),
+    }
+}
+
 // 获取注释
 
 /// 获取文章注释
@@ -151,7 +236,9 @@ async fn get_annotations(
     viewer: OptionalViewer,
     Path(item_id): Path<i32>,
 ) -> impl IntoResponse {
-    // 尝试从数据库获取（任何人都可以访问已缓存的注释）
+    if let Err(response) = companion_source(&db, &viewer, item_id).await {
+        return response;
+    }
     let existing = phantasi_annotations::Entity::find()
         .filter(phantasi_annotations::Column::ItemId.eq(item_id))
         .all(&db)
@@ -247,6 +334,7 @@ async fn regenerate_annotations(
         .filter(phantasi_annotations::Column::ItemId.eq(item_id))
         .exec(&db)
         .await;
+    crate::services::blog::request_rebuild();
 
     // 获取文章内容
     use crate::models::entities::phantasi_items;
@@ -389,6 +477,9 @@ async fn generate_and_save_annotations(
                 saved_annotations.len(),
                 item_id
             );
+            if !saved_annotations.is_empty() {
+                crate::services::blog::request_rebuild();
+            }
 
             (
                 StatusCode::OK,
@@ -863,6 +954,9 @@ async fn get_podcast_script(
     viewer: OptionalViewer,
     Path(item_id): Path<i32>,
 ) -> axum::response::Response {
+    if let Err(response) = companion_source(&db, &viewer, item_id).await {
+        return response;
+    }
     podcast_script(db, item_id, viewer.is_admin).await
 }
 
@@ -1012,6 +1106,7 @@ async fn podcast_script(
                 }
                 _ => {
                     tracing::info!("Saved podcast for item {} to database", item_id);
+                    crate::services::blog::request_rebuild();
                 }
             }
 
@@ -1093,6 +1188,7 @@ async fn regenerate_podcast_script(
         }
         _ => {
             tracing::info!("Deleted existing podcast cache for item {}", item_id);
+            crate::services::blog::request_rebuild();
         }
     }
 
@@ -1578,6 +1674,19 @@ fn extract_json_array_from_response(response: &str) -> Result<String, String> {
     }
 
     Err("No JSON array found in response".to_string())
+}
+
+#[cfg(test)]
+mod companion_tests {
+    use crate::models::entities::phantasi_sources::SourceType;
+
+    /// 访客只读得到博客上那些文章的 AI 伴读。
+    #[test]
+    fn only_articles_on_the_blog_share_their_companion() {
+        assert!(super::on_the_blog(&SourceType::Note, false));
+        assert!(!super::on_the_blog(&SourceType::Note, true));
+        assert!(!super::on_the_blog(&SourceType::Rss, false));
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 - **创作台：** 笔记编辑与创作侧管理搬到 `/studio`，仅站长可见；订阅源管理不再有内置界面，改用示例应用「订阅」（RSS reader TAPP）。
 - **RSS：** `/journal/notes.xml` 删除，只剩 `/api/phantasi/notes.xml`。
 - **反代：** 自带 proxy 把 `/blog` 转给后端；自己按路径分流到后端和前端的反代，也要把 `/blog` 交给后端。`/embed/*` 是 SPA 页面，只允许同源 iframe。
+- **AI 注释与播客：** 改在博客文章页的伴读岛里显示。非管理员读 `/api/phantasiai/items/{id}/annotations` 和 `/podcast` 现在只限博客上的文章（非 `admin_only` 的笔记源），并受博客模块可见性约束，其余返回 404；新增只读的 `/api/phantasiai/items/{id}/companion`。站长在创作台的发布设置里生成，生成或重新生成后博客自动重建。
 
 ## 最低支持版本 0.6.1
 
