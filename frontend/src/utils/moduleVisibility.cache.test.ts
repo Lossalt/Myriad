@@ -51,21 +51,15 @@ describe('module visibility session cache', () => {
   })
 })
 
-describe('site-wide journal board visibility', () => {
-  it('keeps database board settings when normalizing and caching API responses', () => {
-    const response = {
-      journalBoards: { feeds: 'admin', notes: 'authenticated', sites: 'all' } as const,
-    }
-    const next = normalizeModuleVisibilityPreferences(response)
-    assert.deepEqual(next.journalBoards, response.journalBoards)
-    dispatchModuleVisibilityPreferencesUpdated(next)
-    assert.deepEqual(getCachedModuleVisibilityPreferences()?.journalBoards, response.journalBoards)
+function withLibrary(library: 'all' | 'authenticated' | 'admin') {
+  return normalizeModuleVisibilityPreferences({
+    modules: { ...DEFAULT_MODULE_VISIBILITY_PREFERENCES.modules, library },
   })
-})
+}
 
-it('saves journal visibility through the shared API and a fresh visitor reads it', async (t) => {
+it('saves visibility through the shared API and a fresh visitor reads it', async (t) => {
   const saved = normalizeModuleVisibilityPreferences({
-    journalBoards: { feeds: 'admin', notes: 'authenticated', sites: 'all' },
+    modules: { ...DEFAULT_MODULE_VISIBILITY_PREFERENCES.modules, library: 'admin', phantasi: 'authenticated' },
   })
   let stored = DEFAULT_MODULE_VISIBILITY_PREFERENCES
   t.mock.method(apiService, 'put', async (url: string, payload: typeof saved) => {
@@ -81,49 +75,22 @@ it('saves journal visibility through the shared API and a fresh visitor reads it
   // Discard this browser's cached state before the visitor fetch.
   dispatchModuleVisibilityPreferencesUpdated(DEFAULT_MODULE_VISIBILITY_PREFERENCES)
   const visitor = await fetchModuleVisibilityPreferences()
-  assert.deepEqual(visitor.journalBoards, saved.journalBoards)
+  assert.deepEqual(visitor, saved)
   assert.equal(areModuleVisibilityPreferencesEqual(visitor, DEFAULT_MODULE_VISIBILITY_PREFERENCES), false)
 })
 
 it('failed saves leave the last confirmed visibility in place', async (t) => {
-  dispatchModuleVisibilityPreferencesUpdated(DEFAULT_MODULE_VISIBILITY_PREFERENCES)
+  dispatchModuleVisibilityPreferencesUpdated(withLibrary('authenticated'))
   t.mock.method(apiService, 'put', async () => { throw new Error('offline') })
-  await assert.rejects(updateModuleVisibilityPreferences(normalizeModuleVisibilityPreferences({
-    journalBoards: { feeds: 'admin', notes: 'all', sites: 'all' },
-  })), /offline/)
-  assert.deepEqual(getCachedModuleVisibilityPreferences()?.journalBoards, DEFAULT_MODULE_VISIBILITY_PREFERENCES.journalBoards)
-})
-
-it('roundtrips the global sort for a fresh visitor without losing sibling settings', async (t) => {
-  const saved = normalizeModuleVisibilityPreferences({
-    journalSourceSort: 'pinyin',
-    journalBoards: { feeds: 'admin', notes: 'authenticated', sites: 'all' },
-    modules: { ...DEFAULT_MODULE_VISIBILITY_PREFERENCES.modules, library: 'admin' },
-  })
-  let stored = DEFAULT_MODULE_VISIBILITY_PREFERENCES
-  t.mock.method(apiService, 'put', async (_url: string, payload: typeof saved) => {
-    stored = structuredClone(payload)
-    return { success: true, preferences: stored }
-  })
-  t.mock.method(apiService, 'get', async () => ({ success: true, preferences: structuredClone(stored) }))
-  await updateModuleVisibilityPreferences(saved)
-  dispatchModuleVisibilityPreferencesUpdated(DEFAULT_MODULE_VISIBILITY_PREFERENCES)
-  assert.deepEqual(await fetchModuleVisibilityPreferences(), saved)
-  assert.equal(areModuleVisibilityPreferencesEqual(saved, { ...saved, journalSourceSort: 'smart' }), false)
-})
-
-it('failed default-sort save retains the confirmed default', async (t) => {
-  dispatchModuleVisibilityPreferencesUpdated(normalizeModuleVisibilityPreferences({ journalSourceSort: 'update' }))
-  t.mock.method(apiService, 'put', async () => { throw new Error('offline') })
-  await assert.rejects(updateModuleVisibilityPreferences(normalizeModuleVisibilityPreferences({ journalSourceSort: 'pinyin' })), /offline/)
-  assert.equal(getCachedModuleVisibilityPreferences()?.journalSourceSort, 'update')
+  await assert.rejects(updateModuleVisibilityPreferences(withLibrary('admin')), /offline/)
+  assert.equal(getCachedModuleVisibilityPreferences()?.modules.library, 'authenticated')
 })
 
 it('an authoritative preference update invalidates older session loads', async t => {
   const held = Promise.withResolvers<{ preferences: typeof DEFAULT_MODULE_VISIBILITY_PREFERENCES }>()
   t.mock.method(apiService, 'get', () => held.promise)
   const old = ensureModuleVisibilityPreferences(true)
-  const saved = normalizeModuleVisibilityPreferences({ journalSourceSort: 'pinyin' })
+  const saved = withLibrary('admin')
   dispatchModuleVisibilityPreferencesUpdated(saved)
   held.resolve({ preferences: DEFAULT_MODULE_VISIBILITY_PREFERENCES })
   assert.deepEqual(await old, saved)
@@ -137,7 +104,7 @@ it('a forced session refresh starts a fresh transport and owns the final snapsho
   t.mock.method(apiService, 'get', () => ++calls === 1 ? old.promise : fresh.promise)
   const first = ensureModuleVisibilityPreferences(true)
   const second = ensureModuleVisibilityPreferences(true)
-  const saved = normalizeModuleVisibilityPreferences({ journalSourceSort: 'pinyin' })
+  const saved = withLibrary('admin')
   fresh.resolve({ preferences: saved })
   assert.deepEqual(await second, saved)
   old.resolve({ preferences: DEFAULT_MODULE_VISIBILITY_PREFERENCES })
@@ -148,7 +115,7 @@ it('a forced session refresh starts a fresh transport and owns the final snapsho
 
 it('a successful save supersedes an already pending session read', async t => {
   const held = Promise.withResolvers<{ preferences: typeof DEFAULT_MODULE_VISIBILITY_PREFERENCES }>()
-  const saved = normalizeModuleVisibilityPreferences({ journalSourceSort: 'update' })
+  const saved = withLibrary('authenticated')
   t.mock.method(apiService, 'get', () => held.promise)
   t.mock.method(apiService, 'put', async () => ({ success: true, preferences: saved }))
   const old = ensureModuleVisibilityPreferences(true)

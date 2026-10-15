@@ -12,10 +12,6 @@ use std::collections::HashMap;
 pub const MODULE_VISIBILITY_PREFERENCES_KEY: &str = "module_visibility_preferences";
 
 pub const MODULE_VISIBILITY_KEYS: [&str; 5] = ["library", "phantasi", "reports", "tapp", "agent"];
-const JOURNAL_SOURCE_SORT_MODES: [&str; 4] = ["smart", "update", "category", "pinyin"];
-
-pub const JOURNAL_BOARD_KEYS: [&str; 3] = ["feeds", "notes", "sites"];
-
 pub const MODULE_VISIBILITY_LEVELS: [&str; 3] = ["all", "authenticated", "admin"];
 
 /// Legacy agent usage levels (compat storage; auth uses Tapp permissions).
@@ -68,29 +64,6 @@ pub struct ModuleVisibilityPreferences {
     /// 旧版 Agent 档位（兼容存储；鉴权请用 Tapp 权限）
     #[serde(default)]
     pub agent_usage: AgentUsagePreferences,
-    /// Site-wide secondary navigation visibility; not an API authorization grant.
-    #[serde(default = "default_journal_boards")]
-    pub journal_boards: HashMap<String, String>,
-    #[serde(default = "default_journal_source_sort")]
-    pub journal_source_sort: String,
-}
-
-fn default_journal_source_sort() -> String {
-    "smart".to_string()
-}
-
-fn default_journal_boards() -> HashMap<String, String> {
-    JOURNAL_BOARD_KEYS
-        .into_iter()
-        .map(|key| (key.to_string(), "all".to_string()))
-        .collect()
-}
-
-fn visibility_rank(level: &str) -> usize {
-    MODULE_VISIBILITY_LEVELS
-        .iter()
-        .position(|candidate| *candidate == level)
-        .unwrap_or(0)
 }
 
 fn default_module_visibility_modules() -> HashMap<String, String> {
@@ -108,8 +81,6 @@ impl Default for ModuleVisibilityPreferences {
         Self {
             modules: default_module_visibility_modules(),
             agent_usage: AgentUsagePreferences::default(),
-            journal_boards: default_journal_boards(),
-            journal_source_sort: default_journal_source_sort(),
         }
     }
 }
@@ -132,32 +103,8 @@ impl ModuleVisibilityPreferences {
             normalized.insert(key.to_string(), value);
         }
 
-        if !JOURNAL_SOURCE_SORT_MODES.contains(&self.journal_source_sort.as_str()) {
-            self.journal_source_sort = default_journal_source_sort();
-        }
         self.modules = normalized;
         self.agent_usage = self.agent_usage.normalized();
-        self.journal_boards = JOURNAL_BOARD_KEYS
-            .into_iter()
-            .map(|key| {
-                let level = self
-                    .journal_boards
-                    .get(key)
-                    .filter(|value| MODULE_VISIBILITY_LEVELS.contains(&value.as_str()))
-                    .cloned()
-                    .unwrap_or_else(|| "all".to_string());
-                (key.to_string(), level)
-            })
-            .collect();
-        let parent = self.module_visibility("phantasi").to_string();
-        if parent != "admin"
-            && !self
-                .journal_boards
-                .values()
-                .any(|level| visibility_rank(level) <= visibility_rank(&parent))
-        {
-            self.journal_boards.insert("feeds".to_string(), parent);
-        }
         self
     }
 
@@ -182,16 +129,6 @@ fn parse_module_visibility_preferences(
         {
             return Err(format!("invalid visibility level for {key}"));
         }
-    }
-    for key in JOURNAL_BOARD_KEYS {
-        if let Some(level) = preferences.journal_boards.get(key)
-            && !MODULE_VISIBILITY_LEVELS.contains(&level.as_str())
-        {
-            return Err(format!("invalid journal board visibility level for {key}"));
-        }
-    }
-    if !JOURNAL_SOURCE_SORT_MODES.contains(&preferences.journal_source_sort.as_str()) {
-        return Err("invalid journal source sort mode".to_string());
     }
     Ok(preferences.normalized())
 }
@@ -267,8 +204,6 @@ mod tests {
         modules.insert("evil".into(), "all".into());
         let p = ModuleVisibilityPreferences {
             modules,
-            journal_boards: default_journal_boards(),
-            journal_source_sort: default_journal_source_sort(),
             agent_usage: AgentUsagePreferences {
                 guest: "bogus".into(),
                 user: "elevated".into(),
@@ -313,75 +248,17 @@ mod tests {
     }
 
     #[test]
-    fn journal_boards_survive_database_json_roundtrip() {
+    fn retired_journal_fields_still_parse_and_drop_on_save() {
         let stored = serde_json::json!({
-            "modules": { "phantasi": "all" },
-            "journalBoards": { "feeds": "admin", "notes": "authenticated", "sites": "all" }
+            "modules": { "phantasi": "admin" },
+            "journalBoards": { "feeds": "admin", "notes": "invalid" },
+            "journalSourceSort": "bogus"
         });
         let loaded = parse_module_visibility_preferences(stored).unwrap();
-        let saved = serde_json::to_value(loaded.normalized()).unwrap();
-        assert_eq!(saved["journalBoards"]["feeds"], "admin");
-        assert_eq!(saved["journalBoards"]["notes"], "authenticated");
-        assert_eq!(saved["journalBoards"]["sites"], "all");
-        let reread = parse_module_visibility_preferences(saved.clone()).unwrap();
-        assert_eq!(serde_json::to_value(reread).unwrap(), saved);
-    }
-
-    #[test]
-    fn journal_boards_default_and_keep_one_page_for_module_audience() {
-        let defaults = serde_json::to_value(
-            parse_module_visibility_preferences(serde_json::json!({})).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            defaults["journalBoards"],
-            serde_json::json!({"feeds":"all","notes":"all","sites":"all"})
-        );
-        let loaded = parse_module_visibility_preferences(serde_json::json!({
-            "modules": {"phantasi":"authenticated"},
-            "journalBoards": {"feeds":"admin","notes":"admin","sites":"admin"}
-        }))
-        .unwrap();
-        assert_eq!(
-            serde_json::to_value(loaded).unwrap()["journalBoards"]["feeds"],
-            "authenticated"
-        );
-        assert!(
-            parse_module_visibility_preferences(serde_json::json!({
-                "journalBoards": {"notes":"invalid"}
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn journal_source_sort_roundtrip_defaults_and_validation() {
-        let legacy = parse_module_visibility_preferences(serde_json::json!({})).unwrap();
-        assert_eq!(legacy.journal_source_sort, "smart");
-        for mode in JOURNAL_SOURCE_SORT_MODES {
-            let stored = serde_json::json!({
-                "journalSourceSort": mode,
-                "journalBoards": {"feeds":"admin","notes":"authenticated","sites":"all"},
-                "modules": {"library":"admin"}
-            });
-            let loaded = parse_module_visibility_preferences(stored).unwrap();
-            assert_eq!(loaded.journal_source_sort, mode);
-            assert_eq!(loaded.journal_boards["feeds"], "admin");
-            assert_eq!(loaded.module_visibility("library"), "admin");
-            let reread =
-                parse_module_visibility_preferences(serde_json::to_value(&loaded).unwrap())
-                    .unwrap();
-            assert_eq!(loaded, reread);
-        }
-        assert!(
-            parse_module_visibility_preferences(serde_json::json!({"journalSourceSort":"bogus"}))
-                .is_err()
-        );
-        let invalid = ModuleVisibilityPreferences {
-            journal_source_sort: "bogus".into(),
-            ..Default::default()
-        };
-        assert_eq!(invalid.normalized().journal_source_sort, "smart");
+        assert_eq!(loaded.module_visibility("phantasi"), "admin");
+        let saved = serde_json::to_value(&loaded).unwrap();
+        assert!(saved.get("journalBoards").is_none());
+        assert!(saved.get("journalSourceSort").is_none());
     }
 
     #[test]

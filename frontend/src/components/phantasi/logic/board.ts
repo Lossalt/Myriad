@@ -16,5 +16,3 @@ export const NOTE_TRANSFER_KINDS = [
 ] as const
 
 export type NoteTransferKind = (typeof NOTE_TRANSFER_KINDS)[number]
-
-export type SourceSortMode = 'smart' | 'update' | 'category' | 'pinyin'
