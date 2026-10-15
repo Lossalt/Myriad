@@ -58,6 +58,13 @@ export function blogThemeInstallUrl(raw: string): string | null {
   }
 }
 
+/** `hugo version` 的整行输出带提交号和构建时间，界面只要版本号和是否 extended。 */
+export function blogHugoVersionLabel(raw: string): string {
+  const match = /\bv?(\d+\.\d+\.\d+)(\S*)/.exec(raw)
+  if (!match) return raw.trim()
+  return match[2]?.includes('+extended') ? `v${match[1]} extended` : `v${match[1]}`
+}
+
 export function sameBlogSettings(a: BlogSettings, b: BlogSettings): boolean {
   return (
     a.theme_id === b.theme_id &&

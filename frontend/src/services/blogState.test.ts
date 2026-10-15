@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   blogBuildPolls,
   blogBuildStatus,
+  blogHugoVersionLabel,
   blogSnapshotFromValue,
   blogThemeCanUninstall,
   blogThemeInstallUrl,
@@ -55,6 +56,17 @@ describe('blog params', () => {
     assert.equal(parseBlogParams('[]'), null)
     assert.equal(parseBlogParams('"x"'), null)
     assert.equal(parseBlogParams('{'), null)
+  })
+})
+
+describe('blogHugoVersionLabel', () => {
+  it('只留版本号和 extended', () => {
+    assert.equal(
+      blogHugoVersionLabel('hugo v0.168.0-e27a6760c5547237f87d353aebe0580feadb20f4+extended darwin/arm64 BuildDate=2026-10-13T16:42:50Z VendorInfo=gohugoio'),
+      'v0.168.0 extended',
+    )
+    assert.equal(blogHugoVersionLabel('hugo v0.140.2 linux/amd64'), 'v0.140.2')
+    assert.equal(blogHugoVersionLabel(' dev build '), 'dev build')
   })
 })
 
