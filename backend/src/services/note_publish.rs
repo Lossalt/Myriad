@@ -1052,7 +1052,7 @@ mod tests {
             source_id: Set(1),
             guid: Set(format!("test-note-{}", uuid::Uuid::new_v4())),
             title: Set("Published title".into()),
-            link: Set("/journal/articles/1".into()),
+            link: Set("/blog/posts/published-title/".into()),
             content: Set(Some("<p>Published body</p>".into())),
             content_md: Set(Some("Published body".into())),
             image: Set(Some("published.png".into())),
@@ -1101,7 +1101,7 @@ mod tests {
             return;
         };
         let admin = Database::connect(&url).await.unwrap();
-        let scope = format!("journal_count_{}", uuid::Uuid::new_v4().simple());
+        let scope = format!("note_count_{}", uuid::Uuid::new_v4().simple());
         admin
             .execute_unprepared(&format!("CREATE SCHEMA {scope}"))
             .await

@@ -73,7 +73,7 @@ pub fn validate_same_origin_open_url_path(value: &str, field: &str) -> Result<()
     }
     if !value.starts_with('/') {
         return Err(format!(
-            "Tapp {field} for match=same-origin must be a rooted relative path (e.g. /journal)"
+            "Tapp {field} for match=same-origin must be a rooted relative path (e.g. /library)"
         ));
     }
     if value.starts_with("//") {
@@ -208,13 +208,13 @@ mod tests {
     fn same_origin_open_url_accepts_rooted_paths_only() {
         for ok in [
             "/",
-            "/journal",
-            "/journal/notes?x=1",
-            "/journal/notes?next=/a/../b",
-            "/journal/%E7%AC%94%E8%AE%B0",
-            "/journal/100%25",
-            "/journal/v1..2",
-            "/journal/a%2Fb",
+            "/library",
+            "/library/notes?x=1",
+            "/library/notes?next=/a/../b",
+            "/library/%E7%AC%94%E8%AE%B0",
+            "/library/100%25",
+            "/library/v1..2",
+            "/library/a%2Fb",
         ] {
             assert!(
                 validate_same_origin_open_url_path(ok, "openUrls[0].url").is_ok(),
@@ -223,24 +223,24 @@ mod tests {
         }
         for bad in [
             "",
-            "journal",
+            "library",
             "//evil.example",
-            "https://example.com/journal",
-            "/journal#frag",
-            "/journal/../evil",
-            "/journal/%2e%2e/",
-            "/journal/.%2e/",
-            "/journal/%2E%2E/config",
-            "/journal/%2e%2e%2fconfig",
-            "/journal%2f..%2fconfig",
-            "/journal\\evil",
-            "/journal/%5cconfig",
-            "/journal/%00",
-            "/journal/%0a",
-            "/journal/%7f",
-            "/journal/%",
-            "/journal/%zz",
-            "/journal/%ff",
+            "https://example.com/library",
+            "/library#frag",
+            "/library/../evil",
+            "/library/%2e%2e/",
+            "/library/.%2e/",
+            "/library/%2E%2E/config",
+            "/library/%2e%2e%2fconfig",
+            "/library%2f..%2fconfig",
+            "/library\\evil",
+            "/library/%5cconfig",
+            "/library/%00",
+            "/library/%0a",
+            "/library/%7f",
+            "/library/%",
+            "/library/%zz",
+            "/library/%ff",
             "/a b",
         ] {
             assert!(

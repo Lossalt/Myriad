@@ -148,7 +148,7 @@ fn math_urls_and_comment_iframe() {
     let html = r##"<p>行内 <span class="math math-inline" data-tex="E=mc^2">E=mc^2</span>。</p>
 <p><span class="math math-display" data-tex="\int_0^1 x^2 \, dx">\int_0^1 x^2 \, dx</span></p>
 <p><span class="math math-inline" data-tex="\frac{">\frac{</span></p>
-<p><a href="/journal">内</a> <a href="//cdn.example/a">c</a> <a href="https://gohugo.io/">g</a> <a href="#top">t</a></p>
+<p><a href="/library">内</a> <a href="//cdn.example/a">c</a> <a href="https://gohugo.io/">g</a> <a href="#top">t</a></p>
 <img src="/media/a.jpg" srcset="/a.jpg 1x, https://cdn.example/b.jpg 2x">
 <video poster="/p.jpg" src="/v.mp4"></video>"##;
     let out = prepare_content_html(html, "https://example.com/", 7);
@@ -156,7 +156,7 @@ fn math_urls_and_comment_iframe() {
     assert!(out.contains("display=\"inline\""), "{out}");
     assert!(out.contains("display=\"block\""), "{out}");
     assert!(out.contains("data-tex="), "{out}");
-    assert!(out.contains("https://example.com/journal"), "{out}");
+    assert!(out.contains("https://example.com/library"), "{out}");
     assert!(out.contains("//cdn.example/a"), "{out}");
     assert!(out.contains("https://gohugo.io/"), "{out}");
     assert!(out.contains("#top"), "{out}");

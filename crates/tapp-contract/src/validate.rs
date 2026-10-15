@@ -1223,13 +1223,13 @@ mod tests {
         let mut value = serde_json::to_value(manifest(&["ui:openUrl"])).unwrap();
         value["openUrls"] = json!([{
             "id": "self",
-            "url": "/journal/notes?next=/a/../b",
+            "url": "/library/notes?next=/a/../b",
             "match": "same-origin"
         }]);
         let valid: TappManifest = serde_json::from_value(value.clone()).unwrap();
         assert!(validate_tapp_manifest(&valid, &current()).is_ok());
 
-        for path in ["/journal/%2e%2e/", "/journal/.%2e/", "/journal/%5cconfig"] {
+        for path in ["/library/%2e%2e/", "/library/.%2e/", "/library/%5cconfig"] {
             value["openUrls"][0]["url"] = json!(path);
             let invalid: TappManifest = serde_json::from_value(value.clone()).unwrap();
             let err = validate_tapp_manifest(&invalid, &current()).unwrap_err();
