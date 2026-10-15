@@ -278,8 +278,12 @@ pub(super) async fn execute_phantasi_page_content(
                     } else {
                         json!(["all", "unread"])
                     },
-                    "canGoBack": true,
-                    "parentPath": "/journal"
+                    "canGoBack": false,
+                    "parentPath": if source.source_type == phantasi_sources::SourceType::Note {
+                        json!("/blog")
+                    } else {
+                        json!("/studio")
+                    }
                 }
             }))
         }
@@ -369,8 +373,14 @@ pub(super) async fn execute_phantasi_page_content(
                     "readAt": user_state.as_ref().and_then(|s| s.read_at.map(|t| t.to_string()))
                 },
                 "navigation": {
-                    "canGoBack": true,
-                    "parentPath": "/journal"
+                    "canGoBack": false,
+                    "parentPath": if source.as_ref().is_some_and(|source| {
+                        source.source_type == phantasi_sources::SourceType::Note
+                    }) {
+                        json!("/blog")
+                    } else {
+                        json!("/studio")
+                    }
                 },
                 "actions": {
                     "available": [

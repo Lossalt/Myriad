@@ -19,6 +19,7 @@ mod ensure_heals;
 mod expected_indexes;
 mod expected_schema;
 mod introspect;
+mod note_slugs;
 mod old_rows;
 mod orchestrator;
 mod seeds;

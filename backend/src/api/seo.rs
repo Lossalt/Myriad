@@ -4,11 +4,8 @@
 //! - Not `branding.noindex` (`site_noindex` or private visibility policy) for sitemap entries (shell still returns noindex meta)
 //! - Module visibility = `all` (`tapp` / `phantasi`)
 //! - Tapp: site-owner public install with `visibility = all`
-//! - Phantasi: only sources categorized as site-owner original content (`我`);
-//! never index friend-links or third-party RSS items
-//! - Syndicated journal topic URLs (`/journal/topics/{topic}`) and the friends
-//! board (`/journal/friends`) are linkable crawler shells: `noindex, follow`,
-//! no sitemap, no reprinted bodies
+//! - Phantasi: published notes only, at `/blog/posts/{slug}/`.
+//!   Friend-links and third-party RSS items have no public page.
 //!
 //! Ordinary browsers get the SPA via the proxy. The frontend process stamps site
 //! identity into that document; the proxy only routes. Crawler UAs and
@@ -35,10 +32,10 @@ use crate::models::entities::{phantasi_items, phantasi_sources, tapps};
 #[cfg(test)]
 pub(crate) use crate::services::public_site::PHANTASI_MINE_CATEGORY;
 pub(crate) use crate::services::public_site::{
-    SiteBranding, description_from_manifest, encode_path_segment, load_site_branding,
-    module_is_public_all, name_from_manifest, own_phantasi_item_links, own_phantasi_note_links,
-    phantasi_item_path, phantasi_source_is_own, public_absolute_url, public_tapp_links,
-    strip_html_snippet,
+    SiteBranding, description_from_manifest, encode_path_segment, host_site_locale,
+    infer_site_locale, load_site_branding, module_is_public_all, name_from_manifest,
+    own_phantasi_item_links, phantasi_item_path, public_absolute_url, public_site_identity,
+    public_tapp_links, resolve_public_base_url, strip_html_snippet,
 };
 use crate::services::tapp_ownership::{find_admin_user_id, public_install_visible_to_viewer};
 use crate::services::tapp_validation::validate_tapp_id;
@@ -48,8 +45,7 @@ use myriad_module_visibility::{
 
 /// Cap phantasi item URLs in sitemap (newest first).
 const PHANTASI_SITEMAP_ITEM_LIMIT: u64 = 200;
-/// Plain-text article body in the Phantasi crawler shell (not the 160-char meta snippet).
-const PHANTASI_SHELL_BODY_LIMIT: usize = 8000;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TappSeoSummary {
@@ -67,39 +63,6 @@ pub struct TappSeoSummary {
     pub indexable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub site_title: Option<String>,
-}
-
-/// Public SEO summary for a site-owner original Phantasi article (`我` category only).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PhantasiItemSeoSummary {
-    pub id: i32,
-    pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    pub canonical_url: String,
-    pub path: String,
-    pub noindex: bool,
-    pub indexable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub site_title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_name: Option<String>,
-    /// ISO date (`YYYY-MM-DD`) for Article JSON-LD.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub published_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub author: Option<String>,
-    /// Full plain-text body for the HTML shell only (omitted from JSON).
-    #[serde(skip)]
-    pub body_text: String,
-}
-
-struct SiteLocale {
-    html_lang: &'static str,
-    og_locale: &'static str,
 }
 
 struct SeoChrome {
@@ -279,91 +242,10 @@ fn render_seo_html(doc: SeoDocument<'_>) -> String {
     )
 }
 
-const TRADITIONAL_MARKERS: &str = "說這個為與萬億軟體檔訊預設網連線憶臺裡麼迴";
-
-fn host_site_locale(tag: &str) -> SiteLocale {
-    match tag {
-        "zh-TW" => SiteLocale {
-            html_lang: "zh-TW",
-            og_locale: "zh_TW",
-        },
-        "zh-CN" => SiteLocale {
-            html_lang: "zh-CN",
-            og_locale: "zh_CN",
-        },
-        "ja-JP" => SiteLocale {
-            html_lang: "ja",
-            og_locale: "ja_JP",
-        },
-        "ko-KR" => SiteLocale {
-            html_lang: "ko",
-            og_locale: "ko_KR",
-        },
-        "fr-FR" => SiteLocale {
-            html_lang: "fr",
-            og_locale: "fr_FR",
-        },
-        "de-DE" => SiteLocale {
-            html_lang: "de",
-            og_locale: "de_DE",
-        },
-        _ => SiteLocale {
-            html_lang: "en",
-            og_locale: "en_US",
-        },
-    }
-}
-
-fn infer_site_locale(texts: &[&str]) -> SiteLocale {
-    let mut cjk = 0usize;
-    let mut kana = 0usize;
-    let mut hangul = 0usize;
-    let mut traditional = 0usize;
-    for text in texts {
-        for ch in text.chars() {
-            match ch {
-                '\u{3040}'..='\u{30FF}' | '\u{FF66}'..='\u{FF9D}' => kana += 1,
-                '\u{AC00}'..='\u{D7A3}' => hangul += 1,
-                '\u{4E00}'..='\u{9FFF}' => {
-                    cjk += 1;
-                    if TRADITIONAL_MARKERS.contains(ch) {
-                        traditional += 1;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    if kana >= 4 || (kana > 0 && kana * 3 >= cjk.max(1)) {
-        return host_site_locale("ja-JP");
-    }
-    if hangul >= 4 || (hangul > 0 && hangul * 3 >= cjk.max(1)) {
-        return host_site_locale("ko-KR");
-    }
-    if cjk >= 4 {
-        if traditional * 2 >= cjk.max(1) || traditional >= 2 {
-            return host_site_locale("zh-TW");
-        }
-        return host_site_locale("zh-CN");
-    }
-    host_site_locale("en-US")
-}
-
 /// Match proxy `is_seo_document_shell_path`. Humans with `?_spa=1` must not
 /// stay on this SEO document — the bounce script is a no-op once that query is set.
 pub(crate) fn is_seo_document_shell_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/tapp"
-            | "/journal"
-            | "/journal/feeds"
-            | "/journal/notes"
-            | "/journal/friends"
-            | "/library"
-            | "/reports"
-    ) || path.starts_with("/tapp/run/")
-        || path.starts_with("/journal/articles/")
-        || path.starts_with("/journal/topics/")
+    matches!(path, "/" | "/tapp" | "/library" | "/reports") || path.starts_with("/tapp/run/")
 }
 
 pub(crate) fn query_has_spa_bypass(query: Option<&str>) -> bool {
@@ -449,20 +331,6 @@ fn spa_escape_script(chrome: &SeoChrome) -> String {
         r#"  <script>(function(){{try{{localStorage.setItem("site_metadata",{js_literal});var s=location.search;if(/(?:^|[?&])_spa=1(?:&|$)/.test(s))return;var q=s?s+"&_spa=1":"?_spa=1";location.replace(location.pathname+q+location.hash)}}catch(e){{}}}})();</script>
 "#
     )
-}
-
-fn plain_text_paragraphs_html(text: &str) -> String {
-    let mut out = String::new();
-    for para in text.split("\n\n") {
-        let collapsed = para.split_whitespace().collect::<Vec<_>>().join(" ");
-        if collapsed.is_empty() {
-            continue;
-        }
-        out.push_str("<p>");
-        out.push_str(&html_escape(&collapsed));
-        out.push_str("</p>\n");
-    }
-    out
 }
 
 fn listing_json_ld(
@@ -578,40 +446,19 @@ fn collect_widget_labels(layout_json: Option<&str>) -> Vec<String> {
     labels
 }
 
-/// Durable public origin only: `FRONTEND_URL`, then `BASE_URL`.
-///
-/// **Never** derive absolute SEO URLs from client `Host` / `X-Forwarded-Host`
-/// (or `X-Forwarded-Proto`) — a poisoned Host can poison cached sitemap /
-/// robots / canonical absolute links. When unset, callers must omit absolute
-/// URLs (fail closed) rather than invent an origin.
-pub(crate) fn resolve_public_base_url() -> Option<String> {
-    for key in ["FRONTEND_URL", "BASE_URL"] {
-        if let Ok(raw) = std::env::var(key) {
-            let trimmed = raw.trim().trim_end_matches('/');
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
 fn llms_primary_routes(
     modules: &std::collections::HashMap<String, String>,
 ) -> Vec<(&'static str, &'static str)> {
     let mut routes: Vec<(&str, &str)> = vec![("Home", "/")];
     for (key, path, label) in [
         ("library", "/library", "Library"),
-        ("phantasi", "/journal", "Journal"),
+        ("phantasi", "/blog", "Blog"),
         ("reports", "/reports", "Reports"),
         ("tapp", "/tapp", "Tapp"),
     ] {
         let level = modules.get(key).map(String::as_str).unwrap_or("all");
         if module_is_public_all(level) {
             routes.push((label, path));
-            if key == "phantasi" {
-                routes.push(("Notes", "/journal/notes"));
-            }
         }
     }
     routes
@@ -636,14 +483,6 @@ fn absolute_share_image(base: &str, raw: &str) -> Option<String> {
         return Some(format!("{base}{t}"));
     }
     None
-}
-
-fn syndication_robots(site_noindex: bool) -> Option<&'static str> {
-    if site_noindex {
-        None
-    } else {
-        Some("noindex, follow")
-    }
 }
 
 async fn module_open_to_guests(db: &DatabaseConnection, key: &str) -> bool {
@@ -692,196 +531,6 @@ pub(crate) async fn notes_rss_enabled(db: &impl ConnectionTrait) -> bool {
 /// 开关打开，且 Phantasi 对访客开放，公开 feed 才存在。
 pub(crate) async fn notes_rss_is_public(db: &DatabaseConnection) -> bool {
     notes_rss_enabled(db).await && phantasi_module_open_to_guests(db).await
-}
-
-pub(crate) async fn public_site_identity(
-    db: &DatabaseConnection,
-) -> (String, String, &'static str) {
-    let branding = load_site_branding(db).await;
-    let locale = infer_site_locale(&[&branding.title, &branding.description]);
-    (branding.title, branding.description, locale.html_lang)
-}
-
-fn notes_rss_alternate(base: Option<&str>, enabled: bool) -> String {
-    if !enabled {
-        return String::new();
-    }
-    let href = public_absolute_url(base, myriad_phantasi_notes::NOTES_RSS_PATH);
-    format!(
-        "  <link rel=\"alternate\" type=\"application/rss+xml\" title=\"Notes\" href=\"{}\" />\n",
-        html_escape(&href)
-    )
-}
-
-async fn resolve_phantasi_item_seo_summary(
-    db: &DatabaseConnection,
-    _headers: &HeaderMap,
-    item_id: i32,
-) -> Result<PhantasiItemSeoSummary, StatusCode> {
-    if item_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let base = resolve_public_base_url();
-    let branding = load_site_branding(db).await;
-    let module_open = phantasi_module_open_to_guests(db).await;
-    let path = phantasi_item_path(item_id);
-    let canonical_url = public_absolute_url(base.as_deref(), &path);
-
-    if !module_open {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let item = phantasi_items::Entity::find_by_id(item_id)
-        .one(db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let source = phantasi_sources::Entity::find_by_id(item.source_id)
-        .one(db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Hard gate: local notes or `我` sources, never friend links / third-party feeds.
-    if !phantasi_source_is_own(&source.source_type, &source.category, source.admin_only) {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let indexable = !branding.noindex;
-    let body_source = item
-        .content
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .or(item.summary.as_deref().filter(|s| !s.trim().is_empty()))
-        .unwrap_or("");
-    let body_text = strip_html_snippet(body_source, PHANTASI_SHELL_BODY_LIMIT);
-    let description = item
-        .summary
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .or(item.content.as_deref().filter(|s| !s.trim().is_empty()))
-        .map(|s| strip_html_snippet(s, 160));
-    let base_for_img = base.as_deref().unwrap_or("");
-    let image = item
-        .image
-        .as_deref()
-        .and_then(|i| absolute_share_image(base_for_img, i))
-        .or_else(|| absolute_share_image(base_for_img, branding.og_image.trim()))
-        .or_else(|| absolute_share_image(base_for_img, branding.favicon.trim()));
-    let author = item
-        .author
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            let n = source.name.trim();
-            if n.is_empty() {
-                None
-            } else {
-                Some(n.to_string())
-            }
-        });
-
-    Ok(PhantasiItemSeoSummary {
-        id: item.id,
-        title: item.title,
-        description,
-        image,
-        canonical_url,
-        path,
-        noindex: branding.noindex || !indexable,
-        indexable,
-        site_title: Some(branding.title),
-        source_name: Some(source.name),
-        published_at: Some(item.published_at.format("%Y-%m-%d").to_string()),
-        author,
-        body_text,
-    })
-}
-
-fn render_phantasi_item_seo_html(
-    summary: &PhantasiItemSeoSummary,
-    chrome: &SeoChrome,
-    notes_rss: bool,
-) -> String {
-    let site = summary.site_title.as_deref().unwrap_or("Myriad");
-    let title = format_document_title(&summary.title, site);
-    let desc = summary
-        .description
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(site);
-    let source_line = summary
-        .source_name
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("<p style=\"color:#666\">{}</p>", html_escape(s)))
-        .unwrap_or_default();
-    let article_html = if summary.body_text.trim().is_empty() {
-        format!("<p>{}</p>\n", html_escape(desc))
-    } else {
-        format!(
-            "<article>\n{}</article>\n",
-            plain_text_paragraphs_html(&summary.body_text)
-        )
-    };
-    let mut json_ld = json!({
-        "@context": "https://schema.org",
-        "@type": "Article",
-        "headline": summary.title,
-        "description": desc,
-        "mainEntityOfPage": summary.canonical_url,
-        "url": summary.canonical_url,
-    });
-    if let Some(published) = summary.published_at.as_deref() {
-        json_ld["datePublished"] = json!(published);
-    }
-    if let Some(author) = summary.author.as_deref() {
-        json_ld["author"] = json!({ "@type": "Person", "name": author });
-    }
-    if let Some(image) = summary.image.as_deref() {
-        json_ld["image"] = json!(image);
-    }
-
-    let body_inner = format!(
-        "    <h1>{name}</h1>\n    {source_line}\n    {article}<p><a href=\"{canonical}\">Read more</a> · <a href=\"/journal\">Journal</a></p>\n",
-        name = html_escape(&summary.title),
-        source_line = source_line,
-        article = article_html,
-        canonical = html_escape(&summary.canonical_url),
-    );
-
-    let mut extra_head = String::new();
-    if let Some(published) = summary.published_at.as_deref().filter(|s| !s.is_empty()) {
-        extra_head.push_str("  <meta property=\"article:published_time\" content=\"");
-        extra_head.push_str(&html_escape(published));
-        extra_head.push_str("\" />\n");
-    }
-    if let Some(author) = summary.author.as_deref().filter(|s| !s.is_empty()) {
-        extra_head.push_str("  <meta property=\"article:author\" content=\"");
-        extra_head.push_str(&html_escape(author));
-        extra_head.push_str("\" />\n");
-    }
-    extra_head.push_str(&notes_rss_alternate(
-        resolve_public_base_url().as_deref(),
-        notes_rss,
-    ));
-    render_seo_html(SeoDocument {
-        title: &title,
-        description: desc,
-        canonical: &summary.canonical_url,
-        noindex: summary.noindex,
-        robots: None,
-        og_type: "article",
-        image: summary.image.as_deref(),
-        json_ld: Some(json_ld),
-        body_inner,
-        extra_head: &extra_head,
-        chrome,
-    })
 }
 
 fn icon_from_manifest(manifest: &Value, row_icon: Option<&str>) -> Option<String> {
@@ -1085,63 +734,6 @@ pub async fn tapp_run_seo_html(
     }
 }
 
-/// GET /api/seo/phantasi/{item_id} — JSON share summary for site-owner original articles only.
-pub async fn phantasi_item_seo_summary(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-    Path(item_id): Path<i32>,
-) -> Response {
-    match resolve_phantasi_item_seo_summary(&db, &headers, item_id).await {
-        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
-        Err(StatusCode::BAD_REQUEST) => (
-            StatusCode::BAD_REQUEST,
-            Json(AppError::public_json("Invalid item id")),
-        )
-            .into_response(),
-        Err(StatusCode::NOT_FOUND) => (
-            StatusCode::NOT_FOUND,
-            Json(AppError::public_json("Not found")),
-        )
-            .into_response(),
-        Err(status) => (
-            status,
-            Json(json!({ "error": "Internal error", "code": "internal_error" })),
-        )
-            .into_response(),
-    }
-}
-
-/// GET /journal/articles/{item_id} — crawler HTML shell (own content only; 404 otherwise).
-pub async fn phantasi_item_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-    Path(item_id): Path<i32>,
-) -> Response {
-    match resolve_phantasi_item_seo_summary(&db, &headers, item_id).await {
-        Ok(summary) => {
-            let branding = load_site_branding(&db).await;
-            let chrome = seo_chrome(&branding, &headers);
-            let notes_rss = notes_rss_enabled(&db).await;
-            html_response(
-                StatusCode::OK,
-                render_phantasi_item_seo_html(&summary, &chrome, notes_rss),
-            )
-        }
-        Err(StatusCode::BAD_REQUEST) => html_response(
-            StatusCode::BAD_REQUEST,
-            simple_error_html("Bad request", "Invalid article id."),
-        ),
-        Err(StatusCode::NOT_FOUND) => html_response(
-            StatusCode::NOT_FOUND,
-            simple_error_html("Not found", "This article is not available."),
-        ),
-        Err(status) => html_response(
-            status,
-            simple_error_html("Error", "Unable to load article metadata."),
-        ),
-    }
-}
-
 fn simple_error_html(title: &str, message: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -1175,7 +767,7 @@ fn module_nav_html(modules: &std::collections::HashMap<String, String>) -> Strin
     let mut parts: Vec<(&str, &str)> = vec![("/", "Home")];
     for (key, path, label) in [
         ("library", "/library", "Library"),
-        ("phantasi", "/journal", "Journal"),
+        ("phantasi", "/blog", "Blog"),
         ("reports", "/reports", "Reports"),
         ("tapp", "/tapp", "Apps"),
     ] {
@@ -1358,11 +950,7 @@ async fn module_list_seo_html(
         list_links_html(&links),
         module_nav_html(&prefs.modules),
     );
-    let extra_head = if module_key == "phantasi" {
-        notes_rss_alternate(base.as_deref(), notes_rss_enabled(db).await)
-    } else {
-        String::new()
-    };
+    let extra_head = "";
     let json_ld = listing_json_ld(heading, desc, &canonical, listing, &links);
     html_response(
         StatusCode::OK,
@@ -1399,160 +987,6 @@ pub async fn tapp_list_seo_html(
         "/tapp",
         "Apps",
         "Public Tapp apps on this site.",
-        links,
-        true,
-    )
-    .await
-}
-
-/// GET /journal — own-content article index for crawlers.
-pub async fn phantasi_list_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-) -> Response {
-    journal_writing_list_seo(&db, &headers, "/journal", "Journal").await
-}
-
-/// GET /journal/feeds — same writing index; canonical path stays `/journal`.
-pub async fn journal_feeds_list_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-) -> Response {
-    journal_writing_list_seo(&db, &headers, "/journal", "Journal").await
-}
-
-/// GET /journal/notes — own notes index for crawlers.
-pub async fn journal_notes_list_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-) -> Response {
-    if !phantasi_module_open_to_guests(&db).await {
-        return module_not_found();
-    }
-    let base = resolve_public_base_url();
-    let links = own_phantasi_note_links(&db, base.as_deref()).await;
-    module_list_seo_html(
-        &db,
-        &headers,
-        "phantasi",
-        "/journal/notes",
-        "Notes",
-        "Notes from the site owner.",
-        links,
-        true,
-    )
-    .await
-}
-
-/// GET /journal/friends — linkable, not indexed. No reprinted friend-link bodies.
-pub async fn journal_friends_list_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-) -> Response {
-    if !phantasi_module_open_to_guests(&db).await {
-        return module_not_found();
-    }
-    let branding = load_site_branding(&db).await;
-    let chrome = seo_chrome(&branding, &headers);
-    html_response(
-        StatusCode::OK,
-        render_journal_syndication_seo_html(
-            "Friends",
-            "Sites and friends collected here.",
-            "/journal/friends",
-            &branding,
-            &chrome,
-        ),
-    )
-}
-
-fn render_journal_syndication_seo_html(
-    heading: &str,
-    intro: &str,
-    path: &str,
-    branding: &SiteBranding,
-    chrome: &SeoChrome,
-) -> String {
-    let title = format_document_title(heading, &branding.title);
-    let base = resolve_public_base_url();
-    let canonical = public_absolute_url(base.as_deref(), path);
-    let image = site_image(branding, base.as_deref());
-    let desc = if intro.trim().is_empty() {
-        branding.description.as_str()
-    } else {
-        intro
-    };
-    let body_inner = format!(
-        "    <h1>{heading}</h1>\n    <p>{intro}</p>\n    <p><a href=\"/journal\">Journal</a></p>\n",
-        heading = html_escape(heading),
-        intro = html_escape(desc),
-    );
-    render_seo_html(SeoDocument {
-        title: &title,
-        description: desc,
-        canonical: &canonical,
-        noindex: true,
-        robots: syndication_robots(branding.noindex),
-        og_type: "website",
-        image: image.as_deref(),
-        json_ld: None,
-        body_inner,
-        extra_head: "",
-        chrome,
-    })
-}
-
-const TOPIC_KEY_MAX: usize = 80;
-
-/// GET /journal/topics/{topic} — linkable, not indexed. No reprinted entries.
-pub async fn journal_topic_seo_html(
-    State(db): State<DatabaseConnection>,
-    headers: HeaderMap,
-    Path(topic): Path<String>,
-) -> Response {
-    let key = topic.trim();
-    if key.is_empty() || key.chars().count() > TOPIC_KEY_MAX {
-        return html_response(
-            StatusCode::NOT_FOUND,
-            simple_error_html("Not found", "This topic is not available."),
-        );
-    }
-    if !phantasi_module_open_to_guests(&db).await {
-        return module_not_found();
-    }
-    let branding = load_site_branding(&db).await;
-    let chrome = seo_chrome(&branding, &headers);
-    let path = format!("/journal/topics/{}", encode_path_segment(key));
-    html_response(
-        StatusCode::OK,
-        render_journal_syndication_seo_html(
-            key,
-            "A subscribed topic. Entries come from other sites.",
-            &path,
-            &branding,
-            &chrome,
-        ),
-    )
-}
-
-async fn journal_writing_list_seo(
-    db: &DatabaseConnection,
-    headers: &HeaderMap,
-    path: &str,
-    heading: &str,
-) -> Response {
-    if !phantasi_module_open_to_guests(db).await {
-        return module_not_found();
-    }
-    let base = resolve_public_base_url();
-    let links = own_phantasi_item_links(db, base.as_deref()).await;
-    module_list_seo_html(
-        db,
-        headers,
-        "phantasi",
-        path,
-        heading,
-        "Original writing from the site owner.",
         links,
         true,
     )
@@ -1597,8 +1031,7 @@ pub async fn reports_seo_html(
 
 /// GET /robots.txt — `Sitemap:` only when policy is not private and durable origin is set.
 /// Non-private: `Allow: /` plus Disallow `/login` `/register` `/setup` `/config`
-/// `/tapp/playground` `/tapp/detail/` `/journal/starred` `/journal/workbench`
-/// `/agent/settings`. Those SPA pages also set client noindex.
+/// `/tapp/playground` `/tapp/detail/` `/agent/settings`. Those SPA pages also set client noindex.
 pub async fn robots_txt(State(db): State<DatabaseConnection>, _headers: HeaderMap) -> Response {
     let branding = load_site_branding(&db).await;
     let base = resolve_public_base_url();
@@ -1722,7 +1155,7 @@ pub async fn sitemap_xml(State(db): State<DatabaseConnection>, _headers: HeaderM
 
     for (key, path, freq) in [
         ("library", "/library", "weekly"),
-        ("phantasi", "/journal", "weekly"),
+        ("phantasi", "/blog", "weekly"),
         ("reports", "/reports", "weekly"),
         ("tapp", "/tapp", "weekly"),
     ] {
@@ -1733,15 +1166,6 @@ pub async fn sitemap_xml(State(db): State<DatabaseConnection>, _headers: HeaderM
                 lastmod: None,
                 changefreq: Some(freq),
             });
-            // Own writing indexes only. `/journal/topics/*` and `/journal/friends`
-            // are linkable but stay out of the sitemap.
-            if key == "phantasi" {
-                urls.push(SitemapUrl {
-                    loc: format!("{base}/journal/notes"),
-                    lastmod: None,
-                    changefreq: Some("weekly"),
-                });
-            }
         }
     }
 
@@ -1768,8 +1192,7 @@ pub async fn sitemap_xml(State(db): State<DatabaseConnection>, _headers: HeaderM
         }
     }
 
-    // Phantasi: only site-owner original articles (category contains `我`).
-    // Never include friend-links or third-party RSS items.
+    // Published notes only. A missing slug has no public address.
     let phantasi_level = modules.get("phantasi").map(String::as_str).unwrap_or("all");
     if module_is_public_all(phantasi_level) {
         if let Ok(sources) = phantasi_sources::Entity::find()
@@ -1779,26 +1202,32 @@ pub async fn sitemap_xml(State(db): State<DatabaseConnection>, _headers: HeaderM
         {
             let own_source_ids: Vec<i32> = sources
                 .into_iter()
-                .filter(|s| phantasi_source_is_own(&s.source_type, &s.category, s.admin_only))
+                .filter(|s| s.source_type == phantasi_sources::SourceType::Note)
                 .map(|s| s.id)
                 .collect();
             if !own_source_ids.is_empty() {
                 if let Ok(items) = phantasi_items::Entity::find()
                     .filter(phantasi_items::Column::SourceId.is_in(own_source_ids))
+                    .filter(phantasi_items::Column::Slug.is_not_null())
                     .order_by_desc(phantasi_items::Column::PublishedAt)
                     .limit(PHANTASI_SITEMAP_ITEM_LIMIT)
                     .select_only()
                     .columns([
-                        phantasi_items::Column::Id,
                         phantasi_items::Column::PublishedAt,
+                        phantasi_items::Column::Slug,
                     ])
-                    .into_tuple::<(i32, chrono::DateTime<chrono::FixedOffset>)>()
+                    .into_tuple::<(chrono::DateTime<chrono::FixedOffset>, Option<String>)>()
                     .all(&db)
                     .await
                 {
-                    for (id, published_at) in items {
+                    for (published_at, slug) in items {
+                        let Some(slug) =
+                            slug.filter(|slug| myriad_phantasi_notes::validate_slug(slug).is_ok())
+                        else {
+                            continue;
+                        };
                         urls.push(SitemapUrl {
-                            loc: format!("{base}{}", phantasi_item_path(id)),
+                            loc: format!("{base}{}", phantasi_item_path(&slug)),
                             lastmod: Some(published_at.format("%Y-%m-%d").to_string()),
                             changefreq: None,
                         });
@@ -1907,75 +1336,6 @@ mod tests {
     }
 
     #[test]
-    fn phantasi_shell_includes_article_body_and_json_ld() {
-        let chrome = SeoChrome {
-            keywords: "life, notes".into(),
-            google_site_verification: "Tok_en-1".into(),
-            ..SeoChrome::default()
-        };
-        let html = render_phantasi_item_seo_html(
-            &PhantasiItemSeoSummary {
-                id: 1,
-                title: "Hello".into(),
-                description: Some("short".into()),
-                image: None,
-                canonical_url: "https://ex.com/journal/articles/1".into(),
-                path: "/journal/articles/1".into(),
-                noindex: false,
-                indexable: true,
-                site_title: Some("Site".into()),
-                source_name: Some("Blog".into()),
-                published_at: Some("2026-01-02".into()),
-                author: Some("Ada".into()),
-                body_text: "Paragraph one.\n\nParagraph two.".into(),
-            },
-            &chrome,
-            true,
-        );
-        assert!(html.contains("<article>"));
-        assert!(html.contains("Paragraph one."));
-        assert!(html.contains("Paragraph two."));
-        assert!(html.contains(r#""@type":"Article""#) || html.contains(r#""@type": "Article""#));
-        assert!(html.contains("2026-01-02"));
-        assert!(html.contains("og:type") && html.contains("article"));
-        assert!(html.contains(r#"property="article:published_time""#));
-        assert!(html.contains(r#"property="article:author""#));
-        assert!(html.contains("Ada"));
-        assert!(html.contains(r#"type="application/rss+xml""#));
-        assert!(html.contains(myriad_phantasi_notes::NOTES_RSS_PATH));
-        assert!(html.contains(r#"property="og:site_name""#));
-        assert!(html.contains(r#"name="keywords""#) && html.contains("life, notes"));
-        assert!(html.contains(r#"name="google-site-verification""#));
-        assert!(html.contains("Tok_en-1"));
-        assert!(!html.contains("_spa=1"));
-    }
-
-    #[test]
-    fn phantasi_shell_omits_notes_rss_when_the_switch_is_off() {
-        let html = render_phantasi_item_seo_html(
-            &PhantasiItemSeoSummary {
-                id: 1,
-                title: "Hello".into(),
-                description: Some("short".into()),
-                image: None,
-                canonical_url: "https://ex.com/journal/articles/1".into(),
-                path: "/journal/articles/1".into(),
-                noindex: false,
-                indexable: true,
-                site_title: Some("Site".into()),
-                source_name: Some("Blog".into()),
-                published_at: Some("2026-01-02".into()),
-                author: Some("Ada".into()),
-                body_text: "Paragraph one.".into(),
-            },
-            &SeoChrome::default(),
-            false,
-        );
-        assert!(!html.contains(r#"type="application/rss+xml""#));
-        assert!(!html.contains(myriad_phantasi_notes::NOTES_RSS_PATH));
-    }
-
-    #[test]
     fn tapp_shell_includes_software_application_json_ld() {
         let html = render_tapp_seo_html(
             &TappSeoSummary {
@@ -2056,9 +1416,8 @@ mod tests {
         modules.insert("tapp".into(), "owner".into());
         let routes = llms_primary_routes(&modules);
         assert!(routes.contains(&("Home", "/")));
-        assert!(routes.contains(&("Journal", "/journal")));
-        assert!(routes.contains(&("Notes", "/journal/notes")));
-        assert!(!routes.iter().any(|(_, path)| *path == "/journal/friends"));
+        assert!(routes.contains(&("Blog", "/blog")));
+        assert!(!routes.iter().any(|(_, path)| path.starts_with("/journal")));
         assert!(!routes.iter().any(|(_, path)| *path == "/library"));
     }
 
@@ -2136,69 +1495,13 @@ mod tests {
         assert!(!query_has_spa_bypass(None));
         assert!(is_seo_document_shell_path("/"));
         assert!(is_seo_document_shell_path("/tapp/run/com.example"));
-        assert!(is_seo_document_shell_path("/journal/articles/1"));
-        assert!(is_seo_document_shell_path("/journal/notes"));
-        assert!(is_seo_document_shell_path("/journal/feeds"));
-        assert!(!is_seo_document_shell_path("/journal/feeds/9"));
-        assert!(is_seo_document_shell_path("/journal/topics/ai"));
+        assert!(!is_seo_document_shell_path("/journal"));
+        assert!(!is_seo_document_shell_path("/journal/articles/1"));
+        assert!(!is_seo_document_shell_path("/blog"));
+        assert!(!is_seo_document_shell_path("/blog/posts/hello/"));
         assert!(!is_seo_document_shell_path("/phantasi"));
         assert!(!is_seo_document_shell_path("/phantasi/item/1"));
-        assert!(!is_seo_document_shell_path("/journal/workbench/feeds"));
-        assert!(!is_seo_document_shell_path("/journal/starred"));
         assert!(!is_seo_document_shell_path("/config"));
         assert!(!is_seo_document_shell_path("/api/seo/tapp/x"));
-    }
-
-    #[test]
-    fn syndication_shell_is_noindex_follow_without_article_body() {
-        let branding = SiteBranding {
-            title: "Site".into(),
-            description: "desc".into(),
-            favicon: String::new(),
-            og_image: String::new(),
-            noindex: false,
-            policy: String::new(),
-            ai_intro: String::new(),
-            keywords: String::new(),
-            google_site_verification: String::new(),
-        };
-        let html = render_journal_syndication_seo_html(
-            "Example Topic",
-            "A subscribed topic. Entries come from other sites.",
-            "/journal/topics/example",
-            &branding,
-            &SeoChrome::default(),
-        );
-        assert!(html.contains(r#"name="robots""#));
-        assert!(html.contains("noindex, follow"));
-        assert!(!html.contains("noindex, nofollow"));
-    }
-
-    #[test]
-    fn friends_shell_is_noindex_follow_without_link_bodies() {
-        let branding = SiteBranding {
-            title: "Site".into(),
-            description: "desc".into(),
-            favicon: String::new(),
-            og_image: String::new(),
-            noindex: false,
-            policy: String::new(),
-            ai_intro: String::new(),
-            keywords: String::new(),
-            google_site_verification: String::new(),
-        };
-        let html = render_journal_syndication_seo_html(
-            "Friends",
-            "Sites and friends collected here.",
-            "/journal/friends",
-            &branding,
-            &SeoChrome::default(),
-        );
-        assert!(html.contains("noindex, follow"));
-        assert!(html.contains("/journal/friends"));
-        assert!(html.contains("Friends"));
-        assert!(!html.contains("<ul>"));
-        assert!(!html.contains("application/ld+json"));
-        assert!(!html.contains("<article>"));
     }
 }

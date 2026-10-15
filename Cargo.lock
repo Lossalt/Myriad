@@ -3148,10 +3148,10 @@ version = "0.1.0"
 dependencies = [
  "latex2mathml",
  "lol_html",
+ "myriad-phantasi",
  "serde",
  "serde_json",
  "toml",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -3288,6 +3288,7 @@ name = "myriad-phantasi"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

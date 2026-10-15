@@ -334,6 +334,9 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     default_value: Some("1".into()),
                     not_null: false,
                 },
+                // 笔记公开 slug。可空；旧库由通用 ADD COLUMN 补上。
+                // 部分唯一索引不在这里，见 `note_slugs::ensure_note_slugs`。
+                ColumnDef::new("slug", "text"),
             ],
         },
         TableDef {

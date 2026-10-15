@@ -1082,9 +1082,117 @@ pub fn note_guid(uuid: &str) -> String {
     format!("note:{uuid}")
 }
 
-/// 笔记的站内链接。与前端 `journalItemPath` 同一口径。
-pub fn note_link(item_id: i32) -> String {
-    myriad_phantasi::item_path(item_id)
+/// 公开 slug 的长度上限。和博客地址、库里的部分唯一索引同一口径。
+pub const SLUG_MAX_CHARS: usize = myriad_phantasi::SLUG_MAX_LEN;
+
+/// 标题里能进 slug 的 ASCII。非 ASCII（例如纯中文标题）被丢掉，结果可能为空。
+pub fn slugify_title(title: &str) -> String {
+    myriad_phantasi::slugify_title(title)
+}
+
+/// 标题 ASCII 化之后为空时的 slug。`item_id` 在笔记源内唯一，所以这个兜底本身不撞。
+pub fn fallback_slug(item_id: i32) -> String {
+    myriad_phantasi::fallback_slug(item_id)
+}
+
+/// `base` 已被占用时追加 `-2`、`-3`。结果仍满足 [`validate_slug`]。
+///
+/// 编号规则在 [`myriad_phantasi::dedupe_slug`]。非法词干不当地址，从 `n-2` 起。
+pub fn dedupe_slug(base: &str, taken: &HashSet<String>) -> String {
+    if validate_slug(base).is_ok() {
+        myriad_phantasi::dedupe_slug(base, |slug| taken.contains(slug))
+    } else {
+        myriad_phantasi::dedupe_slug("n", |slug| slug == "n" || taken.contains(slug))
+    }
+}
+
+/// 发布时生成 slug：标题 ASCII 化，空则 `n{item_id}`，和 `taken` 冲突再编号。
+pub fn allocate_note_slug(title: &str, item_id: i32, taken: &HashSet<String>) -> String {
+    let ascii = slugify_title(title);
+    let base = if ascii.is_empty() {
+        fallback_slug(item_id)
+    } else {
+        ascii
+    };
+    dedupe_slug(&base, taken)
+}
+
+/// 站长手改的 slug。小写、`[a-z0-9-]`、不能以 `-` 开头或结尾、不能连续 `-`、长度 1..=80。
+pub fn validate_slug(slug: &str) -> Result<(), ()> {
+    if myriad_phantasi::is_note_slug(slug) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+/// 旧手帐公开地址：`/journal` 或 `/journal/...`。启动修复把这些 link 改成博客地址。
+pub fn is_legacy_journal_article_link(link: &str) -> bool {
+    let link = link.trim();
+    link == "/journal" || link.starts_with("/journal/")
+}
+
+/// 一篇已发布笔记在修复前的样子。
+#[derive(Clone, Debug)]
+pub struct NoteSlugInput {
+    pub id: i32,
+    pub source_id: i32,
+    pub title: String,
+    pub slug: Option<String>,
+    pub link: String,
+}
+
+/// 需要写回的 slug 和公开地址。已经符合当前规则的行不会出现在这里。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoteSlugRepair {
+    pub id: i32,
+    pub slug: String,
+    pub link: String,
+}
+
+/// 给已发布笔记补 slug，并把旧 `/journal/articles/{id}` 改成博客地址。
+///
+/// 同一 `source_id` 内唯一。已经合法且不冲突的 slug 保持不变。重复调用不再产生修复。
+pub fn plan_note_slug_repairs(mut rows: Vec<NoteSlugInput>) -> Vec<NoteSlugRepair> {
+    rows.sort_by_key(|row| (row.source_id, row.id));
+    let mut taken: HashMap<i32, HashSet<String>> = HashMap::new();
+    let mut repairs = Vec::new();
+    for row in rows {
+        let set = taken.entry(row.source_id).or_default();
+        let previous = row.slug.clone();
+        let kept = previous
+            .as_deref()
+            .filter(|slug| validate_slug(slug).is_ok() && set.insert((*slug).to_string()));
+        let slug = if let Some(slug) = kept {
+            slug.to_string()
+        } else {
+            let allocated = allocate_note_slug(&row.title, row.id, set);
+            set.insert(allocated.clone());
+            allocated
+        };
+        let slug_changed = previous.as_deref() != Some(slug.as_str());
+        let link = if is_legacy_journal_article_link(&row.link)
+            || row.link.trim().is_empty()
+            || slug_changed
+        {
+            note_link(&slug)
+        } else {
+            row.link.clone()
+        };
+        if slug_changed || link != row.link {
+            repairs.push(NoteSlugRepair {
+                id: row.id,
+                slug,
+                link,
+            });
+        }
+    }
+    repairs
+}
+
+/// 笔记的公开地址：`/blog/posts/{slug}/`。
+pub fn note_link(slug: &str) -> String {
+    myriad_phantasi::item_path(slug)
 }
 
 /// 已发布笔记的公开 RSS。代理和前端分享入口必须用同一条路径。
@@ -1108,6 +1216,8 @@ pub fn notes_rss_enabled_from_value(value: &serde_json::Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -1538,8 +1648,8 @@ mod tests {
     #[test]
     fn guid_and_link_shapes() {
         assert_eq!(note_guid("abc"), "note:abc");
-        assert_eq!(note_link(12), "/journal/articles/12");
-        assert_eq!(NOTES_RSS_PATH, "/journal/notes.xml");
+        assert_eq!(note_link("hello-world"), "/blog/posts/hello-world/");
+        assert_eq!(NOTES_RSS_PATH, "/api/phantasi/notes.xml");
         assert_eq!(NOTES_RSS_PREFERENCES_KEY, "phantasi_notes_rss");
     }
 
@@ -1850,5 +1960,143 @@ mod tests {
         assert!(urls.contains(&"/media/assets/11111111-1111-1111-1111-111111111111/a.png".into()));
         assert!(urls.contains(&"/api/media/7/content".into()));
         assert!(urls.contains(&"/media/federation/1/b.jpg".into()));
+    }
+
+    #[test]
+    fn slugify_keeps_ascii_and_drops_everything_else() {
+        assert_eq!(slugify_title("  Hello, World! "), "hello-world");
+        assert_eq!(slugify_title("MiXeD_Case"), "mixed-case");
+        assert_eq!(slugify_title("你好"), "");
+        assert_eq!(slugify_title("Café Notes"), "cafe-notes");
+        assert_eq!(slugify_title("Straße"), "strasse");
+        assert_eq!(slugify_title("Hello 你好 World"), "hello-world");
+        assert_eq!(slugify_title("---"), "");
+        assert_eq!(slugify_title(&"A".repeat(100)).chars().count(), 80);
+        assert!(!slugify_title(&format!("{}!", "a".repeat(80))).ends_with('-'));
+    }
+
+    #[test]
+    fn slug_validation_is_the_charset_and_length() {
+        assert!(validate_slug("a").is_ok());
+        assert!(validate_slug("n12").is_ok());
+        assert!(validate_slug("hello-world").is_ok());
+        assert!(validate_slug("-a").is_err());
+        assert!(validate_slug("a-").is_err());
+        assert!(validate_slug("a--b").is_err());
+        assert!(validate_slug("").is_err());
+        assert!(validate_slug("Hello").is_err());
+        assert!(validate_slug("a_b").is_err());
+        assert!(validate_slug(&"a".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn dedupe_appends_numeric_suffixes() {
+        let mut taken = HashSet::new();
+        assert_eq!(dedupe_slug("hello", &taken), "hello");
+        taken.insert("hello".into());
+        assert_eq!(dedupe_slug("hello", &taken), "hello-2");
+        taken.insert("hello-2".into());
+        assert_eq!(dedupe_slug("hello", &taken), "hello-3");
+        assert_eq!(fallback_slug(12), "n12");
+        assert_eq!(allocate_note_slug("你好", 12, &HashSet::new()), "n12");
+        let mut taken_fallback = HashSet::new();
+        taken_fallback.insert("n12".into());
+        assert_eq!(allocate_note_slug("你好", 12, &taken_fallback), "n12-2");
+    }
+
+    #[test]
+    fn dedupe_keeps_the_suffix_inside_eighty_characters() {
+        let base = "a".repeat(80);
+        let mut taken = HashSet::new();
+        taken.insert(base.clone());
+        let slug = dedupe_slug(&base, &taken);
+        assert!(validate_slug(&slug).is_ok());
+        assert!(slug.ends_with("-2"));
+        assert_ne!(slug, base);
+    }
+
+    #[test]
+    fn legacy_journal_links_cover_the_old_public_tree() {
+        assert!(is_legacy_journal_article_link("/journal"));
+        assert!(is_legacy_journal_article_link("/journal/articles/12"));
+        assert!(is_legacy_journal_article_link("/journal/articles/12/"));
+        assert!(is_legacy_journal_article_link("/journal/notes"));
+        assert!(is_legacy_journal_article_link("/journal/topics/ai"));
+        assert!(!is_legacy_journal_article_link("/blog/posts/hello/"));
+        assert!(!is_legacy_journal_article_link(
+            "https://ex.com/journal/articles/1"
+        ));
+    }
+
+    #[test]
+    fn slug_repair_is_idempotent_and_unique_inside_one_source() {
+        let rows = vec![
+            NoteSlugInput {
+                id: 1,
+                source_id: 7,
+                title: "Hello".into(),
+                slug: None,
+                link: "/journal/articles/1".into(),
+            },
+            NoteSlugInput {
+                id: 2,
+                source_id: 7,
+                title: "Hello!".into(),
+                slug: None,
+                link: "/journal/articles/2".into(),
+            },
+            NoteSlugInput {
+                id: 3,
+                source_id: 8,
+                title: "Hello".into(),
+                slug: None,
+                link: "/journal/articles/3".into(),
+            },
+            NoteSlugInput {
+                id: 4,
+                source_id: 7,
+                title: "Kept".into(),
+                slug: Some("kept".into()),
+                link: "/blog/posts/kept/".into(),
+            },
+        ];
+        let repairs = plan_note_slug_repairs(rows);
+        assert_eq!(
+            repairs,
+            vec![
+                NoteSlugRepair {
+                    id: 1,
+                    slug: "hello".into(),
+                    link: "/blog/posts/hello/".into(),
+                },
+                NoteSlugRepair {
+                    id: 2,
+                    slug: "hello-2".into(),
+                    link: "/blog/posts/hello-2/".into(),
+                },
+                NoteSlugRepair {
+                    id: 3,
+                    slug: "hello".into(),
+                    link: "/blog/posts/hello/".into(),
+                },
+            ]
+        );
+        let settled = vec![
+            NoteSlugInput {
+                id: 1,
+                source_id: 7,
+                title: "Hello".into(),
+                slug: Some("hello".into()),
+                link: "/blog/posts/hello/".into(),
+            },
+            NoteSlugInput {
+                id: 2,
+                source_id: 7,
+                title: "Hello!".into(),
+                slug: Some("hello-2".into()),
+                link: "/blog/posts/hello-2/".into(),
+            },
+        ];
+        assert!(plan_note_slug_repairs(settled).is_empty());
     }
 }

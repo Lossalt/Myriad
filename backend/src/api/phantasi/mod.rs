@@ -22,7 +22,6 @@ mod reading_sync_ws;
 mod routes;
 mod rsshub;
 
-pub use notes_rss::notes_rss;
 pub use routes::create_phantasi_routes;
 
 #[cfg(test)]

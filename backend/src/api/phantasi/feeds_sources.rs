@@ -119,66 +119,11 @@ pub struct ListSourcesQuery {
     board: Option<String>,
 }
 
+use crate::services::public_site::listed_board_keeps;
+use crate::services::public_site::source_matches_listed_category;
+
 fn is_catalog_view(view: Option<&str>) -> bool {
     view == Some("catalog")
-}
-
-fn normalize_listed_category_token(token: &str) -> String {
-    let trimmed = token.trim();
-    match trimmed.to_lowercase().as_str() {
-        "friends" | "friend" | "friendlink" | "friend-link" | "friend_link" | "friend-links"
-        | "friend_links" | "friend links" | "友链" | "友情連結" | "友情链接" => {
-            "友情链接".to_string()
-        }
-        "mine" | "me" | "我的" | "我" => "我".to_string(),
-        _ => trimmed.to_string(),
-    }
-}
-
-fn source_matches_listed_category(
-    category: Option<&str>,
-    source_type: &phantasi_sources::SourceType,
-    wanted: &str,
-) -> bool {
-    let want = normalize_listed_category_token(wanted);
-    if want.is_empty() {
-        return false;
-    }
-    let hit = category
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .any(|part| normalize_listed_category_token(part) == want);
-    if hit {
-        return true;
-    }
-    want == "友情链接"
-        && *source_type == phantasi_sources::SourceType::Link
-        && category.map(str::trim).unwrap_or("").is_empty()
-}
-
-fn listed_board_keeps(
-    source_type: &phantasi_sources::SourceType,
-    category: Option<&str>,
-    admin_only: bool,
-    board: &str,
-) -> bool {
-    match board {
-        "feeds" => {
-            *source_type != phantasi_sources::SourceType::Link
-                && *source_type != phantasi_sources::SourceType::Note
-        }
-        "notes" => {
-            *source_type == phantasi_sources::SourceType::Note
-                || (!admin_only && source_matches_listed_category(category, source_type, "我"))
-        }
-        "sites" => {
-            *source_type == phantasi_sources::SourceType::Link
-                || source_matches_listed_category(category, source_type, "友情链接")
-        }
-        _ => true,
-    }
 }
 
 fn retain_listed_sources_for_board(
@@ -1182,10 +1127,9 @@ pub(crate) async fn delete_category(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        listed_board_keeps, normalize_listed_category_token, source_matches_listed_category,
-    };
+    use super::{listed_board_keeps, source_matches_listed_category};
     use crate::models::entities::phantasi_sources::SourceType;
+    use crate::services::public_site::normalize_listed_category_token;
 
     #[tokio::test]
     async fn postgres_source_previews_and_pulses_are_bounded_index_reads() {

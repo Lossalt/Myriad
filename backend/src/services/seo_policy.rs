@@ -93,8 +93,7 @@ Disallow: /setup\n\
 Disallow: /config\n\
 Disallow: /tapp/playground\n\
 Disallow: /tapp/detail/\n\
-Disallow: /journal/starred\n\
-Disallow: /journal/workbench\n\
+Disallow: /studio\n\
 Disallow: /agent/settings\n";
 
 /// Optional absolute Sitemap line when a durable public origin is known.
@@ -263,19 +262,13 @@ mod tests {
     #[test]
     fn robots_non_private_disallows_admin_spa() {
         let body = build_robots_txt(Some("https://ex.com"), VISIBILITY_AI_FULL);
-        for path in [
-            "/login",
-            "/config",
-            "/journal/starred",
-            "/journal/workbench",
-            "/agent/settings",
-        ] {
+        for path in ["/login", "/config", "/studio", "/agent/settings"] {
             assert!(
                 body.contains(&format!("Disallow: {path}")),
                 "missing Disallow for {path}"
             );
         }
-        assert!(!body.contains("Disallow: /journal/friends"));
+        assert!(!body.contains("/journal"));
     }
 
     #[test]
@@ -284,10 +277,10 @@ mod tests {
             "My Site",
             "A personal hub.",
             Some("https://ex.com"),
-            &[("Home", "/"), ("Journal", "/journal")],
+            &[("Home", "/"), ("Blog", "/blog")],
         );
         assert!(body.contains("# My Site"));
-        assert!(body.contains("[Journal](https://ex.com/journal)"));
+        assert!(body.contains("[Blog](https://ex.com/blog)"));
     }
 
     #[test]
@@ -296,9 +289,9 @@ mod tests {
             "My Site",
             "A personal hub.",
             None,
-            &[("Home", "/"), ("Journal", "/journal")],
+            &[("Home", "/"), ("Blog", "/blog")],
         );
-        assert!(body.contains("[Journal](/journal)"));
+        assert!(body.contains("[Blog](/blog)"));
         assert!(!body.contains("https://"));
     }
 

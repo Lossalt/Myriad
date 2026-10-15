@@ -1,4 +1,4 @@
-//! 已发布笔记的公开 RSS。别人用任何阅读器订阅 `/journal/notes.xml`。
+//! 已发布笔记的公开 RSS。别人用任何阅读器订阅 `/api/phantasi/notes.xml`。
 //!
 //! 只读 `phantasi_items.content`，不读草稿表。开关关掉或 Phantasi 不对访客开放时 404。
 
@@ -12,7 +12,9 @@ use axum::{
 };
 use chrono::Utc;
 use myriad_phantasi::SPA_PREFIX;
-use myriad_phantasi_notes::{NOTES_RSS_PATH, NOTES_RSS_PREFERENCES_KEY, note_link};
+use myriad_phantasi_notes::{
+    NOTES_RSS_PATH, NOTES_RSS_PREFERENCES_KEY, fallback_slug, note_link, validate_slug,
+};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -181,11 +183,13 @@ async fn load_notes_rss_channel(db: &DatabaseConnection) -> Result<NotesRssChann
                         Some(title.to_string())
                     }
                 });
-            let path = if item.link.trim().starts_with('/') {
-                item.link.trim().to_string()
-            } else {
-                note_link(item.id)
-            };
+            let slug = item
+                .slug
+                .as_deref()
+                .filter(|slug| validate_slug(slug).is_ok())
+                .map(str::to_string)
+                .unwrap_or_else(|| fallback_slug(item.id));
+            let path = note_link(&slug);
             NotesRssItem {
                 guid: if item.guid.trim().is_empty() {
                     path.clone()
@@ -275,7 +279,7 @@ pub async fn put_notes_rss_settings(
     Ok(Json(notes_rss_settings_json(req.enabled)))
 }
 
-/// GET `/journal/notes.xml`（以及 `/api/phantasi/notes.xml`）— 已发布笔记的 RSS 2.0。
+/// GET `/api/phantasi/notes.xml` — 已发布笔记的 RSS 2.0。
 pub async fn notes_rss(State(db): State<DatabaseConnection>) -> Response {
     if !notes_rss_is_public(&db).await {
         return notes_rss_not_found();
@@ -303,15 +307,15 @@ mod tests {
     fn sample_channel() -> NotesRssChannel {
         NotesRssChannel {
             title: "Site & Notes".into(),
-            link: "https://ex.com/journal".into(),
+            link: "https://ex.com/blog".into(),
             description: "Hello <world>".into(),
             language: "zh-CN".into(),
-            feed_url: "https://ex.com/journal/notes.xml".into(),
+            feed_url: "https://ex.com/api/phantasi/notes.xml".into(),
             last_build: "Mon, 14 Sep 2026 00:00:00 +0000".into(),
             items: vec![NotesRssItem {
                 guid: "note:abc".into(),
                 title: "A & B".into(),
-                link: "https://ex.com/journal/articles/12".into(),
+                link: "https://ex.com/blog/posts/hello/".into(),
                 published_rfc822: "Mon, 14 Sep 2026 00:00:00 +0000".into(),
                 author: Some("Ada".into()),
                 description: "plain".into(),
@@ -322,7 +326,7 @@ mod tests {
 
     #[test]
     fn feed_path_is_the_public_notes_rss() {
-        assert_eq!(NOTES_RSS_PATH, "/journal/notes.xml");
+        assert_eq!(NOTES_RSS_PATH, "/api/phantasi/notes.xml");
     }
 
     #[test]
@@ -334,15 +338,15 @@ mod tests {
     fn empty_channel_is_valid_rss() {
         let xml = render_notes_rss(&NotesRssChannel {
             title: "Site".into(),
-            link: "/journal".into(),
+            link: "/blog".into(),
             description: "Notes".into(),
             language: "en".into(),
-            feed_url: "/journal/notes.xml".into(),
+            feed_url: "/api/phantasi/notes.xml".into(),
             last_build: "Mon, 14 Sep 2026 00:00:00 +0000".into(),
             items: Vec::new(),
         });
         assert!(xml.contains(r#"<rss version="2.0""#));
-        assert!(xml.contains("<atom:link href=\"/journal/notes.xml\""));
+        assert!(xml.contains("<atom:link href=\"/api/phantasi/notes.xml\""));
         assert!(!xml.contains("<item>"));
     }
 
@@ -365,12 +369,12 @@ mod tests {
             .parse_content(
                 &xml,
                 "application/rss+xml",
-                "https://ex.com/journal/notes.xml",
+                "https://ex.com/api/phantasi/notes.xml",
             )
             .expect("parse notes rss");
         assert_eq!(feed.items.len(), 1);
         let item = &feed.items[0];
-        assert_eq!(item.link, "https://ex.com/journal/articles/12");
+        assert_eq!(item.link, "https://ex.com/blog/posts/hello/");
         assert_eq!(item.guid, "note:abc");
         assert_eq!(item.author.as_deref(), Some("Ada"));
         assert!(

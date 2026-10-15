@@ -46,6 +46,10 @@ pub const CONVERSATIONS_CHANNEL: &str = "myriad_conversations";
 
 pub const SOURCE_RECENT_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_phantasi_items_source_recent ON phantasi_items (source_id, published_at DESC NULLS LAST, id DESC)";
 
+/// 笔记 slug 在同一源内唯一。NULL（抓来的文章）不参与。
+/// 通用索引修复没有 WHERE，所以这份 DDL 要和 schema_check 用的是同一句。
+pub const NOTE_SLUG_INDEX_SQL: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_phantasi_items_source_slug ON phantasi_items (source_id, slug) WHERE slug IS NOT NULL";
+
 /// The schema mark 0.6.1 writes once its startup heals have all run
 /// (`schema_check::SCHEMA_VERSION` at that release). Marks are dated, so
 /// they compare as text.

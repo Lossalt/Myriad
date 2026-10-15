@@ -7,18 +7,12 @@
 export const SEO_SHELL_EXACT = [
   '/',
   '/tapp',
-  '/journal',
-  '/journal/feeds',
-  '/journal/notes',
-  '/journal/friends',
   '/library',
   '/reports',
 ]
 
 export const SEO_SHELL_PREFIXES = [
   '/tapp/run/',
-  '/journal/articles/',
-  '/journal/topics/',
 ]
 
 export const SEO_CRAWLER_MARKERS = [

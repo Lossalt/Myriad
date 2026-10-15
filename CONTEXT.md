@@ -223,11 +223,10 @@ _Avoid_: 常驻 toast、把 duration 0 当成粘滞
 AI 增强源内部叫 phantasiai，界面叫 **AI 增强**。订阅包格式叫 pipack。
 
 **手帐路由**：
-用户可见地址是 `/journal`，不是内部名。板块、收藏、主题、工作台、自有文章有子路径。
-订阅页的网站卡片选择是页内状态，没有单个订阅源的独立地址。主题流和朋友们仍可链接，但 SEO 与自有写作分开：不收录、不进 sitemap、爬虫薄壳不转载正文。
-笔记 RSS 是 `/journal/notes.xml`（另有 `/api/phantasi/notes.xml` 同一份），默认关闭，管理员在工作台打开。
+访客侧 `/journal` 已下线，不做 301。笔记的公开地址是 `/blog/posts/{slug}/`。
+笔记 RSS 只在 `/api/phantasi/notes.xml`，默认关闭，管理员打开。
 抓来的单篇没有本站文章地址。`/api/phantasi` 与联邦对象 ID `/phantasi/articles/{id}` 仍用内部名。
-_Avoid_: Brew、Brewlia、Brewpack、手记（旧板块名）、把 Phantasi 当产品名、把用户可见 URL 写成 `/phantasi`、把订阅源当自己的文章收录、给旧址做 301 或 query 回填
+_Avoid_: Brew、Brewlia、Brewpack、手记（旧板块名）、把 Phantasi 当产品名、把用户可见 URL 写成 `/phantasi`、把订阅源当自己的文章收录、给 `/journal` 做 301 或 query 回填
 
 **板块（board）**：
 手帐的三个顶层分区：订阅、笔记、朋友们。笔记和朋友们是客厅，订阅是信箱。

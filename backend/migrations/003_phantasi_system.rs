@@ -299,6 +299,8 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(1),
                     )
+                    // 笔记公开地址。可空；抓来的文章保持 NULL。唯一性见下面的部分索引。
+                    .col(ColumnDef::new(PhantasiItems::Slug).text())
                     .to_owned(),
             )
             .await?;
@@ -342,6 +344,13 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 "CREATE INDEX IF NOT EXISTS idx_phantasi_items_topic ON phantasi_items (topic) WHERE topic IS NOT NULL",
             )
+            .await?;
+
+        // 笔记 slug：同一源内唯一，NULL 不参与。与 `NOTE_SLUG_INDEX_SQL` 同一句，
+        // 不进 `get_expected_indexes`（通用路径没有 WHERE）。已有库由 schema_check 补。
+        manager
+            .get_connection()
+            .execute_unprepared(crate::NOTE_SLUG_INDEX_SQL)
             .await?;
 
         // 外键约束
@@ -1205,6 +1214,7 @@ enum PhantasiItems {
     Guid,
     Title,
     Link,
+    Slug,
     Summary,
     Content,
     Author,

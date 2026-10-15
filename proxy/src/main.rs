@@ -268,8 +268,8 @@ async fn handle(
     // ActivityPub/MFP endpoints registered outside /api (WebFinger discovery,
     // NodeInfo, actor documents and inboxes) — remote instances resolve
     // @user@domain against these, so they must not fall through to the frontend.
-    // SEO: crawler UAs on `/`, module indexes, /tapp/run/* and /journal/articles/*
-    // get the backend HTML shell; browsers get SPA.
+    // SEO: crawler UAs on `/`, module indexes and /tapp/run/* get the backend
+    // HTML shell; browsers get SPA. `/blog` always goes to the backend.
     let ua = req
         .headers()
         .get(header::USER_AGENT)
@@ -750,16 +750,8 @@ fn wants_seo_html_shell(user_agent: &str) -> bool {
 fn is_seo_document_shell_path(path: &str) -> bool {
     matches!(
         path,
-        "/" | "/tapp"
-            | "/journal"
-            | "/journal/feeds"
-            | "/journal/notes"
-            | "/journal/friends"
-            | "/library"
-            | "/reports"
+        "/" | "/tapp" | "/library" | "/reports"
     ) || path.starts_with("/tapp/run/")
-        || path.starts_with("/journal/articles/")
-        || path.starts_with("/journal/topics/")
 }
 
 #[cfg(test)]
@@ -775,7 +767,8 @@ fn is_backend_path_for(path: &str, user_agent: &str, query: &str) -> bool {
         || path == "/sitemap.xml"
         || path == "/robots.txt"
         || path == "/llms.txt"
-        || path == "/journal/notes.xml"
+        || path == "/blog"
+        || path.starts_with("/blog/")
     {
         return true;
     }
@@ -1844,15 +1837,20 @@ mod tests {
         assert!(is_backend_path("/sitemap.xml", browser));
         assert!(is_backend_path("/robots.txt", browser));
         assert!(is_backend_path("/llms.txt", browser));
-        assert!(is_backend_path("/journal/notes.xml", browser));
+        assert!(is_backend_path("/blog", browser));
+        assert!(is_backend_path("/blog/", browser));
+        assert!(is_backend_path("/blog/posts/hello/", browser));
+        assert!(is_backend_path("/blog/posts/hello/", googlebot));
+        assert!(!is_backend_path("/blogs", browser));
+        assert!(!is_backend_path("/journal/notes.xml", browser));
         assert!(!is_backend_path("/phantasi/notes.xml", browser));
         assert!(is_backend_path("/api/phantasi/notes.xml", browser));
         assert!(is_backend_path("/api/seo/sitemap.xml", browser));
         // Homepage / module indexes / Tapp / Phantasi SEO shells: crawlers only
         assert!(is_backend_path("/", googlebot));
         assert!(is_backend_path("/tapp", googlebot));
-        assert!(is_backend_path("/journal", "facebookexternalhit/1.1"));
-        assert!(is_backend_path("/journal/notes", googlebot));
+        assert!(!is_backend_path("/journal", "facebookexternalhit/1.1"));
+        assert!(!is_backend_path("/journal/notes", googlebot));
         assert!(!is_backend_path("/phantasi", "facebookexternalhit/1.1"));
         assert!(is_backend_path("/library", googlebot));
         assert!(is_backend_path("/reports", googlebot));
@@ -1867,11 +1865,9 @@ mod tests {
             "facebookexternalhit/1.1"
         ));
         assert!(!is_backend_path("/tapp/run/com.example.app", browser));
-        assert!(is_backend_path("/journal/articles/42", googlebot));
-        assert!(is_backend_path("/journal/feeds", googlebot));
-        assert!(!is_backend_path("/journal/feeds/9", googlebot));
-        assert!(is_backend_path("/journal/topics/ai", googlebot));
-        assert!(!is_backend_path("/journal/feeds/9", browser));
+        assert!(!is_backend_path("/journal/articles/42", googlebot));
+        assert!(!is_backend_path("/journal/feeds", googlebot));
+        assert!(!is_backend_path("/journal/topics/ai", googlebot));
         assert!(!is_backend_path("/journal/workbench/feeds", googlebot));
         assert!(!is_backend_path("/phantasi/item/42", googlebot));
         assert!(!is_backend_path("/phantasi/item/42", "Twitterbot/1.0"));

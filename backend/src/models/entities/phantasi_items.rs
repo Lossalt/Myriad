@@ -65,6 +65,9 @@ pub struct Model {
     pub content_md: Option<String>,
     /// Server-owned body version; trigger increments when content or content_md changes.
     pub content_revision: i64,
+    /// 笔记公开地址的 slug。只有笔记有值，同一笔记源内唯一；抓来的文章保持 NULL。
+    #[sea_orm(column_type = "Text", nullable)]
+    pub slug: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -124,6 +127,8 @@ pub struct ItemResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_revision: Option<i64>,
     pub content_revision: i64,
+    /// 笔记公开 slug。抓来的文章为 null。
+    pub slug: Option<String>,
     // AI 功能状态
     /// 是否已生成 AI 注释
     #[serde(default)]
@@ -170,6 +175,7 @@ impl ItemResponse {
             fulltext_fetched: m.fulltext_fetched,
             topic: m.topic,
             content_revision: m.content_revision,
+            slug: m.slug,
             is_read,
             is_starred,
             read_progress,
@@ -335,6 +341,7 @@ pub fn preview_query(query: sea_orm::Select<Entity>) -> sea_orm::Select<Entity> 
             Column::FulltextFetched,
             Column::Topic,
             Column::ContentRevision,
+            Column::Slug,
         ])
         .column_as(
             Expr::cust(preview_summary_sql("\"phantasi_items\".\"summary\"")),
@@ -379,6 +386,7 @@ mod preview_tests {
         assert!(sql.contains("\"phantasi_items\".\"summary\""));
         assert!(sql.contains("LEFT(\"phantasi_items\".\"summary\", 2048) AS \"summary\""));
         assert!(sql.contains("\"phantasi_items\".\"content_revision\""));
+        assert!(sql.contains("\"phantasi_items\".\"slug\""));
     }
 
     #[test]
@@ -468,6 +476,7 @@ mod preview_tests {
             fulltext_fetched: false,
             topic: None,
             content_revision: 1,
+            slug: None,
         };
         let (page, next) = split_list_page(vec![row(1), row(2), row(3)], 2);
         assert_eq!(
@@ -503,6 +512,7 @@ mod preview_tests {
             fulltext_fetched: true,
             topic: None,
             content_revision: 3,
+            slug: None,
         };
         let mut item = ItemResponse::from_model_with_ai(
             model,

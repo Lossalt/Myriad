@@ -176,6 +176,7 @@ fn partial_unique_indexes_stay_out_of_generic_ddl() {
         "idx_phantasi_source_applications_pending_site",
         "idx_tapp_shortcuts_owner_chord",
         "idx_media_assets_producer_key",
+        "idx_phantasi_items_source_slug",
     ] {
         assert!(
             !names.contains(&partial),

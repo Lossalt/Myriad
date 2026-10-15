@@ -119,7 +119,6 @@ impl NotificationManager {
         .with_event(
             NotificationEventKey::PhantasiNewItems,
             serde_json::json!({
-                "route": "/journal",
                 "source_id": source_id,
                 "source_name": source_name,
                 "new_count": new_count,
@@ -141,9 +140,8 @@ impl NotificationManager {
         if !crate::services::agent::merope::allow_existing_notify(user_id).await {
             return;
         }
-        // Exactly one click target: with Merope on the addressee lands in the
-        // conversation, otherwise the old deep link stands. Carrying both would
-        // leave `route` dead, since the panel resolves `action` first.
+        // With Merope on, the click opens her conversation. There is no journal
+        // page to open otherwise.
         let mut metadata = serde_json::json!({
             "source_id": source_id,
             "source_name": source_name,
@@ -154,8 +152,6 @@ impl NotificationManager {
             metadata["session_id"] = serde_json::json!(
                 crate::services::agent::merope::ingest::latest_session_id_for(user_id).await
             );
-        } else {
-            metadata["route"] = serde_json::json!("/journal");
         }
         let notification = Notification::new(
             user_id,

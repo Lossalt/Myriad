@@ -56,7 +56,10 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 的 `state` 加 `moved_out`（列放宽到 12）和上一次搬家 `done`，每日备份的记录
 /// `agent_host_backups`，她住在别处时站点上办事的结果 `agent_kept_for_her`（都在同一份
 /// `persona_sync.sql` 里，随 004 与 `ensure_persona_sync_tables` 一起建）。
-pub const SCHEMA_VERSION: &str = "2026.10.14.1";
+/// 2026.10.15.1：笔记公开 slug `phantasi_items.slug`（旧库走通用 ADD）。
+/// 同一笔记源内的部分唯一索引和已发布笔记的地址改写在 `ensure_note_slugs`
+/// （索引带 WHERE，不进 `get_expected_indexes`，只读漂移检查看不见它）。
+pub const SCHEMA_VERSION: &str = "2026.10.15.1";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -308,6 +311,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     // Ongoing heals. Structure older than the support floor came with 0.6.1.
     super::old_rows::rewrite_old_rows(db).await?;
+    super::note_slugs::ensure_note_slugs(db).await?;
     crate::services::media::retire_legacy_media(db).await?;
     ensure_agent_tasks_status_check(db).await?;
     ensure_persona_sync_tables(db).await?;

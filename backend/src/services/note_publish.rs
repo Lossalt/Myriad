@@ -4,9 +4,12 @@
 //! 要么什么都不变。调度器在每篇的发布事务里以 `FOR UPDATE SKIP LOCKED` 取下一篇到点稿件，
 //! 行锁就是认领：多实例同时到点也只有一个能拿到同一篇。
 
+use std::collections::HashSet;
+
 use chrono::{TimeZone, Utc};
 use myriad_phantasi_notes::{
-    NoteDocStatus, note_guid, note_link, render_note, validate_note,
+    NoteDocStatus, allocate_note_slug, note_guid, note_link, render_note, validate_note,
+    validate_slug,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
@@ -35,6 +38,92 @@ fn phantasi_store_http(context: &'static str, error: impl std::fmt::Display) -> 
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("Failed to {context}"),
     )
+}
+
+fn slug_rejected() -> HttpError {
+    phantasi_http_err(
+        StatusCode::BAD_REQUEST,
+        "Slug must be 1-80 characters: a-z, 0-9, and hyphen",
+    )
+}
+
+fn slug_taken() -> HttpError {
+    phantasi_http_err(StatusCode::CONFLICT, "That slug is already used")
+}
+
+fn slug_store_err(context: &'static str, error: sea_orm::DbErr) -> HttpError {
+    if crate::federation::types::is_unique_violation(&error) {
+        slug_taken()
+    } else {
+        phantasi_store_http(context, error)
+    }
+}
+
+async fn taken_note_slugs<C: ConnectionTrait>(
+    db: &C,
+    source_id: i32,
+    except_item_id: i32,
+) -> Result<HashSet<String>, HttpError> {
+    let rows = phantasi_items::Entity::find()
+        .filter(phantasi_items::Column::SourceId.eq(source_id))
+        .filter(phantasi_items::Column::Id.ne(except_item_id))
+        .filter(phantasi_items::Column::Slug.is_not_null())
+        .select_only()
+        .column(phantasi_items::Column::Slug)
+        .into_tuple::<Option<String>>()
+        .all(db)
+        .await
+        .map_err(|error| phantasi_store_http("list note slugs", error))?;
+    Ok(rows.into_iter().flatten().collect())
+}
+
+async fn resolve_note_slug<C: ConnectionTrait>(
+    db: &C,
+    source_id: i32,
+    item_id: i32,
+    title: &str,
+    existing: Option<&str>,
+    requested: Option<&str>,
+) -> Result<String, HttpError> {
+    if let Some(raw) = requested {
+        let slug = raw.trim();
+        if validate_slug(slug).is_err() {
+            return Err(slug_rejected());
+        }
+        let taken = taken_note_slugs(db, source_id, item_id).await?;
+        if taken.contains(slug) {
+            return Err(slug_taken());
+        }
+        return Ok(slug.to_string());
+    }
+    if let Some(existing) = existing.filter(|slug| validate_slug(slug).is_ok()) {
+        return Ok(existing.to_string());
+    }
+    let taken = taken_note_slugs(db, source_id, item_id).await?;
+    Ok(allocate_note_slug(title, item_id, &taken))
+}
+
+/// 站长改已发布笔记的 slug。校验失败 400，同一笔记源里已有则 409。
+pub(crate) async fn set_published_note_slug<C: ConnectionTrait>(
+    db: &C,
+    item_id: i32,
+    source_id: i32,
+    requested: &str,
+) -> Result<String, HttpError> {
+    let slug = resolve_note_slug(db, source_id, item_id, "", None, Some(requested)).await?;
+    let mut active = <phantasi_items::ActiveModel as Default>::default();
+    active.slug = Set(Some(slug.clone()));
+    active.link = Set(note_link(&slug));
+    let updated = phantasi_items::Entity::update_many()
+        .set(active)
+        .filter(phantasi_items::Column::Id.eq(item_id))
+        .exec(db)
+        .await
+        .map_err(|error| slug_store_err("save note slug", error))?;
+    if updated.rows_affected == 0 {
+        return Err(phantasi_http_err(StatusCode::NOT_FOUND, "Note not found"));
+    }
+    Ok(slug)
 }
 
 pub(crate) const NOTE_SOURCE_NAME: &str = "笔记";
@@ -146,6 +235,7 @@ async fn write_published_item<C: ConnectionTrait>(
     image: Option<String>,
     published_at_ms: Option<i64>,
     author: Option<String>,
+    requested_slug: Option<&str>,
 ) -> Result<PublishedNote, HttpError> {
     let (rewritten_cover, rewritten_body) = crate::services::media::normalize_cited_media(
         db,
@@ -175,6 +265,17 @@ async fn write_published_item<C: ConnectionTrait>(
         if item.source_id != source.id {
             return Err(phantasi_http_err(StatusCode::NOT_FOUND, "Note not found"));
         }
+        let existing_id = item.id;
+        let current_slug = item.slug.clone();
+        let slug = resolve_note_slug(
+            db,
+            source.id,
+            existing_id,
+            &rendered.title,
+            current_slug.as_deref(),
+            requested_slug,
+        )
+        .await?;
         let mut active: phantasi_items::ActiveModel = item.into();
         active.title = Set(rendered.title);
         active.summary = Set(rendered.summary);
@@ -185,13 +286,15 @@ async fn write_published_item<C: ConnectionTrait>(
         active.reading_time = Set(Some(rendered.reading_time));
         active.topic = Set(topic);
         active.author = Set(author);
+        active.slug = Set(Some(slug.clone()));
+        active.link = Set(note_link(&slug));
         if let Some(published_at) = published_at_ms.and_then(millis_to_datetime) {
             active.published_at = Set(published_at.into());
         }
         let item = active
             .update(db)
             .await
-            .map_err(|e| phantasi_store_http("save note", e))?;
+            .map_err(|error| slug_store_err("save note", error))?;
         return Ok(PublishedNote {
             id: item.id,
             link: item.link,
@@ -222,12 +325,22 @@ async fn write_published_item<C: ConnectionTrait>(
         .await
         .map_err(|e| phantasi_store_http("save note", e))?;
     let item_id = item.id;
+    let slug = resolve_note_slug(
+        db,
+        source.id,
+        item_id,
+        &item.title,
+        None,
+        requested_slug,
+    )
+    .await?;
     let mut active: phantasi_items::ActiveModel = item.into();
-    active.link = Set(note_link(item_id));
+    active.slug = Set(Some(slug.clone()));
+    active.link = Set(note_link(&slug));
     let item = active
         .update(db)
         .await
-        .map_err(|e| phantasi_store_http("save note", e))?;
+        .map_err(|error| slug_store_err("save note", error))?;
     sync_item_count(db, &source).await?;
     Ok(PublishedNote {
         id: item.id,
@@ -292,6 +405,7 @@ pub async fn publish_doc_on<C: ConnectionTrait>(
     doc: phantasi_note_docs::Model,
     published_at_ms: Option<i64>,
     history_since: i64,
+    requested_slug: Option<&str>,
 ) -> Result<(PublishedNote, phantasi_note_docs::Model), HttpError> {
     {
         let author = crate::services::note_authors::note_author_line(txn, doc.id).await?;
@@ -305,6 +419,7 @@ pub async fn publish_doc_on<C: ConnectionTrait>(
             doc.image.clone(),
             published_at_ms,
             author,
+            requested_slug,
         )
         .await?;
         let saved = mark_doc_published(txn, doc, &item, published_at_ms).await?;
@@ -386,10 +501,12 @@ pub async fn delete_note_with_doc(
     }
     .await;
     match outcome {
-        Ok(()) => txn
-            .commit()
-            .await
-            .map_err(|e| phantasi_store_http("commit note delete", e)),
+        Ok(()) => {
+            txn.commit()
+                .await
+                .map_err(|e| phantasi_store_http("commit note delete", e))?;
+            Ok(())
+        }
         Err(error) => {
             if let Err(rollback) = txn.rollback().await {
                 tracing::warn!(error = %rollback, "note delete rollback failed");
@@ -596,7 +713,7 @@ pub async fn publish_due_note_docs(db: &DatabaseConnection) -> Result<usize, Str
             }
         };
         let history_since = doc.revision;
-        let outcome = publish_doc_on(&savepoint, doc, published_at, history_since).await;
+        let outcome = publish_doc_on(&savepoint, doc, published_at, history_since, None).await;
         let committed = match outcome {
             Ok(_) => match savepoint.commit().await {
                 Ok(()) => txn.commit().await.map(|()| true),
@@ -623,7 +740,9 @@ pub async fn publish_due_note_docs(db: &DatabaseConnection) -> Result<usize, Str
             }
         };
         match committed {
-            Ok(true) => published += 1,
+            Ok(true) => {
+                published += 1;
+            }
             Ok(false) => {}
             Err(error) => {
                 tracing::error!(error = %error, doc_id, "failed to commit scheduled note");
@@ -759,6 +878,7 @@ pub async fn write_note_with_doc(
             topic.clone(),
             image.clone(),
             published_at_ms,
+            None,
             None,
         )
         .await?;

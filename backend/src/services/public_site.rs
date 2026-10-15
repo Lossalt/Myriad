@@ -13,7 +13,7 @@ use myriad_module_visibility::load_module_visibility_preferences;
 /// Fixed DB category label for site-owner original Phantasi content.
 /// Must match frontend `PHANTASI_MINE_CATEGORY` (`frontend/src/components/phantasi/constants.ts`).
 ///
-/// `api::phantasi::notes` writes this value only when creating a notes source. Sitemap still requires `phantasi_source_is_own`; the notes board keeps `source_type = note` even if category is no longer `我`.
+/// `api::phantasi::notes` writes this value only when creating a notes source. Public note addresses key off `source_type = note`, not this category.
 pub(crate) const PHANTASI_MINE_CATEGORY: &str = "我";
 
 /// Links on the Phantasi list crawler shell.
@@ -109,29 +109,6 @@ pub(crate) async fn load_site_branding(db: &DatabaseConnection) -> SiteBranding 
     }
 }
 
-/// Whether a Phantasi source is site-owner original content.
-/// Friend links and third-party feeds must never be treated as own content.
-pub(crate) fn phantasi_source_is_own(
-    source_type: &phantasi_sources::SourceType,
-    category: &Option<String>,
-    admin_only: bool,
-) -> bool {
-    if admin_only {
-        return false;
-    }
-    if *source_type == phantasi_sources::SourceType::Note {
-        return true;
-    }
-    category
-        .as_ref()
-        .map(|c| {
-            c.split(',')
-                .map(str::trim)
-                .any(|part| part == PHANTASI_MINE_CATEGORY)
-        })
-        .unwrap_or(false)
-}
-
 pub(crate) fn strip_html_snippet(raw: &str, max_len: usize) -> String {
     let mut plain = String::with_capacity(raw.len().min(max_len * 2));
     let mut in_tag = false;
@@ -159,8 +136,16 @@ pub(crate) fn strip_html_snippet(raw: &str, max_len: usize) -> String {
     format!("{}…", truncated.trim_end())
 }
 
-pub(crate) fn phantasi_item_path(item_id: i32) -> String {
-    myriad_phantasi::item_path(item_id)
+pub(crate) fn phantasi_item_path(slug: &str) -> String {
+    myriad_phantasi::item_path(slug)
+}
+
+fn published_note_path(item: &phantasi_items::Model) -> Option<String> {
+    let slug = item
+        .slug
+        .as_deref()
+        .filter(|slug| myriad_phantasi_notes::validate_slug(slug).is_ok())?;
+    Some(phantasi_item_path(slug))
 }
 
 pub(crate) fn name_from_manifest(manifest: &Value, fallback: &str) -> String {
@@ -233,7 +218,7 @@ pub(crate) async fn own_phantasi_item_links(
     };
     let own_source_ids: Vec<i32> = sources
         .into_iter()
-        .filter(|s| phantasi_source_is_own(&s.source_type, &s.category, s.admin_only))
+        .filter(|s| s.source_type == phantasi_sources::SourceType::Note)
         .map(|s| s.id)
         .collect();
     if own_source_ids.is_empty() {
@@ -249,7 +234,9 @@ pub(crate) async fn own_phantasi_item_links(
         return links;
     };
     for item in items {
-        let path = phantasi_item_path(item.id);
+        let Some(path) = published_note_path(&item) else {
+            continue;
+        };
         let blurb = item
             .summary
             .as_deref()
@@ -292,10 +279,7 @@ pub(crate) async fn own_phantasi_note_links(
     };
     let note_source_ids: Vec<i32> = sources
         .into_iter()
-        .filter(|s| {
-            s.source_type == phantasi_sources::SourceType::Note
-                || phantasi_source_is_own(&s.source_type, &s.category, s.admin_only)
-        })
+        .filter(|s| s.source_type == phantasi_sources::SourceType::Note)
         .map(|s| s.id)
         .collect();
     if note_source_ids.is_empty() {
@@ -311,7 +295,9 @@ pub(crate) async fn own_phantasi_note_links(
         return links;
     };
     for item in items {
-        let path = phantasi_item_path(item.id);
+        let Some(path) = published_note_path(&item) else {
+            continue;
+        };
         let blurb = item
             .summary
             .as_deref()
@@ -355,7 +341,7 @@ pub(crate) async fn public_geo_prompt_facts(db: &DatabaseConnection) -> String {
     let mut hidden = Vec::new();
     for (key, label) in [
         ("library", "Library"),
-        ("phantasi", "Journal"),
+        ("phantasi", "Blog"),
         ("reports", "Reports"),
         ("tapp", "Tapp"),
     ] {
@@ -419,7 +405,7 @@ pub(crate) async fn public_geo_inspect(db: &DatabaseConnection) -> Value {
     let mut hidden = Vec::new();
     for (key, label) in [
         ("library", "Library"),
-        ("phantasi", "Journal"),
+        ("phantasi", "Blog"),
         ("reports", "Reports"),
         ("tapp", "Tapp"),
     ] {
@@ -495,51 +481,6 @@ mod tests {
     }
 
     #[test]
-    fn phantasi_own_category_gate() {
-        use phantasi_sources::SourceType;
-
-        assert!(phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("我".into()),
-            false
-        ));
-        assert!(phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("博客, 我".into()),
-            false
-        ));
-        assert!(phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("我, 随笔".into()),
-            false
-        ));
-        assert!(phantasi_source_is_own(&SourceType::Note, &None, false));
-        // Friend links and third-party feeds must never pass
-        assert!(!phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("友情链接".into()),
-            false
-        ));
-        assert!(!phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("科技".into()),
-            false
-        ));
-        assert!(!phantasi_source_is_own(&SourceType::Rss, &None, false));
-        assert!(!phantasi_source_is_own(
-            &SourceType::Note,
-            &Some("我".into()),
-            true
-        )); // admin_only
-        // Substring false positive: 「我们」 is not the mine preset
-        assert!(!phantasi_source_is_own(
-            &SourceType::Rss,
-            &Some("我们".into()),
-            false
-        ));
-    }
-
-    #[test]
     fn strip_html_snippet_truncates() {
         let s = strip_html_snippet("<p>Hello <b>world</b> &amp; friends</p>", 200);
         assert_eq!(s, "Hello world & friends");
@@ -570,13 +511,172 @@ mod tests {
     #[test]
     fn geo_inspect_link_json_keeps_title_and_blurb() {
         let items = vec![(
-            "/journal/articles/1".into(),
+            "/blog/posts/hello/".into(),
             "Hello".into(),
             Some("short".into()),
         )];
         let v = geo_link_json(&items);
         assert_eq!(v[0]["title"], "Hello");
-        assert_eq!(v[0]["url"], "/journal/articles/1");
+        assert_eq!(v[0]["url"], "/blog/posts/hello/");
         assert_eq!(v[0]["blurb"], "short");
+    }
+}
+
+pub(crate) struct SiteLocale {
+    pub(crate) html_lang: &'static str,
+    pub(crate) og_locale: &'static str,
+}
+
+const TRADITIONAL_MARKERS: &str = "說這個為與萬億軟體檔訊預設網連線憶臺裡麼迴";
+
+pub(crate) fn host_site_locale(tag: &str) -> SiteLocale {
+    match tag {
+        "zh-TW" => SiteLocale {
+            html_lang: "zh-TW",
+            og_locale: "zh_TW",
+        },
+        "zh-CN" => SiteLocale {
+            html_lang: "zh-CN",
+            og_locale: "zh_CN",
+        },
+        "ja-JP" => SiteLocale {
+            html_lang: "ja",
+            og_locale: "ja_JP",
+        },
+        "ko-KR" => SiteLocale {
+            html_lang: "ko",
+            og_locale: "ko_KR",
+        },
+        "fr-FR" => SiteLocale {
+            html_lang: "fr",
+            og_locale: "fr_FR",
+        },
+        "de-DE" => SiteLocale {
+            html_lang: "de",
+            og_locale: "de_DE",
+        },
+        _ => SiteLocale {
+            html_lang: "en",
+            og_locale: "en_US",
+        },
+    }
+}
+
+pub(crate) fn infer_site_locale(texts: &[&str]) -> SiteLocale {
+    let mut cjk = 0usize;
+    let mut kana = 0usize;
+    let mut hangul = 0usize;
+    let mut traditional = 0usize;
+    for text in texts {
+        for ch in text.chars() {
+            match ch {
+                '\u{3040}'..='\u{30FF}' | '\u{FF66}'..='\u{FF9D}' => kana += 1,
+                '\u{AC00}'..='\u{D7A3}' => hangul += 1,
+                '\u{4E00}'..='\u{9FFF}' => {
+                    cjk += 1;
+                    if TRADITIONAL_MARKERS.contains(ch) {
+                        traditional += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if kana >= 4 || (kana > 0 && kana * 3 >= cjk.max(1)) {
+        return host_site_locale("ja-JP");
+    }
+    if hangul >= 4 || (hangul > 0 && hangul * 3 >= cjk.max(1)) {
+        return host_site_locale("ko-KR");
+    }
+    if cjk >= 4 {
+        if traditional * 2 >= cjk.max(1) || traditional >= 2 {
+            return host_site_locale("zh-TW");
+        }
+        return host_site_locale("zh-CN");
+    }
+    host_site_locale("en-US")
+}
+
+/// Durable public origin only: `FRONTEND_URL`, then `BASE_URL`.
+///
+/// **Never** derive absolute SEO URLs from client `Host` / `X-Forwarded-Host`
+/// (or `X-Forwarded-Proto`) — a poisoned Host can poison cached sitemap /
+/// robots / canonical absolute links. When unset, callers must omit absolute
+/// URLs (fail closed) rather than invent an origin.
+pub(crate) fn resolve_public_base_url() -> Option<String> {
+    for key in ["FRONTEND_URL", "BASE_URL"] {
+        if let Ok(raw) = std::env::var(key) {
+            let trimmed = raw.trim().trim_end_matches('/');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub(crate) async fn public_site_identity(
+    db: &DatabaseConnection,
+) -> (String, String, &'static str) {
+    let branding = load_site_branding(db).await;
+    let locale = infer_site_locale(&[&branding.title, &branding.description]);
+    (branding.title, branding.description, locale.html_lang)
+}
+
+pub(crate) fn normalize_listed_category_token(token: &str) -> String {
+    let trimmed = token.trim();
+    match trimmed.to_lowercase().as_str() {
+        "friends" | "friend" | "friendlink" | "friend-link" | "friend_link" | "friend-links"
+        | "friend_links" | "friend links" | "友链" | "友情連結" | "友情链接" => {
+            "友情链接".to_string()
+        }
+        "mine" | "me" | "我的" | "我" => "我".to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
+pub(crate) fn source_matches_listed_category(
+    category: Option<&str>,
+    source_type: &phantasi_sources::SourceType,
+    wanted: &str,
+) -> bool {
+    let want = normalize_listed_category_token(wanted);
+    if want.is_empty() {
+        return false;
+    }
+    let hit = category
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .any(|part| normalize_listed_category_token(part) == want);
+    if hit {
+        return true;
+    }
+    want == "友情链接"
+        && *source_type == phantasi_sources::SourceType::Link
+        && category.map(str::trim).unwrap_or("").is_empty()
+}
+
+pub(crate) fn listed_board_keeps(
+    source_type: &phantasi_sources::SourceType,
+    category: Option<&str>,
+    admin_only: bool,
+    board: &str,
+) -> bool {
+    match board {
+        "feeds" => {
+            *source_type != phantasi_sources::SourceType::Link
+                && *source_type != phantasi_sources::SourceType::Note
+        }
+        "notes" => {
+            *source_type == phantasi_sources::SourceType::Note
+                || (!admin_only && source_matches_listed_category(category, source_type, "我"))
+        }
+        "sites" => {
+            *source_type == phantasi_sources::SourceType::Link
+                || source_matches_listed_category(category, source_type, "友情链接")
+        }
+        _ => true,
     }
 }

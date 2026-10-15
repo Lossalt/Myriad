@@ -10,7 +10,7 @@
 //!
 //! 渲染只在写入这一侧发生。读路径永远读 `content`，绝不在渲染一次 ——
 //! 否则阅读器、RSS、联邦三处会各自拿到一份不同的 HTML。
-//! 对外订阅走 `GET /journal/notes.xml`（`/api/phantasi/notes.xml` 同一份）。
+//! 对外订阅走 `GET /api/phantasi/notes.xml`。
 //! 默认关；站长在工作台打开，且 Phantasi 对访客开放，地址才存在。
 
 use axum::{

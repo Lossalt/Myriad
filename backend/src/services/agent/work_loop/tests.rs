@@ -239,7 +239,7 @@ fn declined_and_interrupted_actions_are_not_replayed() {
 fn work_prompt_receives_live_route_and_request_preferences() {
     let mut state = checkpoint();
     state.request.context = Some(RequestContext {
-        current_route: Some("/journal".into()),
+        current_route: Some("/studio".into()),
         preferences: Some(json!({"language":"zh"})),
         active_platforms: vec!["steam".into()],
         ..Default::default()
@@ -249,7 +249,7 @@ fn work_prompt_receives_live_route_and_request_preferences() {
         state.task.recipe.as_ref().unwrap(),
         &state.task,
     );
-    assert_eq!(evidence["route"], "/journal");
+    assert_eq!(evidence["route"], "/studio");
     assert_eq!(evidence["preferences"]["language"], "zh");
     assert_eq!(evidence["platforms"][0], "steam");
 }

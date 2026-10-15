@@ -44,8 +44,9 @@ static RE_FUNC_NAME: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(\w+)\s*\("#).unwr
 /// Allowed SPA route prefixes for `router.navigate`.
 ///
 /// Keep in lockstep with `frontend/src/App.tsx` `<Route path>`.
+/// `/blog` is the public notes site. `/studio` is note management.
 pub const VALID_ROUTER_PREFIXES: &[&str] = &[
-    "/", "/library", "/journal", "/reports", "/config", "/agent", "/tapp", "/setup",
+    "/", "/library", "/reports", "/config", "/agent", "/tapp", "/setup", "/blog", "/studio",
 ];
 
 /// Allowed `page.interact` action names.
@@ -587,7 +588,7 @@ pub fn detect_page_type(path: &str) -> &'static str {
         || path_lower.starts_with("/netease")
     {
         "platform"
-    } else if path_lower.starts_with("/journal") {
+    } else if path_lower.starts_with("/blog") || path_lower.starts_with("/studio") {
         "phantasi"
     } else if path_lower.starts_with("/tapp") {
         "tapp"
@@ -623,18 +624,12 @@ pub fn get_page_name(path: &str, page_type: &str) -> String {
             }
         }
         "phantasi" => {
-            if segments.get(1) == Some(&"notes") {
-                "Journal notes".to_string()
-            } else if segments.get(1) == Some(&"friends") {
-                "Journal friends".to_string()
-            } else if segments.get(1) == Some(&"articles") {
-                "Journal article".to_string()
-            } else if segments.get(1) == Some(&"workbench") {
-                "Journal workbench".to_string()
-            } else if segments.len() > 1 {
-                "Journal".to_string()
+            if segments.first() == Some(&"blog") && segments.get(1) == Some(&"posts") {
+                "Blog post".to_string()
+            } else if segments.first() == Some(&"blog") {
+                "Blog".to_string()
             } else {
-                "Journal".to_string()
+                "Notes".to_string()
             }
         }
         "tapp" => {
@@ -842,7 +837,11 @@ mod tests {
         assert!(is_valid_router_path("/tapp"));
         assert!(is_valid_router_path("/tapp/run/com.example"));
         assert!(is_valid_router_path("/library"));
-        assert!(is_valid_router_path("/journal/articles/1"));
+        assert!(is_valid_router_path("/blog"));
+        assert!(is_valid_router_path("/blog/posts/hello"));
+        assert!(is_valid_router_path("/studio"));
+        assert!(!is_valid_router_path("/journal"));
+        assert!(!is_valid_router_path("/journal/articles/1"));
         assert!(!is_valid_router_path("/phantasi/item/1"));
         assert!(is_valid_router_path("/reports"));
         assert!(is_valid_router_path("/config"));

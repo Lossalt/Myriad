@@ -22,13 +22,15 @@ use super::helpers::{admin_user_id, phantasi_http_err, phantasi_store_http};
 use super::note_collab::{NoteCollabEvent, note_collab_hub};
 use crate::error::HttpError;
 use crate::extract::AdminClaims;
-use crate::models::entities::phantasi_note_docs;
+use crate::models::entities::{phantasi_items, phantasi_note_docs};
 use crate::services::note_authors::{
     NoteAuthorFace, add_note_author, ensure_note_author,
     list_note_author_candidates as load_note_author_candidates, load_authors_for_docs,
     remove_note_author, sync_published_author_line,
 };
-use crate::services::note_publish::{datetime_to_millis, millis_to_datetime, publish_doc_on};
+use crate::services::note_publish::{
+    datetime_to_millis, millis_to_datetime, publish_doc_on, set_published_note_slug,
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NoteDocWriteRequest {
@@ -42,6 +44,9 @@ pub(crate) struct NoteDocWriteRequest {
     pub published_at: Option<i64>,
     pub scheduled_at: Option<i64>,
     pub revision: Option<i64>,
+    /// 已发布笔记的公开 slug。省略表示不改；未发布时不能设置。
+    #[serde(default)]
+    pub slug: Option<String>,
 }
 
 // Omitted preserves the value; explicit null clears it.
@@ -92,6 +97,7 @@ pub(crate) struct NoteDocResponse {
     pub revision: i64,
     pub last_error: Option<String>,
     pub updated_at: i64,
+    pub slug: Option<String>,
 }
 
 fn note_excerpt(md: &str) -> String {
@@ -102,7 +108,7 @@ fn note_excerpt(md: &str) -> String {
     trimmed.chars().take(80).collect()
 }
 
-fn to_response(doc: phantasi_note_docs::Model) -> NoteDocResponse {
+fn to_response(doc: phantasi_note_docs::Model, slug: Option<String>) -> NoteDocResponse {
     let has_body = !doc.content_md.trim().is_empty();
     NoteDocResponse {
         id: doc.id,
@@ -123,14 +129,15 @@ fn to_response(doc: phantasi_note_docs::Model) -> NoteDocResponse {
         revision: doc.revision,
         last_error: doc.last_error,
         updated_at: datetime_to_millis(doc.updated_at),
+        slug,
     }
 }
 
 // Only called with the bounded excerpt and derived cover from list_query().
-fn to_list_response(doc: phantasi_note_docs::Model) -> NoteDocResponse {
+fn to_list_response(doc: phantasi_note_docs::Model, slug: Option<String>) -> NoteDocResponse {
     let has_body = !doc.content_md.trim().is_empty();
     let excerpt = has_body.then(|| note_excerpt(&doc.content_md));
-    let mut row = to_response(doc);
+    let mut row = to_response(doc, slug);
     row.content_md = String::new();
     row.has_body = has_body;
     row.excerpt = excerpt;
@@ -140,13 +147,54 @@ fn to_list_response(doc: phantasi_note_docs::Model) -> NoteDocResponse {
 fn note_docs_with_authors(
     docs: Vec<phantasi_note_docs::Model>,
     authors: std::collections::HashMap<i32, Vec<NoteAuthorFace>>,
+    slugs: &std::collections::HashMap<i32, String>,
 ) -> Vec<NoteDocResponse> {
     docs.into_iter()
         .map(|doc| {
+            let slug = doc.item_id.and_then(|item_id| slugs.get(&item_id).cloned());
             let list = authors.get(&doc.id).cloned().unwrap_or_default();
-            attach_authors(to_list_response(doc), list)
+            attach_authors(to_list_response(doc, slug), list)
         })
         .collect()
+}
+
+async fn slug_of_item(
+    db: &DatabaseConnection,
+    item_id: Option<i32>,
+) -> Result<Option<String>, HttpError> {
+    let Some(item_id) = item_id else {
+        return Ok(None);
+    };
+    let slug = phantasi_items::Entity::find_by_id(item_id)
+        .select_only()
+        .column(phantasi_items::Column::Slug)
+        .into_tuple::<Option<String>>()
+        .one(db)
+        .await
+        .map_err(|error| phantasi_store_http("read note slug", error))?;
+    Ok(slug.flatten())
+}
+
+async fn slugs_for_items(
+    db: &DatabaseConnection,
+    docs: &[phantasi_note_docs::Model],
+) -> Result<std::collections::HashMap<i32, String>, HttpError> {
+    let ids: Vec<i32> = docs.iter().filter_map(|doc| doc.item_id).collect();
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows = phantasi_items::Entity::find()
+        .filter(phantasi_items::Column::Id.is_in(ids))
+        .select_only()
+        .columns([phantasi_items::Column::Id, phantasi_items::Column::Slug])
+        .into_tuple::<(i32, Option<String>)>()
+        .all(db)
+        .await
+        .map_err(|error| phantasi_store_http("read note slugs", error))?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, slug)| slug.map(|slug| (id, slug)))
+        .collect())
 }
 
 fn attach_authors(mut row: NoteDocResponse, authors: Vec<NoteAuthorFace>) -> NoteDocResponse {
@@ -169,7 +217,8 @@ async fn respond_doc(
 ) -> Result<NoteDocResponse, HttpError> {
     let mut authors = load_authors_for_docs(db, &[doc.id]).await?;
     let list = authors.remove(&doc.id).unwrap_or_default();
-    Ok(attach_authors(to_response(doc), list))
+    let slug = slug_of_item(db, doc.item_id).await?;
+    Ok(attach_authors(to_response(doc, slug), list))
 }
 
 pub(super) async fn credit_and_respond(
@@ -233,9 +282,10 @@ pub(crate) async fn list_note_docs(
         .map_err(|e| phantasi_store_http("list note docs", e))?;
     let ids: Vec<i32> = docs.iter().map(|doc| doc.id).collect();
     let authors = load_authors_for_docs(&db, &ids).await?;
+    let slugs = slugs_for_items(&db, &docs).await?;
     Ok(Json(json!({
         "success": true,
-        "docs": note_docs_with_authors(docs, authors),
+        "docs": note_docs_with_authors(docs, authors, &slugs),
     })))
 }
 
@@ -356,6 +406,12 @@ pub(crate) async fn update_note_doc(
             "Note draft was updated elsewhere",
         ));
     }
+    if req.slug.is_some() && doc.item_id.is_none() {
+        return Err(phantasi_http_err(
+            StatusCode::BAD_REQUEST,
+            "Publish the note before setting a slug",
+        ));
+    }
     // 只放 Set 过的列进 UPDATE；条件带 revision，两个并发写只有一个能落地。
     let mut active = <phantasi_note_docs::ActiveModel as std::default::Default>::default();
     if let Some(title) = req.title {
@@ -379,6 +435,23 @@ pub(crate) async fn update_note_doc(
         .begin()
         .await
         .map_err(|e| phantasi_store_http("begin note doc save", e))?;
+    if let Some(raw) = req.slug.as_deref() {
+        let Some(item_id) = doc.item_id else {
+            return Err(phantasi_http_err(
+                StatusCode::BAD_REQUEST,
+                "Publish the note before setting a slug",
+            ));
+        };
+        let source_id = phantasi_items::Entity::find_by_id(item_id)
+            .select_only()
+            .column(phantasi_items::Column::SourceId)
+            .into_tuple::<i32>()
+            .one(&txn)
+            .await
+            .map_err(|error| phantasi_store_http("find published note", error))?
+            .ok_or_else(|| phantasi_http_err(StatusCode::NOT_FOUND, "Note not found"))?;
+        set_published_note_slug(&txn, item_id, source_id, raw).await?;
+    }
     let mut saved_rows = phantasi_note_docs::Entity::update_many()
         .set(active)
         .filter(phantasi_note_docs::Column::Id.eq(id))
@@ -556,7 +629,8 @@ pub(crate) async fn publish_note_doc(
     }
     doc.revision = expected + 1;
     ensure_note_author(&txn, doc.id, user_id, doc.user_id).await?;
-    let (item, saved) = publish_doc_on(&txn, doc, published_at, expected).await?;
+    let (item, saved) =
+        publish_doc_on(&txn, doc, published_at, expected, req.slug.as_deref()).await?;
     txn.commit()
         .await
         .map_err(|e| phantasi_store_http("commit note publish", e))?;
@@ -1109,7 +1183,10 @@ mod tests {
         // the revision the claim captured.
         assert!(publish.contains("db\n        .begin()") || publish.contains("db.begin()"));
         assert!(publish.contains("txn.commit()"));
-        assert!(publish.contains("publish_doc_on(&txn, doc, published_at, expected)"));
+        assert!(
+            publish
+                .contains("publish_doc_on(&txn, doc, published_at, expected, req.slug.as_deref())")
+        );
         assert!(publish.contains("expected_revision"));
         assert!(publish.contains("update_many()"));
         assert!(publish.contains("Column::Revision.eq(expected)"));

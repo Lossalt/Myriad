@@ -195,8 +195,8 @@ pub(super) async fn build_ap_object(
             let row = db
                 .query_one_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT bi.id, bi.title, bi.content, bi.link, bi.author,
-                              bs.name AS source_name
+                    r#"SELECT bi.id, bi.title, bi.content, bi.link, bi.author, bi.slug,
+                              bs.name AS source_name, bs.source_type
                        FROM phantasi_items bi
                        LEFT JOIN phantasi_sources bs ON bs.id = bi.source_id
                        WHERE bi.id = $1 AND bs.user_id = $2"#,
@@ -208,9 +208,21 @@ pub(super) async fn build_ap_object(
 
             let title: String = row.try_get("", "title").unwrap_or_default();
             let content_text: Option<String> = row.try_get("", "content").ok();
-            let url: Option<String> = row.try_get("", "link").ok();
+            let stored_link: Option<String> = row.try_get("", "link").ok();
             let author: Option<String> = row.try_get("", "author").ok();
             let source_name: Option<String> = row.try_get("", "source_name").ok();
+            let source_type: String = row.try_get("", "source_type").unwrap_or_default();
+            let slug: Option<String> = row.try_get::<Option<String>>("", "slug").ok().flatten();
+            // 对象 id 仍是 `/phantasi/articles/{id}`。笔记的 url 指向博客地址。
+            let url = if source_type == "note" {
+                let slug = slug
+                    .filter(|slug| myriad_phantasi_notes::validate_slug(slug).is_ok())
+                    .unwrap_or_else(|| myriad_phantasi_notes::fallback_slug(item_id));
+                let path = myriad_phantasi::item_path(&slug);
+                Some(format!("{}{path}", base_url.trim_end_matches('/')))
+            } else {
+                stored_link.filter(|link| !link.trim().is_empty())
+            };
 
             let summary_text = content_text
                 .as_deref()
