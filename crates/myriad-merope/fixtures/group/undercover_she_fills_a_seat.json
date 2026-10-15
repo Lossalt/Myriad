@@ -7279,6 +7279,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 9,
           "who": "onebot:6001"
         },
         "her": {
@@ -7477,6 +7478,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 9,
           "who": "onebot:6002"
         },
         "her": {

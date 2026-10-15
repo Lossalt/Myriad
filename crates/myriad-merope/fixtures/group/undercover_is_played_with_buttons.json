@@ -20,7 +20,7 @@
     "lastReply": 1791957630639322,
     "ledger": [
       {
-        "at": 1791957773,
+        "at": 1791957818,
         "bang": false,
         "by": "4fc82b26aecb",
         "chars": 8,
@@ -28,7 +28,7 @@
         "mark": false
       },
       {
-        "at": 1791957783,
+        "at": 1791957828,
         "bang": false,
         "by": "6b51d431df5d",
         "chars": 8,
@@ -236,7 +236,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:02:43Z",
+        "at": "2026-10-14T06:03:28Z",
         "from": "14",
         "hers": false,
         "message_id": "505",
@@ -245,7 +245,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:02:43Z",
+        "at": "2026-10-14T06:03:28Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -254,7 +254,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:02:53Z",
+        "at": "2026-10-14T06:03:38Z",
         "from": "11",
         "hers": false,
         "message_id": "506",
@@ -263,7 +263,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:02:53Z",
+        "at": "2026-10-14T06:03:38Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -272,7 +272,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:03:03Z",
+        "at": "2026-10-14T06:03:48Z",
         "from": "12",
         "hers": false,
         "message_id": "507",
@@ -281,7 +281,7 @@
       },
       {
         "addressed": false,
-        "at": "2026-10-14T06:03:13Z",
+        "at": "2026-10-14T06:03:58Z",
         "from": null,
         "hers": true,
         "message_id": null,
@@ -290,7 +290,7 @@
       }
     ],
     "mutedUntil": null,
-    "next": 128,
+    "next": 129,
     "offered": {},
     "paused": {},
     "pending": null,
@@ -7127,7 +7127,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 小李\n2. 小红\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -7140,7 +7141,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 小李\n2. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -7153,7 +7155,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小李\n1. 阿明\n2. 小红\n点下面的按钮，或者回号码、名字。",
-            "user": "13"
+            "user": "13",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -7166,7 +7169,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 阿明\n2. 小红\n点下面的按钮，或者回号码、名字。",
-            "user": "14"
+            "user": "14",
+            "wait": 10
           },
           {
             "after": 60.0,
@@ -7436,6 +7440,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:11"
         },
         "her": {
@@ -7634,6 +7639,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:12"
         },
         "her": {
@@ -7836,6 +7842,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:13"
         },
         "her": {
@@ -8042,6 +8049,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:14"
         },
         "her": {
@@ -8987,6 +8995,403 @@
     {
       "input": {
         "event": {
+          "kind": "whispered",
+          "text": "0",
+          "wait": 10,
+          "who": "telegram:11"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957761000000,
+        "seed": 6709614588554736732
+      },
+      "output": {
+        "effects": [
+          {
+            "chat": "-100777",
+            "id": "g106",
+            "kind": "whisper",
+            "platform": "telegram",
+            "text": "这个按钮是之前那次的，已经不算了。",
+            "user": "11"
+          }
+        ],
+        "taken": true
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "whispered",
+            "ok": true
+          },
+          "id": "g106",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957761000000,
+        "seed": 15857478340147583355
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "501",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957768000000,
+        "seed": 12974318808004526318
+      },
+      "output": {
+        "effects": [],
+        "fresh": false
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "501",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957768000000,
+        "seed": 8413008054331981093
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g76",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957773000000,
+        "seed": 10420925274750294992
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "502",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957778000000,
+        "seed": 3657175511646082271
+      },
+      "output": {
+        "effects": [],
+        "fresh": false
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "502",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957778000000,
+        "seed": 13259445285702913410
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g81",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957783000000,
+        "seed": 18315010025997016873
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "503",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957788000000,
+        "seed": 4064760468430934660
+      },
+      "output": {
+        "effects": [],
+        "fresh": false
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "503",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957788000000,
+        "seed": 11980305616357392003
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g86",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957793000000,
+        "seed": 7513844936297724758
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "heard",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "504",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          },
+          "restore": null
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957798000000,
+        "seed": 5444016209053489517
+      },
+      "output": {
+        "effects": [],
+        "fresh": false
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "kind": "noticed",
+          "message": {
+            "addressed": false,
+            "chat": "-100777",
+            "displayName": "小李",
+            "from": "14",
+            "images": [],
+            "messageId": "504",
+            "platform": "telegram",
+            "replyTo": null,
+            "text": "戴在脸上的3-2",
+            "thread": null
+          }
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957798000000,
+        "seed": 5846369255486655608
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g70",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957798200493,
+        "seed": 5353586817252538983
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "key": "g94",
+          "kind": "woke"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957803000000,
+        "seed": 3707492688042843754
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
           "kind": "heard",
           "message": {
             "addressed": false,
@@ -9008,8 +9413,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957763000000,
-        "seed": 6709614588554736732
+        "now": 1791957808000000,
+        "seed": 15809125636821561329
       },
       "output": {
         "effects": [
@@ -9198,7 +9603,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -9209,7 +9614,7 @@
           },
           {
             "how": "json",
-            "id": "g106",
+            "id": "g107",
             "input": "{\"line\":\"戴在脸上的3-2\",\"word\":\"墨镜\"}",
             "kind": "ask",
             "operation": "undercover_judge",
@@ -9312,7 +9717,7 @@
                 "mark": false
               },
               {
-                "at": 1791957763,
+                "at": 1791957808,
                 "bang": false,
                 "by": "8527a891e224",
                 "chars": 8,
@@ -9352,7 +9757,7 @@
             "kind": "keepTable",
             "table": {
               "agreed": [],
-              "asked": "g106",
+              "asked": "g107",
               "asking": "judge",
               "chat": {
                 "chat": "-100777",
@@ -9535,8 +9940,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957763000000,
-        "seed": 15857478340147583355
+        "now": 1791957808000000,
+        "seed": 13775273381456674220
       },
       "output": {
         "effects": []
@@ -9550,7 +9955,7 @@
             "kind": "asked",
             "raw": "{\"givesAway\":false}"
           },
-          "id": "g106",
+          "id": "g107",
           "kind": "done"
         },
         "her": {
@@ -9559,8 +9964,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957763000000,
-        "seed": 12974318808004526318
+        "now": 1791957808000000,
+        "seed": 16631634213161397387
       },
       "output": {
         "effects": [
@@ -9749,7 +10154,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -9758,7 +10163,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -9768,7 +10173,7 @@
             ]
           },
           {
-            "id": "g108",
+            "id": "g109",
             "kind": "send",
             "pieces": [
               {
@@ -9795,7 +10200,7 @@
           },
           {
             "after": 60.0,
-            "key": "g109",
+            "key": "g110",
             "kind": "wake"
           },
           {
@@ -9955,10 +10360,10 @@
               ],
               "soul": "你是测试里的她。",
               "stage": "playing",
-              "timer": "g109",
+              "timer": "g110",
               "told": 2,
               "tries": 1,
-              "until": 1791957823000000,
+              "until": 1791957868000000,
               "waited": 13
             }
           }
@@ -9972,7 +10377,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g108",
+          "id": "g109",
           "kind": "done"
         },
         "her": {
@@ -9981,8 +10386,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957763000000,
-        "seed": 8413008054331981093
+        "now": 1791957808000000,
+        "seed": 5176881325453085374
       },
       "output": {
         "effects": []
@@ -9991,7 +10396,7 @@
     {
       "input": {
         "event": {
-          "key": "g76",
+          "key": "g104",
           "kind": "woke"
         },
         "her": {
@@ -10000,8 +10405,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957773000000,
-        "seed": 10420925274750294992
+        "now": 1791957813000000,
+        "seed": 7903057387150354101
       },
       "output": {
         "effects": []
@@ -10031,8 +10436,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957773000000,
-        "seed": 3657175511646082271
+        "now": 1791957818000000,
+        "seed": 6829087300300085792
       },
       "output": {
         "effects": [
@@ -10221,7 +10626,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -10230,7 +10635,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -10239,7 +10644,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": "11",
                 "hers": false,
                 "message_id": "506",
@@ -10250,7 +10655,7 @@
           },
           {
             "how": "json",
-            "id": "g111",
+            "id": "g112",
             "input": "{\"line\":\"戴在脸上的0-2\",\"word\":\"眼镜\"}",
             "kind": "ask",
             "operation": "undercover_judge",
@@ -10281,7 +10686,7 @@
             "kind": "keepTable",
             "table": {
               "agreed": [],
-              "asked": "g111",
+              "asked": "g112",
               "asking": "judge",
               "chat": {
                 "chat": "-100777",
@@ -10468,8 +10873,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957773000000,
-        "seed": 13259445285702913410
+        "now": 1791957818000000,
+        "seed": 16905136310951114991
       },
       "output": {
         "effects": []
@@ -10483,7 +10888,7 @@
             "kind": "asked",
             "raw": "{\"givesAway\":false}"
           },
-          "id": "g111",
+          "id": "g112",
           "kind": "done"
         },
         "her": {
@@ -10492,8 +10897,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957773000000,
-        "seed": 18315010025997016873
+        "now": 1791957818000000,
+        "seed": 16116227829547553874
       },
       "output": {
         "effects": [
@@ -10682,7 +11087,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -10691,7 +11096,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -10700,7 +11105,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": "11",
                 "hers": false,
                 "message_id": "506",
@@ -10709,7 +11114,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -10719,7 +11124,7 @@
             ]
           },
           {
-            "id": "g113",
+            "id": "g114",
             "kind": "send",
             "pieces": [
               {
@@ -10746,7 +11151,7 @@
           },
           {
             "after": 60.0,
-            "key": "g114",
+            "key": "g115",
             "kind": "wake"
           },
           {
@@ -10910,10 +11315,10 @@
               ],
               "soul": "你是测试里的她。",
               "stage": "playing",
-              "timer": "g114",
+              "timer": "g115",
               "told": 2,
               "tries": 1,
-              "until": 1791957833000000,
+              "until": 1791957878000000,
               "waited": 15
             }
           }
@@ -10927,7 +11332,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g113",
+          "id": "g114",
           "kind": "done"
         },
         "her": {
@@ -10936,27 +11341,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957773000000,
-        "seed": 4064760468430934660
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "key": "g81",
-          "kind": "woke"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957783000000,
-        "seed": 11980305616357392003
+        "now": 1791957818000000,
+        "seed": 11390306532056826297
       },
       "output": {
         "effects": []
@@ -10986,8 +11372,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957783000000,
-        "seed": 7513844936297724758
+        "now": 1791957828000000,
+        "seed": 11099667660123837908
       },
       "output": {
         "effects": [
@@ -11176,7 +11562,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -11185,7 +11571,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -11194,7 +11580,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": "11",
                 "hers": false,
                 "message_id": "506",
@@ -11203,7 +11589,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -11212,7 +11598,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:03:03Z",
+                "at": "2026-10-14T06:03:48Z",
                 "from": "12",
                 "hers": false,
                 "message_id": "507",
@@ -11223,7 +11609,7 @@
           },
           {
             "how": "json",
-            "id": "g116",
+            "id": "g117",
             "input": "{\"line\":\"戴在脸上的1-2\",\"word\":\"眼镜\"}",
             "kind": "ask",
             "operation": "undercover_judge",
@@ -11254,7 +11640,7 @@
             "kind": "keepTable",
             "table": {
               "agreed": [],
-              "asked": "g116",
+              "asked": "g117",
               "asking": "judge",
               "chat": {
                 "chat": "-100777",
@@ -11445,8 +11831,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957783000000,
-        "seed": 5444016209053489517
+        "now": 1791957828000000,
+        "seed": 2645470022513984403
       },
       "output": {
         "effects": []
@@ -11460,7 +11846,7 @@
             "kind": "asked",
             "raw": "{\"givesAway\":false}"
           },
-          "id": "g116",
+          "id": "g117",
           "kind": "done"
         },
         "her": {
@@ -11469,8 +11855,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957783000000,
-        "seed": 5846369255486655608
+        "now": 1791957828000000,
+        "seed": 12876106407896747814
       },
       "output": {
         "effects": [
@@ -11480,11 +11866,12 @@
               "小李",
               "小红"
             ],
-            "id": "g118",
+            "id": "g119",
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小李\n1. 小红\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 18
           },
           {
             "chat": "-100777",
@@ -11492,11 +11879,12 @@
               "小李",
               "阿明"
             ],
-            "id": "g119",
+            "id": "g120",
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小李\n1. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 18
           },
           {
             "chat": "-100777",
@@ -11504,15 +11892,16 @@
               "阿明",
               "小红"
             ],
-            "id": "g120",
+            "id": "g121",
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿明\n1. 小红\n点下面的按钮，或者回号码、名字。",
-            "user": "14"
+            "user": "14",
+            "wait": 18
           },
           {
             "after": 60.0,
-            "key": "g121",
+            "key": "g122",
             "kind": "wake"
           },
           {
@@ -11684,37 +12073,14 @@
               ],
               "soul": "你是测试里的她。",
               "stage": "playing",
-              "timer": "g121",
+              "timer": "g122",
               "told": 2,
               "tries": 1,
-              "until": 1791957843000000,
+              "until": 1791957888000000,
               "waited": 18
             }
           }
         ]
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "whispered",
-            "ok": true
-          },
-          "id": "g118",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957783000000,
-        "seed": 5353586817252538983
-      },
-      "output": {
-        "effects": []
       }
     },
     {
@@ -11733,8 +12099,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957783000000,
-        "seed": 3707492688042843754
+        "now": 1791957828000000,
+        "seed": 7513084051608634621
       },
       "output": {
         "effects": []
@@ -11756,8 +12122,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957783000000,
-        "seed": 15809125636821561329
+        "now": 1791957828000000,
+        "seed": 12372555892002383048
       },
       "output": {
         "effects": []
@@ -11766,8 +12132,12 @@
     {
       "input": {
         "event": {
-          "key": "g86",
-          "kind": "woke"
+          "answer": {
+            "kind": "whispered",
+            "ok": true
+          },
+          "id": "g121",
+          "kind": "done"
         },
         "her": {
           "asleepFor": null,
@@ -11775,8 +12145,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 13775273381456674220
+        "now": 1791957828000000,
+        "seed": 10590310194181435511
       },
       "output": {
         "effects": []
@@ -11787,6 +12157,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:11"
         },
         "her": {
@@ -11795,14 +12166,14 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 16631634213161397387
+        "now": 1791957838000000,
+        "seed": 4255856589718474554
       },
       "output": {
         "effects": [
           {
             "chat": "-100777",
-            "id": "g123",
+            "id": "g124",
             "kind": "whisper",
             "platform": "telegram",
             "text": "收到：小李。",
@@ -11982,10 +12353,10 @@
               ],
               "soul": "你是测试里的她。",
               "stage": "playing",
-              "timer": "g121",
+              "timer": "g122",
               "told": 2,
               "tries": 1,
-              "until": 1791957843000000,
+              "until": 1791957888000000,
               "waited": 18
             }
           }
@@ -11998,6 +12369,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:12"
         },
         "her": {
@@ -12006,14 +12378,14 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 5176881325453085374
+        "now": 1791957838000000,
+        "seed": 16822671600617239681
       },
       "output": {
         "effects": [
           {
             "chat": "-100777",
-            "id": "g124",
+            "id": "g125",
             "kind": "whisper",
             "platform": "telegram",
             "text": "收到：小李。",
@@ -12197,10 +12569,10 @@
               ],
               "soul": "你是测试里的她。",
               "stage": "playing",
-              "timer": "g121",
+              "timer": "g122",
               "told": 2,
               "tries": 1,
-              "until": 1791957843000000,
+              "until": 1791957888000000,
               "waited": 18
             }
           }
@@ -12213,6 +12585,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:14"
         },
         "her": {
@@ -12221,14 +12594,14 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 7903057387150354101
+        "now": 1791957838000000,
+        "seed": 2925550354390268668
       },
       "output": {
         "effects": [
           {
             "chat": "-100777",
-            "id": "g125",
+            "id": "g126",
             "kind": "whisper",
             "platform": "telegram",
             "text": "收到：阿明。",
@@ -12419,7 +12792,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": "14",
                 "hers": false,
                 "message_id": "505",
@@ -12428,7 +12801,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:43Z",
+                "at": "2026-10-14T06:03:28Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -12437,7 +12810,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": "11",
                 "hers": false,
                 "message_id": "506",
@@ -12446,7 +12819,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:02:53Z",
+                "at": "2026-10-14T06:03:38Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -12455,7 +12828,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:03:03Z",
+                "at": "2026-10-14T06:03:48Z",
                 "from": "12",
                 "hers": false,
                 "message_id": "507",
@@ -12464,7 +12837,7 @@
               },
               {
                 "addressed": false,
-                "at": "2026-10-14T06:03:13Z",
+                "at": "2026-10-14T06:03:58Z",
                 "from": null,
                 "hers": true,
                 "message_id": null,
@@ -12474,7 +12847,7 @@
             ]
           },
           {
-            "id": "g126",
+            "id": "g127",
             "kind": "send",
             "pieces": [
               {
@@ -12492,7 +12865,7 @@
           },
           {
             "how": "json",
-            "id": "g127",
+            "id": "g128",
             "input": "{\"everyoneKnows\":[\"谁是卧底：4 人（阿明、小红、阿强、小李），1 个卧底。每人私聊收到一个词，大多数人的一样，卧底的相近但不同，谁也不知道自己是不是卧底。按顺序每人在群里说一句描述自己的词，不能说出词本身（谐音、拆字也不行，说了直接出局）；说完大家私聊投票，票最多的出局，平票的人再各说一句、其他人在他们中间再投。卧底全出局平民赢；卧底和剩下的平民一样多就是卧底赢。\",\"阿强：戴在脸上的2-1\",\"小李：戴在脸上的3-1\",\"阿明：戴在脸上的0-1\",\"小红：戴在脸上的1-1\",\"第1轮投票：阿强 3 票、小李 1 票、阿明 0 票、小红 0 票，阿强出局，不是卧底。\",\"小李：戴在脸上的3-2\",\"阿明：戴在脸上的0-2\",\"小红：戴在脸上的1-2\",\"第2轮投票：小李 2 票、阿明 1 票、小红 0 票，小李出局，是卧底。\",\"平民赢了。平民的词是「眼镜」，卧底的词是「墨镜」，卧底是小李。\"],\"justNow\":[\"平民赢了。平民的词是「眼镜」，卧底的词是「墨镜」，卧底是小李。\"]}",
             "kind": "ask",
             "operation": "undercover_voice",
@@ -12519,7 +12892,7 @@
             "kind": "keepTable",
             "table": {
               "agreed": [],
-              "asked": "g127",
+              "asked": "g128",
               "asking": "voice",
               "chat": {
                 "chat": "-100777",
@@ -12697,29 +13070,6 @@
             "kind": "whispered",
             "ok": true
           },
-          "id": "g123",
-          "kind": "done"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957793000000,
-        "seed": 6829087300300085792
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "answer": {
-            "kind": "whispered",
-            "ok": true
-          },
           "id": "g124",
           "kind": "done"
         },
@@ -12729,8 +13079,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 16905136310951114991
+        "now": 1791957838000000,
+        "seed": 6559146963048588187
       },
       "output": {
         "effects": []
@@ -12752,8 +13102,31 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 16116227829547553874
+        "now": 1791957838000000,
+        "seed": 15767393152836266126
+      },
+      "output": {
+        "effects": []
+      }
+    },
+    {
+      "input": {
+        "event": {
+          "answer": {
+            "kind": "whispered",
+            "ok": true
+          },
+          "id": "g126",
+          "kind": "done"
+        },
+        "her": {
+          "asleepFor": null,
+          "away": false,
+          "busyFor": null,
+          "today": "2026-10-14"
+        },
+        "now": 1791957838000000,
+        "seed": 10836595749104211013
       },
       "output": {
         "effects": []
@@ -12766,7 +13139,7 @@
             "kind": "sent",
             "ok": true
           },
-          "id": "g126",
+          "id": "g127",
           "kind": "done"
         },
         "her": {
@@ -12775,8 +13148,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 11390306532056826297
+        "now": 1791957838000000,
+        "seed": 10606907278932479088
       },
       "output": {
         "effects": []
@@ -12790,7 +13163,7 @@
             "kind": "asked",
             "raw": null
           },
-          "id": "g127",
+          "id": "g128",
           "kind": "done"
         },
         "her": {
@@ -12799,8 +13172,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957793000000,
-        "seed": 11099667660123837908
+        "now": 1791957838000000,
+        "seed": 13837801228725764351
       },
       "output": {
         "effects": [
@@ -12841,7 +13214,7 @@
     {
       "input": {
         "event": {
-          "key": "g70",
+          "key": "g110",
           "kind": "woke"
         },
         "her": {
@@ -12850,8 +13223,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957798200493,
-        "seed": 2645470022513984403
+        "now": 1791957868000000,
+        "seed": 10375974120220782370
       },
       "output": {
         "effects": []
@@ -12860,7 +13233,7 @@
     {
       "input": {
         "event": {
-          "key": "g94",
+          "key": "g115",
           "kind": "woke"
         },
         "her": {
@@ -12869,8 +13242,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957803000000,
-        "seed": 12876106407896747814
+        "now": 1791957878000000,
+        "seed": 15805041139194030153
       },
       "output": {
         "effects": []
@@ -12879,7 +13252,7 @@
     {
       "input": {
         "event": {
-          "key": "g104",
+          "key": "g122",
           "kind": "woke"
         },
         "her": {
@@ -12888,65 +13261,8 @@
           "busyFor": null,
           "today": "2026-10-14"
         },
-        "now": 1791957813000000,
-        "seed": 7513084051608634621
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "key": "g109",
-          "kind": "woke"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957823000000,
-        "seed": 12372555892002383048
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "key": "g114",
-          "kind": "woke"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957833000000,
-        "seed": 10590310194181435511
-      },
-      "output": {
-        "effects": []
-      }
-    },
-    {
-      "input": {
-        "event": {
-          "key": "g121",
-          "kind": "woke"
-        },
-        "her": {
-          "asleepFor": null,
-          "away": false,
-          "busyFor": null,
-          "today": "2026-10-14"
-        },
-        "now": 1791957843000000,
-        "seed": 4255856589718474554
+        "now": 1791957888000000,
+        "seed": 4885077506310999332
       },
       "output": {
         "effects": []

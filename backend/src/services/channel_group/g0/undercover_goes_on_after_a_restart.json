@@ -4206,19 +4206,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "阿强"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "小李"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "小红"
             }
           ]
@@ -4236,19 +4236,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "阿强"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "小李"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "阿明"
             }
           ]
@@ -4266,19 +4266,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "小李"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "阿明"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "小红"
             }
           ]
@@ -4296,19 +4296,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "阿强"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "阿明"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "小红"
             }
           ]

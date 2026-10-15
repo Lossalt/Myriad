@@ -498,7 +498,14 @@ pub enum Event {
     /// Someone seated at the group's table whispered to her (`who` as
     /// `<platform>:<id>`): taken when it is a move of theirs in the game,
     /// else it is not the game's (see [`Outcome::taken`]).
-    Whispered { who: String, text: String },
+    Whispered {
+        who: String,
+        text: String,
+        /// A button pressed: the wait whose whisper it was on (see
+        /// [`Effect::Whisper`]); a button of a wait gone by is not taken.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<u64>,
+    },
 }
 
 /// Who wrote a line, as the end knows them.
@@ -883,6 +890,10 @@ pub enum Effect {
         /// (pressing one comes back whispered as its number).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         choices: Vec<String>,
+        /// With choices: which wait they are for, sent back with a button
+        /// pressed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<u64>,
     },
     /// Keep the game with seats at the group's table as it now stands, so
     /// it outlives a restart (none: there is none any more); handed back in

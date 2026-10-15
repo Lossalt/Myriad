@@ -4038,19 +4038,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "二号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "四号"
             }
           ]
@@ -4068,19 +4068,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "一号"
             }
           ]
@@ -4098,19 +4098,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "二号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "一号"
             }
           ]
@@ -4128,19 +4128,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:10:0",
               "text": "二号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:10:1",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:10:2",
               "text": "一号"
             }
           ]
@@ -6719,13 +6719,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:16:0",
               "text": "二号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:16:1",
               "text": "一号"
             }
           ]
@@ -6743,13 +6743,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:16:0",
               "text": "二号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:16:1",
               "text": "一号"
             }
           ]
@@ -10943,19 +10943,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:26:0",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:26:1",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:26:2",
               "text": "二号"
             }
           ]
@@ -10973,19 +10973,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:26:0",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:26:1",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:26:2",
               "text": "一号"
             }
           ]
@@ -11003,19 +11003,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:26:0",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:26:1",
               "text": "一号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:26:2",
               "text": "二号"
             }
           ]
@@ -11033,19 +11033,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:26:0",
               "text": "三号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:26:1",
               "text": "一号"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:26:2",
               "text": "二号"
             }
           ]
@@ -15463,13 +15463,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:34:0",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:34:1",
               "text": "二号"
             }
           ]
@@ -15487,13 +15487,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:34:0",
               "text": "四号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:34:1",
               "text": "一号"
             }
           ]
@@ -15511,13 +15511,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:34:0",
               "text": "一号"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:34:1",
               "text": "二号"
             }
           ]

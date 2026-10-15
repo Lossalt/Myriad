@@ -6145,13 +6145,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:11:0",
               "text": "丙"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:11:1",
               "text": "乙"
             }
           ]
@@ -6169,13 +6169,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:11:0",
               "text": "丙"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:11:1",
               "text": "甲"
             }
           ]
@@ -6193,13 +6193,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:11:0",
               "text": "甲"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:11:1",
               "text": "乙"
             }
           ]

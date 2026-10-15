@@ -324,10 +324,12 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             user,
             text,
             choices,
+            wait,
             ..
         } => {
             tokio::spawn(async move {
-                let ok = whisper(&token(&venue), &platform, &user, &text, &choices).await;
+                let wait = wait.unwrap_or_default();
+                let ok = whisper(&token(&venue), &platform, &user, &text, &choices, wait).await;
                 answered(venue, id, Answer::Whispered { ok }).await;
             });
         }

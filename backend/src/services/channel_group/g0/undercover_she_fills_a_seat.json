@@ -4519,19 +4519,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:9:0",
               "text": "阿强"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:9:1",
               "text": "Arael"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:9:2",
               "text": "小红"
             }
           ]
@@ -4549,19 +4549,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:9:0",
               "text": "阿强"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:9:1",
               "text": "Arael"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:9:2",
               "text": "阿明"
             }
           ]
@@ -4579,19 +4579,19 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:9:0",
               "text": "Arael"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:9:1",
               "text": "阿明"
             }
           ],
           [
             {
-              "callback_data": "seat:2",
+              "callback_data": "seat:9:2",
               "text": "小红"
             }
           ]

@@ -226,17 +226,18 @@ async fn how_she_talks_against_the_members() {
 #[test]
 fn a_games_buttons_come_back_as_their_number() {
     let choices: Vec<String> = (0..7).map(|n| format!("玩家{n}")).collect();
-    let telegram = platform::telegram_buttons(&choices).unwrap();
+    let telegram = platform::telegram_buttons(&choices, 12).unwrap();
     assert_eq!(telegram["inline_keyboard"].as_array().unwrap().len(), 7);
-    assert_eq!(telegram["inline_keyboard"][3][0]["callback_data"], "seat:3");
-    let discord = platform::discord_buttons(&choices).unwrap();
+    assert_eq!(telegram["inline_keyboard"][3][0]["callback_data"], "seat:12:3");
+    let discord = platform::discord_buttons(&choices, 12).unwrap();
     let rows = discord.as_array().unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[1]["components"][1]["custom_id"], "seat:6");
-    assert!(platform::telegram_buttons(&[]).is_none());
-    assert_eq!(seat_button("seat:3"), Some("3"));
-    assert_eq!(seat_button("seat:x"), None);
-    assert_eq!(seat_button("approve:1"), None);
+    assert_eq!(rows[1]["components"][1]["custom_id"], "seat:12:6");
+    assert!(platform::telegram_buttons(&[], 12).is_none());
+    assert_eq!(platform::seat_button("seat:12:3"), Some((Some(12), "3".into())));
+    assert_eq!(platform::seat_button("seat:12:x"), None);
+    assert_eq!(platform::seat_button("seat:3"), Some((None, "3".into())));
+    assert_eq!(platform::seat_button("approve:1"), None);
 }
 
 /// A pressed button of a game is the game's before anything looks at
@@ -258,7 +259,7 @@ fn a_games_button_is_the_games_before_pairing() {
         ),
     ] {
         let body = source.split(entry).nth(1).expect(name);
-        let game = body.find("channel_group::seat_button(").expect(name);
+        let game = body.find("channel_group::pressed(").expect(name);
         assert!(game < body.find(lookup).expect(name), "{name}");
     }
 }

@@ -180,6 +180,7 @@ fn tell_naming(cx: &mut Cx, s: &Seating, before: &str, seat: &Seat, after: &str)
 fn whisper(cx: &mut Cx, s: &Seating, seat: &Seat, text: String, choices: Vec<String>) -> String {
     let (platform, user) = platform_of(&seat.who);
     let (platform, user, chat) = (platform.to_string(), user.to_string(), s.chat.chat.clone());
+    let wait = (!choices.is_empty()).then_some(s.waited).flatten();
     cx.effect(|id| Effect::Whisper {
         id,
         platform,
@@ -187,6 +188,7 @@ fn whisper(cx: &mut Cx, s: &Seating, seat: &Seat, text: String, choices: Vec<Str
         chat,
         text,
         choices,
+        wait,
     })
 }
 
@@ -918,7 +920,7 @@ fn end(cx: &mut Cx, s: Seating) {
 
 /// A seat whispered back: a move when it is one of theirs now (taken), a
 /// move at the wrong time (taken, and they are told), else not the game's.
-pub(crate) fn whispered(cx: &mut Cx, who: &str, text: &str) -> bool {
+pub(crate) fn whispered(cx: &mut Cx, who: &str, text: &str, wait: Option<u64>) -> bool {
     let Some(mut s) = cx.group.seating.take() else {
         return false;
     };
@@ -935,6 +937,19 @@ pub(crate) fn whispered(cx: &mut Cx, who: &str, text: &str) -> bool {
         return false;
     };
     let view = game.seat_view(seat);
+    // A button of a wait gone by is not this one's: they are told so.
+    if wait.is_some_and(|wait| Some(wait) != s.waited) {
+        let sat = s.reachable[seat].clone();
+        whisper(
+            cx,
+            &s,
+            &sat,
+            crate::hosting::STALE_BUTTON_LINE.to_string(),
+            Vec::new(),
+        );
+        cx.group.seating = Some(s);
+        return true;
+    }
     let open = matches!(game.waiting(), Waiting::Choose(ref seats) if seats.contains(&seat));
     match crate::hosting::read_move(text, &view).filter(|_| open) {
         Some(index) => {

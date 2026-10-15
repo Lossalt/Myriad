@@ -88,9 +88,8 @@ pub(crate) use ledger::talk_between;
 pub use line::GroupLine;
 pub use mind::{
     back_from_away, catch_up, groups_lately, handle, muted, names_here, notice, record,
-    take_back_kept, take_back_tables, whispered,
+    pressed, take_back_kept, take_back_tables, whispered,
 };
-pub use platform::seat_button;
 pub use title::title;
 
 /// Groups she keeps in mind at once.

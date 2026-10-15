@@ -92,12 +92,13 @@ pub(super) async fn whisper(
     user: &str,
     text: &str,
     choices: &[String],
+    wait: u64,
 ) -> bool {
     #[cfg(test)]
     let who = format!("{platform}:{user}");
     let reached = match platform_of(platform) {
         Some(ChannelPlatform::Telegram) => {
-            let markup = telegram_buttons(choices);
+            let markup = telegram_buttons(choices, wait);
             #[cfg(test)]
             if g0::on() {
                 return g0::outbound(
@@ -125,7 +126,7 @@ pub(super) async fn whisper(
             let opened = crate::services::discord_bot::open_dm(token, user).await;
             match opened {
                 Ok(channel) => {
-                    let components = discord_buttons(choices);
+                    let components = discord_buttons(choices, wait);
                     #[cfg(test)]
                     if g0::on() {
                         return g0::outbound(
@@ -165,17 +166,23 @@ pub(super) async fn whisper(
     reached
 }
 
-/// What a pressed button of a game's sends back (`seat:<number>`), as the
-/// number of the choice, else none.
-pub fn seat_button(data: &str) -> Option<&str> {
-    data.strip_prefix(SEAT_BUTTON)
-        .filter(|number| number.parse::<usize>().is_ok())
+/// What a pressed button of a game's sends back (`seat:<wait>:<number>`):
+/// the wait it was for, and the number of the choice; else none. A button
+/// sent before buttons carried their wait (`seat:<number>`) has none.
+pub(super) fn seat_button(data: &str) -> Option<(Option<u64>, String)> {
+    let rest = data.strip_prefix(SEAT_BUTTON)?;
+    let (wait, number) = match rest.split_once(':') {
+        Some((wait, number)) => (Some(wait.parse().ok()?), number),
+        None => (None, rest),
+    };
+    number.parse::<usize>().ok()?;
+    Some((wait, number.to_string()))
 }
 
 const SEAT_BUTTON: &str = "seat:";
 
 /// A game's choices as Telegram inline buttons, one a row; none without.
-pub(super) fn telegram_buttons(choices: &[String]) -> Option<serde_json::Value> {
+pub(super) fn telegram_buttons(choices: &[String], wait: u64) -> Option<serde_json::Value> {
     (!choices.is_empty()).then(|| {
         let rows: Vec<serde_json::Value> = choices
             .iter()
@@ -183,7 +190,7 @@ pub(super) fn telegram_buttons(choices: &[String]) -> Option<serde_json::Value> 
             .map(|(index, choice)| {
                 serde_json::json!([{
                     "text": choice.chars().take(60).collect::<String>(),
-                    "callback_data": format!("{SEAT_BUTTON}{index}"),
+                    "callback_data": format!("{SEAT_BUTTON}{wait}:{index}"),
                 }])
             })
             .collect();
@@ -193,7 +200,7 @@ pub(super) fn telegram_buttons(choices: &[String]) -> Option<serde_json::Value> 
 
 /// A game's choices as Discord buttons, five a row (at most five rows);
 /// none without.
-pub(super) fn discord_buttons(choices: &[String]) -> Option<serde_json::Value> {
+pub(super) fn discord_buttons(choices: &[String], wait: u64) -> Option<serde_json::Value> {
     (!choices.is_empty()).then(|| {
         let buttons: Vec<serde_json::Value> = choices
             .iter()
@@ -204,7 +211,7 @@ pub(super) fn discord_buttons(choices: &[String]) -> Option<serde_json::Value> {
                     "type": 2,
                     "style": 1,
                     "label": choice.chars().take(80).collect::<String>(),
-                    "custom_id": format!("{SEAT_BUTTON}{index}"),
+                    "custom_id": format!("{SEAT_BUTTON}{wait}:{index}"),
                 })
             })
             .collect();

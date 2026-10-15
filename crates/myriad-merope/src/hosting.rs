@@ -872,6 +872,9 @@ pub fn speak_turn_lines(game: &str) -> (String, String) {
     )
 }
 
+/// Told to one who pressed a button of a choice gone by.
+pub const STALE_BUTTON_LINE: &str = "这个按钮是之前那次的，已经不算了。";
+
 /// Told to a seat whose move it is not.
 pub const NOT_YOURS_LINE: &str = "现在还没轮到你选。";
 

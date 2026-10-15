@@ -276,6 +276,22 @@ pub async fn handle(message: GroupLine, token: String) {
 /// whoever they are, paired or not); else it is not the game's, and goes on
 /// as any private line does.
 pub async fn whispered(platform: ChannelPlatform, from: &str, text: &str) -> bool {
+    whispered_on(platform, from, text, None).await
+}
+
+/// A button of a game that `from` pressed on `platform` (`data` as it
+/// came back): none when it is no game's button; else whether it was taken.
+pub async fn pressed(platform: ChannelPlatform, from: &str, data: &str) -> Option<bool> {
+    let (wait, choice) = seat_button(data)?;
+    Some(whispered_on(platform, from, &choice, wait).await)
+}
+
+async fn whispered_on(
+    platform: ChannelPlatform,
+    from: &str,
+    text: &str,
+    wait: Option<u64>,
+) -> bool {
     let who = format!("{}:{from}", platform.slug());
     let Some(venue) = SEATED
         .lock()
@@ -289,6 +305,7 @@ pub async fn whispered(platform: ChannelPlatform, from: &str, text: &str) -> boo
         Event::Whispered {
             who,
             text: text.to_string(),
+            wait,
         },
     );
     let taken = out.taken.unwrap_or(false);

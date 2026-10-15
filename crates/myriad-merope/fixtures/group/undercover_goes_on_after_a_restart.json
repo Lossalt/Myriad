@@ -806,7 +806,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小红\n1. 阿强\n2. 小李\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -819,7 +820,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 小李\n2. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -832,7 +834,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小红\n1. 小李\n2. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "13"
+            "user": "13",
+            "wait": 10
           },
           {
             "chat": "-100777",
@@ -845,7 +848,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小红\n1. 阿强\n2. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "14"
+            "user": "14",
+            "wait": 10
           },
           {
             "after": 60.0,
@@ -1113,6 +1117,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:11"
         },
         "her": {
@@ -1309,6 +1314,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:12"
         },
         "her": {
@@ -1509,6 +1515,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:13"
         },
         "her": {
@@ -1713,6 +1720,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 10,
           "who": "telegram:14"
         },
         "her": {
@@ -3939,7 +3947,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 小李\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 18
           },
           {
             "chat": "-100777",
@@ -3951,7 +3960,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 小李\n1. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "13"
+            "user": "13",
+            "wait": 18
           },
           {
             "chat": "-100777",
@@ -3963,7 +3973,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. 阿强\n1. 阿明\n点下面的按钮，或者回号码、名字。",
-            "user": "14"
+            "user": "14",
+            "wait": 18
           },
           {
             "after": 60.0,
@@ -4221,6 +4232,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:11"
         },
         "her": {
@@ -4430,6 +4442,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:13"
         },
         "her": {
@@ -4643,6 +4656,7 @@
         "event": {
           "kind": "whispered",
           "text": "0",
+          "wait": 18,
           "who": "telegram:14"
         },
         "her": {

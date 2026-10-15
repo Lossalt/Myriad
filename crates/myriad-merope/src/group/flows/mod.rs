@@ -378,8 +378,8 @@ fn step_on(group: &mut Group, at: &mut At, event: Event, out: &mut Outcome) {
             let now = cx.now();
             record_hers(cx.group, &format!("（表情包：{meaning}）"), now, cx.out);
         }
-        Event::Whispered { who, text } => {
-            let taken = whispered(&mut cx, &who, &text);
+        Event::Whispered { who, text, wait } => {
+            let taken = whispered(&mut cx, &who, &text, wait);
             cx.out.taken = Some(taken);
         }
         Event::Woke { key } => resume(&mut cx, &key, None),

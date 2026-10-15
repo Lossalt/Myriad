@@ -1212,13 +1212,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:2:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:2:1",
               "text": "guess the next seat's mark"
             }
           ]
@@ -1480,13 +1480,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:3:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:3:1",
               "text": "guess the next seat's mark"
             }
           ]
@@ -1740,13 +1740,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:4:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:4:1",
               "text": "guess the next seat's mark"
             }
           ]
@@ -1983,13 +1983,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:5:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:5:1",
               "text": "guess the next seat's mark"
             }
           ]
@@ -2384,13 +2384,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:6:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:6:1",
               "text": "guess the next seat's mark"
             }
           ]
@@ -2822,13 +2822,13 @@
         "inline_keyboard": [
           [
             {
-              "callback_data": "seat:0",
+              "callback_data": "seat:7:0",
               "text": "pass"
             }
           ],
           [
             {
-              "callback_data": "seat:1",
+              "callback_data": "seat:7:1",
               "text": "guess the next seat's mark"
             }
           ]

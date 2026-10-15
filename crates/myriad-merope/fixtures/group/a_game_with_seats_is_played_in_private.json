@@ -2884,7 +2884,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 2
           },
           {
             "after": 60.0,
@@ -3282,7 +3283,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 3
           },
           {
             "after": 60.0,
@@ -3605,7 +3607,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 4
           },
           {
             "after": 60.0,
@@ -3895,7 +3898,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 5
           },
           {
             "after": 60.0,
@@ -4339,7 +4343,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "11"
+            "user": "11",
+            "wait": 6
           },
           {
             "after": 60.0,
@@ -4843,7 +4848,8 @@
             "kind": "whisper",
             "platform": "telegram",
             "text": "轮到你选了：\n0. pass\n1. guess the next seat's mark\n点下面的按钮，或者回号码、名字。",
-            "user": "12"
+            "user": "12",
+            "wait": 7
           },
           {
             "after": 60.0,

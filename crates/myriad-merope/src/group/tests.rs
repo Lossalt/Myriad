@@ -2042,6 +2042,7 @@ fn g1_a_game_with_seats_is_played_in_private() {
             Event::Whispered {
                 who: who.into(),
                 text: text.into(),
+                wait: None,
             },
         );
     };
@@ -2150,6 +2151,7 @@ fn play_out(
                             Event::Whispered {
                                 who: sat.who.clone(),
                                 text,
+                                wait: seating.waited,
                             },
                         );
                     }
@@ -2245,13 +2247,25 @@ fn g1_undercover_is_played_with_buttons() {
         );
     }
     heard(&mut end, 101.0, message(9, 12, "小红", "等等", false));
-    play_out(
-        &mut end,
-        110.0,
-        3000.0,
-        &|seat, round| Some(format!("戴在脸上的{seat}-{round}")),
-        &|_| Some("0".into()),
+    let describe = |seat: usize, round: u32| Some(format!("戴在脸上的{seat}-{round}"));
+    play_out(&mut end, 110.0, 160.0, &describe, &|_| Some("0".into()));
+    // A button of the first vote, pressed after it was counted: not taken
+    // as a vote, and they are told it no longer counts.
+    let first_vote = end
+        .steps
+        .iter()
+        .flat_map(|step| step["output"]["effects"].as_array().cloned().unwrap_or_default())
+        .find_map(|effect| effect["wait"].as_u64())
+        .unwrap();
+    end.at(
+        BASE + secs(161.0),
+        Event::Whispered {
+            who: "telegram:11".into(),
+            text: "0".into(),
+            wait: Some(first_vote),
+        },
     );
+    play_out(&mut end, 165.0, 3000.0, &describe, &|_| Some("0".into()));
     assert!(end.group.seating.is_none(), "over");
     let said = said_in_group(&end);
     assert!(
@@ -2262,6 +2276,14 @@ fn g1_undercover_is_played_with_buttons() {
         said.iter()
             .any(|line| line == crate::hosting::MORE_TIME_LINE)
     );
+    let stale = end.steps.iter().any(|step| {
+        step["output"]["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|effect| effect["text"] == crate::hosting::STALE_BUTTON_LINE)
+    });
+    assert!(stale, "a button of a vote gone by is answered so");
     // Neither word is said in the group before the end.
     let end_at = said.iter().position(|line| line.contains("赢了")).unwrap();
     assert!(
