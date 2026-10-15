@@ -63,9 +63,9 @@
     "book": "書籍",
     "showBook": "顯示書籍",
     "expandFilters": "點選展開篩選",
-    "phantasi": "手帳",
-    "phantasiReading": "手帳",
-    "studio": "工作臺",
+    "phantasi": "部落格",
+    "phantasiReading": "部落格",
+    "studio": "創作臺",
     "agent": "Agent",
     "tapp": "Tapp 應用",
     "openTapp": "開啟 Tapp 應用"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "導航",
-        "body": "切換首頁、資料庫、手帳、平臺報告與 Tapp 應用。"
+        "body": "切換首頁、資料庫、部落格、平臺報告與 Tapp 應用。"
       },
       "home-grid": {
         "title": "宮格",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "各平臺畫像與資料洞察",
     "libraryFeature": "遊戲、影視、音樂收在一處",
     "platformProfile": "平臺畫像與報告生成",
-    "phantasiReading": "手帳",
+    "phantasiReading": "部落格",
     "phantasiDesc": "公開筆記",
     "phantasiFeature": "文章與友鏈",
     "tappApps": "Tapp 應用",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count} 個站點",
     "emptyTitle": "還沒有友情連結",
-    "emptyDescription": "前往手帳新增",
+    "emptyDescription": "前往創作臺新增",
     "loadFailed": "友情連結暫時不可用",
-    "openPhantasi": "在手帳中檢視友情連結",
+    "openPhantasi": "在部落格中檢視友情連結",
     "visitSite": "訪問 {name}",
     "samplePersonalBlog": "朋友的部落格",
     "sampleLifeAndNotes": "生活與隨筆",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "首頁",
         "library": "庫",
-        "phantasi": "資訊",
         "reports": "報告",
         "config": "設定",
         "tapp": "Tapp",
-        "studio": "工作臺",
+        "studio": "創作臺",
         "other": "這一頁"
       }
     },

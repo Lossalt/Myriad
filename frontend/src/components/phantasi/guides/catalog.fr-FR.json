@@ -2,25 +2,25 @@
   "overview": {
     "what": "Console d’admin. L’aperçu montre brouillons et publications à venir, puis notes, commentaires, médias, flux et import/export.",
     "chain": "① Choisissez une page à gauche.\n② Sur l’aperçu, reprenez un brouillon ou voyez ce qui va paraître.\n③ Écrivez, supprimez ou recatégorisez les notes.\n④ Relisez les commentaires et supprimez-les.\n⑤ Ajoutez, actualisez ou triez les flux.",
-    "frontend": "Le mur, le mur de notes et la page amis utilisent les sources et catégories changées ici.",
+    "frontend": "Le blog (/blog) génère ses articles, ses pages de catégorie et sa page d'amis à partir des notes et catégories d'ici, et se reconstruit après chaque modification. Les sources de flux ne servent qu'à l'application de lecture.",
     "notes": "Réservé aux administrateurs."
   },
   "notes": {
     "what": "Liste des notes. Ouvrir, supprimer, annuler une programmation, ajouter une catégorie en lot.",
     "chain": "① Ouvrez un titre pour éditer.\n② Filtrez par état, catégorie ou coauteur.\n③ Le mode édition sélectionne plusieurs notes. Deux catégories au plus.",
-    "frontend": "Les notes publiées vont au mur. Elles n’entrent dans le RSS public qu’après activation. Les programmées partent à l’heure.",
+    "frontend": "Les notes publiées sont générées dans le blog sous /blog/posts/. Elles n'entrent dans le flux public qu'une fois le RSS des notes activé. Les notes programmées partent à l'heure.",
     "notes": "Le corps et la couverture restent dans l’éditeur. Une troisième catégorie signale que c’est plein."
   },
   "comments": {
     "what": "Commentaires des notes. Quiconque voit la note peut les lire. L’admin peut supprimer.",
     "chain": "① Cherchez le texte, l’extrait ou le titre.\n② Ouvrez une ligne pour la note.\n③ Le mode édition en supprime plusieurs.",
-    "frontend": "Seul le lecteur de notes montre les commentaires. Pas les articles abonnés.",
+    "frontend": "Les articles du blog intègrent une zone de commentaires en bas. Les articles de flux n'en ont pas.",
     "notes": "Écrire demande une connexion. Les invités lisent seulement."
   },
   "reviews": {
     "what": "Demandes de lien ami et de flux. L’acceptation écrit une source classée « 友情链接 ».",
     "chain": "① Relisez le site et le RSS optionnel.\n② Accepter : une URL de flux devient une source à récupérer, sinon une entrée.\n③ Refuser ou supprimer le bruit.",
-    "frontend": "« Demander un lien ami » sur Amis arrive ici. Les sites acceptés vont à Amis ; un flux va aussi au mur.",
+    "frontend": "Les demandes « Demander un lien » de la page d'amis du blog arrivent ici. Une fois approuvés, les sites apparaissent sur la page d'amis ; ceux qui ont un RSS deviennent aussi des sources de flux.",
     "notes": "Ce n’est pas l’état « jamais récupéré ». Les demandes ont leur propre table."
   },
   "media": {
@@ -32,7 +32,7 @@
   "noteCategories": {
     "what": "Noms de catégories de notes. Filtres et ajout en lot s’en servent.",
     "chain": "① Créez ou renommez.\n② Supprimer n’enlève que cette partie.\n③ Liens d’amis / Moi n’apparaissent pas ici.",
-    "frontend": "Le mur de notes et cette liste filtrent par ces noms.",
+    "frontend": "Le blog génère les pages de catégorie à partir de ces noms. La liste du Studio filtre aussi avec eux.",
     "notes": "Deux catégories par note."
   },
   "notesIo": {

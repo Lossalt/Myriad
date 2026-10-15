@@ -63,9 +63,9 @@
     "book": "책",
     "showBook": "책 보기",
     "expandFilters": "클릭해서 필터 펼치기",
-    "phantasi": "수첩",
-    "phantasiReading": "수첩",
-    "studio": "작업대",
+    "phantasi": "블로그",
+    "phantasiReading": "블로그",
+    "studio": "스튜디오",
     "agent": "Agent",
     "tapp": "Tapp 앱",
     "openTapp": "Tapp 앱 열기"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "탐색",
-        "body": "홈, 라이브러리, 수첩, 플랫폼 리포트, Tapp 앱을 전환합니다."
+        "body": "홈, 라이브러리, 블로그, 플랫폼 리포트, Tapp 앱을 전환합니다."
       },
       "home-grid": {
         "title": "위젯 그리드",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "플랫폼별 프로필과 인사이트",
     "libraryFeature": "게임, 영상, 음악을 한곳에",
     "platformProfile": "플랫폼 프로필과 리포트 생성",
-    "phantasiReading": "수첩",
+    "phantasiReading": "블로그",
     "phantasiDesc": "공개 노트",
     "phantasiFeature": "글과 이웃 링크",
     "tappApps": "Tapp 앱",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count, plural, one {#곳} other {#곳}}",
     "emptyTitle": "친구 링크가 아직 없습니다",
-    "emptyDescription": "수첩에서 추가하세요",
+    "emptyDescription": "스튜디오에서 추가하세요",
     "loadFailed": "친구 링크를 잠시 쓸 수 없습니다",
-    "openPhantasi": "수첩에서 친구 링크 보기",
+    "openPhantasi": "블로그에서 친구 링크 보기",
     "visitSite": "{name} 방문",
     "samplePersonalBlog": "친구의 블로그",
     "sampleLifeAndNotes": "생활과 메모",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "홈",
         "library": "라이브러리",
-        "phantasi": "수첩",
         "reports": "리포트",
         "config": "설정",
         "tapp": "Tapp",
-        "studio": "작업대",
+        "studio": "스튜디오",
         "other": "이 페이지"
       }
     },

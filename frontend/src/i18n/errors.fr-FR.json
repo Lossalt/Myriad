@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "Retiré des favoris",
   "phantasiMarkLater": "Lire plus tard",
   "confirmAddFeed": "Cela ajoutera un nouveau flux RSS/Atom",
-  "confirmPhantasiSchedule": "Cela démarrera, arrêtera ou actualisera le planificateur Journal",
+  "confirmPhantasiSchedule": "Cela démarrera, arrêtera ou actualisera le planificateur d’abonnements",
   "confirmHttpFetch": "Cela enverra une requête HTTP vers une URL externe",
   "confirmCreateTappTask": "Cela créera une tâche Tapp planifiée",
   "confirmTriggerTappTask": "Cela exécutera maintenant une tâche Tapp planifiée",

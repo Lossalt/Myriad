@@ -86,7 +86,7 @@
   "workbenchMediaPrivate": "Privat",
   "workbenchMediaPublic": "Öffentlich",
   "workbenchUnscheduleFailed": "Zeitplan konnte nicht aufgehoben werden.",
-  "workbenchLoadFailed": "Werkbank konnte nicht geladen werden.",
+  "workbenchLoadFailed": "Studio konnte nicht geladen werden.",
   "workbenchWriteHint": "Neuer Entwurf",
   "workbenchUploadHint": "Dateien wählen",
   "workbenchNoteCategoriesHint": "Notizen ordnen",

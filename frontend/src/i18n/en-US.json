@@ -63,9 +63,9 @@
     "book": "Books",
     "showBook": "Show Books",
     "expandFilters": "Click to expand filters",
-    "phantasi": "Journal",
-    "phantasiReading": "Journal",
-    "studio": "Workbench",
+    "phantasi": "Blog",
+    "phantasiReading": "Blog",
+    "studio": "Studio",
     "agent": "Agent",
     "tapp": "Tapp Apps",
     "openTapp": "Open Tapp Apps"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "Navigation",
-        "body": "Switch among Home, Library, Journal, Platform Reports, and Tapp Apps."
+        "body": "Switch among Home, Library, Blog, Platform Reports, and Tapp Apps."
       },
       "home-grid": {
         "title": "Widget grid",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "Per-platform profiles and insights",
     "libraryFeature": "Games, films, and music in one place",
     "platformProfile": "Platform profiles and report generation",
-    "phantasiReading": "Journal",
+    "phantasiReading": "Blog",
     "phantasiDesc": "Public notes",
     "phantasiFeature": "Posts and friend links",
     "tappApps": "Tapp Apps",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count, plural, one {# site} other {# sites}}",
     "emptyTitle": "No friend links yet",
-    "emptyDescription": "Add them in Journal",
+    "emptyDescription": "Add them in Studio",
     "loadFailed": "Friend links are temporarily unavailable",
-    "openPhantasi": "View friend links in Journal",
+    "openPhantasi": "View friend links in Blog",
     "visitSite": "Visit {name}",
     "samplePersonalBlog": "A Friend's Blog",
     "sampleLifeAndNotes": "Life and notes",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "Home",
         "library": "Library",
-        "phantasi": "Journal",
         "reports": "Reports",
         "config": "Settings",
         "tapp": "Tapp",
-        "studio": "Workbench",
+        "studio": "Studio",
         "other": "this page"
       }
     },

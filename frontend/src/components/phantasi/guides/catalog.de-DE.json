@@ -2,25 +2,25 @@
   "overview": {
     "what": "Admin-Konsole. Überblick zeigt Entwürfe und anstehende Veröffentlichungen, dann Notizen, Kommentare, Medien, Abos und Import/Export.",
     "chain": "① Links eine Seite wählen.\n② Im Überblick Entwürfe fortsetzen oder anstehende Veröffentlichungen prüfen.\n③ Notizen schreiben, löschen oder umkategorisieren.\n④ Kommentare prüfen und löschen.\n⑤ Abos hinzufügen, aktualisieren oder sortieren.",
-    "frontend": "Abo-Wand, Notizwand und Freunde-Seite nutzen hier geänderte Quellen und Kategorien.",
+    "frontend": "Der Blog (/blog) erzeugt Beiträge, Kategorieseiten und die Freundesseite aus den Notizen und Kategorien hier und baut nach Änderungen neu. Feed-Quellen nutzt nur die Reader-App.",
     "notes": "Nur für Administratoren."
   },
   "notes": {
     "what": "Notizenliste. Öffnen, löschen, Zeitplan aufheben, Kategorie im Stapel setzen.",
     "chain": "① Titel öffnen zum Bearbeiten.\n② Nach Status, Kategorie oder Co-Autor filtern.\n③ Der Bearbeiten-Modus wählt mehrere aus. Höchstens zwei Kategorien.",
-    "frontend": "Veröffentlichte Notizen gehen an die Notizwand. Ins öffentliche RSS nur nach dem Einschalten. Geplante gehen pünktlich raus.",
+    "frontend": "Veröffentlichte Notizen landen im Blog unter /blog/posts/. In den öffentlichen Feed kommen sie erst, wenn Notizen-RSS an ist. Geplante gehen pünktlich raus.",
     "notes": "Text und Cover bleiben im Editor. Eine dritte Kategorie meldet: voll."
   },
   "comments": {
     "what": "Kommentare an Notizen. Wer die Notiz sieht, kann sie lesen. Admins können löschen.",
     "chain": "① Text, Auszug oder Titel suchen.\n② Eine Zeile öffnet die Notiz.\n③ Der Bearbeiten-Modus löscht mehrere.",
-    "frontend": "Nur der Notizleser zeigt Kommentare. Abonnierte Artikel nicht.",
+    "frontend": "Blogbeiträge haben unten einen eingebetteten Kommentarbereich. Feed-Artikel nicht.",
     "notes": "Schreiben braucht Login. Gäste lesen nur."
   },
   "reviews": {
     "what": "Anträge auf Freundeslink und Feed. Annahme schreibt eine Quelle mit der Kategorie «友情链接».",
     "chain": "① Seite und optionalen RSS prüfen.\n② Annehmen: eine Feed-URL wird holbar, sonst nur ein Einstieg.\n③ Ablehnen oder Müll löschen.",
-    "frontend": "„Freundeslink beantragen“ auf Freunde landet hier. Angenommene Seiten erscheinen bei Freunden; Feeds auch an der Wand.",
+    "frontend": "„Link anfragen“ auf der Freundesseite des Blogs landet hier. Freigegebene Seiten erscheinen auf der Freundesseite; mit RSS werden sie auch Feed-Quellen.",
     "notes": "Das ist nicht der Status „noch nie geholt“. Anträge liegen in einer eigenen Tabelle."
   },
   "media": {
@@ -32,7 +32,7 @@
   "noteCategories": {
     "what": "Notiz-Kategorienamen. Filter und Stapelzuweisung nutzen sie.",
     "chain": "① Anlegen oder umbenennen.\n② Löschen entfernt nur diesen Teil.\n③ Freundeslinks / Ich fehlen auf dieser Seite.",
-    "frontend": "Notizwand und diese Liste filtern nach diesen Namen.",
+    "frontend": "Der Blog erzeugt aus diesen Namen Kategorieseiten. Die Studio-Liste filtert ebenfalls danach.",
     "notes": "Zwei Kategorien pro Notiz."
   },
   "notesIo": {

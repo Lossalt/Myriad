@@ -63,9 +63,9 @@
     "book": "Livres",
     "showBook": "Afficher les livres",
     "expandFilters": "Ouvrir les filtres",
-    "phantasi": "Journal",
-    "phantasiReading": "Journal",
-    "studio": "Atelier",
+    "phantasi": "Blog",
+    "phantasiReading": "Blog",
+    "studio": "Studio",
     "agent": "Agent",
     "tapp": "Apps Tapp",
     "openTapp": "Ouvrir les apps Tapp"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "Navigation",
-        "body": "Passez de l'accueil à la bibliothèque, au Journal, aux rapports et aux apps Tapp."
+        "body": "Passez de l'accueil à la bibliothèque, au Blog, aux rapports et aux apps Tapp."
       },
       "home-grid": {
         "title": "Grille de widgets",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "Profils et regards par plateforme",
     "libraryFeature": "Jeux, films et musique au même endroit",
     "platformProfile": "Profils plateforme et génération de rapports",
-    "phantasiReading": "Journal",
+    "phantasiReading": "Blog",
     "phantasiDesc": "Notes publiques",
     "phantasiFeature": "Articles et liens",
     "tappApps": "Apps Tapp",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count, plural, one {# site} other {# sites}}",
     "emptyTitle": "Pas encore de liens amis",
-    "emptyDescription": "Ajoutez-les dans Journal",
+    "emptyDescription": "Ajoutez-les dans Studio",
     "loadFailed": "Les liens amis sont temporairement indisponibles",
-    "openPhantasi": "Voir les liens amis dans Journal",
+    "openPhantasi": "Voir les liens amis dans Blog",
     "visitSite": "Visiter {name}",
     "samplePersonalBlog": "Le blog d'un ami",
     "sampleLifeAndNotes": "Vie et notes",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "Accueil",
         "library": "Bibliothèque",
-        "phantasi": "Journal",
         "reports": "Rapports",
         "config": "Réglages",
         "tapp": "Tapp",
-        "studio": "Atelier",
+        "studio": "Studio",
         "other": "cette page"
       }
     },

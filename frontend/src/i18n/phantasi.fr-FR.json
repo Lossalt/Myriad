@@ -86,7 +86,7 @@
   "workbenchMediaPrivate": "Privé",
   "workbenchMediaPublic": "Public",
   "workbenchUnscheduleFailed": "Impossible d'annuler la programmation.",
-  "workbenchLoadFailed": "Impossible de charger l'atelier.",
+  "workbenchLoadFailed": "Impossible de charger Studio.",
   "workbenchWriteHint": "Nouveau brouillon",
   "workbenchUploadHint": "Choisir des fichiers",
   "workbenchNoteCategoriesHint": "Organiser les notes",

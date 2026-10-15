@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "取消收藏",
   "phantasiMarkLater": "稍後閱讀",
   "confirmAddFeed": "即將新增新的 RSS/Atom 訂閱源",
-  "confirmPhantasiSchedule": "即將控制手帳 訂閱排程器（啟動/停止/重新整理）",
+  "confirmPhantasiSchedule": "即將控制訂閱排程器（啟動/停止/重新整理）",
   "confirmHttpFetch": "即將向外部 URL 發起 HTTP 請求",
   "confirmCreateTappTask": "即將建立 Tapp 定時任務",
   "confirmTriggerTappTask": "即將立即觸發 Tapp 定時任務",

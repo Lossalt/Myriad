@@ -86,7 +86,7 @@
   "workbenchMediaPrivate": "비공개",
   "workbenchMediaPublic": "공개",
   "workbenchUnscheduleFailed": "예약을 취소하지 못했습니다.",
-  "workbenchLoadFailed": "작업대를 불러오지 못했습니다.",
+  "workbenchLoadFailed": "스튜디오를 불러오지 못했습니다.",
   "workbenchWriteHint": "초안 작성",
   "workbenchUploadHint": "파일 선택",
   "workbenchNoteCategoriesHint": "노트 정리",

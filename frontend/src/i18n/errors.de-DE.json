@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "Markierung entfernt",
   "phantasiMarkLater": "Später lesen",
   "confirmAddFeed": "Das fügt einen neuen RSS-/Atom-Feed hinzu",
-  "confirmPhantasiSchedule": "Das startet, stoppt oder aktualisiert den Journal-Zeitplaner",
+  "confirmPhantasiSchedule": "Das startet, stoppt oder aktualisiert den Abo-Zeitplaner",
   "confirmHttpFetch": "Das sendet eine HTTP-Anfrage an eine externe URL",
   "confirmCreateTappTask": "Das legt eine geplante Tapp-Aufgabe an",
   "confirmTriggerTappTask": "Das führt eine geplante Tapp-Aufgabe jetzt aus",

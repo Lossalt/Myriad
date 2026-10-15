@@ -2,25 +2,25 @@
   "overview": {
     "what": "Admin console. Overview shows drafts and upcoming publishes, then notes, comments, media, feeds, and import/export.",
     "chain": "① Pick a page on the left.\n② On Overview, resume drafts or check upcoming publishes.\n③ Write, delete, or recategorize notes.\n④ Review comments and delete them.\n⑤ Add, refresh, or sort feeds.",
-    "frontend": "The feed wall, note wall, and friends page use sources and categories you change here.",
+    "frontend": "The blog (/blog) builds its posts, category pages and friends page from the notes and categories here, and rebuilds after changes. Feed sources are only used by the reader app.",
     "notes": "Admins only."
   },
   "notes": {
     "what": "Note list. Open, delete, cancel a schedule, or batch-add a category.",
     "chain": "① Open a title to edit.\n② Filter by status, category, or any co-author.\n③ Edit mode selects many for delete or category. Two categories max.",
-    "frontend": "Published notes hit the note wall. They enter the public RSS only after you turn it on. Scheduled ones go out on time.",
+    "frontend": "Published notes are built into the blog under /blog/posts/. They join the public feed only after notes RSS is on. Scheduled notes go out on time.",
     "notes": "Body and cover stay in the editor. A third category prompts that it is full."
   },
   "comments": {
     "what": "Comments on notes. Anyone who can see the note can read them. You can delete any.",
     "chain": "① Search body, excerpt, or title.\n② Open a row to jump to the note.\n③ Edit mode selects many to delete.",
-    "frontend": "Only the note reader shows comments. Feed articles do not.",
+    "frontend": "Blog posts embed a comment section at the bottom. Feed articles have none.",
     "notes": "Writing still needs a login. Guests can only read."
   },
   "reviews": {
     "what": "Friend-link and feed applications. Approving writes a source with the Friends category.",
     "chain": "① Review the site and optional RSS.\n② Approve: a feed URL becomes a fetchable source, otherwise a link entry.\n③ Reject or delete junk.",
-    "frontend": "Friends “Apply for a friend link” lands here. Approved sites appear on Friends; feeds also hit the feed wall.",
+    "frontend": "\"Apply for a link\" on the blog's friends page lands here. Approved sites appear on the friends page; those with RSS also become feed sources.",
     "notes": "This is not the “never fetched” source status. Applications live in their own table."
   },
   "media": {
@@ -32,7 +32,7 @@
   "noteCategories": {
     "what": "Note category names. Filters and batch-add use these.",
     "chain": "① Open a category to see its notes.\n② Create or rename.\n③ Deleting a name strips that part only. Friend Links / Me are not on this page.",
-    "frontend": "Opening a category lists the notes in it. The note wall and this list filter by these names.",
+    "frontend": "The blog builds category pages from these names. The Studio list filters by them too.",
     "notes": "Two categories per note."
   },
   "notesIo": {

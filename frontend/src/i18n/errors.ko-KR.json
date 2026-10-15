@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "별표 해제",
   "phantasiMarkLater": "나중에 읽기",
   "confirmAddFeed": "새 RSS/Atom 피드를 추가합니다",
-  "confirmPhantasiSchedule": "수첩 스케줄러를 시작, 중지, 또는 새로고침합니다",
+  "confirmPhantasiSchedule": "구독 스케줄러를 시작, 중지, 또는 새로고침합니다",
   "confirmHttpFetch": "외부 URL로 HTTP 요청을 보냅니다",
   "confirmCreateTappTask": "Tapp 예약 작업을 만듭니다",
   "confirmTriggerTappTask": "Tapp 예약 작업을 지금 실행합니다",

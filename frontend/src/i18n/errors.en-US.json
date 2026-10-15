@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "Unstarred",
   "phantasiMarkLater": "Read later",
   "confirmAddFeed": "This will add a new RSS/Atom feed",
-  "confirmPhantasiSchedule": "This will start, stop, or refresh the Journal scheduler",
+  "confirmPhantasiSchedule": "This will start, stop, or refresh the subscription scheduler",
   "confirmHttpFetch": "This will send an HTTP request to an external URL",
   "confirmCreateTappTask": "This will create a scheduled Tapp task",
   "confirmTriggerTappTask": "This will run a scheduled Tapp task now",

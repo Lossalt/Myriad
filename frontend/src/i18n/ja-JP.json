@@ -63,9 +63,9 @@
     "book": "書籍",
     "showBook": "書籍を表示",
     "expandFilters": "クリックでフィルターを展開",
-    "phantasi": "手帳",
-    "phantasiReading": "手帳",
-    "studio": "ワークベンチ",
+    "phantasi": "ブログ",
+    "phantasiReading": "ブログ",
+    "studio": "スタジオ",
     "agent": "Agent",
     "tapp": "Tapp アプリ",
     "openTapp": "Tapp アプリを開く"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "ナビゲーション",
-        "body": "ホーム、ライブラリ、手帳、プラットフォームレポート、Tapp アプリを切り替えます。"
+        "body": "ホーム、ライブラリ、ブログ、プラットフォームレポート、Tapp アプリを切り替えます。"
       },
       "home-grid": {
         "title": "ウィジェット",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "各プラットフォームのプロフィールと洞察",
     "libraryFeature": "ゲーム、映像、音楽を一か所に",
     "platformProfile": "プラットフォームレポートの生成と閲覧",
-    "phantasiReading": "手帳",
+    "phantasiReading": "ブログ",
     "phantasiDesc": "公開ノート",
     "phantasiFeature": "記事と相互リンク",
     "tappApps": "Tapp アプリ",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count} サイト",
     "emptyTitle": "相互リンクはまだありません",
-    "emptyDescription": "手帳で追加できます",
+    "emptyDescription": "スタジオで追加できます",
     "loadFailed": "相互リンクを一時的に利用できません",
-    "openPhantasi": "手帳で相互リンクを見る",
+    "openPhantasi": "ブログで相互リンクを見る",
     "visitSite": "{name} を開く",
     "samplePersonalBlog": "友人のブログ",
     "sampleLifeAndNotes": "暮らしと随筆",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "ホーム",
         "library": "ライブラリ",
-        "phantasi": "ニュース",
         "reports": "レポート",
         "config": "設定",
         "tapp": "Tapp",
-        "studio": "ワークベンチ",
+        "studio": "スタジオ",
         "other": "このページ"
       }
     },

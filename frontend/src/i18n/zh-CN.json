@@ -63,9 +63,9 @@
     "book": "书籍",
     "showBook": "显示书籍",
     "expandFilters": "点击展开筛选",
-    "phantasi": "手帐",
-    "phantasiReading": "手帐",
-    "studio": "工作台",
+    "phantasi": "博客",
+    "phantasiReading": "博客",
+    "studio": "创作台",
     "agent": "Agent",
     "tapp": "Tapp 应用",
     "openTapp": "打开 Tapp 应用"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "导航",
-        "body": "切换首页、资料库、手帐、平台报告与 Tapp 应用。"
+        "body": "切换首页、资料库、博客、平台报告与 Tapp 应用。"
       },
       "home-grid": {
         "title": "宫格",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "各平台画像与数据洞察",
     "libraryFeature": "游戏、影视、音乐收在一处",
     "platformProfile": "平台画像与报告生成",
-    "phantasiReading": "手帐",
+    "phantasiReading": "博客",
     "phantasiDesc": "公开笔记",
     "phantasiFeature": "文章与友链",
     "tappApps": "Tapp 应用",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count} 个站点",
     "emptyTitle": "还没有友情链接",
-    "emptyDescription": "前往手帐添加",
+    "emptyDescription": "前往创作台添加",
     "loadFailed": "友情链接暂时不可用",
-    "openPhantasi": "在手帐中查看友情链接",
+    "openPhantasi": "在博客中查看友情链接",
     "visitSite": "访问 {name}",
     "samplePersonalBlog": "朋友的博客",
     "sampleLifeAndNotes": "生活与随笔",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "首页",
         "library": "库",
-        "phantasi": "资讯",
         "reports": "报告",
         "config": "设置",
         "tapp": "Tapp",
-        "studio": "工作台",
+        "studio": "创作台",
         "other": "这一页"
       }
     },

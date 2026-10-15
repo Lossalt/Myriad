@@ -86,7 +86,7 @@
   "workbenchMediaPrivate": "Private",
   "workbenchMediaPublic": "Public",
   "workbenchUnscheduleFailed": "Could not cancel the schedule.",
-  "workbenchLoadFailed": "Could not load the workbench.",
+  "workbenchLoadFailed": "Could not load Studio.",
   "workbenchWriteHint": "New draft",
   "workbenchUploadHint": "Choose files",
   "workbenchNoteCategoriesHint": "Organize notes",

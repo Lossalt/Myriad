@@ -225,7 +225,7 @@
   "phantasiMarkUnstarred": "スター解除",
   "phantasiMarkLater": "あとで読む",
   "confirmAddFeed": "新しい RSS/Atom フィードを追加します",
-  "confirmPhantasiSchedule": "手帳のスケジューラを開始・停止・更新します",
+  "confirmPhantasiSchedule": "購読スケジューラを開始・停止・更新します",
   "confirmHttpFetch": "外部 URL に HTTP リクエストを送ります",
   "confirmCreateTappTask": "Tapp の定期タスクを作成します",
   "confirmTriggerTappTask": "Tapp の定期タスクを今すぐ実行します",

@@ -86,7 +86,7 @@
   "workbenchMediaPrivate": "非公開",
   "workbenchMediaPublic": "公開",
   "workbenchUnscheduleFailed": "予約を取り消せませんでした。",
-  "workbenchLoadFailed": "ワークベンチを読み込めませんでした。",
+  "workbenchLoadFailed": "スタジオを読み込めませんでした。",
   "workbenchWriteHint": "下書きを作成",
   "workbenchUploadHint": "ファイルを選択",
   "workbenchNoteCategoriesHint": "ノートを整理",

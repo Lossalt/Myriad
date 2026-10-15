@@ -63,9 +63,9 @@
     "book": "Bücher",
     "showBook": "Bücher zeigen",
     "expandFilters": "Filter aufklappen",
-    "phantasi": "Journal",
-    "phantasiReading": "Journal",
-    "studio": "Werkbank",
+    "phantasi": "Blog",
+    "phantasiReading": "Blog",
+    "studio": "Studio",
     "agent": "Agent",
     "tapp": "Tapp-Apps",
     "openTapp": "Tapp-Apps öffnen"
@@ -132,7 +132,7 @@
     "steps": {
       "nav": {
         "title": "Navigation",
-        "body": "Wechseln Sie zwischen Start, Bibliothek, Journal, Plattformberichten und Tapp-Apps."
+        "body": "Wechseln Sie zwischen Start, Bibliothek, Blog, Plattformberichten und Tapp-Apps."
       },
       "home-grid": {
         "title": "Widget-Raster",
@@ -537,7 +537,7 @@
     "dualLayerAnalysis": "Profile und Einblicke je Plattform",
     "libraryFeature": "Spiele, Filme und Musik an einem Ort",
     "platformProfile": "Plattformprofile und Berichte erzeugen",
-    "phantasiReading": "Journal",
+    "phantasiReading": "Blog",
     "phantasiDesc": "Öffentliche Notizen",
     "phantasiFeature": "Beiträge und Links",
     "tappApps": "Tapp-Apps",
@@ -547,9 +547,9 @@
   "friendLinksWidget": {
     "siteCount": "{count, plural, one {# Seite} other {# Seiten}}",
     "emptyTitle": "Noch keine Freundelinks",
-    "emptyDescription": "In Journal hinzufügen",
+    "emptyDescription": "In Studio hinzufügen",
     "loadFailed": "Freundelinks sind gerade nicht verfügbar",
-    "openPhantasi": "Freundelinks in Journal ansehen",
+    "openPhantasi": "Freundelinks in Blog ansehen",
     "visitSite": "{name} besuchen",
     "samplePersonalBlog": "Blog einer Freundin",
     "sampleLifeAndNotes": "Leben und Notizen",
@@ -708,11 +708,10 @@
       "routes": {
         "home": "Start",
         "library": "Bibliothek",
-        "phantasi": "Journal",
         "reports": "Berichte",
         "config": "Einstellungen",
         "tapp": "Tapp",
-        "studio": "Werkbank",
+        "studio": "Studio",
         "other": "diese Seite"
       }
     },
