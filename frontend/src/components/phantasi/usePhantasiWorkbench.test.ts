@@ -100,15 +100,10 @@ const demands: Array<[WorkbenchPane, string[], boolean]> = [
   ['notes', [notesPath], true],
   ['notesIo', [notesPath], false],
   ['noteCategories', [notesPath], true],
-  ['sourceCategories', [notesPath], true],
-  ['sources', [notesPath], true],
-  ['add', [notesPath], true],
   ['media', [mediaPath], false],
   ['comments', [commentsPath], false],
   ['reviews', [reviewsPath], false],
-  ['topics', [], false],
-  ['rsshub', [], false],
-  ['feedsIo', [], false],
+  ['blog', [], false],
 ]
 for (const [pane, paths, categories] of demands) {
   it(`${pane} requests only resources used by its visible content and category actions`, async () => {
@@ -151,7 +146,7 @@ for (const pane of ['comments', 'media', 'reviews'] as const) {
       try {
         await render(pane)
         assert.ok(signal)
-        await render('topics')
+        await render('blog')
         assert.equal(signal.aborted, true)
         globalThis.fetch = fetch
         await render(pane)
@@ -189,7 +184,7 @@ for (const [pane, reload] of [
     await withWorkbench(async ({ render, current, requested }) => {
       await render(pane)
       const reloadAfterMutation = current()[reload]
-      await render('topics')
+      await render('blog')
       requestCache.deleteByPrefix('phantasi:')
       requested.length = 0
       await act(async () => { await reloadAfterMutation() })
@@ -206,7 +201,7 @@ it('leaving notes discards a late shared-cache result without clearing previousl
     requestCache.deleteByPrefix('phantasi:')
     let pending!: Promise<void>
     await act(async () => { pending = current().reloadNotes() })
-    await render('topics')
+    await render('blog')
     await act(async () => {
       response.resolve(Response.json({ success: true, docs: [{ ...doc, title: 'Too late' }] }))
       await pending

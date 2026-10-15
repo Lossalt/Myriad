@@ -1,4 +1,4 @@
-/** 工作台分类：笔记 topic 和订阅 category 共用名字。预置分类不能改。 */
+/** 工作台分类：笔记 topic。预置分类不能改。 */
 
 import {
   isFriendLinkCategory,
@@ -7,8 +7,6 @@ import {
 } from '../constants'
 import { normalizeNoteCategory } from '../notes/noteCategory'
 
-export type WorkbenchCategoryPage = 'notes' | 'sources'
-
 const CANON_FRIEND_CATEGORY = '友情链接'
 const CANON_MINE_CATEGORY = '我'
 
@@ -16,7 +14,6 @@ export interface WorkbenchCategoryRow {
   name: string
   catalogId: number | null
   noteCount: number
-  sourceCount: number
   locked: boolean
 }
 
@@ -90,7 +87,6 @@ export function removeCategoryPart(
 export function collectWorkbenchCategoryRows(
   catalog: readonly { id: number; name: string }[],
   notes: readonly { topic?: string | null }[],
-  sources: readonly { category?: string | null }[],
 ): WorkbenchCategoryRow[] {
   const catalogByName = new Map<string, number>()
   for (const item of catalog) {
@@ -105,26 +101,12 @@ export function collectWorkbenchCategoryRows(
       noteCounts.set(name, (noteCounts.get(name) ?? 0) + 1)
     }
   }
-  const sourceCounts = new Map<string, number>()
-  for (const source of sources) {
-    for (const part of phantasiCategoryParts(source.category)) {
-      const name = canonCategoryName(part)
-      sourceCounts.set(name, (sourceCounts.get(name) ?? 0) + 1)
-    }
-  }
-  const names = new Set([
-    CANON_FRIEND_CATEGORY,
-    CANON_MINE_CATEGORY,
-    ...catalogByName.keys(),
-    ...noteCounts.keys(),
-    ...sourceCounts.keys(),
-  ])
+  const names = new Set([...catalogByName.keys(), ...noteCounts.keys()])
   return [...names]
     .map((name) => ({
       name,
       catalogId: catalogByName.get(name) ?? null,
       noteCount: noteCounts.get(name) ?? 0,
-      sourceCount: sourceCounts.get(name) ?? 0,
       locked: isLockedCategory(name),
     }))
     .toSorted((a, b) => {
@@ -144,32 +126,12 @@ export function noteMatchesCategory(
   )
 }
 
-export function categoryMatchesPage(
-  row: WorkbenchCategoryRow,
-  page: WorkbenchCategoryPage,
-): boolean {
-  if (page === 'notes') return !row.locked
-  return true
-}
-
+/** 笔记分类页不展示预置分类。 */
 export function collectWorkbenchCategoryPageRows(
   catalog: readonly { id: number; name: string }[],
   notes: readonly { topic?: string | null }[],
-  sources: readonly { category?: string | null }[],
-  page: WorkbenchCategoryPage,
 ): WorkbenchCategoryRow[] {
-  const rows =
-    page === 'notes'
-      ? collectWorkbenchCategoryRows(catalog, notes, [])
-      : collectWorkbenchCategoryRows(catalog, [], sources)
-  return rows.filter((row) => categoryMatchesPage(row, page))
-}
-
-export function categoryUsedOnOtherPage(
-  row: WorkbenchCategoryRow,
-  page: WorkbenchCategoryPage,
-): boolean {
-  return page === 'notes' ? row.sourceCount > 0 : row.noteCount > 0
+  return collectWorkbenchCategoryRows(catalog, notes).filter((row) => !row.locked)
 }
 
 export function canUseCategoryName(

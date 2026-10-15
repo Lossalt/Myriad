@@ -64,14 +64,14 @@ it('a partial category write refreshes completed changes even when a later revis
     const errors: string[] = []
     const report = (message: string) => { errors.push(message) }
     function Harness() {
-      categories = usePhantasiCategories(true, docs, [], {
+      categories = usePhantasiCategories(true, docs, {
         loadFailed: 'load', createFailed: 'create', renameFailed: 'rename',
         deleteFailed: 'delete', assignFailed: 'assign', categoryFull: 'full', untitled: 'untitled',
-      }, report, async () => {}, () => { refreshed++ })
+      }, report, () => { refreshed++ })
       return null
     }
     await act(async () => root.render(createElement(Harness)))
-    await act(async () => { assert.equal(await categories.assign('notes', [1, 2], 'science'), false) })
+    await act(async () => { assert.equal(await categories.assign([1, 2], 'science'), false) })
     assert.equal(refreshed, 1)
     assert.equal(errors.length, 1)
     assert.equal(categories.busy, false)
@@ -103,15 +103,15 @@ for (const operation of ['assign', 'rename'] as const) {
       const report = () => {}
       function Harness() {
         const [docs, setDocs] = useState([stale])
-        categories = usePhantasiCategories(true, docs, [], {
+        categories = usePhantasiCategories(true, docs, {
           loadFailed: 'load', createFailed: 'create', renameFailed: 'rename',
           deleteFailed: 'delete', assignFailed: 'assign', categoryFull: 'full', untitled: 'untitled',
-        }, report, async () => {}, () => { pending = loadNoteDocs().then(setDocs) })
+        }, report, () => { pending = loadNoteDocs().then(setDocs) })
         return null
       }
       await act(async () => root.render(createElement(Harness)))
       const attempt = () => operation === 'assign'
-        ? categories.assign('notes', [1], 'new') : categories.rename('old', 'new', 'notes')
+        ? categories.assign([1], 'new') : categories.rename('old', 'new')
       await act(async () => { assert.equal(await attempt(), false); await pending })
       await act(async () => { assert.equal(await attempt(), true); await pending })
       assert.deepEqual(revisions, [1, 2])
@@ -141,14 +141,14 @@ it('changing a published note category sends a revision-checked metadata command
     const report = (message: string) => { errors.push(message) }
     const docs = [doc]
     function Harness() {
-      categories = usePhantasiCategories(true, docs, [], {
+      categories = usePhantasiCategories(true, docs, {
         loadFailed: 'load', createFailed: 'create', renameFailed: 'rename',
         deleteFailed: 'delete', assignFailed: 'assign', categoryFull: 'full', untitled: 'untitled',
-      }, report, async () => {}, () => { refreshed++ })
+      }, report, () => { refreshed++ })
       return null
     }
     await act(async () => root.render(createElement(Harness)))
-    await act(async () => { assert.equal(await categories.assign('notes', [8], 'science'), true) })
+    await act(async () => { assert.equal(await categories.assign([8], 'science'), true) })
     assert.deepEqual(writes, [{ path: '/api/phantasi/notes/docs/8/topic', body: { topic: 'science', revision: 12 } }])
     assert.equal(refreshed, 1)
     assert.deepEqual(errors, [])

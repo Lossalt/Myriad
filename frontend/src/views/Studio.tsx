@@ -31,8 +31,7 @@ function deskPane(section: StudioSection): WorkbenchPane {
     case 'import':
       return 'notesIo'
     case 'blog':
-      // 博客页不拉笔记/媒体/评论。topics 这一档本来就不取这些。
-      return 'topics'
+      return 'blog'
   }
 }
 
@@ -100,7 +99,6 @@ function StudioDesk({ section }: { section: StudioSection }) {
   const categories = usePhantasiCategories(
     section === 'notes' || section === 'categories' || section === 'home',
     workbench.docs,
-    [],
     {
       loadFailed: t.phantasi.workbenchCategoryLoadFailed,
       createFailed: t.phantasi.workbenchCategoryCreateFailed,
@@ -111,7 +109,6 @@ function StudioDesk({ section }: { section: StudioSection }) {
       untitled: t.phantasi.workbenchNoteUntitled,
     },
     setError,
-    async () => {},
     () => {
       setDocsEpoch((value) => value + 1)
     },
@@ -142,8 +139,8 @@ function StudioDesk({ section }: { section: StudioSection }) {
       categoriesLoading={categories.loading}
       categoriesBusy={categories.busy}
       onCreateCategory={categories.create}
-      onRenameCategory={(from, to) => categories.rename(from, to, 'notes')}
-      onDeleteCategory={(name) => categories.remove(name, 'notes')}
+      onRenameCategory={(from, to) => categories.rename(from, to)}
+      onDeleteCategory={(name) => categories.remove(name)}
       notesBusy={notesIo.loading}
       notesKind={notesIo.activeKind}
       notesProgress={
@@ -164,7 +161,7 @@ function StudioDesk({ section }: { section: StudioSection }) {
       onDeleteNotes={async (docs) => workbench.removeNotes(docs)}
       onUnschedule={workbench.unschedule}
       onAssignNotes={(docs, name) => {
-        void categories.assign('notes', docs.map((doc) => doc.id), name)
+        void categories.assign(docs.map((doc) => doc.id), name)
       }}
       onDeleteComments={(ids) => {
         void workbench.removeComments(ids)

@@ -2,8 +2,6 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   canUseCategoryName,
-  categoryMatchesPage,
-  categoryUsedOnOtherPage,
   collectWorkbenchCategoryPageRows,
   collectWorkbenchCategoryRows,
   formatCategoryFullNotice,
@@ -62,24 +60,18 @@ describe('renameCategoryPart / removeCategoryPart', () => {
 })
 
 describe('collectWorkbenchCategoryRows', () => {
-  it('合并目录、笔记和订阅，预置分类锁住并排后', () => {
+  it('合并目录和笔记，预置分类锁住并排后', () => {
     const rows = collectWorkbenchCategoryRows(
-      [{ id: 9, name: '旅行' }],
+      [{ id: 9, name: '旅行' }, { id: 3, name: 'friend_links' }],
       [{ topic: '旅行' }, { topic: '随笔' }, { topic: null }],
-      [
-        { category: '工程, 旅行' },
-        { category: 'friend_links' },
-        { category: 'mine' },
-      ],
     )
     assert.deepEqual(
       rows.map((row) => row.name),
-      ['工程', '旅行', '随笔', '我', '友情链接'],
+      ['旅行', '随笔', '友情链接'],
     )
     const travel = rows.find((row) => row.name === '旅行')
     assert.equal(travel?.catalogId, 9)
     assert.equal(travel?.noteCount, 1)
-    assert.equal(travel?.sourceCount, 1)
     assert.equal(rows.find((row) => row.name === '友情链接')?.locked, true)
     assert.equal(rows.find((row) => row.name === '随笔')?.catalogId, null)
   })
@@ -88,57 +80,28 @@ describe('collectWorkbenchCategoryRows', () => {
     const rows = collectWorkbenchCategoryRows(
       [],
       [{ topic: '工程, 旅行' }, { topic: '工程' }],
-      [],
     )
     assert.equal(rows.find((row) => row.name === '工程')?.noteCount, 2)
     assert.equal(rows.find((row) => row.name === '旅行')?.noteCount, 1)
   })
 
-  it('没有占用时也留下预置分类，编辑订阅看得到的那一对', () => {
-    const rows = collectWorkbenchCategoryRows([], [], [])
-    assert.deepEqual(
-      rows.map((row) => row.name),
-      ['我', '友情链接'],
-    )
-    assert.equal(rows.every((row) => row.locked), true)
+  it('没有目录和笔记时不造分类', () => {
+    assert.deepEqual(collectWorkbenchCategoryRows([], []), [])
   })
 })
 
-describe('categoryMatchesPage / canUseCategoryName', () => {
-  it('笔记页不看预置，订阅页看预置；预置名不能新建', () => {
+describe('collectWorkbenchCategoryPageRows / canUseCategoryName', () => {
+  it('笔记页不看预置；预置名不能新建', () => {
     const rows = collectWorkbenchCategoryPageRows(
-      [{ id: 9, name: '旅行' }],
-      [{ topic: '随笔' }],
-      [{ category: '工程' }],
-      'notes',
+      [
+        { id: 9, name: '旅行' },
+        { id: 1, name: '友情链接' },
+      ],
+      [{ topic: '随笔' }, { topic: '我' }],
     )
     assert.deepEqual(
       rows.map((row) => row.name),
       ['旅行', '随笔'],
-    )
-    const sourceRows = collectWorkbenchCategoryPageRows(
-      [{ id: 9, name: '旅行' }],
-      [{ topic: '随笔' }],
-      [{ category: '工程' }],
-      'sources',
-    )
-    assert.deepEqual(
-      sourceRows.map((row) => row.name),
-      ['工程', '旅行', '我', '友情链接'],
-    )
-    assert.equal(categoryMatchesPage(sourceRows[0], 'sources'), true)
-    assert.equal(
-      categoryUsedOnOtherPage(
-        {
-          name: '随笔',
-          catalogId: null,
-          noteCount: 2,
-          sourceCount: 0,
-          locked: false,
-        },
-        'notes',
-      ),
-      false,
     )
     assert.equal(canUseCategoryName('旅行', ['旅行']), false)
     assert.equal(canUseCategoryName('新分类', ['旅行']), true)

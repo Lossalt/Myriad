@@ -328,7 +328,6 @@ export function StudioShell({
             )}
           >
             <PhantasiCategoryAdmin
-              page="notes"
               query={categoryQuery}
               rows={categoryRows}
               notes={docs}

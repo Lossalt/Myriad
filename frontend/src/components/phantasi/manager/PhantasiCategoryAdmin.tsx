@@ -1,19 +1,15 @@
-/** 工作台分类管理。皮不进口这一层。笔记页和订阅页各管各的。 */
+/** 工作台分类管理。皮不进口这一层。只管理笔记分类。 */
 
 import type { ReactNode } from 'react'
-import type { PhantasiNoteDoc, PhantasiSource } from '../../../types/phantasi'
+import type { PhantasiNoteDoc } from '../../../types/phantasi'
 import type { ManagedListItem } from '../../settings/ManagedList'
-import type {
-  WorkbenchCategoryPage,
-  WorkbenchCategoryRow,
-} from '../logic/categories'
+import type { WorkbenchCategoryRow } from '../logic/categories'
 import type { WorkbenchNoteOpen } from '../logic/workbench'
 import { LuPlus } from '@lib/icons'
 import { useCallback, useMemo, useState } from 'react'
 import { useI18n } from '../../../contexts/I18nContext'
 import { InputItem, ManagedList, SettingsButton } from '../../settings'
-import { getIconUrl, getImageUrl, isFriendLinkCategory, isMineCategory } from '../constants'
-import { sourceMatchesCategory } from '../logic/board'
+import { getImageUrl, isFriendLinkCategory, isMineCategory } from '../constants'
 import {
   canUseCategoryName,
   normalizeWorkbenchCategoryName,
@@ -27,10 +23,8 @@ import {
 } from '../logic/workbench'
 
 export function PhantasiCategoryAdmin({
-  page,
   query: queryProp,
   rows,
-  sources = [],
   notes = [],
   openName = null,
   loading,
@@ -41,10 +35,8 @@ export function PhantasiCategoryAdmin({
   onOpen,
   onOpenNote,
 }: {
-  page: WorkbenchCategoryPage
   query?: string
   rows: WorkbenchCategoryRow[]
-  sources?: readonly PhantasiSource[]
   notes?: readonly PhantasiNoteDoc[]
   openName?: string | null
   loading: boolean
@@ -103,19 +95,12 @@ export function PhantasiCategoryAdmin({
   }, [canCreate, nextName, onCreate])
 
   const openRow = visible.find((row) => row.name === openName) ?? null
-  const sourceMembers = useMemo(
-    () =>
-      page === 'sources' && openName
-        ? sources.filter((source) => sourceMatchesCategory(source, openName))
-        : [],
-    [openName, page, sources],
-  )
   const noteMembers = useMemo(
     () =>
-      page === 'notes' && openName
+      openName
         ? notes.filter((note) => noteMatchesCategory(note, openName))
         : [],
-    [notes, openName, page],
+    [notes, openName],
   )
 
   const categoryItems = useMemo<ManagedListItem[]>(
@@ -163,14 +148,9 @@ export function PhantasiCategoryAdmin({
         return {
           id: row.name,
           title: label,
-          subtitle:
-            page === 'notes'
-              ? format(phantasi.workbenchCategoryNoteUsage, {
-                  notes: row.noteCount,
-                })
-              : format(phantasi.workbenchCategorySourceUsage, {
-                  sources: row.sourceCount,
-                }),
+          subtitle: format(phantasi.workbenchCategoryNoteUsage, {
+            notes: row.noteCount,
+          }),
           badge: row.locked
             ? { label: phantasi.workbenchCategoryLocked, tone: 'muted' as const }
             : undefined,
@@ -205,12 +185,9 @@ export function PhantasiCategoryAdmin({
                   key: 'delete',
                   label: phantasi.delete,
                   variant: 'danger' as const,
-                  confirm: format(
-                    page === 'notes'
-                      ? phantasi.workbenchCategoryDeleteNotesConfirm
-                      : phantasi.workbenchCategoryDeleteSourcesConfirm,
-                    { name: label },
-                  ),
+                  confirm: format(phantasi.workbenchCategoryDeleteNotesConfirm, {
+                    name: label,
+                  }),
                   disabled: busy,
                   onClick: () => {
                     void onDelete(row.name).then((ok) => {
@@ -235,16 +212,15 @@ export function PhantasiCategoryAdmin({
       onDelete,
       onOpen,
       openName,
-      page,
       phantasi,
       submitCreate,
       visible,
     ],
   )
 
-  const memberItems = useMemo<ManagedListItem[]>(() => {
-    if (page === 'notes') {
-      return noteMembers.map((doc) => {
+  const memberItems = useMemo<ManagedListItem[]>(
+    () =>
+      noteMembers.map((doc) => {
         const excerpt = workbenchNoteListExcerpt(doc)
         const cover = getImageUrl(workbenchNoteCover(doc))
         return {
@@ -276,36 +252,12 @@ export function PhantasiCategoryAdmin({
             </button>
           ),
         }
-      })
-    }
-    return sourceMembers.map((source) => {
-      const icon = getIconUrl(source.icon)
-      return {
-        id: source.id,
-        title: source.name,
-        subtitle: source.url,
-        leading: icon ? (
-          <img className="phantasi-workbench__thumb" src={icon} alt="" />
-        ) : undefined,
-      }
-    })
-  }, [
-    busy,
-    noteMembers,
-    onOpenNote,
-    page,
-    phantasi,
-    sourceMembers,
-  ])
+      }),
+    [busy, noteMembers, onOpenNote, phantasi],
+  )
 
   return (
-    <div
-      id={
-        page === 'notes'
-          ? 'workbench-note-categories'
-          : 'workbench-source-categories'
-      }
-    >
+    <div id="workbench-note-categories">
       {openRow ? (
         <ManagedList
           queryCollapsible={false}

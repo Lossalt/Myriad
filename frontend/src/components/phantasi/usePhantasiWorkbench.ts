@@ -28,14 +28,8 @@ export function usePhantasiWorkbench(
   },
   setError: (message: string) => void,
 ) {
-  // Category pickers include names used only by notes; category administration
-  // also needs those notes to preserve classifications on the other page.
-  const needsCategories =
-    pane === 'notes' ||
-    pane === 'noteCategories' ||
-    pane === 'sourceCategories' ||
-    pane === 'sources' ||
-    pane === 'add'
+  // blog 页自己取数。笔记页和分类页都要笔记，分类名和占用从笔记来。
+  const needsCategories = pane === 'notes' || pane === 'noteCategories'
   const needsNotes = pane === 'home' || pane === 'notesIo' || needsCategories
   // Overview owns real counts, the review queue, and recent media too.
   const needsMedia = pane === 'home' || pane === 'media'

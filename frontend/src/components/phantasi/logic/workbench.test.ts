@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveWorkbenchPane } from './board.ts'
 import {
   collectWorkbenchNoteAuthors,
   collectWorkbenchNoteTopics,
@@ -412,35 +411,5 @@ describe('workbenchNoteExcerpt', () => {
       '正文从这里起。',
     )
     assert.equal(workbenchNoteExcerpt('一二三四五', 3), '一二三…')
-  })
-})
-
-describe('resolveWorkbenchPane', () => {
-  it('认 home / notes / media / sources / add / rsshub / 两页分类 / 两页导入导出；旧深链并进，其余落概览', () => {
-    assert.equal(resolveWorkbenchPane('home'), 'home')
-    assert.equal(resolveWorkbenchPane('media'), 'media')
-    assert.equal(resolveWorkbenchPane('sources'), 'sources')
-    assert.equal(resolveWorkbenchPane('add'), 'add')
-    assert.equal(resolveWorkbenchPane('topics'), 'topics')
-    assert.equal(resolveWorkbenchPane('rsshub'), 'rsshub')
-    assert.equal(resolveWorkbenchPane('notesIo'), 'notesIo')
-    assert.equal(resolveWorkbenchPane('feedsIo'), 'feedsIo')
-    assert.equal(resolveWorkbenchPane('pipack'), 'feedsIo')
-    assert.equal(resolveWorkbenchPane('opml'), 'feedsIo')
-    assert.equal(resolveWorkbenchPane('wordpress'), 'notesIo')
-    assert.equal(resolveWorkbenchPane('halo'), 'notesIo')
-    assert.equal(resolveWorkbenchPane('typecho'), 'notesIo')
-    assert.equal(resolveWorkbenchPane('markdown'), 'notesIo')
-    assert.equal(resolveWorkbenchPane('list'), 'sources')
-    assert.equal(resolveWorkbenchPane('notes'), 'notes')
-    assert.equal(resolveWorkbenchPane('comments'), 'comments')
-    assert.equal(resolveWorkbenchPane('reviews'), 'reviews')
-    assert.equal(resolveWorkbenchPane('noteCategories'), 'noteCategories')
-    assert.equal(resolveWorkbenchPane('sourceCategories'), 'sourceCategories')
-    assert.equal(resolveWorkbenchPane('categories'), 'noteCategories')
-    assert.equal(resolveWorkbenchPane('category'), 'noteCategories')
-    assert.equal(resolveWorkbenchPane('sourceCategory'), 'sourceCategories')
-    assert.equal(resolveWorkbenchPane(null), 'home')
-    assert.equal(resolveWorkbenchPane('settings'), 'home')
   })
 })
