@@ -62,15 +62,14 @@ pub(crate) async fn get_item(
                 }
                 let state = state
                     .map_err(|error| phantasi_store_http("load article reading state", error))?;
-                let (is_read, is_starred, read_progress, state_revision) = if user_id.is_some() {
+                let (is_read, is_starred, state_revision) = if user_id.is_some() {
                     (
                         state.as_ref().map(|s| s.is_read).unwrap_or(false),
                         is_admin && state.as_ref().map(|s| s.is_starred).unwrap_or(false),
-                        state.as_ref().and_then(|s| s.read_progress),
                         Some(state.as_ref().map_or(0, |s| s.revision)),
                     )
                 } else {
-                    (false, false, None, None)
+                    (false, false, None)
                 };
 
                 let note = source.source_type == phantasi_sources::SourceType::Note;
@@ -99,7 +98,6 @@ pub(crate) async fn get_item(
                     source_icon,
                     is_read,
                     is_starred,
-                    read_progress,
                     has_ai_annotations,
                     has_ai_podcast,
                 );

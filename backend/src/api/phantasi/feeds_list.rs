@@ -226,11 +226,6 @@ pub(crate) async fn list_items(
                     let state = states_map.get(&item.id);
                     let is_read = user_id.is_some() && state.map(|s| s.is_read).unwrap_or(false);
                     let is_starred = is_admin && state.map(|s| s.is_starred).unwrap_or(false);
-                    let read_progress = if user_id.is_some() {
-                        state.and_then(|s| s.read_progress)
-                    } else {
-                        None
-                    };
 
                     let source = sources_map.get(&item.source_id);
                     let source_name = source.map(|s| s.0.clone());
@@ -242,7 +237,6 @@ pub(crate) async fn list_items(
                         source_icon,
                         is_read,
                         is_starred,
-                        read_progress,
                         false,
                         false,
                     )

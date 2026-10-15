@@ -407,8 +407,6 @@ impl MigrationTrait for Migration {
                     )
                     // 阅读时间
                     .col(ColumnDef::new(PhantasiUserStates::ReadAt).timestamp_with_time_zone())
-                    // 阅读进度 float；本 migration 无 CHECK
-                    .col(ColumnDef::new(PhantasiUserStates::ReadProgress).float())
                     // 收藏时间
                     .col(ColumnDef::new(PhantasiUserStates::StarredAt).timestamp_with_time_zone())
                     // 用户笔记
@@ -1242,7 +1240,6 @@ enum PhantasiUserStates {
     IsRead,
     IsStarred,
     ReadAt,
-    ReadProgress,
     StarredAt,
     Notes,
     Revision,

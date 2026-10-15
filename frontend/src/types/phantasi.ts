@@ -134,7 +134,6 @@ export interface PhantasiItem {
   reading_time: number | null
   is_read: boolean
   is_starred: boolean
-  read_progress: number | null
   /** 0 means no user state exists yet. */
   state_revision?: number
   content_revision?: number

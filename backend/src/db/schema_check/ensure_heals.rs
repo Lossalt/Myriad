@@ -464,3 +464,24 @@ WHERE (d.status = 'published' AND d.item_id IS NULL)
     .await?;
     Ok(())
 }
+
+/// Columns nothing reads any more, dropped from databases created before 003
+/// stopped making them. Checked first: `ALTER TABLE` locks the table even when
+/// the column is already gone.
+pub(crate) const RETIRED_COLUMNS_SQL: &str = r#"
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'phantasi_user_states' AND column_name = 'read_progress'
+    ) THEN
+        ALTER TABLE phantasi_user_states DROP COLUMN read_progress;
+    END IF;
+END $$;
+"#;
+
+pub(crate) async fn drop_retired_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(RETIRED_COLUMNS_SQL).await?;
+    Ok(())
+}

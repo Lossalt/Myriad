@@ -59,7 +59,9 @@ use super::seeds::{ensure_default_config, ensure_default_platforms};
 /// 2026.10.15.1：笔记公开 slug `phantasi_items.slug`（旧库走通用 ADD）。
 /// 同一笔记源内的部分唯一索引和已发布笔记的地址改写在 `ensure_note_slugs`
 /// （索引带 WHERE，不进 `get_expected_indexes`，只读漂移检查看不见它）。
-pub const SCHEMA_VERSION: &str = "2026.10.15.1";
+/// 2026.10.15.2：阅读进度 `phantasi_user_states.read_progress` 退场（003 不再建，旧库由
+/// `drop_retired_columns` 删掉）。
+pub const SCHEMA_VERSION: &str = "2026.10.15.2";
 
 const SCHEMA_LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -317,6 +319,7 @@ async fn do_schema_check(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_persona_sync_tables(db).await?;
     ensure_memory_cues_table(db).await?;
     unlink_note_docs_without_article(db).await?;
+    drop_retired_columns(db).await?;
     ensure_user_lifecycle(db).await?;
     ensure_conversation_changes(db).await?;
     ensure_federation_foreign_keys(db).await?;

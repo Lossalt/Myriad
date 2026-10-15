@@ -20,8 +20,6 @@ pub struct Model {
     pub is_starred: bool,
     /// 阅读时间
     pub read_at: Option<DateTimeWithTimeZone>,
-    /// 阅读进度百分比 (0.0 – 100.0). API 边界统一 0–100；见 `normalize_read_progress`.
-    pub read_progress: Option<f32>,
     /// 收藏时间
     pub starred_at: Option<DateTimeWithTimeZone>,
     /// 用户笔记

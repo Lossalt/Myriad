@@ -122,7 +122,6 @@ pub struct ItemResponse {
     // 用户状态
     pub is_read: bool,
     pub is_starred: bool,
-    pub read_progress: Option<f32>,
     /// Present when this response includes an authoritative user-state snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_revision: Option<i64>,
@@ -147,7 +146,6 @@ impl ItemResponse {
         source_icon: Option<String>,
         is_read: bool,
         is_starred: bool,
-        read_progress: Option<f32>,
         has_ai_annotations: bool,
         has_ai_podcast: bool,
     ) -> Self {
@@ -178,7 +176,6 @@ impl ItemResponse {
             slug: m.slug,
             is_read,
             is_starred,
-            read_progress,
             state_revision: None,
             has_ai_annotations,
             has_ai_podcast,
@@ -514,16 +511,8 @@ mod preview_tests {
             content_revision: 3,
             slug: None,
         };
-        let mut item = ItemResponse::from_model_with_ai(
-            model,
-            None,
-            None,
-            true,
-            true,
-            Some(42.0),
-            false,
-            false,
-        );
+        let mut item =
+            ItemResponse::from_model_with_ai(model, None, None, true, true, false, false);
         assert!(
             serde_json::to_value(&item)
                 .unwrap()
@@ -546,7 +535,7 @@ mod preview_tests {
         assert_eq!(preview[0]["content_revision"], 3);
         assert_eq!(detail["content_revision"], 3);
         assert_eq!(preview[0]["is_starred"], true);
-        assert_eq!(preview[0]["read_progress"], 42.0);
+        assert!(preview[0].get("read_progress").is_none());
         assert_eq!(detail["state_revision"], 9);
         assert_eq!(preview[0]["state_revision"], 9);
     }

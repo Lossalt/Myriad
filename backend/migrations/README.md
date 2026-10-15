@@ -96,6 +96,12 @@ writes), delete them together with their tests:
   them. 004 runs the
   same `persona_sync.sql`; only the heal call goes.
 
+### Removed when the floor moves past the release that retires reading progress
+
+- `drop_retired_columns` (`orchestrator.rs`, `ensure_heals.rs`) and its test
+  `retired_columns_are_dropped_once`: drops `phantasi_user_states.read_progress`
+  from databases whose 003 still made it.
+
 ### Kept regardless of the floor
 
 Inputs a newer release still receives from outside the database:

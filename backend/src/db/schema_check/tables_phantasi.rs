@@ -385,12 +385,6 @@ pub(crate) fn tables() -> Vec<TableDef> {
                     not_null: false,
                 },
                 ColumnDef {
-                    name: "read_progress".into(),
-                    data_type: "real".into(),
-                    default_value: None,
-                    not_null: false,
-                },
-                ColumnDef {
                     name: "starred_at".into(),
                     data_type: "timestamp with time zone".into(),
                     default_value: None,

@@ -1674,6 +1674,70 @@ async fn federation_fk_heal_runs_against_real_catalog() {
     }
 }
 
+/// The retired reading progress leaves an old database and the heal is a no-op
+/// once it is gone. Runs in its own schema.
+#[tokio::test]
+async fn retired_columns_are_dropped_once() {
+    use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, Statement};
+    let Ok(url) = std::env::var("MYRIAD_MEDIA_TEST_DATABASE_URL") else {
+        eprintln!("skipping: set MYRIAD_MEDIA_TEST_DATABASE_URL to run the retired column heal");
+        return;
+    };
+    let schema = format!("retired_cols_{}", uuid::Uuid::new_v4().simple());
+    let admin = Database::connect(&url).await.expect("connect test db");
+    admin
+        .execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+        .await
+        .expect("create test schema");
+    let mut options = ConnectOptions::new(url);
+    options
+        .set_schema_search_path(&schema)
+        .max_connections(1)
+        .sqlx_logging(false);
+    let db = Database::connect(options)
+        .await
+        .expect("connect test schema");
+    db.execute_unprepared(
+        "CREATE TABLE phantasi_user_states (id serial PRIMARY KEY, is_read boolean, read_progress real);
+         INSERT INTO phantasi_user_states (is_read, read_progress) VALUES (true, 40)",
+    )
+    .await
+    .expect("old shape");
+    let first = super::ensure_heals::drop_retired_columns(&db).await;
+    let second = super::ensure_heals::drop_retired_columns(&db).await;
+    let left = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT count(*) AS n FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'phantasi_user_states'
+                AND column_name = 'read_progress'",
+        ))
+        .await
+        .expect("read catalog")
+        .expect("one row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+    let rows = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT count(*) AS n FROM phantasi_user_states WHERE is_read",
+        ))
+        .await
+        .expect("read rows")
+        .expect("one row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+
+    admin
+        .execute_unprepared(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("drop test schema");
+    first.expect("drops the column");
+    second.expect("a second run finds nothing to drop");
+    assert_eq!(left, 0);
+    assert_eq!(rows, 1);
+}
+
 /// The support floor lets a new database through, again after a first start
 /// cut off before startup wrote its mark, and refuses one with migration
 /// history but no 0.6.1 mark. Runs in its own schema.
