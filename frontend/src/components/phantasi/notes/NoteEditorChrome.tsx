@@ -138,6 +138,7 @@ interface NoteTopBarProps {
   saving: boolean
   loading: boolean
   onPublish: () => void
+  articleHref?: string | null
   settingsOpen: boolean
   onToggleSettings: () => void
   onClose: () => void
@@ -153,6 +154,7 @@ export function NoteTopBar({
   saving,
   loading,
   onPublish,
+  articleHref,
   settingsOpen,
   onToggleSettings,
   onClose,
@@ -212,6 +214,11 @@ export function NoteTopBar({
           ) : null}
         </div>
         <div className="phantasi-note__top-right">
+          {articleHref ? (
+            <a className="note-btn note-btn--outline note-btn--lg" href={articleHref} target="_blank" rel="noopener noreferrer">
+              <span className="note-btn__label">{t.studio.viewArticle}</span>
+            </a>
+          ) : null}
           <NoteButton
             variant="solid"
             size="lg"
@@ -1011,6 +1018,10 @@ interface NoteSettingsDrawerProps {
   onCreateTopic: (name: string) => void
   publishedAt: number | null
   onPublishedAtChange: (ms: number | null) => void
+  slugInput: string
+  slugInvalid: boolean
+  onSlugInput: (value: string) => void
+  articleHref?: string | null
   scheduledAt: number | null
   onScheduledAtChange: (ms: number | null) => void
   canSchedule: boolean
@@ -1043,6 +1054,10 @@ export function NoteSettingsDrawer({
   onCreateTopic,
   publishedAt,
   onPublishedAtChange,
+  slugInput,
+  slugInvalid,
+  onSlugInput,
+  articleHref,
   scheduledAt,
   onScheduledAtChange,
   canSchedule,
@@ -1167,6 +1182,31 @@ export function NoteSettingsDrawer({
           </NoteButton>
         </div>
       </NoteSection>
+
+      {docStatus === 'published' ? (
+        <NoteField
+          label={t.studio.slug}
+          hint={slugInvalid ? t.studio.slugInvalid : t.studio.slugHint}
+          htmlFor="note-slug"
+        >
+          <input
+            id="note-slug"
+            className="note-input"
+            value={slugInput}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            aria-invalid={slugInvalid || undefined}
+            onChange={(event) => onSlugInput(event.target.value)}
+          />
+        </NoteField>
+      ) : null}
+
+      {docStatus === 'published' && articleHref ? (
+        <a className="note-btn note-btn--outline" href={articleHref} target="_blank" rel="noopener noreferrer">
+          <span className="note-btn__label">{t.studio.viewArticle}</span>
+        </a>
+      ) : null}
 
       <NoteField label={t.phantasi.notePublishedAt} htmlFor="note-published-at">
         <NoteDateInput

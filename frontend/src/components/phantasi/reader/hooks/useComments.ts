@@ -3,7 +3,7 @@ import type {
   CreateCommentRequest,
 } from '../../../../services/phantasiApi'
 import type { ReaderTooltipAnchor } from '../tooltipPlacement'
-import type { ReaderCopy } from '../types'
+import type { ReaderCopy } from '../../reading/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as phantasiApi from '../../../../services/phantasiApi'
 import { userFacingError } from '../../../../utils/userFacingError'

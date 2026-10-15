@@ -1,5 +1,5 @@
 import type { AnnotationItem } from '../../../services/phantasiaiApi'
-import type { TocItem } from './types'
+import type { TocItem } from '../reading/types'
 import { useEffect } from 'react'
 import { loadEmbedData } from '../../../utils/embedProcessor'
 

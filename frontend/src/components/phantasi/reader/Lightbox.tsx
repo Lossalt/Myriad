@@ -1,5 +1,5 @@
 import type { MouseEvent } from 'react'
-import type { ReaderCopy } from './types'
+import type { ReaderCopy } from '../reading/types'
 import {
   LuDownload as Download,
   LuRotateCw as RotateCw,

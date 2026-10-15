@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react'
 
 import type { CommentItem } from '../../../services/phantasiApi'
 import type { ReaderTooltipAnchor } from './tooltipPlacement'
-import type { ReaderCopy, ThemeConfig } from './types'
+import type { ReaderCopy, ThemeConfig } from '../reading/types'
 import {
   LuCheck as Check,
   LuCopy as Copy,
@@ -20,7 +20,7 @@ import { currentCopy } from '../../../i18n/localeCopy'
 import { showError } from '../../../utils/toastManager'
 import { Spinner } from '../../Spinner'
 import { annotationChrome } from './annotationChrome'
-import { DATE_FORMAT_SHORT } from './constants'
+import { DATE_FORMAT_SHORT } from '../reading/constants'
 import { placeReaderTooltip } from './tooltipPlacement'
 
 /** 按框的实际尺寸整块放进视口；尺寸在绘制前量出，首帧不会先落在错的位置。 */

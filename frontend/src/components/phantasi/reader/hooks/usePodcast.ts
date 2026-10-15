@@ -4,7 +4,7 @@ import type {
   TTSEngine,
   VoiceInfo,
 } from '../../../../services/speechApi'
-import type { ReaderCopy } from '../types'
+import type { ReaderCopy } from '../../reading/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getDefaultLocale } from '../../../../i18n'
 import * as phantasiaiApi from '../../../../services/phantasiaiApi'

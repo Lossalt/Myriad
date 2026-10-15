@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useConfigI18n } from '../../contexts/I18nContext'
 import { listMedia } from '../../services/mediaApi'
 import { userFacingError } from '../../utils/userFacingError'
-import { MediaPreview } from '../phantasi/skin/MediaPreview'
+import { MediaPreview } from '../media/MediaPreview'
 
 export function WallpaperMediaPicker({ onSelect }: { onSelect: (url: string) => void }) {
   const { t } = useConfigI18n()

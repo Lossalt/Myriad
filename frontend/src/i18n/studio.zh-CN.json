@@ -1,0 +1,14 @@
+{
+  "title": "工作台",
+  "subtitle": "笔记、评论和博客",
+  "blog": "博客",
+  "blogPending": "主题、站点和重建下一批接上。",
+  "slug": "地址名",
+  "slugHint": "公开地址用这一段。留空则发布时自动生成。",
+  "slugInvalid": "只能用小写字母、数字和连字符，最长 80 个字符。",
+  "slugTaken": "这个地址名已被占用。",
+  "viewArticle": "查看文章",
+  "navHome": "概览",
+  "navCategories": "笔记分类",
+  "openFailed": "没能打开这篇文章。"
+}

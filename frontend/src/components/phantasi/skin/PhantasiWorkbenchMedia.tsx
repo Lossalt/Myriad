@@ -11,6 +11,7 @@ import {
 import { useMemo, useRef, useState } from 'react'
 import { useConfigI18n as useI18n } from '../../../contexts/I18nContext'
 import { mediaAssetSrc } from '../../../services/mediaApi'
+import { MediaPreview } from '../../media/MediaPreview'
 import { InputItem, ManagedList, SettingsButton } from '../../settings'
 import {
   formatWorkbenchBytes,
@@ -22,7 +23,6 @@ import {
 import { noteScheduleLabel } from '../notes/noteBoard'
 import { PhantasiWorkbenchIcon } from '../ui/PhantasiWorkbenchIcon'
 import { MediaEditorDialog } from './MediaEditorDialog'
-import { MediaPreview } from './MediaPreview'
 import { PageAction, WorkbenchPage } from './PhantasiWorkbenchChrome'
 import './WorkbenchMediaCards.css'
 

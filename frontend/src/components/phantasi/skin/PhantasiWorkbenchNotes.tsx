@@ -26,7 +26,7 @@ import { noteScheduleLabel } from '../notes/noteBoard'
 import { PhantasiWorkbenchIcon } from '../ui/PhantasiWorkbenchIcon'
 import { listSelectChrome, useListSelection } from '../useListSelection'
 import { PageAction, WorkbenchPage } from './PhantasiWorkbenchChrome'
-import { Thumb } from './PhantasiWorkbenchHome'
+import { WorkbenchThumb } from './WorkbenchThumb'
 
 function noteTone(
   key: WorkbenchNoteStatusKey,
@@ -172,7 +172,7 @@ export function WorkbenchNotesPane({
             ? 'phantasi-workbench__note'
             : 'phantasi-workbench__note phantasi-workbench__hover-actions',
           leading: (
-            <Thumb
+            <WorkbenchThumb
               cover
               src={getImageUrl(workbenchNoteCover(doc)) || undefined}
             />

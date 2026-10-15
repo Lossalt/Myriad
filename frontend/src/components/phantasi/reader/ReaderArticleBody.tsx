@@ -1,6 +1,6 @@
 import type { PhantasiItem } from '../../../types/phantasi'
 import type { ReadingQueue } from '../logic/readingQueue'
-import type { FontOption, LayoutOption, ReaderCopy, ThemeConfig } from './types'
+import type { FontOption, LayoutOption, ReaderCopy, ThemeConfig } from '../reading/types'
 import {
   LuCalendar as Calendar,
   LuClock as Clock,
@@ -9,7 +9,7 @@ import {
 import { useMemo } from 'react'
 import { useI18n } from '../../../contexts/I18nContext'
 import { neighborsInQueue } from '../logic/readingQueue'
-import { getArticleProseClass } from './articleProseClass'
+import { getArticleProseClass } from '../reading/articleProseClass'
 import { getImageUrl } from './contentRender'
 import { ReaderTopicField } from './ReaderTopicField'
 

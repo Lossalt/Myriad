@@ -58,6 +58,7 @@ export function useNoteEditorOpen({
           topic: normalizeNoteTopic(doc.topic),
           cover: normalizeNoteCover(doc.image),
           publishedAt: doc.published_at ?? null,
+          slug: doc.slug?.trim() || null,
         }
         const recovery = (loadRecovery ?? readNoteRecovery)({ userId, docId: doc.id })
         const recovered = recoverNoteFields(recovery, server)

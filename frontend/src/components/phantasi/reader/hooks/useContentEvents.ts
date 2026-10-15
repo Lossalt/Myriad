@@ -1,7 +1,7 @@
 import type { AnnotationItem, AnnotationType } from '../../../../services/phantasiaiApi'
 import type { CommentItem } from '../../../../services/phantasiApi'
 import type { ReaderTooltipAnchor } from '../tooltipPlacement'
-import type { ReaderCopy } from '../types'
+import type { ReaderCopy } from '../../reading/types'
 import { useCallback, useEffect, useRef } from 'react'
 import { playNeteaseSong } from '../../../../utils/embedProcessor'
 

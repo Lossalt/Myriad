@@ -1,4 +1,4 @@
-import type { MobileReaderBarProps } from './types'
+import type { MobileReaderBarProps } from '../reading/types'
 
 import {
   LuAlignJustify as AlignJustify,
@@ -44,7 +44,7 @@ import {
   READER_TOOL_TITLE_ID,
   STYLE_MAX_HEIGHT_60VH,
   THEMES,
-} from './constants'
+} from '../reading/constants'
 import {
   applyExclusivePanel,
   currentReaderPanel,

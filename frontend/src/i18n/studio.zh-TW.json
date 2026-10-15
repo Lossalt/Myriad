@@ -1,0 +1,14 @@
+{
+  "title": "工作臺",
+  "subtitle": "筆記、評論和部落格",
+  "blog": "部落格",
+  "blogPending": "主題、站點和重建下一批接上。",
+  "slug": "網址名稱",
+  "slugHint": "公開網址用這一段。留空則發布時自動生成。",
+  "slugInvalid": "只能用小寫字母、數字和連字號，最長 80 個字元。",
+  "slugTaken": "這個網址名稱已被占用。",
+  "viewArticle": "查看文章",
+  "navHome": "概覽",
+  "navCategories": "筆記分類",
+  "openFailed": "沒能打開這篇文章。"
+}

@@ -1,6 +1,6 @@
 import type { AnnotationItem } from '../../../services/phantasiaiApi'
 import type { CommentItem } from '../../../services/phantasiApi'
-import type { ThemeKey } from './types'
+import type { ThemeKey } from '../reading/types'
 
 interface TextAnchor {
   selected_text: string

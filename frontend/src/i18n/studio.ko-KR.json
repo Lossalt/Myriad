@@ -1,0 +1,14 @@
+{
+  "title": "작업대",
+  "subtitle": "노트, 댓글, 블로그",
+  "blog": "블로그",
+  "blogPending": "테마, 사이트, 재빌드는 다음 단계에서 연결합니다.",
+  "slug": "슬러그",
+  "slugHint": "공개 주소의 이 부분입니다. 비우면 발행할 때 자동으로 만듭니다.",
+  "slugInvalid": "소문자, 숫자, 하이픈만 사용할 수 있으며 80자까지입니다.",
+  "slugTaken": "이 슬러그는 이미 사용 중입니다.",
+  "viewArticle": "글 보기",
+  "navHome": "개요",
+  "navCategories": "노트 분류",
+  "openFailed": "이 글을 열지 못했습니다."
+}

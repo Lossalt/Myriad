@@ -182,6 +182,8 @@ export interface PhantasiNoteDoc {
   excerpt?: string | null
   topic: string | null
   image: string | null
+  /** 公开地址 `/blog/posts/{slug}/` 的那一段。空则发布时由后端生成。 */
+  slug?: string | null
   status: PhantasiNoteDocStatus
   scheduled_at: number | null
   published_at: number | null
@@ -196,6 +198,7 @@ export interface PhantasiNoteDocInput {
   content_md?: string
   topic?: string | null
   image?: string | null
+  slug?: string | null
   published_at?: number | null
   scheduled_at?: number | null
   revision?: number

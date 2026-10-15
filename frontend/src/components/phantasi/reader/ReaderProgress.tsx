@@ -1,4 +1,4 @@
-import type { ReadingProgress } from './progressStore'
+import type { ReadingProgress } from '../reading/progressStore'
 import { useSyncExternalStore } from 'react'
 
 function useReadingProgressValue(progress: ReadingProgress): number {

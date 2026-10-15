@@ -1,0 +1,14 @@
+{
+  "title": "Atelier",
+  "subtitle": "Notes, commentaires et blog",
+  "blog": "Blog",
+  "blogPending": "Le thème, le site et la reconstruction arrivent au prochain lot.",
+  "slug": "Slug",
+  "slugHint": "Segment de l’adresse publique. Laisser vide pour le générer à la publication.",
+  "slugInvalid": "Lettres minuscules, chiffres et traits d’union, 80 caractères maximum.",
+  "slugTaken": "Ce slug est déjà pris.",
+  "viewArticle": "Voir l’article",
+  "navHome": "Aperçu",
+  "navCategories": "Catégories de notes",
+  "openFailed": "Impossible d’ouvrir cet article."
+}

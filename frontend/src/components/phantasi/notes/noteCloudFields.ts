@@ -7,6 +7,7 @@ export interface NoteCloudFields {
   topic: string | null
   cover: string | null
   publishedAt: number | null
+  slug?: string | null
 }
 
 export function sameCloudFields(a: NoteCloudFields, b: NoteCloudFields): boolean {
@@ -15,7 +16,8 @@ export function sameCloudFields(a: NoteCloudFields, b: NoteCloudFields): boolean
     a.contentMd === b.contentMd &&
     (a.topic ?? null) === (b.topic ?? null) &&
     (a.cover ?? null) === (b.cover ?? null) &&
-    (a.publishedAt ?? null) === (b.publishedAt ?? null)
+    (a.publishedAt ?? null) === (b.publishedAt ?? null) &&
+    (a.slug ?? null) === (b.slug ?? null)
   )
 }
 
@@ -26,6 +28,7 @@ export function cloudFieldsOf(doc: PhantasiNoteDoc): NoteCloudFields {
     topic: doc.topic ?? null,
     cover: doc.image ?? null,
     publishedAt: doc.published_at ?? null,
+    slug: doc.slug?.trim() || null,
   }
 }
 
@@ -41,5 +44,6 @@ export function mergeCloudFields(
     topic: mergeNoteField(base.topic, local.topic, remote.topic),
     cover: mergeNoteField(base.cover, local.cover, remote.cover),
     publishedAt: remote.publishedAt === base.publishedAt ? local.publishedAt : remote.publishedAt,
+    slug: mergeNoteField(base.slug ?? null, local.slug ?? null, remote.slug ?? null),
   }
 }

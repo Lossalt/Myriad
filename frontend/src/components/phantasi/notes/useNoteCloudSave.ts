@@ -10,6 +10,7 @@ import * as phantasiApi from '../../../services/phantasiApi'
 import { userFacingError } from '../../../utils/userFacingError'
 import { cloudFieldsOf, mergeCloudFields, sameCloudFields } from './noteCloudFields'
 import { NoteRecoveryWriter } from './noteRecoveryStore'
+import { isSlugTakenError, noteSlugWire } from './noteSlug'
 import { mergeNoteSnapshot, NoteSnapshotBuffer } from './noteSnapshotBuffer'
 
 export { cloudFieldsOf, mergeCloudFields, sameCloudFields } from './noteCloudFields'
@@ -30,7 +31,7 @@ export interface UseNoteCloudSaveOptions {
   onMerged: (fields: NoteCloudFields) => void
   onSaved: (acked: NoteCloudFields) => void
   onError: (message: string | null) => void
-  labels: { saveFailed: string; conflict: string; uncertain?: string }
+  labels: { saveFailed: string; conflict: string; uncertain?: string; slugTaken?: string }
   io?: NoteCloudSaveIo
 }
 
@@ -271,9 +272,12 @@ export function useNoteCloudSave({
           const snapshot = latestRef.current
           const receipt = track(snapshot)
           try {
+            const slug = noteSlugWire(snapshot.slug)
             const doc = await api.updateNoteDoc(id, {
               title: snapshot.title, content_md: snapshot.contentMd, topic: snapshot.topic,
               image: snapshot.cover, published_at: snapshot.publishedAt,
+              // 未发布不能带 slug；空值省略，避免把「不改」写成清空。
+              ...(typeof slug === 'string' ? { slug } : {}),
               revision: revisionRef.current, client_request_id: receipt.requestId,
             })
             if (!current()) return false
@@ -282,6 +286,10 @@ export function useNoteCloudSave({
             return receipt.confirmed
           } catch (err) {
             if (!current()) return false
+            if (isSlugTakenError(err)) {
+              callbacks.current.onError(text.slugTaken ?? text.saveFailed)
+              return false
+            }
             const conflict = err instanceof ApiError && err.status === 409 || userFacingError(err, text.saveFailed) === text.conflict
             if (!conflict || attempt === 1) throw err
             receipt.reject()
@@ -354,7 +362,7 @@ export function useNoteCloudSave({
       clearTimeout(timer)
       if (idle !== undefined) window.cancelIdleCallback?.(idle)
     }
-  }, [loading, cloudId, userId, fields.title, fields.contentMd, fields.topic, fields.cover, fields.publishedAt, persistRecovery])
+  }, [loading, cloudId, userId, fields.title, fields.contentMd, fields.topic, fields.cover, fields.publishedAt, fields.slug, persistRecovery])
 
   useEffect(() => {
     const flush = () => recoveryFlushRef.current()
@@ -371,7 +379,7 @@ export function useNoteCloudSave({
     if (loading || cloudId == null || sameCloudFields(fields, baseRef.current)) return
     const timer = setTimeout(() => { void flush(cloudId).catch(() => {}) }, CLOUD_SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [cloudId, loading, fields.title, fields.contentMd, fields.topic, fields.cover, fields.publishedAt, flush])
+  }, [cloudId, loading, fields.title, fields.contentMd, fields.topic, fields.cover, fields.publishedAt, fields.slug, flush])
 
   return { loadRecovery, discardRecovery, ack, baseRef, restorePending, runWrite, receiveRemote, receiveDoc, compositionStart, compositionEnd }
 }

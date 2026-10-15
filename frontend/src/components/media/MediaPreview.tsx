@@ -1,4 +1,4 @@
-import { displayImageUrl } from '../notes/noteImageUrl'
+import { displayImageUrl } from '../phantasi/notes/noteImageUrl'
 
 /** Thumbnail of a media asset at its permanent address (private ones use the session). */
 export function MediaPreview({

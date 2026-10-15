@@ -4,17 +4,17 @@ import type {
   LayoutOption,
   ThemeConfig,
   ThemeKey,
-} from '../types'
+} from './types'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   isExlight,
   useAnimationLevel,
-} from '../../../../hooks/useAnimationLevel'
+} from '../../../hooks/useAnimationLevel'
 import {
   getIsDarkMode,
   subscribeToTheme,
-} from '../../../../utils/themeSubscriber'
-import { FONT_OPTIONS, LAYOUT_OPTIONS, THEME_ORDER, THEMES } from '../constants'
+} from '../../../utils/themeSubscriber'
+import { FONT_OPTIONS, LAYOUT_OPTIONS, THEME_ORDER, THEMES } from './constants'
 
 function getStoredSettings() {
   try {

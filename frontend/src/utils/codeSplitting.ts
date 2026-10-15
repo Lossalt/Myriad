@@ -88,6 +88,8 @@ export const routeComponents = {
 
   phantasi: lazyWithPreload(() => import('../views/Phantasi')),
 
+  studio: lazyWithPreload(() => import('../views/Studio')),
+
   reports: lazyWithPreload(() => import('../views/Reports')),
 
   config: lazyWithPreload(() => import('../views/Config')),

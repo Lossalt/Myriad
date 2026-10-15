@@ -16,8 +16,8 @@ import { isExlight } from '../../../hooks/useAnimationLevel'
 import { editNoteWithAi } from '../../../services/phantasiaiApi'
 import * as phantasiApi from '../../../services/phantasiApi'
 import { showNoteNotice } from '../phantasiNotice'
-import { getArticleProseClass } from '../reader/articleProseClass'
-import { useReaderSettings } from '../reader/hooks/useReaderSettings'
+import { getArticleProseClass } from '../reading/articleProseClass'
+import { useReaderSettings } from '../reading/useReaderSettings'
 import { captureNoteAiSelection } from './noteAiSelection'
 import {
   noteRecoveryKey,
@@ -33,6 +33,7 @@ import {
 } from './noteFields'
 import { displayImageUrl } from './noteImageUrl'
 import { NOTE_WIDGET_SIZES, noteWidgetCanConfigure } from './noteLayout'
+import { noteSlugInvalid, noteSlugWire, publishedNoteHref } from './noteSlug'
 import { applyNoteSourceEdit } from './noteSourceEdit'
 import { expandJammedDefinitions, setVisualImageResolver } from './noteVisual'
 import { useNoteWidgetCatalog } from './noteWidgetCatalog'
@@ -60,6 +61,7 @@ interface NoteSnapshot {
   topic: string | null
   cover: string | null
   publishedAt: number | null
+  slug?: string | null
 }
 
 const EMPTY_SNAPSHOT: NoteSnapshot = {
@@ -68,6 +70,7 @@ const EMPTY_SNAPSHOT: NoteSnapshot = {
   topic: null,
   cover: null,
   publishedAt: null,
+  slug: null,
 }
 
 export interface NoteEditorProps {
@@ -76,6 +79,7 @@ export interface NoteEditorProps {
   onClose: () => void
   onSaved: (id: number) => void
   onDeleted?: (id: number) => void
+  onCloudId?: (id: number) => void
 }
 
 export function useNoteEditorSession({
@@ -84,6 +88,7 @@ export function useNoteEditorSession({
   onClose,
   onSaved,
   onDeleted,
+  onCloudId,
 }: NoteEditorProps) {
   const { t, format, locale } = useI18n()
   const { user } = useAuth()
@@ -119,6 +124,10 @@ export function useNoteEditorSession({
   const [topic, setTopic] = useState<string | null>(null)
   const [cover, setCover] = useState<string | null>(null)
   const [publishedAt, setPublishedAt] = useState<number | null>(null)
+  const [slug, setSlug] = useState<string | null>(null)
+  const [slugInput, setSlugInput] = useState('')
+  const [itemId, setItemId] = useState<number | null>(null)
+  const [articleHref, setArticleHref] = useState<string | null>(null)
   const defaultPublishedAt = useRef(Date.now())
   const [saved, setSaved] = useState<NoteSnapshot>(EMPTY_SNAPSHOT)
   const [loading, setLoading] = useState(true)
@@ -173,6 +182,28 @@ export function useNoteEditorSession({
   })
   const [scheduledAt, setScheduledAt] = useState<number | null>(null)
   const [cloudHint, setCloudHint] = useState(false)
+  const onCloudIdRef = useRef(onCloudId)
+  onCloudIdRef.current = onCloudId
+  useEffect(() => {
+    if (cloudId != null) onCloudIdRef.current?.(cloudId)
+  }, [cloudId])
+
+  useEffect(() => {
+    if (docStatus !== 'published' || itemId == null) return
+    const controller = new AbortController()
+    const load = async () => {
+      try {
+        const item = await phantasiApi.getItem(itemId, undefined, { signal: controller.signal })
+        const href = item.link?.trim()
+        if (!controller.signal.aborted && href) setArticleHref(href)
+      } catch {
+        // 公开地址取不到就不显示「查看文章」。
+      }
+    }
+    void load()
+    return () => controller.abort()
+  }, [docStatus, itemId])
+
   useEffect(() => {
     if (!cloudHint) return
     const timer = window.setTimeout(setCloudHint, 1600, false)
@@ -262,6 +293,7 @@ export function useNoteEditorSession({
     setDocStatus(doc.status)
     setScheduledAt(doc.scheduled_at)
     setLastError(doc.last_error ?? null)
+    setItemId(doc.item_id)
     if (doc.authors) setAuthors(doc.authors)
   }, [setAuthors])
 
@@ -274,20 +306,25 @@ export function useNoteEditorSession({
     setTopic(fields.topic)
     setCover(fields.cover)
     setPublishedAt(fields.publishedAt)
+    setSlug(fields.slug ?? null)
+    setSlugInput(fields.slug ?? '')
   }, [])
 
   const cloud = useNoteCloudSave({
     userId: user?.id ?? null,
     cloudId,
     loading,
-    fields: { title, contentMd, topic, cover, publishedAt },
+    fields: {
+      title, contentMd, topic, cover, publishedAt,
+      ...(docStatus === 'published' ? { slug } : {}),
+    },
     revisionRef,
     onServerDoc: applyServerDoc,
     onMerged: applyMergedFields,
     // 云端存上了就是「已保存」：关门不再问要不要丢弃。
     onSaved: (acked) => {
       setCloudHint(true)
-      setSaved(acked)
+      setSaved({ ...acked, slug: acked.slug ?? null })
     },
     onError: (message) =>
       showNoteNotice(
@@ -298,6 +335,7 @@ export function useNoteEditorSession({
       saveFailed: t.phantasi.errorSaveFailed,
       conflict: t.phantasi.noteRevisionConflict,
       uncertain: t.phantasi.noteSaveUnconfirmed,
+      slugTaken: t.studio.slugTaken,
     },
   })
   const restoreHistory = async (entry: phantasiApi.NoteHistoryEntry) => {
@@ -324,7 +362,10 @@ export function useNoteEditorSession({
     loading,
     userName: user?.username,
     textareaRef,
-    fields: { title, contentMd, topic, cover, publishedAt },
+    fields: {
+      title, contentMd, topic, cover, publishedAt,
+      ...(docStatus === 'published' ? { slug } : {}),
+    },
     cloud,
   })
   widgetSettingsOpenRef.current = widgetSettingsOpen
@@ -440,8 +481,9 @@ export function useNoteEditorSession({
       contentMd.trim() !== saved.contentMd.trim() ||
       normalizeNoteTopic(topic) !== normalizeNoteTopic(saved.topic) ||
       normalizeNoteCover(cover) !== normalizeNoteCover(saved.cover) ||
-      !sameNoteMinute(publishedAt, saved.publishedAt),
-    [title, contentMd, topic, cover, publishedAt, saved],
+      !sameNoteMinute(publishedAt, saved.publishedAt) ||
+      (slug ?? null) !== (saved.slug ?? null),
+    [title, contentMd, topic, cover, publishedAt, slug, saved],
   )
 
   const applyEdit = useCallback(
@@ -502,6 +544,7 @@ export function useNoteEditorSession({
     topic,
     cover,
     publishedAt,
+    slug,
     scheduledAt,
     noteId,
     cloudId,
@@ -516,6 +559,10 @@ export function useNoteEditorSession({
     clearRecovery: cloud.discardRecovery,
     onSaved,
     onDeleted,
+    onPublished: (link) => {
+      const href = link.trim()
+      if (href) setArticleHref(href)
+    },
     onClose,
     format,
     labels: {
@@ -528,6 +575,8 @@ export function useNoteEditorSession({
       deleteConfirm: t.phantasi.noteDeleteConfirm,
       deleteFailed: t.phantasi.errorDeleteFailed,
       discardConfirm: t.phantasi.noteDiscardConfirm,
+      slugInvalid: t.studio.slugInvalid,
+      slugTaken: t.studio.slugTaken,
     },
   })
   const requestClose = useCallback(() => {
@@ -660,6 +709,16 @@ export function useNoteEditorSession({
     setCover,
     publishedAt: publishedAt ?? defaultPublishedAt.current,
     setPublishedAt,
+    slugInput,
+    slugInvalid: noteSlugInvalid(slugInput),
+    onSlugInput: (next: string) => {
+      setSlugInput(next)
+      const wire = noteSlugWire(next)
+      if (wire === undefined) return
+      if (wire !== slug) setArticleHref(null)
+      setSlug(wire)
+    },
+    articleHref: articleHref ?? (docStatus === 'published' ? publishedNoteHref({ slug }) : null),
     loading,
     saving,
     uploading,

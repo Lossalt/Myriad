@@ -3,6 +3,7 @@ import type {
   LocaleConfig,
   LocaleMerope,
   LocalePhantasi,
+  LocaleStudio,
   LocaleTapp,
   ShellChromeKeys,
   ShellNamespace,
@@ -120,6 +121,16 @@ const phantasiLoader = createLocaleLoader<LocalePhantasi>({
   'de-DE': () => import('./phantasi.de-DE.json').then(module => module.default),
 })
 
+const studioLoader = createLocaleLoader<LocaleStudio>({
+  'zh-CN': () => import('./studio.zh-CN.json').then(module => module.default),
+  'zh-TW': () => import('./studio.zh-TW.json').then(module => module.default),
+  'en-US': () => import('./studio.en-US.json').then(module => module.default),
+  'ja-JP': () => import('./studio.ja-JP.json').then(module => module.default),
+  'ko-KR': () => import('./studio.ko-KR.json').then(module => module.default),
+  'fr-FR': () => import('./studio.fr-FR.json').then(module => module.default),
+  'de-DE': () => import('./studio.de-DE.json').then(module => module.default),
+})
+
 const meropeLoader = createLocaleLoader<LocaleMerope>({
   'zh-CN': () => import('./merope.zh-CN.json').then(module => module.default),
   'zh-TW': () => import('./merope.zh-TW.json').then(module => module.default),
@@ -143,6 +154,7 @@ const agentCapsLoader = createLocaleLoader<LocaleAgentCaps>({
 const namespaceLoaders = {
   tapp: tappLoader,
   phantasi: phantasiLoader,
+  studio: studioLoader,
   merope: meropeLoader,
   agentCaps: agentCapsLoader,
 } as const
@@ -155,17 +167,18 @@ export class LocaleNamespaceError extends Error {
 }
 
 async function loadFullPack(locale: Locale): Promise<TranslationKeys> {
-  const [shell, config, tapp, phantasi, merope, agentCaps] = await Promise.all([
+  const [shell, config, tapp, phantasi, studio, merope, agentCaps] = await Promise.all([
     shellLoader.load(locale),
     configLoader.load(locale).catch((cause) => {
       throw new LocaleNamespaceError(locale, cause)
     }),
     tappLoader.load(locale),
     phantasiLoader.load(locale),
+    studioLoader.load(locale),
     meropeLoader.load(locale),
     agentCapsLoader.load(locale),
   ])
-  return { ...shell, config, tapp, phantasi, merope, agentCaps }
+  return { ...shell, config, tapp, phantasi, studio, merope, agentCaps }
 }
 
 const loader = createLocaleLoader<TranslationKeys>({

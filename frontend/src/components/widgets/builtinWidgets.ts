@@ -1,7 +1,13 @@
 import type { ComponentType } from 'react'
 import type { TranslationKeys } from '../../i18n'
 import type { WidgetComponentProps, WidgetSize, WidgetType } from '../widgetGridTypes'
+import type { BuiltinWidgetHost, BuiltinWidgetId } from './builtinWidgetMeta'
 import { lazyWithPreload } from '../../utils/codeSplitting'
+import {
+  BUILTIN_WIDGET_META,
+
+  builtinWidgetVisibleOn,
+} from './builtinWidgetMeta'
 import {
   preloadReportCardsForTypes,
   ReportCardHost,
@@ -75,195 +81,55 @@ const COMPONENT_LONG_PRESS_WIDGETS = new Set<unknown>([
 
 type WidgetsI18n = TranslationKeys['widgets']
 
-export const BUILTIN_WIDGET_BASE_CONFIG = {
-  welcome: {
-    defaultSize: '4x2' as WidgetSize,
-    component: WelcomeWidget,
-    supportedSizes: ['2x2', '4x2'] as WidgetSize[],
-    hosts: ['home', 'control-panel'] as const,
-  },
-  'agent-persona': {
-    defaultSize: '2x2' as WidgetSize,
-    component: MeropeWidget,
-    supportedSizes: ['2x2', '4x4'] as WidgetSize[],
-    hosts: ['home'] as const,
-  },
-  'quick-stats': {
-    defaultSize: '4x2' as WidgetSize,
-    component: QuickStatsWidget,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'recent-activity': {
-    defaultSize: '4x2' as WidgetSize,
-    component: RecentActivityWidget,
-    supportedSizes: ['2x2', '4x2', '4x4'] as WidgetSize[],
-  },
-  'friend-links': {
-    defaultSize: '4x2' as WidgetSize,
-    component: FriendLinksWidget,
-    supportedSizes: ['4x1', '2x2', '4x2'] as WidgetSize[],
-    hosts: ['home', 'note'] as const,
-  },
-  weather: {
-    defaultSize: '2x2' as WidgetSize,
-    component: WeatherWidget,
-    supportedSizes: ['2x2', '4x2', '4x1'] as WidgetSize[],
-  },
-  quote: {
-    defaultSize: '2x2' as WidgetSize,
-    component: QuoteWidget,
-    supportedSizes: ['2x2', '4x2', '4x1'] as WidgetSize[],
-  },
-  'music-player': {
-    defaultSize: '2x2' as WidgetSize,
-    component: MusicPlayerWidget,
-    supportedSizes: ['2x2', '4x2'] as WidgetSize[],
-  },
-  'report-bilibili': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-steam': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-github': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-youtube': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-netease': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-bangumi': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-mal': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-x': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-discord': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-xbox': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'report-psn': {
-    defaultSize: '4x2' as WidgetSize,
-    component: ReportCardHost,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'social-network': {
-    defaultSize: '1x1' as WidgetSize,
-    component: SocialNetworkWidget,
-    supportedSizes: ['1x1', '2x1', '2x2'] as WidgetSize[],
-  },
-  'tapp-shortcut': {
-    defaultSize: '1x1' as WidgetSize,
-    component: TappShortcutWidget,
-    supportedSizes: ['1x1', '2x1', '2x2'] as WidgetSize[],
-  },
-  'game-presence': {
-    defaultSize: '4x2' as WidgetSize,
-    component: GamePresenceWidget,
-    supportedSizes: ['4x2'] as WidgetSize[],
-  },
-  'visitor-stats': {
-    defaultSize: '4x2' as WidgetSize,
-    component: VisitorStatsWidget,
-    supportedSizes: ['2x2', '4x2'] as WidgetSize[],
-  },
-  'phantasi-featured': {
-    defaultSize: '4x4' as WidgetSize,
-    component: PhantasiFeaturedWidget,
-    supportedSizes: ['4x2', '4x4'] as WidgetSize[],
-    hosts: ['home'] as const,
-  },
-  'github-repos': {
-    defaultSize: '2x2' as WidgetSize,
-    component: GithubReposWidget,
-    supportedSizes: ['2x1', '2x2', '4x2'] as WidgetSize[],
-  },
-} as const
-
-export type BuiltinWidgetId = keyof typeof BUILTIN_WIDGET_BASE_CONFIG
-
-const BUILTIN_WIDGET_ORDER: BuiltinWidgetId[] = [
-  'welcome',
-  'agent-persona',
-  'quick-stats',
-  'recent-activity',
-  'friend-links',
-  'weather',
-  'quote',
-  'music-player',
-  'report-bilibili',
-  'report-steam',
-  'report-github',
-  'report-youtube',
-  'report-netease',
-  'report-bangumi',
-  'report-mal',
-  'report-x',
-  'report-discord',
-  'report-xbox',
-  'report-psn',
-  'social-network',
-  'tapp-shortcut',
-  'game-presence',
-  'visitor-stats',
-  'phantasi-featured',
-  'github-repos',
-]
-
-const WIDGET_NAME_KEY: Record<BuiltinWidgetId, keyof WidgetsI18n> = {
-  welcome: 'welcome',
-  'agent-persona': 'agentPersona',
-  'quick-stats': 'quickStats',
-  'recent-activity': 'recentActivity',
-  'friend-links': 'friendLinks',
-  weather: 'weather',
-  quote: 'quote',
-  'music-player': 'musicPlayer',
-  'report-bilibili': 'reportBilibili',
-  'report-steam': 'reportSteam',
-  'report-github': 'reportGithub',
-  'report-youtube': 'reportYoutube',
-  'report-netease': 'reportNetease',
-  'report-bangumi': 'reportBangumi',
-  'report-mal': 'reportMal',
-  'report-x': 'reportX',
-  'report-discord': 'reportDiscord',
-  'report-xbox': 'reportXbox',
-  'report-psn': 'reportPsn',
-  'social-network': 'socialNetwork',
-  'tapp-shortcut': 'tappShortcut',
-  'game-presence': 'gamePresence',
-  'visitor-stats': 'visitorStats',
-  'phantasi-featured': 'phantasiFeatured',
-  'github-repos': 'githubRepos',
+const WIDGET_COMPONENTS: Record<BuiltinWidgetId, ComponentType<WidgetComponentProps>> = {
+  welcome: WelcomeWidget,
+  'agent-persona': MeropeWidget,
+  'quick-stats': QuickStatsWidget,
+  'recent-activity': RecentActivityWidget,
+  'friend-links': FriendLinksWidget,
+  weather: WeatherWidget,
+  quote: QuoteWidget,
+  'music-player': MusicPlayerWidget,
+  'report-bilibili': ReportCardHost,
+  'report-steam': ReportCardHost,
+  'report-github': ReportCardHost,
+  'report-youtube': ReportCardHost,
+  'report-netease': ReportCardHost,
+  'report-bangumi': ReportCardHost,
+  'report-mal': ReportCardHost,
+  'report-x': ReportCardHost,
+  'report-discord': ReportCardHost,
+  'report-xbox': ReportCardHost,
+  'report-psn': ReportCardHost,
+  'social-network': SocialNetworkWidget,
+  'tapp-shortcut': TappShortcutWidget,
+  'game-presence': GamePresenceWidget,
+  'visitor-stats': VisitorStatsWidget,
+  'phantasi-featured': PhantasiFeaturedWidget,
+  'github-repos': GithubReposWidget,
 }
+
+export const BUILTIN_WIDGET_BASE_CONFIG = Object.fromEntries(
+  BUILTIN_WIDGET_META.map((meta) => [
+    meta.id,
+    {
+      defaultSize: meta.defaultSize,
+      component: WIDGET_COMPONENTS[meta.id],
+      supportedSizes: [...meta.supportedSizes],
+      ...(meta.hosts ? { hosts: [...meta.hosts] } : {}),
+    },
+  ]),
+) as Record<
+  BuiltinWidgetId,
+  {
+    defaultSize: WidgetSize
+    component: ComponentType<WidgetComponentProps>
+    supportedSizes: WidgetSize[]
+    hosts?: BuiltinWidgetHost[]
+  }
+>
+
+export type { BuiltinWidgetHost, BuiltinWidgetId }
 
 export function preloadBuiltinWidgets(types: Iterable<string>): Promise<void> {
   const typeList = Iterator.from(types).toArray()
@@ -292,32 +158,23 @@ export function preloadBuiltinWidgets(types: Iterable<string>): Promise<void> {
   return Promise.all(jobs).then(() => undefined)
 }
 
-export type BuiltinWidgetHost = 'home' | 'control-panel' | 'note'
-
 export function getBuiltinWidgets(
   widgetsI18n: WidgetsI18n,
   host: BuiltinWidgetHost,
 ): WidgetType[] {
-  return BUILTIN_WIDGET_ORDER.filter((id) => {
-    const base = BUILTIN_WIDGET_BASE_CONFIG[
-      id
-    ] as (typeof BUILTIN_WIDGET_BASE_CONFIG)[BuiltinWidgetId] & {
-      hosts?: readonly BuiltinWidgetHost[]
-    }
-    return !base.hosts || base.hosts.includes(host)
-  }).map((id) => {
-    const base = BUILTIN_WIDGET_BASE_CONFIG[id]
+  return BUILTIN_WIDGET_META.filter((meta) => builtinWidgetVisibleOn(meta, host)).map((meta) => {
+    const base = BUILTIN_WIDGET_BASE_CONFIG[meta.id]
     return {
-      id,
-      name: widgetsI18n[WIDGET_NAME_KEY[id]],
+      id: meta.id,
+      name: widgetsI18n[meta.nameKey],
       defaultSize: base.defaultSize,
       component: base.component,
-      preload: () => preloadBuiltinWidgets([id]),
-      supportedSizes: Iterator.from(base.supportedSizes).toArray(),
+      preload: () => preloadBuiltinWidgets([meta.id]),
+      supportedSizes: [...base.supportedSizes],
       componentLongPress:
         COMPONENT_LONG_PRESS_WIDGETS.has(base.component) || undefined,
       settings:
-        id === 'github-repos'
+        meta.id === 'github-repos'
           ? [
               {
                 key: 'repo',

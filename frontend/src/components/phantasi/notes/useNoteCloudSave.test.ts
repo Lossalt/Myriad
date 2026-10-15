@@ -35,6 +35,7 @@ describe('mergeCloudFields', () => {
       topic: 'ai',
       cover: null,
       publishedAt: 9,
+      slug: null,
     })
   })
 })
@@ -61,6 +62,7 @@ describe('cloudFieldsOf', () => {
       topic: null,
       cover: null,
       publishedAt: null,
+      slug: null,
     })
   })
 })

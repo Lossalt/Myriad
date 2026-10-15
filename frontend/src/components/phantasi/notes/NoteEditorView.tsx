@@ -124,6 +124,10 @@ export function NoteEditorView({
   setCover,
   publishedAt,
   setPublishedAt,
+  slugInput,
+  slugInvalid,
+  onSlugInput,
+  articleHref,
   loading,
   saving,
   uploading,
@@ -456,6 +460,7 @@ export function NoteEditorView({
           onPublish={() => {
             void handleSave()
           }}
+          articleHref={articleHref}
           settingsOpen={settingsOpen}
           onToggleSettings={() => setSettingsOpen((open) => !open)}
           onClose={requestClose}
@@ -914,6 +919,10 @@ export function NoteEditorView({
           onCreateTopic={handleCreateTopic}
           publishedAt={publishedAt}
           onPublishedAtChange={setPublishedAt}
+          slugInput={slugInput}
+          slugInvalid={slugInvalid}
+          onSlugInput={onSlugInput}
+          articleHref={articleHref}
           scheduledAt={scheduledAt}
           onScheduledAtChange={setScheduledAt}
           canSchedule={cloudId != null}

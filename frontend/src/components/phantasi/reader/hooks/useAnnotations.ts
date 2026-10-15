@@ -1,6 +1,6 @@
 import type { AnnotationItem } from '../../../../services/phantasiaiApi'
 import type { ReaderTooltipAnchor } from '../tooltipPlacement'
-import type { ReaderCopy } from '../types'
+import type { ReaderCopy } from '../../reading/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../../../contexts/I18nContext'
 import * as phantasiaiApi from '../../../../services/phantasiaiApi'

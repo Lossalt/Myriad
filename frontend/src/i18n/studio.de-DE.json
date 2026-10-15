@@ -1,0 +1,14 @@
+{
+  "title": "Werkbank",
+  "subtitle": "Notizen, Kommentare und Blog",
+  "blog": "Blog",
+  "blogPending": "Thema, Website und Neuerstellung folgen im nächsten Schritt.",
+  "slug": "Slug",
+  "slugHint": "Dieser Teil der öffentlichen Adresse. Leer lassen, dann entsteht er beim Veröffentlichen.",
+  "slugInvalid": "Nur Kleinbuchstaben, Ziffern und Bindestriche, höchstens 80 Zeichen.",
+  "slugTaken": "Dieser Slug ist schon vergeben.",
+  "viewArticle": "Artikel ansehen",
+  "navHome": "Überblick",
+  "navCategories": "Notizkategorien",
+  "openFailed": "Dieser Artikel ließ sich nicht öffnen."
+}

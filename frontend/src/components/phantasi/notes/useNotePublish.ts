@@ -16,6 +16,7 @@ import {
   noteScheduleError,
   toNoteWritePayload,
 } from './noteFields'
+import { isSlugTakenError, noteSlugWire } from './noteSlug'
 
 export function useNotePublish({
   title,
@@ -23,6 +24,7 @@ export function useNotePublish({
   topic,
   cover,
   publishedAt,
+  slug = null,
   scheduledAt,
   noteId,
   cloudId,
@@ -37,6 +39,7 @@ export function useNotePublish({
   runWrite,
   onSaved,
   onDeleted,
+  onPublished,
   onClose,
   format,
   labels,
@@ -46,6 +49,7 @@ export function useNotePublish({
   topic: string | null
   cover: string | null
   publishedAt: number | null
+  slug?: string | null
   scheduledAt: number | null
   noteId?: number
   cloudId: number | null
@@ -60,6 +64,7 @@ export function useNotePublish({
   runWrite: NoteCloudSaveHandle['runWrite']
   onSaved: (id: number) => void
   onDeleted?: (id: number) => void
+  onPublished?: (link: string) => void
   onClose: () => void
   format: (template: string, values: Record<string, string | number>) => string
   labels: {
@@ -72,6 +77,8 @@ export function useNotePublish({
     deleteConfirm: string
     deleteFailed: string
     discardConfirm: string
+    slugInvalid?: string
+    slugTaken?: string
   }
 }): {
   fieldMessage: (kind: ReturnType<typeof noteFieldError>) => string | null
@@ -113,23 +120,36 @@ export function useNotePublish({
       showNoteNotice(fieldMessage(invalid))
       return
     }
+    const slugWire = noteSlugWire(slug)
+    if (slugWire === undefined) {
+      showNoteNotice(labels.slugInvalid ?? labels.saveFailed)
+      return
+    }
     setSaving(true)
     const payload = toNoteWritePayload(title, contentMd, topic, cover, publishedAt)
     try {
       if (cloudId != null) {
         await runWrite(async (current, track) => {
           const latest = toNoteWritePayload(current.title, current.contentMd, current.topic, current.cover, current.publishedAt)
+          const currentSlug = noteSlugWire(slug)
+          if (currentSlug === undefined) {
+            showNoteNotice(labels.slugInvalid ?? labels.saveFailed)
+            return
+          }
           const receipt = track({
             title: latest.title, contentMd: latest.content_md, topic: latest.topic,
             cover: latest.image ?? null, publishedAt: latest.published_at ?? null,
+            slug: currentSlug,
           })
           const result = await phantasiApi.publishNoteDoc(cloudId, {
             ...latest,
+            slug: currentSlug,
             client_request_id: receipt.requestId,
             image: latest.image ?? null,
             revision: revisionRef.current,
           })
           if (!await receipt.receiveDoc(result.doc)) return
+          onPublished?.(result.link)
           onSaved(result.id)
         })
         return
@@ -141,7 +161,7 @@ export function useNotePublish({
       clearLocalRecovery()
       onSaved(result.id)
     } catch (err) {
-      showNoteNotice(userFacingError(err, labels.saveFailed))
+      showNoteNotice(isSlugTakenError(err) ? (labels.slugTaken ?? labels.saveFailed) : userFacingError(err, labels.saveFailed))
     } finally {
       setSaving(false)
     }
@@ -153,10 +173,14 @@ export function useNotePublish({
     clearLocalRecovery,
     fieldMessage,
     labels.saveFailed,
+    labels.slugInvalid,
+    labels.slugTaken,
     noteId,
+    onPublished,
     onSaved,
     publishedAt,
     revisionRef,
+    slug,
     saving,
     setContentMd,
     setSaving,
@@ -186,12 +210,14 @@ export function useNotePublish({
     try {
       await runWrite(async (current, track) => {
         const receipt = track(current)
+        const scheduledSlug = noteSlugWire(current.slug)
         const doc = await phantasiApi.scheduleNoteDoc(cloudId, {
           client_request_id: receipt.requestId,
           title: current.title,
           content_md: current.contentMd,
           topic: current.topic,
           image: current.cover,
+          ...(scheduledSlug !== undefined ? { slug: scheduledSlug } : {}),
           scheduled_at: when,
           revision: revisionRef.current,
         })

@@ -34,6 +34,12 @@ import phantasiJa from './phantasi.ja-JP.json' with { type: 'json' }
 import phantasiKo from './phantasi.ko-KR.json' with { type: 'json' }
 import phantasiZh from './phantasi.zh-CN.json' with { type: 'json' }
 import phantasiTw from './phantasi.zh-TW.json' with { type: 'json' }
+import studioDe from './studio.de-DE.json' with { type: 'json' }
+import studioFr from './studio.fr-FR.json' with { type: 'json' }
+import studioJa from './studio.ja-JP.json' with { type: 'json' }
+import studioKo from './studio.ko-KR.json' with { type: 'json' }
+import studioZh from './studio.zh-CN.json' with { type: 'json' }
+import studioTw from './studio.zh-TW.json' with { type: 'json' }
 import tappDe from './tapp.de-DE.json' with { type: 'json' }
 import tappFr from './tapp.fr-FR.json' with { type: 'json' }
 import tappJa from './tapp.ja-JP.json' with { type: 'json' }
@@ -47,6 +53,7 @@ const _zh: TranslationKeys = assembleLocale(zh, {
   config: configZh,
   tapp: tappZh,
   phantasi: phantasiZh,
+  studio: studioZh,
   merope: meropeZh,
   errors: errorsZh,
   agentCaps: agentCapsZh,
@@ -55,6 +62,7 @@ const _tw: TranslationKeys = assembleLocale(tw, {
   config: configTw,
   tapp: tappTw,
   phantasi: phantasiTw,
+  studio: studioTw,
   merope: meropeTw,
   errors: errorsTw,
   agentCaps: agentCapsTw,
@@ -63,6 +71,7 @@ const _ja: TranslationKeys = assembleLocale(ja, {
   config: configJa,
   tapp: tappJa,
   phantasi: phantasiJa,
+  studio: studioJa,
   merope: meropeJa,
   errors: errorsJa,
   agentCaps: agentCapsJa,
@@ -71,6 +80,7 @@ const _ko: TranslationKeys = assembleLocale(ko, {
   config: configKo,
   tapp: tappKo,
   phantasi: phantasiKo,
+  studio: studioKo,
   merope: meropeKo,
   errors: errorsKo,
   agentCaps: agentCapsKo,
@@ -79,6 +89,7 @@ const _fr: TranslationKeys = assembleLocale(fr, {
   config: configFr,
   tapp: tappFr,
   phantasi: phantasiFr,
+  studio: studioFr,
   merope: meropeFr,
   errors: errorsFr,
   agentCaps: agentCapsFr,
@@ -87,6 +98,7 @@ const _de: TranslationKeys = assembleLocale(de, {
   config: configDe,
   tapp: tappDe,
   phantasi: phantasiDe,
+  studio: studioDe,
   merope: meropeDe,
   errors: errorsDe,
   agentCaps: agentCapsDe,

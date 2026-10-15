@@ -7,7 +7,7 @@ import {
   READER_PODCAST_PANEL_ID,
   READER_TOC_PANEL_ID,
   READER_TOOL_SHEET_ID,
-} from './constants.ts'
+} from '../reading/constants.ts'
 
 it('reader overlay ids stay unique', () => {
   const ids = [

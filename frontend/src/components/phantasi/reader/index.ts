@@ -1,9 +1,9 @@
-export { default as CommentsListPanel } from './CommentsListPanel'
-
 export {
   STYLE_READER_CONTAINER,
   STYLE_SCROLL_SMOOTH,
-} from './constants'
+} from '../reading/constants'
+
+export { default as CommentsListPanel } from './CommentsListPanel'
 
 export { useContentPostprocess } from './contentPostprocess'
 export { useContentRender } from './contentRender'

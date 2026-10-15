@@ -1,5 +1,5 @@
 import type { CommentItem } from '../../../services/phantasiApi'
-import type { ReaderCopy, ThemeConfig } from './types'
+import type { ReaderCopy, ThemeConfig } from '../reading/types'
 import {
   LuChevronDown as ChevronDown,
   LuChevronUp as ChevronUp,
@@ -21,7 +21,7 @@ import {
   READER_COMMENTS_PANEL_ID,
   READER_COMMENTS_TITLE_ID,
   STYLE_MAX_HEIGHT_60VH,
-} from './constants'
+} from '../reading/constants'
 import { useReaderDialogFocus } from './useReaderDialogFocus'
 
 interface CommentsListPanelProps {

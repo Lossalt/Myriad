@@ -1,12 +1,11 @@
 /** 工作台只在这一路挂数据。订阅墙不建这些 hook。 */
 
-import type { PhantasiItem } from '../../types/phantasi'
 import type { WorkbenchPane } from './logic/board'
-import type { ArticleLoader, OpenArticleOptions } from './useArticleOpen'
 import type { usePhantasiNotes } from './usePhantasiNotes'
 import type { usePhantasiSources } from './usePhantasiSources'
+import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../contexts/I18nContext'
-import * as phantasiApi from '../../services/phantasiApi'
+import { openPublishedItem, openStudioNote } from '../studio/studioNoteNav'
 import { isSiteSource, refreshableSourceCount } from './logic/board'
 import { PhantasiCategoryAdmin } from './manager/PhantasiCategoryAdmin'
 import { PhantasiWorkbenchAdmin } from './manager/PhantasiWorkbenchAdmin'
@@ -19,7 +18,6 @@ import { usePhantasiWorkbench } from './usePhantasiWorkbench'
 export default function PhantasiWorkbenchLane({
   sources,
   notes,
-  openArticle,
   pane,
   onPane,
   setError,
@@ -27,17 +25,14 @@ export default function PhantasiWorkbenchLane({
   sources: ReturnType<typeof usePhantasiSources>
   notes: Pick<
     ReturnType<typeof usePhantasiNotes>,
-    'docsEpoch' | 'touchDocs' | 'write' | 'edit' | 'editDoc'
+    'docsEpoch' | 'touchDocs'
   >
-  openArticle: (
-    target: PhantasiItem | ArticleLoader,
-    options?: OpenArticleOptions,
-  ) => Promise<PhantasiItem | void>
   pane: WorkbenchPane
   onPane: (next: WorkbenchPane) => void
   setError: (message: string) => void
 }) {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const pack = usePipack(sources.sources, sources.reloadBoard)
   const workbench = usePhantasiWorkbench(
     pane,
@@ -112,10 +107,11 @@ export default function PhantasiWorkbenchLane({
             }`
           : null
       }
-      onWrite={notes.write}
+      onWrite={() => {
+        void openStudioNote(navigate, { kind: 'new' })
+      }}
       onOpenNote={(open) => {
-        if (open.kind === 'item') notes.edit(open.id)
-        else notes.editDoc(open.id)
+        void openStudioNote(navigate, open, setError, t.errors.operationFailed)
       }}
       onDeleteNotes={async (docs) => {
         const ok = await workbench.removeNotes(docs)
@@ -126,9 +122,7 @@ export default function PhantasiWorkbenchLane({
         void workbench.removeComments(ids)
       }}
       onOpenCommentItem={(id) => {
-        void openArticle((signal) =>
-          phantasiApi.getItem(id, undefined, { signal }),
-        )
+        void openPublishedItem(id, setError, t.errors.operationFailed)
       }}
       onApproveApplication={async (id) => {
         const ok = await workbench.approveApplication(id)
@@ -190,8 +184,7 @@ export default function PhantasiWorkbenchLane({
             loading={categories.loading}
             busy={categories.busy}
             onOpenNote={(open) => {
-              if (open.kind === 'item') notes.edit(open.id)
-              else notes.editDoc(open.id)
+              void openStudioNote(navigate, open, setError, t.errors.operationFailed)
             }}
             onCreate={categories.create}
             onRename={(from, to) =>
@@ -229,9 +222,7 @@ export default function PhantasiWorkbenchLane({
             onRefreshSource={sources.refreshSource}
             onGenerateStyleTags={sources.generateStyleTags}
             onOpenItem={(id) => {
-              void openArticle((signal) =>
-                phantasiApi.getItem(id, undefined, { signal }),
-              )
+              void openPublishedItem(id, setError, t.errors.operationFailed)
             }}
           />
         ) : null

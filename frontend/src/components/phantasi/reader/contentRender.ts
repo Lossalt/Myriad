@@ -1,7 +1,7 @@
 import type { AnnotationItem } from '../../../services/phantasiaiApi'
 import type { CommentItem } from '../../../services/phantasiApi'
 import type { PhantasiItem } from '../../../types/phantasi'
-import type { ReaderCopy, ThemeKey } from './types'
+import type { ReaderCopy, ThemeKey } from '../reading/types'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { processEmbeds } from '../../../utils/embedProcessor'
 import { escapeHtml } from '../../../utils/inputSanitizer'

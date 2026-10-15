@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react'
 
 import type { CommentItem } from '../../../services/phantasiApi'
-import type { ReaderRightPanelProps } from './types'
+import type { ReaderRightPanelProps } from '../reading/types'
 import {
   LuAlignJustify as AlignJustify,
   LuMessageSquare as MessageSquare,
@@ -11,7 +11,7 @@ import {
 } from '@lib/icons'
 import { motionShim as motion } from '@lib/motionShim'
 import { memo } from 'react'
-import { READER_COMMENTS_PANEL_ID, THEMES } from './constants'
+import { READER_COMMENTS_PANEL_ID, THEMES } from '../reading/constants'
 import { readerDialogTrigger } from './readerPanels'
 
 interface ExtendedReaderRightPanelProps extends ReaderRightPanelProps {

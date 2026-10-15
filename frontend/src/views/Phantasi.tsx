@@ -63,6 +63,7 @@ import { usePhantasiSeo } from '../components/phantasi/usePhantasiSeo'
 import { usePhantasiSources } from '../components/phantasi/usePhantasiSources'
 import { usePhantasiStarred } from '../components/phantasi/usePhantasiStarred'
 import { usePhantasiSurface } from '../components/phantasi/usePhantasiSurface'
+import { openStudioNote } from '../components/studio/studioNoteNav'
 import { useAuth } from '../contexts/AuthContext'
 import { useI18n } from '../contexts/I18nContext'
 import { useSecondaryNav } from '../contexts/NavigationContext'
@@ -77,13 +78,11 @@ import { phantasiSubject } from '../utils/phantasiSubject'
 import { showToast } from '../utils/toastManager'
 
 const PhantasiReader = lazy(() => import('../components/phantasi/PhantasiReader'))
-const NoteEditor = lazy(() => import('../components/phantasi/notes/NoteEditor'))
 const PhantasiWorkbenchLane = lazy(() => import('../components/phantasi/PhantasiWorkbenchLane'))
 
 function warmJournalSurfaces(admin: boolean) {
   void import('../components/phantasi/PhantasiReader')
   if (!admin) return
-  void import('../components/phantasi/notes/NoteEditor')
   void import('../components/phantasi/PhantasiWorkbenchLane')
 }
 
@@ -434,7 +433,6 @@ function PhantasiSubjectPage() {
             <PhantasiWorkbenchLane
               sources={sources}
               notes={notes}
-              openArticle={item.openArticle}
               pane={route.workbenchPane}
               onPane={route.setWorkbenchPane}
               setError={setError}
@@ -465,8 +463,8 @@ function PhantasiSubjectPage() {
             onPeekEnd={handlePeekEnd}
             onToggleStar={isAdmin ? handleCardStar : undefined}
             onMarkAllRead={isAuthenticated ? actions.markAllRead : undefined}
-            onWriteNote={isAdmin ? notes.write : undefined}
-            onOpenDoc={isAdmin ? notes.editDoc : undefined}
+            onWriteNote={isAdmin ? () => { void openStudioNote(navigate, { kind: 'new' }) } : undefined}
+            onOpenDoc={isAdmin ? (docId) => { void openStudioNote(navigate, { kind: 'doc', id: docId }) } : undefined}
             docsEpoch={notes.docsEpoch}
             isAuthenticated={isAuthenticated}
             isAdmin={isAdmin}
@@ -511,7 +509,14 @@ function PhantasiSubjectPage() {
               sourceType={item.selectedItemSource?.source_type}
               onEditNote={
                 isAdmin && item.selectedItemSource?.source_type === 'note'
-                  ? () => notes.edit(item.selectedItem!.id)
+                  ? () => {
+                      void openStudioNote(
+                        navigate,
+                        { kind: 'item', id: item.selectedItem!.id },
+                        setError,
+                        t.errors.operationFailed,
+                      )
+                    }
                   : undefined
               }
               shareUrl={
@@ -538,34 +543,6 @@ function PhantasiSubjectPage() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence mode="wait">
-        {notes.noteEditor !== null && (
-          <Suspense fallback={null}>
-            <NoteEditor
-              key={
-                notes.noteEditor === 'new'
-                  ? 'new'
-                  : typeof notes.noteEditor === 'number'
-                    ? `item:${notes.noteEditor}`
-                    : `doc:${notes.noteEditor.docId}`
-              }
-              noteId={
-                typeof notes.noteEditor === 'number'
-                  ? notes.noteEditor
-                  : undefined
-              }
-              docId={
-                typeof notes.noteEditor === 'object'
-                  ? notes.noteEditor.docId
-                  : undefined
-              }
-              onClose={notes.close}
-              onSaved={notes.onSaved}
-              onDeleted={notes.onDeleted}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
     </PhantasiPage>
   )
 }

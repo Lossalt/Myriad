@@ -1,4 +1,4 @@
-import type { LayoutKey } from '../types'
+import type { LayoutKey } from '../../reading/types'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseReaderChromeOptions {

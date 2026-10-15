@@ -56,6 +56,10 @@ function assembleServiceCopy(
     getCachedShellNamespace('phantasi', locale) ??
     getCachedShellNamespace('phantasi', 'en-US') ??
     service.phantasi
+  const studio =
+    getCachedShellNamespace('studio', locale) ??
+    getCachedShellNamespace('studio', 'en-US') ??
+    {}
   const merope =
     getCachedShellNamespace('merope', locale) ??
     getCachedShellNamespace('merope', 'en-US') ??
@@ -68,6 +72,7 @@ function assembleServiceCopy(
     ...chrome,
     tapp,
     phantasi,
+    studio,
     merope,
     agentCaps,
   } as ShellTranslationKeys

@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react'
 
 import type { ReaderToolPanel } from './readerPanels'
-import type { ReaderLeftPanelProps } from './types'
+import type { ReaderLeftPanelProps } from '../reading/types'
 import {
   LuArrowRight as ArrowRight,
   LuChevronLeft as ChevronLeft,
@@ -48,7 +48,7 @@ import {
   READER_TOC_PANEL_ID,
   READER_TOC_TITLE_ID,
   STYLE_MAX_HEIGHT_320,
-} from './constants'
+} from '../reading/constants'
 import {
   nextExclusivePanel,
   readerPanelFlags,

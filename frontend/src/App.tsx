@@ -72,6 +72,7 @@ const {
   home: Home,
   library: Library,
   phantasi: Phantasi,
+  studio: Studio,
   reports: Reports,
   config: Config,
   agentSettings: AgentSettings,
@@ -569,6 +570,16 @@ function AppRoutes() {
                 <Library />
               </SuspensePage>
             </ModuleVisibilityGuard>
+          }
+        />
+        <Route
+          path="/studio/*"
+          element={
+            <RequireAuth requiresAdmin>
+              <NamespacedPage names={['phantasi', 'studio']}>
+                <Studio />
+              </NamespacedPage>
+            </RequireAuth>
           }
         />
         {/* /journal/* 单路由，避免列表 ↔ 文章 remount 丢阅读器状态。 */}
