@@ -75,4 +75,3 @@ docs/
 | [agent-channel-telegram.md](design/agent-channel-telegram.md) | Telegram Bot 通道调研 |
 | [merope-25d-pipeline.md](design/merope-25d-pipeline.md) | Merope / See-through / Anime2.5D 形象管线 |
 | [merope-3d-pipeline.md](design/merope-3d-pipeline.md) | Merope / Tripo 3D 管线 |
-| [phantasi-tile-grid.md](design/phantasi-tile-grid.md) | Phantasi 磁贴网格改造实施手册 |

@@ -62,13 +62,13 @@
 
 ## Phantasi / 手帐品牌硬切（破坏性变更）
 
-Brew 内部名改为 Phantasi，用户界面改为 **手帐**（en: Journal）。**没有新的 SeaORM 迁移编号。** 绿场直接跑改名后的 `003_phantasi_system`。已有库在 `Migrator::up` 里、丢掉无文件的历史行之前，走一次性临时改名：把 `brew_*` 表、列内 URL/JSON、TAPP 批准权限和 `seaql_migrations` 的 `003_brew_system` 行改成 phantasi。两套表同时存在会启动失败。无 301，旧路径 `/brew`、`/api/brew`、`/api/brewlia`、`Tapp.brewList`、`brew:*` 一律失效。
+Brew 内部名改为 Phantasi，用户界面改为 **手帐**（en: Journal）。手帐访客界面后来已下线，现行地址以文首说明为准。**没有新的 SeaORM 迁移编号。** 绿场直接跑改名后的 `003_phantasi_system`。已有库在 `Migrator::up` 里、丢掉无文件的历史行之前，走一次性临时改名：把 `brew_*` 表、列内 URL/JSON、TAPP 批准权限和 `seaql_migrations` 的 `003_brew_system` 行改成 phantasi。两套表同时存在会启动失败。无 301，旧路径 `/brew`、`/api/brew`、`/api/brewlia`、`Tapp.brewList`、`brew:*` 一律失效。
 
 - **TAPP：** 批准列里的 `brew:read|write|manage|commentWrite` 会被改写成 `phantasi:*`。包内 Manifest 或源码仍声明 `brew:*` / 调用 `Tapp.brewList` 的安装校验与签发 fail-closed，站长必须改 Manifest 后更新或重装。退役串 `brew:comment` 不映射。
 - **卫星品牌：** `source_type=brewlia` 改为 `phantasiai`（界面「AI 增强」）；导出格式改为 `.pipack`。本机旧 `.brewpack` 不再能导入，从库重新导出。
-- **阅读器：** 用户地址是 `/journal/articles/{id}`，不是 `/phantasi/item/{id}`。协同仍走 `/api/phantasi/ws`。浏览器里的 `brew-reader-settings` 不双读。无 301。
+- **阅读器：** 当时的用户地址是 `/journal/articles/{id}`，不是 `/phantasi/item/{id}`；它已随手帐下线删除，文章现在是 `/blog/posts/{slug}/`。协同仍走 `/api/phantasi/ws`。浏览器里的 `brew-reader-settings` 不双读。无 301。
 - **联邦：** 对象 ID 仍是 `/phantasi/articles/{id}`。本实例不再认对端的 `brew-article` / `brew-recommend`。
-- **RSS：** `/brew/notes.xml` 改为 `/journal/notes.xml`（另有 `/api/phantasi/notes.xml` 同一份）。默认关闭，管理员在工作台打开；关闭或手帐不对游客可见时 404。无 301。旧 `/phantasi/notes.xml` 不是用户地址。
+- **RSS：** `/brew/notes.xml` 当时改为 `/journal/notes.xml`，后者已随手帐下线删除，现在只有 `/api/phantasi/notes.xml`，默认关闭。无 301。旧 `/phantasi/notes.xml` 不是用户地址。
 - **磁盘：** 启动时若存在 `data/brew` 且没有 `data/phantasi`，会改名过去。
 
 临时改名机制（`backend/migrations/phantasi_legacy_rename.rs` 与 `myriad_phantasi::legacy`）已在最低支持版本提到 0.6.1 时删除：更早的库须先升到 0.6.1 并启动一次。
@@ -110,7 +110,7 @@ Brew 内部名改为 Phantasi，用户界面改为 **手帐**（en: Journal）�
 
 已安装应用的 `approved_permissions` 里如果还留着无法识别的旧名（例如 `storage`），列表和详情会标 `needs_reauthorization`，授予权限为空，直到更新 Manifest 并更新或重装。不会自动把 `storage` 改写成 `storage:read` / `storage:write`。
 
-## TAPP 手帐权限拆分（历史：Brew 权限拆分）
+## TAPP phantasi 权限拆分（历史：Brew 权限拆分）
 
 现行权限名是 `phantasi:write` / `phantasi:read` / `phantasi:commentWrite`。下面保留升级当时的 `brew:*` 写法，只说明那次拆分做了什么，不要再往新 Manifest 里写 `brew:*`。
 

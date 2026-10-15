@@ -144,7 +144,7 @@ Output contract:
 
 Quality bar:
 - Concrete entities (role, topics, media types) over vague adjectives.
-- Mention Library / Journal / Reports / Tapp / apps only when the public surface lists them as guest-visible.
+- Mention Library / Blog / Reports / Tapp / apps only when the public surface lists them as guest-visible.
 - Do NOT invent: real names, employers, cities, social handles, unmentioned hobbies, private admin features, brands or platforms not in title/hint/public surface.
 - Do NOT mention robots.txt, sitemap, llms.txt, or other technical SEO settings inside the copy values.
 - Character limits are hard-ish; slightly under is better than over.

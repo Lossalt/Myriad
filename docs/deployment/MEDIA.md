@@ -13,7 +13,7 @@
 ## 备份与恢复
 
 与 [BACKUP.md](BACKUP.md) 相同：Postgres + `backend_data` + `.env`。
-不要挂 `backend_cache` 当恢复条件。生成图、人设、贴纸、手帐上传和联邦附件
+不要挂 `backend_cache` 当恢复条件。生成图、人设、贴纸、笔记上传和联邦附件
 应能从数据卷里的 `media/` 读回。
 
 旧地址退场（见下）之后不能回滚到更早的二进制：旧版本仍要读已删除的

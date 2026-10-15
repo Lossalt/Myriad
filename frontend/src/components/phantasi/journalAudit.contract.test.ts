@@ -133,8 +133,8 @@ describe('手帐审计契约', () => {
 
   it('升级说明给用户地址、不写 301，brew:write 标成历史', () => {
     const notes = readRoot('docs/development/UPGRADE_NOTES.md')
-    assert.match(notes, /\/journal\/articles\/\{id\}/)
-    assert.match(notes, /\/journal\/notes\.xml/)
+    assert.match(notes, /\/blog\/posts\/\{slug\}\//)
+    assert.match(notes, /\/api\/phantasi\/notes\.xml/)
     assert.match(notes, /\/phantasi\/articles\/\{id\}/)
     assert.match(notes, /无 301/)
     assert.match(notes, /历史权限名 `brew:write`/)
