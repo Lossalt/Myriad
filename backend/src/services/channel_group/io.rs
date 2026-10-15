@@ -142,6 +142,15 @@ pub(super) async fn keep<T: serde::Serialize>(
     crate::services::runtime_registry::put(db, namespace, key, no_identity(), value, until).await
 }
 
+/// Keep nothing more under `key`.
+pub(super) async fn forget_kept(db: &DatabaseConnection, namespace: &str, key: &str) {
+    #[cfg(test)]
+    if g0::on() {
+        return g0::forget_kept(namespace, key);
+    }
+    let _ = crate::services::runtime_registry::take::<serde_json::Value>(db, namespace, key).await;
+}
+
 pub(super) async fn all_kept(db: &DatabaseConnection, namespace: &str) -> Vec<RegistryRow> {
     #[cfg(test)]
     if g0::on() {

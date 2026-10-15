@@ -117,11 +117,15 @@ pub(super) fn with_slot<T>(venue: &str, act: impl FnOnce(&mut Slot) -> T) -> Opt
     Some(act(slot))
 }
 
-/// Let the group go from mind, as a restart would.
+/// Let the group go from mind, as a restart would (and who sits at its
+/// table with it).
 #[cfg(test)]
 pub(super) fn forget(venue: &str) {
     if let Ok(mut groups) = GROUPS.lock() {
         groups.remove(venue);
+    }
+    if let Ok(mut seated) = SEATED.lock() {
+        seated.retain(|_, at| at != venue);
     }
 }
 
@@ -191,13 +195,34 @@ pub(super) async fn kept_before(venue: &str) -> Option<Restore> {
             taken,
         })
         .collect();
-    Some(Restore { lines, spoke_up })
+    // The game with seats that was on at the table, if one was.
+    let table = kept::<serde_json::Value>(&db, TABLE_NAMESPACE, venue)
+        .await
+        .ok()
+        .flatten();
+    Some(Restore {
+        lines,
+        spoke_up,
+        table,
+    })
 }
 
 /// Bring back what was kept before a restart, once.
 pub(super) async fn restore(venue: &str) {
-    if let Some(Restore { lines, spoke_up }) = kept_before(venue).await {
-        let out = step(venue, Event::Restored { lines, spoke_up });
+    if let Some(Restore {
+        lines,
+        spoke_up,
+        table,
+    }) = kept_before(venue).await
+    {
+        let out = step(
+            venue,
+            Event::Restored {
+                lines,
+                spoke_up,
+                table,
+            },
+        );
         execute(venue.to_string(), out.effects).await;
     }
 }
@@ -342,6 +367,7 @@ pub async fn catch_up(venue: &str, past: Vec<(GroupLine, chrono::DateTime<chrono
 /// Discord): in each group kept lately, the line that called her before it
 /// and that she never got to, taken up with the configured token.
 pub async fn take_back_kept(platform: ChannelPlatform) {
+    take_back_tables(platform).await;
     heard_since_up();
     let Ok(db) = db() else {
         return;
@@ -376,6 +402,28 @@ pub async fn take_back_kept(platform: ChannelPlatform) {
             },
         );
         execute(venue, out.effects).await;
+    }
+}
+
+/// After a restart: each game with seats that was on at a table on
+/// `platform` goes on (who sits at it seated again, its wait going on for
+/// the time it had left), with the configured token.
+pub async fn take_back_tables(platform: ChannelPlatform) {
+    let Ok(db) = db() else {
+        return;
+    };
+    let prefix = format!("{}:", platform.slug());
+    let config = crate::GLOBAL_DYNAMIC_CONFIG.read().await.clone();
+    for row in all_kept(&db, TABLE_NAMESPACE).await {
+        let Some(chat) = row.record_id.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Some(token) = token_for(platform, chat, &config) else {
+            continue;
+        };
+        note_token(&row.record_id, &token);
+        restore(&row.record_id).await;
+        info!(venue = %row.record_id, "[Group] a game at the table goes on after a restart");
     }
 }
 

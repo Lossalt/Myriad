@@ -40,6 +40,10 @@ pub enum Audience {
 pub struct Fact {
     pub to: Audience,
     pub text: String,
+    /// For all, but heard at the table already (what a seat said there):
+    /// not announced again.
+    #[serde(default)]
+    pub heard: bool,
 }
 
 impl Fact {
@@ -47,6 +51,16 @@ impl Fact {
         Self {
             to: Audience::All,
             text: text.into(),
+            heard: false,
+        }
+    }
+
+    /// For all, as heard at the table already.
+    pub fn heard(text: impl Into<String>) -> Self {
+        Self {
+            to: Audience::All,
+            text: text.into(),
+            heard: true,
         }
     }
 
@@ -54,6 +68,7 @@ impl Fact {
         Self {
             to: Audience::Seat(seat),
             text: text.into(),
+            heard: false,
         }
     }
 
@@ -61,6 +76,7 @@ impl Fact {
         Self {
             to: Audience::Host,
             text: text.into(),
+            heard: false,
         }
     }
 }
@@ -92,6 +108,73 @@ pub trait Rules {
     /// `rolls`. A choice that is not open does nothing.
     fn take(state: &mut Self::State, seat: usize, index: usize, rolls: &mut Rolls);
     fn over(state: &Self::State) -> bool;
+
+    /// The rules as a player is told them, when she plays one.
+    const RULES: &'static str = "";
+
+    /// What the game waits for now: by default, the seats with choices
+    /// open choose.
+    fn waiting(state: &Self::State) -> Waiting {
+        if Self::over(state) {
+            return Waiting::Over;
+        }
+        let seats = (0..Self::seats(state).len().max(1))
+            .filter(|seat| !Self::choices(state, *seat).is_empty())
+            .collect();
+        Waiting::Choose(seats)
+    }
+
+    /// Which wait it is: the same while the game waits for the same thing
+    /// (seats choosing one by one in it), another once it moved on.
+    fn phase(state: &Self::State) -> u64 {
+        Self::facts(state).len() as u64
+    }
+
+    /// How long the game waits, in seconds.
+    fn seconds(_: &Self::State) -> f64 {
+        MOVE_SECONDS
+    }
+
+    /// `seat`, whose turn it is to speak, said `text` at the table.
+    fn spoke(_: &mut Self::State, _: usize, _: &str) {}
+
+    /// What a judgment the game waited for came to (none when it could not
+    /// be had).
+    fn judged(_: &mut Self::State, _: Option<&str>, _: &mut Rolls) {}
+
+    /// Nobody waited for moved in time: by default each passes with its
+    /// first choice.
+    fn timed_out(state: &mut Self::State, rolls: &mut Rolls) {
+        if let Waiting::Choose(seats) = Self::waiting(state) {
+            for seat in seats {
+                Self::take(state, seat, 0, rolls);
+            }
+        }
+    }
+
+    /// How many moments worth a word of hers it has had (it began, someone
+    /// went out, it is over).
+    fn moments(_: &Self::State) -> usize {
+        0
+    }
+}
+
+/// What a game waits for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Waiting {
+    /// These seats each choose among their choices, in private.
+    Choose(Vec<usize>),
+    /// This seat speaks to the table, in turn.
+    Speak(usize),
+    /// What a seat said needs judging, which only a model can do: asked
+    /// as a judge (not as her), with what it takes.
+    Judge {
+        system: String,
+        input: String,
+        schema_name: &'static str,
+        schema: serde_json::Value,
+    },
+    Over,
 }
 
 /// What one seat knows, and may do.
@@ -174,11 +257,80 @@ pub fn host_view<R: Rules>(state: &R::State) -> Option<HostView> {
     })
 }
 
+/// What she announces to the table, in order: the facts for all that were
+/// not heard there already.
+pub fn announced<R: Rules>(state: &R::State) -> Vec<String> {
+    R::facts(state)
+        .into_iter()
+        .filter(|fact| fact.to == Audience::All && !fact.heard)
+        .map(|fact| fact.text)
+        .collect()
+}
+
+/// What `seat` was dealt: the facts for it alone (what is whispered to it
+/// when the game is dealt).
+pub fn dealt<R: Rules>(state: &R::State, seat: usize) -> Vec<String> {
+    R::facts(state)
+        .into_iter()
+        .filter(|fact| fact.to == Audience::Seat(seat))
+        .map(|fact| fact.text)
+        .collect()
+}
+
+/// What she is asked to say at the table as a player of `game`, her turn
+/// to speak: from her seat's view alone. Answered as `{"say": "…"}`.
+pub fn speaker_prompt(
+    soul: &str,
+    game: &str,
+    rules: &str,
+    how: &str,
+    view: &SeatView,
+) -> (String, String) {
+    let system = format!(
+        "{soul}\n\nYou are playing {game} as one of the players. {rules} You know only what is shown to you here; whatever others were dealt or did in secret, you do not know. It is your turn to speak at the table: {how} Answer as JSON {{\"say\": \"…\"}}, what you say in the group, one short line in Chinese."
+    );
+    let input = serde_json::json!({ "youKnow": view.facts }).to_string();
+    (system, input)
+}
+
+pub const SAY_SCHEMA: &str = "merope_game_say";
+
+pub fn say_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "say": { "type": "string" } },
+        "required": ["say"],
+        "additionalProperties": false
+    })
+}
+
+pub const CHOICE_SCHEMA: &str = "merope_game_choice";
+
+pub fn choice_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "n": { "type": "integer" } },
+        "required": ["n"],
+        "additionalProperties": false
+    })
+}
+
+/// What she said at her turn, read back.
+pub fn read_say(raw: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Said {
+        say: String,
+    }
+    let said: Said = crate::answer::parse(raw)?;
+    let said = said.say.trim().to_string();
+    (!said.is_empty()).then_some(said)
+}
+
 /// What she is asked as a player of `game` (named, with its rules told in
 /// `rules`): from her seat's view alone, the choices numbered.
 pub fn player_prompt(soul: &str, game: &str, rules: &str, view: &SeatView) -> (String, String) {
     let system = format!(
-        "{soul}\n\nYou are playing {game} as one of the players. {rules} You know only what is shown to you here; whatever others were dealt or did in secret, you do not know. Pick one of the choices by its number, as yourself."
+        "{soul}\n\nYou are playing {game} as one of the players. {rules} You know only what is shown to you here; whatever others were dealt or did in secret, you do not know. Pick one of the choices by its number, as yourself. Answer as JSON {{\"n\": <number>}}."
     );
     let input = serde_json::json!({
         "youKnow": view.facts,
@@ -202,7 +354,7 @@ pub fn narration_prompt(
     latest: &[String],
 ) -> (String, String) {
     let system = format!(
-        "{soul}\n\nYou are the voice of a game of {game} at this table: the rules are kept for you; say what just happened and what comes next, as yourself, in a line or two. Say only what everyone may know."
+        "{soul}\n\nYou are the voice of a game of {game} at this table: the rules are kept for you and what happened is told already; add a line of your own about what just happened, as yourself, short, in Chinese. Say only what everyone may know. Answer as JSON {{\"say\": \"…\"}}."
     );
     let input = serde_json::json!({ "everyoneKnows": view.facts, "justNow": latest }).to_string();
     (system, input)
@@ -338,6 +490,7 @@ pub mod marks {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum SeatGame {
+    Undercover(crate::undercover::Undercover),
     #[cfg(any(test, feature = "test-games"))]
     Marks(marks::Marks),
 }
@@ -348,17 +501,33 @@ pub struct SeatKind {
     pub name: &'static str,
     pub fewest: usize,
     pub most: usize,
+    /// Something only a model can give is needed before it is dealt (the
+    /// words of a game of 谁是卧底).
+    pub prepares: bool,
+    /// She may take a seat when one player is short and all agree
+    /// (D2c-11 A).
+    pub she_may_fill: bool,
 }
 
 /// The kinds of seat game there are.
 pub fn seat_kinds() -> Vec<SeatKind> {
     vec![
+        SeatKind {
+            kind: crate::undercover::KIND,
+            name: crate::undercover::NAME,
+            fewest: crate::undercover::FEWEST,
+            most: crate::undercover::MOST,
+            prepares: true,
+            she_may_fill: true,
+        },
         #[cfg(any(test, feature = "test-games"))]
         SeatKind {
             kind: "marks",
             name: "记号",
             fewest: 2,
             most: 8,
+            prepares: false,
+            she_may_fill: true,
         },
     ]
 }
@@ -367,52 +536,149 @@ pub fn seat_kind(kind: &str) -> Option<SeatKind> {
     seat_kinds().into_iter().find(|known| known.kind == kind)
 }
 
+/// What a kind asks before it is dealt: as `voice`, the system and input,
+/// and the shape of the answer.
+pub struct Prepare {
+    pub voice: &'static str,
+    pub operation: &'static str,
+    pub system: String,
+    pub input: String,
+    pub schema_name: &'static str,
+    pub schema: serde_json::Value,
+}
+
+/// Run `$body` with `$game` bound to the game whatever its kind, `$R` its
+/// rules.
+macro_rules! each {
+    ($self:expr, $game:ident, $R:ident => $body:expr) => {
+        match $self {
+            SeatGame::Undercover($game) => {
+                type $R = crate::undercover::Undercover;
+                $body
+            }
+            #[cfg(any(test, feature = "test-games"))]
+            SeatGame::Marks($game) => {
+                type $R = marks::Marks;
+                $body
+            }
+        }
+    };
+}
+
 impl SeatGame {
-    /// A game of `kind` dealt to `seats`, by `rolls`.
-    pub fn deal(kind: &str, seats: Vec<Seat>, rolls: &mut Rolls) -> Option<Self> {
-        let _ = (&seats, &rolls);
+    /// What `kind` asks before it is dealt, if anything: `soul` hers when
+    /// she only hosts it (none when she holds a seat: then she must not know
+    /// what is dealt), `recent` what it was given lately.
+    pub fn prepare(kind: &str, soul: Option<&str>, recent: &[String]) -> Option<Prepare> {
         match kind {
+            crate::undercover::KIND => Some(crate::undercover::words_prompt(soul, recent)),
+            _ => None,
+        }
+    }
+
+    /// A game of `kind` dealt to `seats`, by `rolls`, with what was asked
+    /// before (when it asks): none when it cannot be dealt with that.
+    pub fn deal(
+        kind: &str,
+        seats: Vec<Seat>,
+        prepared: Option<&str>,
+        recent: &[String],
+        rolls: &mut Rolls,
+    ) -> Option<Self> {
+        let _ = (&seats, &prepared, &recent, &rolls);
+        match kind {
+            crate::undercover::KIND => {
+                let pair = crate::undercover::read_words(prepared?, recent)?;
+                Some(Self::Undercover(crate::undercover::Undercover::deal(
+                    seats, pair, rolls,
+                )))
+            }
             #[cfg(any(test, feature = "test-games"))]
             "marks" => Some(Self::Marks(marks::Marks::deal_to(seats, rolls))),
             _ => None,
         }
     }
 
-    pub fn seats(&self) -> Vec<Seat> {
-        match *self {
+    /// What was used dealing it, kept so the next is not the same.
+    pub fn used(&self) -> Option<String> {
+        match self {
+            Self::Undercover(game) => Some(game.used()),
             #[cfg(any(test, feature = "test-games"))]
-            Self::Marks(ref game) => marks::Marks::seats(game),
+            Self::Marks(_) => None,
         }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        each!(self, _game, R => R::KIND)
+    }
+
+    pub fn rules(&self) -> &'static str {
+        each!(self, _game, R => R::RULES)
+    }
+
+    pub fn seats(&self) -> Vec<Seat> {
+        each!(self, game, R => R::seats(game))
     }
 
     pub fn seat_view(&self, seat: usize) -> SeatView {
-        let _ = seat;
-        match *self {
-            #[cfg(any(test, feature = "test-games"))]
-            Self::Marks(ref game) => seat_view::<marks::Marks>(game, seat),
-        }
+        each!(self, game, R => seat_view::<R>(game, seat))
+    }
+
+    pub fn dealt(&self, seat: usize) -> Vec<String> {
+        each!(self, game, R => dealt::<R>(game, seat))
     }
 
     pub fn public_view(&self) -> PublicView {
-        match *self {
+        each!(self, game, R => public_view::<R>(game))
+    }
+
+    pub fn announced(&self) -> Vec<String> {
+        each!(self, game, R => announced::<R>(game))
+    }
+
+    /// How it ended, as the group remembers it.
+    pub fn outcome(&self) -> Option<String> {
+        match self {
+            Self::Undercover(game) => game.outcome(),
             #[cfg(any(test, feature = "test-games"))]
-            Self::Marks(ref game) => public_view::<marks::Marks>(game),
+            Self::Marks(_) => None,
         }
+    }
+
+    pub fn waiting(&self) -> Waiting {
+        each!(self, game, R => R::waiting(game))
+    }
+
+    pub fn phase(&self) -> u64 {
+        each!(self, game, R => R::phase(game))
+    }
+
+    pub fn seconds(&self) -> f64 {
+        each!(self, game, R => R::seconds(game))
+    }
+
+    pub fn moments(&self) -> usize {
+        each!(self, game, R => R::moments(game))
     }
 
     pub fn take(&mut self, seat: usize, index: usize, rolls: &mut Rolls) {
-        let _ = (seat, index, &rolls);
-        match *self {
-            #[cfg(any(test, feature = "test-games"))]
-            Self::Marks(ref mut game) => marks::Marks::take(game, seat, index, rolls),
-        }
+        each!(self, game, R => R::take(game, seat, index, rolls))
+    }
+
+    pub fn spoke(&mut self, seat: usize, text: &str) {
+        each!(self, game, R => R::spoke(game, seat, text))
+    }
+
+    pub fn judged(&mut self, raw: Option<&str>, rolls: &mut Rolls) {
+        each!(self, game, R => R::judged(game, raw, rolls))
+    }
+
+    pub fn timed_out(&mut self, rolls: &mut Rolls) {
+        each!(self, game, R => R::timed_out(game, rolls))
     }
 
     pub fn over(&self) -> bool {
-        match *self {
-            #[cfg(any(test, feature = "test-games"))]
-            Self::Marks(ref game) => marks::Marks::over(game),
-        }
+        each!(self, game, R => R::over(game))
     }
 }
 
@@ -487,19 +753,33 @@ pub fn started_line(name: &str, seats: &[Seat]) -> String {
 }
 
 /// Whispered to the seat whose move it is.
-pub fn your_move_line(view: &SeatView) -> String {
+pub fn your_move_line(view: &SeatView, platform: &str) -> String {
     let choices: Vec<String> = view
         .choices()
         .iter()
         .enumerate()
         .map(|(index, choice)| format!("{index}. {choice}"))
         .collect();
-    format!("轮到你了：\n{}\n回一个号码就行。", choices.join("\n"))
+    let how = if has_buttons(platform) {
+        "点下面的按钮，或者回号码、名字。"
+    } else {
+        "回号码或者名字就行。"
+    };
+    format!("轮到你选了：\n{}\n{how}", choices.join("\n"))
 }
 
-/// A seat that did not move in time.
-pub fn no_move_line(name: &str) -> String {
-    format!("{name}没有动，这次算过。")
+/// Whether her whispers on `platform` can carry buttons (D2c-14 A: Telegram
+/// and Discord; QQ types a number or a name).
+pub fn has_buttons(platform: &str) -> bool {
+    matches!(platform, "telegram" | "discord")
+}
+
+/// How her seat speaks when it is its turn, by kind.
+pub fn how_to_speak(kind: &str) -> &'static str {
+    match kind {
+        crate::undercover::KIND => crate::undercover::HOW_TO_DESCRIBE,
+        _ => "say one short line, as yourself.",
+    }
 }
 
 /// It is over.
@@ -508,15 +788,112 @@ pub fn over_line(name: &str) -> String {
 }
 
 /// What she remembers of a seat game the group played.
-pub fn remembered_in_group(name: &str, seats: &[Seat]) -> String {
-    let names: Vec<&str> = seats.iter().map(|seat| seat.name.as_str()).collect();
-    format!("群里玩过一局{name}（{}）", names.join("、"))
+pub fn remembered_in_group(name: &str, seats: &[Seat], outcome: Option<&str>) -> String {
+    let names: Vec<&str> = seats
+        .iter()
+        .map(|seat| if seat.hers { "我" } else { seat.name.as_str() })
+        .collect();
+    match outcome {
+        Some(outcome) => format!("群里玩过一局{name}（{}），{outcome}", names.join("、")),
+        None => format!("群里玩过一局{name}（{}）", names.join("、")),
+    }
 }
 
-/// A move as a seat types it: the number of one of its choices.
+/// The games she can host, as her answer in a group is told them: with,
+/// when a game with seats is on there (`on`, its name), that it is.
+pub fn group_offer(on: Option<&str>) -> String {
+    match on {
+        Some(name) => format!(
+            "{}\nA game of {name} is going on in the group now, you hosting it: another waits until it is over; what anyone was dealt in it is not yours to tell.",
+            crate::soup::GROUP_OFFER
+        ),
+        None => crate::soup::GROUP_OFFER.to_string(),
+    }
+}
+
+/// She offers to take a seat: one short, all must agree.
+pub fn fill_line(name: &str) -> String {
+    format!("{name}还差一个人。要我也来一个吗？在座的都说「好」我就上，有人不想就算了。")
+}
+
+/// Not all agreed to her taking a seat.
+pub fn not_filled_line(name: &str) -> String {
+    format!("没等到大家都同意，{name}这局先不开了。")
+}
+
+/// Whether a line agrees to her taking a seat, or does not; neither, none.
+pub fn agrees(text: &str) -> Option<bool> {
+    let words: String = text
+        .split_whitespace()
+        .filter(|word| !word.starts_with('@'))
+        .collect();
+    let words = words.trim_end_matches(['。', '！', '!', '~', '～']);
+    match words {
+        "好" | "好的" | "好啊" | "好呀" | "可以" | "行" | "来" | "来吧" | "同意" | "ok" | "OK" => {
+            Some(true)
+        }
+        "不" | "不要" | "不用" | "算了" | "不行" | "不好" => Some(false),
+        _ => None,
+    }
+}
+
+/// Wait a little longer, once (D2c-20).
+pub fn waits(text: &str) -> bool {
+    let words: String = text
+        .split_whitespace()
+        .filter(|word| !word.starts_with('@'))
+        .collect();
+    matches!(
+        words.trim_end_matches(['。', '！', '!', '~', '～']),
+        "等等" | "等一下" | "等下" | "稍等"
+    )
+}
+
+/// What she says giving more time.
+pub const MORE_TIME_LINE: &str = "好，多等一分钟。";
+
+/// The words could not be had: not this time.
+pub fn not_prepared_line(name: &str) -> String {
+    format!("这次没想好{name}的词，先不开了，过会儿再叫我。")
+}
+
+/// A seat that missed twice in a row, named in the group (D2c-15).
+pub fn reminder_after(name: &str) -> String {
+    let _ = name;
+    " 你已经连着两次没动了，还在吗？".to_string()
+}
+
+/// It is a seat's turn to speak at the table: before and after its name.
+pub fn speak_turn_lines(game: &str) -> (String, String) {
+    let _ = game;
+    (
+        "轮到 ".to_string(),
+        " 了：说一句描述你的词（一分钟；说「等等」可以多等一分钟）。".to_string(),
+    )
+}
+
+/// Told to a seat whose move it is not.
+pub const NOT_YOURS_LINE: &str = "现在还没轮到你选。";
+
+/// What she whispers back when a move is taken.
+pub fn taken_line(choice: &str) -> String {
+    format!("收到：{choice}。")
+}
+
+/// A move as a seat types it (or a button it pressed sends): the number of
+/// one of its choices, or the choice itself as written (a name).
 pub fn read_move(text: &str, view: &SeatView) -> Option<usize> {
-    let number: usize = text.trim().trim_end_matches(['.', '。']).parse().ok()?;
-    (number < view.choices().len()).then_some(number)
+    let text = text
+        .trim()
+        .trim_start_matches(['@', '＠'])
+        .trim_end_matches(['.', '。', '!', '！']);
+    if let Ok(number) = text.parse::<usize>() {
+        return (number < view.choices().len()).then_some(number);
+    }
+    let named: Vec<usize> = (0..view.choices().len())
+        .filter(|index| view.choices()[*index] == text)
+        .collect();
+    (named.len() == 1).then(|| named[0])
 }
 
 /// Turtle soup, as a game at a table: anyone there asks, she alone knows

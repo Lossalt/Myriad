@@ -34,6 +34,10 @@ pub async fn ask(
         "group_member" => "group_member",
         "soup_judge" => "soup_judge",
         "soup_start" => "soup_start",
+        "undercover_words" => "undercover_words",
+        "undercover_judge" => "undercover_judge",
+        "undercover_voice" => "undercover_voice",
+        "undercover_her_move" => "undercover_her_move",
         _ => "group_mind",
     };
     let voice = match voice {

@@ -40,6 +40,9 @@ const TRAJECTORIES: &[(&str, &[u8])] = &[
     trajectory!("she_keeps_back_what_no_longer_fits"),
     trajectory!("she_says_nothing_when_what_she_has_cannot_be_read"),
     trajectory!("she_speaks_up_unasked_and_reacts"),
+    trajectory!("undercover_goes_on_after_a_restart"),
+    trajectory!("undercover_is_played_with_buttons"),
+    trajectory!("undercover_she_fills_a_seat"),
 ];
 
 #[test]

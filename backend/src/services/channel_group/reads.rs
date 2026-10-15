@@ -49,6 +49,27 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
     if matches!(what, ToRead::OwnRows { .. } | ToRead::Life { .. }) && down(venue) {
         return Answer::Unread;
     }
+    // What a game was dealt lately is kept in the runtime registry (a
+    // recording keeps its own).
+    // What she is called where people see her.
+    if let ToRead::HerName = what {
+        let name = match db() {
+            Ok(db) => crate::services::agent::merope::get_persona(&db)
+                .await
+                .ok()
+                .flatten()
+                .map(|persona| persona.name),
+            Err(_) => None,
+        };
+        return Answer::Label {
+            label: crate::services::agent::merope::public_persona_name(true, name.as_deref()),
+        };
+    }
+    if let ToRead::RecentDealt { game } = &what {
+        return Answer::Surfaces {
+            surfaces: dealt_lately(game).await,
+        };
+    }
     if no_database() && !matches!(what, ToRead::Soul | ToRead::Now | ToRead::Titles { .. }) {
         return match what {
             ToRead::Cues { .. } => Answer::Cues {
@@ -214,6 +235,12 @@ pub(super) async fn read(venue: &str, what: ToRead) -> Answer {
         ToRead::RecentSurfaces => Answer::Surfaces {
             surfaces: crate::services::agent::merope::group::soup::recent_surfaces(),
         },
+        ToRead::RecentDealt { game } => Answer::Surfaces {
+            surfaces: dealt_lately(&game).await,
+        },
+        ToRead::HerName => Answer::Label {
+            label: String::new(),
+        },
         // Her clock, and what her life on the site says she is doing.
         ToRead::Now => Answer::Now {
             local: crate::services::agent::merope::group::speaking::local_now()
@@ -341,7 +368,49 @@ pub(super) async fn may_look_up(term: &str) -> May {
     }
 }
 
+/// Where what a kind of game was dealt lately is kept: hers, a month.
+const DEALT_NAMESPACE: &str = "merope_game_dealt";
+const DEALT_DAYS: i64 = 30;
+
+async fn dealt_lately(game: &str) -> Vec<String> {
+    let Ok(db) = db() else {
+        return Vec::new();
+    };
+    kept::<Vec<String>>(&db, DEALT_NAMESPACE, game)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+async fn keep_dealt(game: &str, dealt: String) {
+    let Ok(db) = db() else {
+        return;
+    };
+    let mut lately = dealt_lately(game).await;
+    lately.retain(|kept| *kept != dealt);
+    lately.push(dealt);
+    let excess = lately
+        .len()
+        .saturating_sub(myriad_merope::undercover::RECENT_KEPT);
+    lately.drain(..excess);
+    if let Err(error) = keep(
+        &db,
+        DEALT_NAMESPACE,
+        game,
+        &lately,
+        kept_for(DEALT_DAYS * 86_400),
+    )
+    .await
+    {
+        warn!(%error, game, "[Group] could not keep what a game was dealt");
+    }
+}
+
 pub(super) async fn write(what: ToWrite) {
+    if let ToWrite::Dealt { game, dealt } = what {
+        return keep_dealt(&game, dealt).await;
+    }
     #[cfg(test)]
     if no_database() {
         let ToWrite::RememberInVenue {
@@ -405,6 +474,7 @@ pub(super) async fn write(what: ToWrite) {
         ToWrite::UsedSurface { surface } => {
             crate::services::agent::merope::group::soup::used_surface(surface);
         }
+        ToWrite::Dealt { .. } => {}
         ToWrite::Tried { id, tried } => {
             let Ok(db) = db() else {
                 return;

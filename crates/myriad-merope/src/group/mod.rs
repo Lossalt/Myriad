@@ -37,6 +37,7 @@ use crate::seeing::Seen;
 use crate::talk_shape::Typed;
 
 mod flows;
+pub use flows::seats::{Asking, SeatStage, Seating};
 mod ledger;
 mod lines;
 mod rolls;
@@ -387,6 +388,9 @@ pub struct Restore {
     pub lines: Option<Vec<Line>>,
     #[serde(default)]
     pub spoke_up: Vec<SpokeUp>,
+    /// The game with seats that was on at the group's table, as kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<Value>,
 }
 
 /// A line of the group's talk read back after she was not there: the line,
@@ -430,6 +434,10 @@ pub enum Event {
         lines: Option<Vec<Line>>,
         #[serde(default)]
         spoke_up: Vec<SpokeUp>,
+        /// The game with seats that was on at the group's table, as kept
+        /// (see [`Effect::KeepTable`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        table: Option<Value>,
     },
     /// A group she is in, as kept before a restart: where she would say
     /// something, and when she last saw a line there.
@@ -871,6 +879,17 @@ pub enum Effect {
         user: String,
         chat: String,
         text: String,
+        /// The choices it offers, as buttons where the platform has them
+        /// (pressing one comes back whispered as its number).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        choices: Vec<String>,
+    },
+    /// Keep the game with seats at the group's table as it now stands, so
+    /// it outlives a restart (none: there is none any more); handed back in
+    /// with what else was kept ([`Restore::table`]).
+    KeepTable {
+        #[serde(default)]
+        table: Option<Value>,
     },
     /// `who` sits at the group's table: what they whisper to her comes to
     /// the group's mind first.
@@ -991,6 +1010,14 @@ pub enum ToRead {
     },
     /// Turtle-soup surfaces she used lately, at any table: hers.
     RecentSurfaces,
+    /// What a game with seats of `game` was dealt lately (the pairs of
+    /// words of 谁是卧底), answered as surfaces: hers.
+    RecentDealt {
+        game: String,
+    },
+    /// What she is called where people see her (her seat's name at a game
+    /// she plays), answered as a label: hers.
+    HerName,
     /// The vectors kept for these memories (as read, with their cues), by
     /// the model in use; up to `fill` of those without one are given one
     /// behind the reply.
@@ -1031,6 +1058,9 @@ pub enum ToWrite {
     TakeGame { table: String },
     /// A turtle-soup surface she used: hers.
     UsedSurface { surface: String },
+    /// What a game with seats of `game` was dealt (kept among the latest
+    /// [`crate::undercover::RECENT_KEPT`]): hers.
+    Dealt { game: String, dealt: String },
     /// How a puzzle of hers went at a table, kept with it: hers.
     Tried {
         id: String,

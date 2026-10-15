@@ -7,7 +7,7 @@ pub(crate) fn record(cx: &mut Cx, message: &Message, restore: Option<Restore>) -
     let now = cx.now();
     let people = people(cx.group, now);
     if let Some(restore) = restore {
-        restored(cx, restore.lines, restore.spoke_up);
+        restored(cx, restore.lines, restore.spoke_up, restore.table);
     }
     let line = Line {
         at: time(now),
@@ -168,7 +168,8 @@ pub(crate) fn glance_after(at: &mut At) -> f64 {
 }
 
 pub(crate) fn notice(cx: &mut Cx, message: Message) {
-    if cx.at.her.away {
+    // Away; or hosting a game there, when she does not speak up unasked.
+    if cx.at.her.away || hosting_now(cx.group) {
         return;
     }
     let now = cx.now();
@@ -247,7 +248,7 @@ pub(crate) fn muted(cx: &mut Cx, by: &str, mute: Mute, everyone: bool, restore: 
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "群管理".to_string());
     if let Some(restore) = restore {
-        restored(cx, restore.lines, restore.spoke_up);
+        restored(cx, restore.lines, restore.spoke_up, restore.table);
     }
     let line = Line {
         at: time(now),

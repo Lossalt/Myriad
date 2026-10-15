@@ -15,6 +15,7 @@ mod members;
 mod memory;
 mod seats;
 mod strangers;
+mod undercover;
 
 fn line(chat: i64, id: i64, from: i64, name: &str, text: &str, addressed: bool) -> GroupLine {
     GroupLine::from(TelegramGroupMessage {

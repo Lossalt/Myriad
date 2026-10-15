@@ -219,3 +219,46 @@ async fn how_she_talks_against_the_members() {
         );
     }
 }
+
+/// A game's choices go out as buttons whose press comes back as the number
+/// of the choice: one a row on Telegram, five a row on Discord; nothing else
+/// reads as a game's button.
+#[test]
+fn a_games_buttons_come_back_as_their_number() {
+    let choices: Vec<String> = (0..7).map(|n| format!("玩家{n}")).collect();
+    let telegram = platform::telegram_buttons(&choices).unwrap();
+    assert_eq!(telegram["inline_keyboard"].as_array().unwrap().len(), 7);
+    assert_eq!(telegram["inline_keyboard"][3][0]["callback_data"], "seat:3");
+    let discord = platform::discord_buttons(&choices).unwrap();
+    let rows = discord.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1]["components"][1]["custom_id"], "seat:6");
+    assert!(platform::telegram_buttons(&[]).is_none());
+    assert_eq!(seat_button("seat:3"), Some("3"));
+    assert_eq!(seat_button("seat:x"), None);
+    assert_eq!(seat_button("approve:1"), None);
+}
+
+/// A pressed button of a game is the game's before anything looks at
+/// pairing, on both platforms with buttons.
+#[test]
+fn a_games_button_is_the_games_before_pairing() {
+    for (name, source, entry, lookup) in [
+        (
+            "telegram",
+            include_str!("../telegram_pairing.rs"),
+            "pub async fn handle_callback",
+            "lookup_openid(",
+        ),
+        (
+            "discord",
+            include_str!("../discord_pairing.rs"),
+            "pub async fn handle_component",
+            "lookup_openid(",
+        ),
+    ] {
+        let body = source.split(entry).nth(1).expect(name);
+        let game = body.find("channel_group::seat_button(").expect(name);
+        assert!(game < body.find(lookup).expect(name), "{name}");
+    }
+}

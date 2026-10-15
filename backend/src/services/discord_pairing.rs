@@ -95,6 +95,16 @@ pub async fn handle_component(event: DiscordPrivateComponent, token: &str) {
     {
         warn!(?error, "Discord interaction ack failed");
     }
+    // A button of a game they sit at: the game's, whoever they are.
+    if let Some(choice) = crate::services::channel_group::seat_button(&event.custom_id) {
+        crate::services::channel_group::whispered(
+            crate::services::channel_platform::ChannelPlatform::Discord,
+            &event.author_id,
+            choice,
+        )
+        .await;
+        return;
+    }
     let Ok(db) = crate::services::process_db::database() else {
         warn!("Discord callback skipped: database is not connected");
         return;

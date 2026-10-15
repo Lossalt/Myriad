@@ -86,20 +86,27 @@ pub(super) async fn send_reply(
 /// channel opened with them; a Telegram user who never started a chat with
 /// her, a Discord member who keeps server DMs closed, a QQ user who is not
 /// her friend, cannot be reached (the platform refuses).
-pub(super) async fn whisper(token: &str, platform: &str, user: &str, text: &str) -> bool {
+pub(super) async fn whisper(
+    token: &str,
+    platform: &str,
+    user: &str,
+    text: &str,
+    choices: &[String],
+) -> bool {
     #[cfg(test)]
     let who = format!("{platform}:{user}");
     let reached = match platform_of(platform) {
         Some(ChannelPlatform::Telegram) => {
+            let markup = telegram_buttons(choices);
             #[cfg(test)]
             if g0::on() {
                 return g0::outbound(
                     "telegram.sendMessage",
-                    serde_json::json!({ "chat_id": user, "text": text }),
+                    serde_json::json!({ "chat_id": user, "text": text, "reply_markup": markup }),
                     &who,
                 );
             }
-            crate::services::telegram_bot::send_message(token, user, text)
+            crate::services::telegram_bot::send_outbound(token, user, text, markup)
                 .await
                 .is_ok()
         }
@@ -118,15 +125,16 @@ pub(super) async fn whisper(token: &str, platform: &str, user: &str, text: &str)
             let opened = crate::services::discord_bot::open_dm(token, user).await;
             match opened {
                 Ok(channel) => {
+                    let components = discord_buttons(choices);
                     #[cfg(test)]
                     if g0::on() {
                         return g0::outbound(
                             "discord.send",
-                            serde_json::json!({ "channel": channel, "content": text }),
+                            serde_json::json!({ "channel": channel, "content": text, "components": components }),
                             &who,
                         );
                     }
-                    crate::services::discord_bot::send_message(token, &channel, text)
+                    crate::services::discord_bot::send_outbound(token, &channel, text, components)
                         .await
                         .is_ok()
                 }
@@ -155,6 +163,57 @@ pub(super) async fn whisper(token: &str, platform: &str, user: &str, text: &str)
         warn!(platform, "[Group] a whisper did not reach them");
     }
     reached
+}
+
+/// What a pressed button of a game's sends back (`seat:<number>`), as the
+/// number of the choice, else none.
+pub fn seat_button(data: &str) -> Option<&str> {
+    data.strip_prefix(SEAT_BUTTON)
+        .filter(|number| number.parse::<usize>().is_ok())
+}
+
+const SEAT_BUTTON: &str = "seat:";
+
+/// A game's choices as Telegram inline buttons, one a row; none without.
+pub(super) fn telegram_buttons(choices: &[String]) -> Option<serde_json::Value> {
+    (!choices.is_empty()).then(|| {
+        let rows: Vec<serde_json::Value> = choices
+            .iter()
+            .enumerate()
+            .map(|(index, choice)| {
+                serde_json::json!([{
+                    "text": choice.chars().take(60).collect::<String>(),
+                    "callback_data": format!("{SEAT_BUTTON}{index}"),
+                }])
+            })
+            .collect();
+        serde_json::json!({ "inline_keyboard": rows })
+    })
+}
+
+/// A game's choices as Discord buttons, five a row (at most five rows);
+/// none without.
+pub(super) fn discord_buttons(choices: &[String]) -> Option<serde_json::Value> {
+    (!choices.is_empty()).then(|| {
+        let buttons: Vec<serde_json::Value> = choices
+            .iter()
+            .take(25)
+            .enumerate()
+            .map(|(index, choice)| {
+                serde_json::json!({
+                    "type": 2,
+                    "style": 1,
+                    "label": choice.chars().take(80).collect::<String>(),
+                    "custom_id": format!("{SEAT_BUTTON}{index}"),
+                })
+            })
+            .collect();
+        let rows: Vec<serde_json::Value> = buttons
+            .chunks(5)
+            .map(|row| serde_json::json!({ "type": 1, "components": row }))
+            .collect();
+        serde_json::Value::Array(rows)
+    })
 }
 
 pub(super) async fn send_typing(line: &GroupLine, token: &str) {

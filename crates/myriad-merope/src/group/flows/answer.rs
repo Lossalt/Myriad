@@ -206,7 +206,7 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
         }
         (AnswerStage::Restoring, Some(Answer::Kept { restore })) => {
             if let Some(restore) = restore {
-                restored(cx, restore.lines, restore.spoke_up);
+                restored(cx, restore.lines, restore.spoke_up, restore.table);
             }
             let went_out = a.went_out.clone().unwrap_or_default();
             after_saying(cx, a, went_out)

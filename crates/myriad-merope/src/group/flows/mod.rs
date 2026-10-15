@@ -20,7 +20,7 @@ mod glance;
 mod heard;
 mod learn;
 mod member;
-mod seats;
+pub mod seats;
 mod sense;
 mod state;
 mod stranger;
@@ -322,9 +322,27 @@ impl Cx<'_> {
 }
 
 pub(crate) fn step(group: &mut Group, at: &mut At, event: Event, out: &mut Outcome) {
+    let table = group.seating.clone();
+    step_on(group, at, event, out);
+    // The table changed: kept as it now stands, to outlive a restart.
+    if group.seating != table {
+        out.effects.push(Effect::KeepTable {
+            table: group
+                .seating
+                .as_ref()
+                .and_then(|seating| serde_json::to_value(seating).ok()),
+        });
+    }
+}
+
+fn step_on(group: &mut Group, at: &mut At, event: Event, out: &mut Outcome) {
     let mut cx = Cx { group, at, out };
     match event {
-        Event::Restored { lines, spoke_up } => restored(&mut cx, lines, spoke_up),
+        Event::Restored {
+            lines,
+            spoke_up,
+            table,
+        } => restored(&mut cx, lines, spoke_up, table),
         Event::Reached { message, seen_at } => {
             if cx.group.reach.is_none() {
                 cx.group.reach = Some(message);
@@ -355,7 +373,7 @@ pub(crate) fn step(group: &mut Group, at: &mut At, event: Event, out: &mut Outco
         } => speak_first(&mut cx, reason, owner, waiter),
         Event::StickerSent { meaning, restore } => {
             if let Some(restore) = restore {
-                restored(&mut cx, restore.lines, restore.spoke_up);
+                restored(&mut cx, restore.lines, restore.spoke_up, restore.table);
             }
             let now = cx.now();
             record_hers(cx.group, &format!("（表情包：{meaning}）"), now, cx.out);

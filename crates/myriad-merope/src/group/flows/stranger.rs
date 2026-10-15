@@ -913,7 +913,7 @@ fn answered(cx: &mut Cx, r: &mut Replying, raw: &str) -> Replied {
             thread: None,
             message_id: String::new(),
         };
-        if let Some(line) = open_sign_up(cx, kind, to) {
+        if let Some(line) = open_sign_up(cx, kind, to, r.owner) {
             said = format!("{said}\n\n{line}");
         }
     }
@@ -970,7 +970,10 @@ fn at_table_done(cx: &mut Cx, r: &mut Replying, what: AtTableDo, text: Option<St
     match what {
         AtTableDo::Turn => {
             // The group's turtle soup: anyone may ask, and so may they.
-            r.soup = text.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string());
+            r.soup = text.unwrap_or_else(|| {
+                let on = cx.group.seating.as_ref().map(|s| s.name.clone());
+                crate::hosting::group_offer(on.as_deref())
+            });
             r.stage = ReplyStage::Stickers;
             let venue = r.venue.clone();
             Replied::Wait(read(cx, Of::Hers, ToRead::Stickers { venue }))

@@ -882,6 +882,7 @@ fn her_speaking_up_counts_as_taken_up_soon_and_comes_back_after_a_restart_under_
         Event::Restored {
             lines: None,
             spoke_up: kept,
+            table: None,
         },
     );
     assert_eq!(group.spoke_up.len(), SPOKE_UP_KEPT);
@@ -1045,6 +1046,8 @@ impl End {
                     ToRead::Stickers { .. } => "stickers",
                     ToRead::Game { .. } => "game",
                     ToRead::RecentSurfaces => "recent",
+                    ToRead::RecentDealt { .. } => "recent",
+                    ToRead::HerName => "label",
                     ToRead::OwnRows { source, .. } => match source.as_str() {
                         "view" => "own:view",
                         "heard" => "own:heard",
@@ -1093,6 +1096,10 @@ impl End {
                     "group_member" => "ask:group_member",
                     "soup_judge" => "ask:soup_judge",
                     "soup_start" => "ask:soup_start",
+                    "undercover_words" => "ask:undercover_words",
+                    "undercover_judge" => "ask:undercover_judge",
+                    "undercover_voice" | "marks_voice" => "ask:voice",
+                    "undercover_her_move" | "marks_her_move" => "ask:her_move",
                     _ => "ask",
                 },
             ),
@@ -1216,6 +1223,18 @@ fn default_answer(kind: &str) -> Answer {
         },
         "send" => Answer::Sent { ok: true },
         "whisper" => Answer::Whispered { ok: true },
+        "ask:undercover_words" => Answer::Asked {
+            raw: Some(r#"{"civilian":"饺子","undercover":"包子"}"#.into()),
+            failure: None,
+        },
+        "ask:undercover_judge" => Answer::Asked {
+            raw: Some(r#"{"givesAway":false}"#.into()),
+            failure: None,
+        },
+        "ask:voice" | "ask:her_move" => Answer::Asked {
+            raw: None,
+            failure: Some("unavailable".into()),
+        },
         _ => unreachable!("{kind}"),
     }
 }
@@ -1836,6 +1855,7 @@ fn g1_read_back_after_a_restart() {
                 at: ago(50),
                 taken: true,
             }],
+            table: None,
         },
     );
     end.at(
@@ -1945,6 +1965,7 @@ fn g1_her_line_brings_back_what_a_failed_read_missed() {
                     line(before(39), None, None, "", "放就放", true),
                 ]),
                 spoke_up: Vec::new(),
+                table: None,
             }),
         },
     );
@@ -1991,8 +2012,10 @@ fn g1_her_line_brings_back_what_a_failed_read_missed() {
 /// marks): sign-up opens, two join and one of them twice, one more cannot be
 /// whispered to and is told how to open it; each of the two is whispered
 /// their own mark, a move in turn comes back in private and is taken, one
-/// out of turn and one that is no move are not; seats that do not move in
-/// time pass, and over, the group remembers who played. Crate-only: the
+/// out of turn is answered that it is not theirs yet, one that is no move
+/// is not the game's; seats that do not move in time pass (named in the
+/// group the second time in a row), and over, the group remembers who
+/// played. Crate-only: the
 /// test game exists only in tests, so no other end replays this one.
 #[test]
 fn g1_a_game_with_seats_is_played_in_private() {
@@ -2034,7 +2057,9 @@ fn g1_a_game_with_seats_is_played_in_private() {
         .filter(|step| step["input"]["event"]["kind"] == "whispered")
         .map(|step| step["output"]["taken"].as_bool())
         .collect();
-    assert_eq!(taken, [Some(false), Some(false), Some(true), Some(false)]);
+    // Not a move; a move out of turn (taken, and they are told so); a move
+    // in turn; one after it is over.
+    assert_eq!(taken, [Some(false), Some(true), Some(true), Some(false)]);
     for step in &end.steps {
         for effect in step["output"]["effects"].as_array().into_iter().flatten() {
             if effect["kind"] == "send" {
@@ -2043,4 +2068,434 @@ fn g1_a_game_with_seats_is_played_in_private() {
         }
     }
     end.check("a_game_with_seats_is_played_in_private");
+}
+
+fn message_on(
+    platform: &str,
+    chat: &str,
+    id: i64,
+    from: &str,
+    name: &str,
+    text: &str,
+    addressed: bool,
+) -> Message {
+    Message {
+        platform: platform.into(),
+        chat: chat.into(),
+        message_id: id.to_string(),
+        thread: None,
+        from: from.into(),
+        display_name: name.into(),
+        text: text.into(),
+        addressed,
+        reply_to: None,
+        images: Vec::new(),
+    }
+}
+
+/// The players at the table, as a test plays them, every ten seconds from
+/// `from` to `until`: whoever's turn it is to speak says `said(round)` in
+/// the group (none: lets it pass); whoever has to choose whispers
+/// `chosen(seat)`.
+fn play_out(
+    end: &mut End,
+    from: f64,
+    until: f64,
+    said: &dyn Fn(usize, u32) -> Option<String>,
+    chosen: &dyn Fn(usize) -> Option<String>,
+) {
+    use crate::hosting::Waiting;
+    let mut at = from;
+    let mut id = 500;
+    while at < until {
+        end.run(BASE + secs(at));
+        let Some(seating) = end.group.seating.clone() else {
+            break;
+        };
+        if let Some(game) = seating.game.as_ref() {
+            let round = match game {
+                crate::hosting::SeatGame::Undercover(game) => game.round,
+                #[allow(unreachable_patterns)]
+                _ => 0,
+            };
+            match game.waiting() {
+                Waiting::Speak(seat) if !seating.reachable[seat].hers => {
+                    let sat = &seating.reachable[seat];
+                    let (platform, user) = sat.who.split_once(':').unwrap();
+                    if let Some(line) = said(seat, round) {
+                        id += 1;
+                        heard(
+                            end,
+                            at + 3.0,
+                            message_on(
+                                platform,
+                                &seating.chat.chat,
+                                id,
+                                user,
+                                &sat.name,
+                                &line,
+                                false,
+                            ),
+                        );
+                    }
+                }
+                Waiting::Choose(seats) => {
+                    for seat in seats {
+                        let sat = &seating.reachable[seat];
+                        let Some(text) = chosen(seat).filter(|_| !sat.hers) else {
+                            continue;
+                        };
+                        end.at(
+                            BASE + secs(at + 3.0),
+                            Event::Whispered {
+                                who: sat.who.clone(),
+                                text,
+                            },
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        at += 10.0;
+    }
+    end.run(BASE + secs(until));
+}
+
+/// What the group heard her say, in order.
+fn said_in_group(end: &End) -> Vec<String> {
+    end.steps
+        .iter()
+        .flat_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter(|effect| effect["kind"] == "send")
+        .map(|effect| {
+            effect["pieces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|piece| {
+                    piece["text"]
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("@{}", piece["name"].as_str().unwrap_or("")))
+                })
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// A member asks for 谁是卧底 in a Telegram group: four join, each is
+/// whispered their word (the words made fresh, not one used lately), and the
+/// game is played out: descriptions in the group in turn (one asks for more
+/// time once), votes whispered back from buttons, someone out each round
+/// and said to be undercover or not, until a side wins and every word is
+/// told; the group remembers it.
+#[test]
+fn g1_undercover_is_played_with_buttons() {
+    let mut end = End::new();
+    end.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("好呀，来一局\n[[game:undercover]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "recent",
+        0.0,
+        Answer::Surfaces {
+            surfaces: vec!["饺子/包子".into()],
+        },
+    );
+    end.answer(
+        "ask:undercover_words",
+        3.0,
+        Answer::Asked {
+            raw: Some(r#"{"civilian":"眼镜","undercover":"墨镜"}"#.into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:voice",
+        2.0,
+        Answer::Asked {
+            raw: Some(r#"{"say":"开始啦，别一上来就把词说出来哦"}"#.into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "@bot 来玩谁是卧底", true),
+    );
+    for (index, (from, name)) in [(11, "阿明"), (12, "小红"), (13, "阿强"), (14, "小李")]
+        .iter()
+        .enumerate()
+    {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    heard(&mut end, 101.0, message(9, 12, "小红", "等等", false));
+    play_out(
+        &mut end,
+        110.0,
+        3000.0,
+        &|seat, round| Some(format!("戴在脸上的{seat}-{round}")),
+        &|_| Some("0".into()),
+    );
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    assert!(
+        said.iter()
+            .any(|line| line.contains("赢了") && line.contains("眼镜") && line.contains("墨镜"))
+    );
+    assert!(
+        said.iter()
+            .any(|line| line == crate::hosting::MORE_TIME_LINE)
+    );
+    // Neither word is said in the group before the end.
+    let end_at = said.iter().position(|line| line.contains("赢了")).unwrap();
+    assert!(
+        said[..end_at]
+            .iter()
+            .all(|line| !line.contains("眼镜") && !line.contains("墨镜"))
+    );
+    let buttons = end.steps.iter().any(|step| {
+        step["output"]["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|effect| effect["kind"] == "whisper" && effect["choices"].is_array())
+    });
+    assert!(buttons, "votes go out with buttons on Telegram");
+    end.check("undercover_is_played_with_buttons");
+}
+
+/// On QQ three join; she offers to take the fourth seat and all agree: the
+/// words are made by a judge with nothing of her (she must not know them),
+/// she describes and votes from her own word alone, and when one lets two
+/// turns pass they are named in the group.
+#[test]
+fn g1_undercover_she_fills_a_seat() {
+    let mut end = End::new();
+    end.answer(
+        "identify",
+        0.0,
+        Answer::Identified {
+            who: Who::Stranger,
+            owner: Some(1),
+        },
+    );
+    end.answer(
+        "ask:group_stranger",
+        2.0,
+        Answer::Asked {
+            raw: Some("好\n[[game:undercover]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "label",
+        0.0,
+        Answer::Label {
+            label: "Arael".into(),
+        },
+    );
+    for _ in 0..12 {
+        end.answer(
+            "ask:her_move",
+            2.0,
+            Answer::Asked {
+                raw: Some(r#"{"say":"每天都离不开它","n":0}"#.into()),
+                failure: None,
+            },
+        );
+    }
+    let qq = |id: i64, from: &str, name: &str, text: &str, addressed: bool| {
+        message_on("onebot", "77001", id, from, name, text, addressed)
+    };
+    heard(
+        &mut end,
+        0.0,
+        qq(1, "6001", "甲", "@bot 来玩谁是卧底", true),
+    );
+    for (index, (from, name)) in [("6001", "甲"), ("6002", "乙"), ("6003", "丙")]
+        .iter()
+        .enumerate()
+    {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            qq(2 + index as i64, from, name, "加入", false),
+        );
+    }
+    for (index, (from, name)) in [("6001", "甲"), ("6002", "乙"), ("6003", "丙")]
+        .iter()
+        .enumerate()
+    {
+        heard(
+            &mut end,
+            100.0 + index as f64,
+            qq(10 + index as i64, from, name, "好", false),
+        );
+    }
+    play_out(
+        &mut end,
+        110.0,
+        4000.0,
+        // 丙 never describes nor votes.
+        &|seat, round| (seat != 2).then(|| format!("很常见的东西{round}")),
+        &|seat| (seat != 2).then(|| "0".into()),
+    );
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    assert!(said.iter().any(|line| line.contains("还差一个人")));
+    assert!(
+        said.iter().any(|line| line.contains("每天都离不开它")),
+        "her description"
+    );
+    assert!(
+        said.iter()
+            .any(|line| line.contains("@丙") && line.contains("连着两次"))
+    );
+    let made_by_judge = end.steps.iter().any(|step| {
+        step["output"]["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|effect| {
+                effect["kind"] == "ask"
+                    && effect["operation"] == "undercover_words"
+                    && effect["voice"] == "judge"
+            })
+    });
+    assert!(made_by_judge);
+    // What she was asked as her seat never holds the other word.
+    let state: Value = end
+        .steps
+        .iter()
+        .rev()
+        .find_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|effect| {
+                    (effect["kind"] == "keepTable" && !effect["table"].is_null())
+                        .then(|| effect["table"].clone())
+                })
+        })
+        .unwrap();
+    let game = &state["game"];
+    let hers = state["reachable"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|seat| seat["hers"] == true)
+        .unwrap();
+    let mine_is_undercover = game["undercover"][hers].as_bool().unwrap();
+    let other = if mine_is_undercover {
+        "饺子"
+    } else {
+        "包子"
+    };
+    for step in &end.steps {
+        for effect in step["output"]["effects"].as_array().into_iter().flatten() {
+            if effect["kind"] == "ask" && effect["operation"] == "undercover_her_move" {
+                assert!(!effect.to_string().contains(other), "{effect}");
+            }
+            if effect["kind"] == "whisper" {
+                assert!(effect["choices"].is_null(), "no buttons on QQ");
+            }
+        }
+    }
+    end.check("undercover_she_fills_a_seat");
+}
+
+/// A game of 谁是卧底 is on when her end restarts: the table comes back as
+/// kept, everyone at it seated again, the wait on going on for the time it
+/// had left, and the game is played to its end.
+#[test]
+fn g1_undercover_goes_on_after_a_restart() {
+    let mut before = End::new();
+    before.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("来\n[[game:undercover]]".into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut before,
+        0.0,
+        message(1, 11, "阿明", "@bot 谁是卧底", true),
+    );
+    for (index, (from, name)) in [(11, "阿明"), (12, "小红"), (13, "阿强"), (14, "小李")]
+        .iter()
+        .enumerate()
+    {
+        heard(
+            &mut before,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    play_out(
+        &mut before,
+        110.0,
+        135.0,
+        &|_, _| Some("挺普通的".into()),
+        &|_| Some("0".into()),
+    );
+    let table = before
+        .steps
+        .iter()
+        .rev()
+        .find_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|effect| (effect["kind"] == "keepTable").then(|| effect["table"].clone()))
+        })
+        .unwrap();
+    assert!(!table.is_null());
+    // The restart: a group of nothing in mind, then what was kept.
+    let mut end = End::new();
+    end.now = BASE + secs(150.0);
+    end.at(
+        end.now,
+        Event::Restored {
+            lines: None,
+            spoke_up: Vec::new(),
+            table: Some(table),
+        },
+    );
+    play_out(
+        &mut end,
+        151.0,
+        3000.0,
+        &|_, round| Some(format!("挺普通的{round}")),
+        &|_| Some("0".into()),
+    );
+    assert!(end.group.seating.is_none(), "played to its end");
+    let seated = end.steps[0]["output"]["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|effect| effect["kind"] == "seat")
+        .count();
+    assert_eq!(seated, 4);
+    assert!(said_in_group(&end).iter().any(|line| line.contains("赢了")));
+    end.check("undercover_goes_on_after_a_restart");
 }

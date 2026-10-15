@@ -95,7 +95,7 @@ pub(crate) fn advance(cx: &mut Cx, mut errand: Errand, answer: Option<Answer>) {
                 restore: Some(restore),
             }) = answer
             {
-                restored(cx, restore.lines, restore.spoke_up);
+                restored(cx, restore.lines, restore.spoke_up, restore.table);
             }
             let now = cx.now();
             record_hers(cx.group, &text, now, cx.out);

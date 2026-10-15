@@ -88,8 +88,9 @@ pub(crate) use ledger::talk_between;
 pub use line::GroupLine;
 pub use mind::{
     back_from_away, catch_up, groups_lately, handle, muted, names_here, notice, record,
-    take_back_kept, whispered,
+    take_back_kept, take_back_tables, whispered,
 };
+pub use platform::seat_button;
 pub use title::title;
 
 /// Groups she keeps in mind at once.
@@ -102,6 +103,11 @@ const LINES_NAMESPACE: &str = "group_lines";
 /// after a restart she can still say something first in one that has gone
 /// quiet, for as long as it counts as one she is in.
 const REACH_NAMESPACE: &str = "group_reach";
+/// Runtime-registry namespace of the game with seats on at each group's
+/// table, as her group mind keeps it: it outlives a restart (D2-3, D2-9).
+const TABLE_NAMESPACE: &str = "group_table";
+/// How long a game left at a table is kept: longer than any game goes on.
+const TABLE_FOR_SECONDS: i64 = 86_400;
 
 /// A group's lines as kept across a restart.
 #[derive(serde::Serialize, serde::Deserialize)]

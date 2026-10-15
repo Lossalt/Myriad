@@ -437,6 +437,11 @@ async fn catch_up_groups() {
             .collect();
         crate::services::channel_group::catch_up(&format!("onebot:{group}"), past).await;
     }
+    // A game with seats on at a table goes on, read back or not.
+    crate::services::channel_group::take_back_tables(
+        crate::services::channel_platform::ChannelPlatform::OneBot,
+    )
+    .await;
 }
 
 /// NapCat's reply segment names only a message id. Look it up so the quoted

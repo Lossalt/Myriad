@@ -91,6 +91,16 @@ pub async fn handle_callback(event: TelegramPrivateCallback, token: &str) {
     {
         warn!(?error, "Telegram callback ack failed");
     }
+    // A button of a game they sit at: the game's, whoever they are.
+    if let Some(choice) = crate::services::channel_group::seat_button(&event.data) {
+        crate::services::channel_group::whispered(
+            crate::services::channel_platform::ChannelPlatform::Telegram,
+            &event.from_id.to_string(),
+            choice,
+        )
+        .await;
+        return;
+    }
     let Ok(db) = crate::services::process_db::database() else {
         warn!("Telegram callback skipped: database is not connected");
         return;

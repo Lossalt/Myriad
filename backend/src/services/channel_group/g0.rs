@@ -220,6 +220,15 @@ pub(crate) fn keep(namespace: &str, key: &str, value: Value, until: i64) {
     });
 }
 
+pub(crate) fn forget_kept(namespace: &str, key: &str) {
+    note("forget", json!({ "namespace": namespace, "key": key }));
+    with(|world| {
+        world
+            .registry
+            .remove(&(namespace.to_string(), key.to_string()))
+    });
+}
+
 pub(crate) fn all_kept(namespace: &str) -> Vec<RegistryRow> {
     with(|world| {
         let mut rows: Vec<RegistryRow> = world

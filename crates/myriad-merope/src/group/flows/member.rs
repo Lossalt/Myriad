@@ -28,6 +28,10 @@ const TYPING_EVERY_SECONDS: f64 = 4.0;
 #[serde(rename_all = "camelCase")]
 pub struct MemberReply {
     pub user_id: i32,
+    /// The site's owner, who hosts her there: a game she opens is theirs
+    /// to pay for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_owner: Option<i32>,
     pub venue: String,
     pub to: Target,
     pub said: String,
@@ -131,6 +135,7 @@ pub(crate) fn member_start(
 ) -> (MemberReply, MemberNext) {
     let reply = MemberReply {
         user_id: a.owner.unwrap_or_default(),
+        site_owner: a.site_owner,
         venue: a.message.venue(),
         to: a.message.target(),
         said: a.said.clone(),
@@ -614,7 +619,7 @@ fn answered(cx: &mut Cx, r: &mut MemberReply, raw: &str) -> MemberNext {
     // says how to join (not when she spoke up unasked).
     let (mut text, seated) = crate::hosting::split_seat_game(&text);
     if let Some(kind) = seated.filter(|_| r.chime.is_none())
-        && let Some(line) = open_sign_up(cx, kind, r.to.clone())
+        && let Some(line) = open_sign_up(cx, kind, r.to.clone(), r.site_owner.unwrap_or(r.user_id))
     {
         text = format!("{text}\n\n{line}");
     }
@@ -663,7 +668,10 @@ fn at_table_done(
         // A turtle soup on in this group, with this line judged; or how she
         // would start one for the group.
         AtTableDo::Turn => {
-            r.game = Some(text.unwrap_or_else(|| crate::soup::GROUP_OFFER.to_string()));
+            r.game = Some(text.unwrap_or_else(|| {
+                let on = cx.group.seating.as_ref().map(|s| s.name.clone());
+                crate::hosting::group_offer(on.as_deref())
+            }));
             stickers(cx, r)
         }
         AtTableDo::Start => {

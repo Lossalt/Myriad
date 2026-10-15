@@ -8,7 +8,7 @@
 use super::*;
 
 /// A line in a group on `platform`.
-fn line_on(
+pub(super) fn line_on(
     platform: ChannelPlatform,
     chat: &str,
     id: i64,
@@ -33,7 +33,7 @@ fn line_on(
 
 /// `from` whispers `text` to her on `platform`, as a private line comes in
 /// before pairing is looked at: whether the game took it.
-async fn whisper_in(platform: ChannelPlatform, from: &str, text: &str) {
+pub(super) async fn whisper_in(platform: ChannelPlatform, from: &str, text: &str) {
     let taken = whispered(platform, from, text).await;
     g0::note(
         "whispered",
@@ -42,7 +42,7 @@ async fn whisper_in(platform: ChannelPlatform, from: &str, text: &str) {
 }
 
 /// Nothing a seat was dealt is said in the group.
-fn nothing_dealt_said_in_the_group(log: &[serde_json::Value]) {
+pub(super) fn nothing_dealt_said_in_the_group(log: &[serde_json::Value]) {
     for entry in log {
         if entry["kind"] == "send" {
             assert!(

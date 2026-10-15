@@ -323,12 +323,34 @@ pub(super) async fn perform(venue: &str, effect: Effect) {
             platform,
             user,
             text,
+            choices,
             ..
         } => {
             tokio::spawn(async move {
-                let ok = whisper(&token(&venue), &platform, &user, &text).await;
+                let ok = whisper(&token(&venue), &platform, &user, &text, &choices).await;
                 answered(venue, id, Answer::Whispered { ok }).await;
             });
+        }
+        Effect::KeepTable { table } => {
+            let Ok(db) = db() else {
+                return;
+            };
+            match table {
+                Some(table) => {
+                    if let Err(error) = keep(
+                        &db,
+                        TABLE_NAMESPACE,
+                        &venue,
+                        &table,
+                        kept_for(TABLE_FOR_SECONDS),
+                    )
+                    .await
+                    {
+                        warn!(%error, %venue, "[Group] could not keep the game at the table");
+                    }
+                }
+                None => forget_kept(&db, TABLE_NAMESPACE, &venue).await,
+            }
         }
         Effect::Seat { who } => seat(&venue, who),
         Effect::Unseat { who } => unseat(&venue, &who),

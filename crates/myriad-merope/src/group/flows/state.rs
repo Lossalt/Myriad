@@ -3,9 +3,20 @@
 
 use super::*;
 
-pub(crate) fn restored(cx: &mut Cx, lines: Option<Vec<Line>>, kept: Vec<SpokeUp>) {
+pub(crate) fn restored(
+    cx: &mut Cx,
+    lines: Option<Vec<Line>>,
+    kept: Vec<SpokeUp>,
+    table: Option<Value>,
+) {
     if cx.group.restored {
         return;
+    }
+    // The game with seats that was on: back at the table, going on.
+    if let Some(table) = table.filter(|_| cx.group.seating.is_none())
+        && let Ok(seating) = serde_json::from_value::<Seating>(table)
+    {
+        resume_table(cx, seating);
     }
     cx.group.restored = true;
     let now = cx.now();
