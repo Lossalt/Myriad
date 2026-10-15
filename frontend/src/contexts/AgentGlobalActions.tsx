@@ -1,19 +1,48 @@
 import type { FrontendAction, PageElementTarget } from '../services/agent'
 import { useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import {
-  isJournalAppPath,
-} from '../components/phantasi/logic/journalRoutes'
 import { playHerSong } from '../features/merope/music/listenTogether'
-import { currentCopy } from '../i18n/localeCopy'
 import {
   registerActionHandler,
   unregisterActionHandler,
 } from '../services/agent/frontendActions'
-import { isInSitePath } from '../services/agent/navigateTarget'
+import { isFullPageSitePath, isInSitePath } from '../services/agent/navigateTarget'
+import * as phantasiApi from '../services/phantasiApi'
 import { emitAppEvent } from '../utils/appEvents'
-import { phantasiSubject } from '../utils/phantasiSubject'
 import { useMusicPlayerControl } from './MusicPlayerContext'
+
+function openArticleTarget(link: string): boolean {
+  const trimmed = link.trim()
+  if (!trimmed) return false
+  if (isInSitePath(trimmed) && isFullPageSitePath(trimmed)) {
+    window.location.assign(trimmed)
+    return true
+  }
+  try {
+    const url = new URL(trimmed, window.location.origin)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    if (url.origin === window.location.origin && isFullPageSitePath(url.pathname)) {
+      window.location.assign(`${url.pathname}${url.search}${url.hash}`)
+      return true
+    }
+    window.open(url.href, '_blank', 'noopener,noreferrer')
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function openPhantasiItem(id: number): Promise<boolean> {
+  if (!Number.isFinite(id) || id <= 0) return false
+  try {
+    const item = await phantasiApi.getItem(id)
+    const link = item.link?.trim()
+    return Boolean(link && openArticleTarget(link))
+  } catch (error) {
+    console.warn('[AgentGlobalActions] Failed to open article', id, error)
+    return false
+  }
+}
 
 function findElement(target: PageElementTarget): HTMLElement | null {
   if (target.testId) {
@@ -298,6 +327,12 @@ export function AgentGlobalActions() {
           action.replace ? '(replace)' : '',
         )
 
+        if (isFullPageSitePath(targetPath)) {
+          if (action.replace) window.location.replace(targetPath)
+          else window.location.assign(targetPath)
+          return true
+        }
+
         if (action.replace) {
           navigate(targetPath, { replace: true, state: action.params })
         } else {
@@ -362,49 +397,20 @@ export function AgentGlobalActions() {
             articleId?: string
             articleLink?: string
             openLatest?: boolean
-            openReader?: boolean
           }
         | undefined
 
-      console.log('[AgentGlobalActions] Opening phantasi article:', params)
-
-      const isOnPhantasiPage = isJournalAppPath(location.pathname)
-
-      if (!isOnPhantasiPage) {
-        console.log(
-          '[AgentGlobalActions] Not on Phantasi page, navigating first...',
-        )
-
-        // Park in sessionStorage so Phantasi can run it after mount (avoids a pre-mount race).
-        const pendingAction = {
-          subjectKey: phantasiSubject.capture().key,
-          subjectGeneration: phantasiSubject.capture().generation,
-          articleId: params?.articleId,
-          articleLink: params?.articleLink,
-          openLatest: params?.openLatest ?? true,
-          timestamp: Date.now(),
-        }
-        sessionStorage.setItem(
-          'phantasi_pending_open_article',
-          JSON.stringify(pendingAction),
-        )
-        console.log(
-          '[AgentGlobalActions] Stored pending action to sessionStorage:',
-          pendingAction,
-        )
-
-        navigate('/journal')
-      } else {
-        emitAppEvent('agent:open-phantasi-article', {
-          articleId: params?.articleId,
-          articleLink: params?.articleLink,
-          openLatest: params?.openLatest ?? true,
-        })
+      const link = params?.articleLink?.trim()
+      if (link && openArticleTarget(link)) return true
+      const articleId = Number(params?.articleId)
+      if (await openPhantasiItem(articleId)) return true
+      if (params?.openLatest !== false && !params?.articleId) {
+        window.location.assign('/blog/')
+        return true
       }
-
-      return true
+      return false
     },
-    [location.pathname, navigate],
+    [],
   )
 
   const handleMusicControl = useCallback(
@@ -559,80 +565,13 @@ export function AgentGlobalActions() {
         return false
       }
 
-      console.log(
-        `[AgentGlobalActions] Setting reading list: ${payload.name} with ${payload.items.length} items`,
-      )
-
-      const hasWebSearchItems = payload.items.some((item) => item.fromWebSearch)
-      if (hasWebSearchItems) {
-        console.log(
-          '[AgentGlobalActions] Reading list contains web search results',
-        )
-      }
-
-      const readingListData = {
-        id: `reading_list_${Date.now()}`,
-        name: payload.name || currentCopy().phantasi.smartReadingList,
-        criteria: frontendAction.criteria || '',
-        items: payload.items,
-        createdAt: new Date().toISOString(),
-      }
-
-      const firstItem = payload.items[0]
-      const firstItemData = firstItem?.fromWebSearch
-        ? {
-            ...firstItem,
-            isWebSearchArticle: true,
-          }
-        : null
-
-      const isOnPhantasiPage = isJournalAppPath(location.pathname)
-
-      if (!isOnPhantasiPage) {
-        // Park in sessionStorage so Phantasi can run it after mount (avoids a pre-mount race).
-        const pendingAction = {
-          subjectKey: phantasiSubject.capture().key,
-          subjectGeneration: phantasiSubject.capture().generation,
-          readingList: readingListData,
-          articleId:
-            payload.items[0]?.id != null
-              ? String(payload.items[0].id)
-              : undefined,
-          webSearchArticle: firstItemData, // Pass full payload for web-search items.
-          timestamp: Date.now(),
-        }
-        sessionStorage.setItem(
-          'phantasi_pending_reading_list',
-          JSON.stringify(pendingAction),
-        )
-        console.log(
-          '[AgentGlobalActions] Stored pending reading list to sessionStorage:',
-          pendingAction,
-        )
-
-        navigate('/journal')
-      } else {
-        emitAppEvent('agent:set-reading-list', {
-          ...readingListData,
-          createdAt: new Date(readingListData.createdAt),
-        })
-
-        if (firstItem) {
-          // Wait until the reading list is applied.
-          setTimeout(() => {
-            emitAppEvent('agent:open-phantasi-article', {
-                  articleId: firstItem.id.toString(),
-                  openLatest: false,
-                  // Pass full payload for web-search items.
-                  webSearchArticle: firstItemData,
-                })
-          }, 100)
-        }
-      }
-
-      return true
+      const first = payload.items[0]
+      if (!first) return false
+      if (first.link && openArticleTarget(first.link)) return true
+      if (await openPhantasiItem(first.id)) return true
+      return false
     },
-    [location.pathname, navigate],
+    [],
   )
 
   const handleShowNotification = useCallback(

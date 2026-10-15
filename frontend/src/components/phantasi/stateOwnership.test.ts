@@ -1,5 +1,4 @@
 import type { PhantasiNoteDoc } from '../../types/phantasi'
-import type { PhantasiViewMode } from './logic/board'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { it } from 'node:test'
@@ -9,8 +8,6 @@ import { phantasiItemState } from '../../utils/phantasiItemState'
 import { requestCache } from '../../utils/requestCache'
 import { loadNoteDocs, NOTE_DOCS_CACHE_KEY } from './pageData'
 import { usePhantasiCategories } from './usePhantasiCategories'
-import { usePhantasiItems } from './usePhantasiItems'
-import { usePhantasiStarred } from './usePhantasiStarred'
 
 const require = createRequire(import.meta.url)
 const { JSDOM } = require(require.resolve('jsdom', {
@@ -46,50 +43,6 @@ async function withDom(run: (root: ReturnType<typeof createRoot>) => Promise<voi
     dom.window.close()
   }
 }
-
-it('a completed unstar from the previous view cannot remove rows or decrement the new topic total', async () => {
-  await withDom(async (root) => {
-    const unstar = Promise.withResolvers<Response>()
-    const errors: string[] = []
-    const report = (message: string) => { errors.push(message) }
-    globalThis.fetch = async (input) => {
-      const url = new URL(String(input), 'https://test.invalid')
-      if (url.pathname.includes('csrf-token')) return Response.json({ csrf_token: null })
-      if (url.pathname.endsWith('/unstar')) return unstar.promise
-      const topic = url.searchParams.get('topic')
-      return Response.json({
-        items: [{ id: 1, title: 'one', is_starred: true, topic: 'science' }],
-        total: topic ? 7 : 1,
-        per_page: 20,
-        next_cursor: null,
-      })
-    }
-    let mode: PhantasiViewMode = 'starred'
-    let list!: ReturnType<typeof usePhantasiItems>
-    let selection!: ReturnType<typeof usePhantasiStarred>
-    function Harness() {
-      list = usePhantasiItems('load failed', report, mode, 'science')
-      selection = usePhantasiStarred(list.items, 'star failed', report)
-      return null
-    }
-    await act(async () => root.render(createElement(Harness)))
-    await act(async () => { selection.enterEdit(); selection.selectAll() })
-    let pending!: Promise<void>
-    await act(async () => { pending = selection.batchUnstar() })
-    mode = 'topic-feed'
-    await act(async () => root.render(createElement(Harness)))
-    assert.equal(list.total, 7)
-    await act(async () => { unstar.resolve(Response.json({ success: true })); await pending })
-    assert.deepEqual(list.items.map(item => item.id), [1])
-    assert.equal(list.total, 7)
-    assert.deepEqual(errors, [])
-    await act(async () => list.updateTopic(1, 'history'))
-    assert.deepEqual(list.items, [])
-    assert.equal(list.total, 6)
-    await act(async () => list.removeItem(1))
-    assert.equal(list.total, 6)
-  })
-})
 
 it('a partial category write refreshes completed changes even when a later revision conflicts', async () => {
   await withDom(async (root) => {
@@ -162,89 +115,6 @@ for (const operation of ['assign', 'rename'] as const) {
       await act(async () => { assert.equal(await attempt(), false); await pending })
       await act(async () => { assert.equal(await attempt(), true); await pending })
       assert.deepEqual(revisions, [1, 2])
-    })
-  })
-}
-
-it('a topic change invalidates an older page response instead of restoring its former membership', async () => {
-  await withDom(async (root) => {
-    const oldPage = Promise.withResolvers<Response>()
-    let requests = 0
-    const response = () => Response.json({
-      items: [{ id: 1, title: 'one', topic: 'science' }], total: 2, per_page: 20, next_cursor: null,
-    })
-    globalThis.fetch = async () => ++requests === 1 ? response() : oldPage.promise
-    let list!: ReturnType<typeof usePhantasiItems>
-    const report = () => {}
-    function Harness() {
-      list = usePhantasiItems('load failed', report, 'topic-feed', 'science')
-      return null
-    }
-    await act(async () => root.render(createElement(Harness)))
-    let pending!: Promise<void>
-    await act(async () => { pending = list.reload() })
-    await act(async () => list.updateTopic(1, 'history'))
-    await act(async () => { oldPage.resolve(response()); await pending })
-    assert.deepEqual(list.items, [])
-    assert.equal(list.total, 1)
-    assert.equal(list.itemsLoading, false)
-  })
-})
-
-it('removing a row preserves loaded pages and continues from the existing seek cursor', async () => {
-  await withDom(async (root) => {
-    let rows = Array.from({ length: 41 }, (_, index) => ({ id: index + 1, topic: 'science' }))
-    globalThis.fetch = async (input) => {
-      const cursor = Number(new URL(String(input), 'https://test.invalid').searchParams.get('cursor') ?? 0)
-      const remaining = rows.filter(row => row.id > cursor)
-      const items = remaining.slice(0, 20)
-      return Response.json({ items, total: rows.length, per_page: 20,
-        next_cursor: remaining.length > 20 ? String(items.at(-1)!.id) : null })
-    }
-    let list!: ReturnType<typeof usePhantasiItems>
-    const report = () => {}
-    function Harness() {
-      list = usePhantasiItems('load failed', report, 'topic-feed', 'science')
-      return null
-    }
-    await act(async () => root.render(createElement(Harness)))
-    await act(async () => list.loadMore())
-    assert.equal(list.items.length, 40)
-    rows = rows.filter(row => row.id !== 1)
-    await act(async () => list.removeItem(1))
-    await act(async () => list.loadMore())
-    assert.deepEqual(list.items.map(item => item.id), rows.map(row => row.id))
-    assert.equal(list.total, 40)
-    assert.equal(list.hasMore, false)
-  })
-})
-
-for (const operation of ['reload', 'topic'] as const) {
-  it(`a delayed ${operation} callback acts on the current list query`, async () => {
-    await withDom(async (root) => {
-      globalThis.fetch = async (input) => {
-        const topic = new URL(String(input), 'https://test.invalid').searchParams.get('topic')
-        return Response.json({
-          items: [{ id: 1, title: 'one', topic }], total: 1, per_page: 20, next_cursor: null,
-        })
-      }
-      let topic = 'science'
-      let list!: ReturnType<typeof usePhantasiItems>
-      const report = () => {}
-      function Harness() {
-        list = usePhantasiItems('load failed', report, 'topic-feed', topic)
-        return null
-      }
-      await act(async () => root.render(createElement(Harness)))
-      const previous = list
-      topic = 'history'
-      await act(async () => root.render(createElement(Harness)))
-      await act(async () => {
-        if (operation === 'reload') await previous.reload()
-        else previous.updateTopic(1, 'history')
-      })
-      assert.deepEqual(list.items.map(item => item.topic), ['history'])
-      assert.equal(list.total, 1)
     })
   })
 }

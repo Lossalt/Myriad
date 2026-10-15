@@ -24,7 +24,9 @@ test('real public data remains responsive across repeated page visits', async ({
       if (response.ok() && response.headers()['content-type']?.includes('json')) {
         const body = await response.json()
         for (const key of ['sources', 'items']) {
-          if (Array.isArray(body[key])) inventory.set(`${url.pathname}:${key}`, body[key].length)
+          if (!Array.isArray(body[key])) continue
+          const name = `${url.pathname}:${key}`
+          inventory.set(name, Math.max(inventory.get(name) ?? 0, body[key].length))
         }
       }
       await route.fulfill({ response })
@@ -84,10 +86,10 @@ test('real public data remains responsive across repeated page visits', async ({
   const inputLatency: number[] = []
   const forcedGcWindows: Array<{ start: number; end: number }> = []
   for (let cycle = 0; cycle < 12; cycle++) {
-    await page.evaluate(() => { history.pushState(null, '', '/journal'); dispatchEvent(new PopStateEvent('popstate')) })
-    await expect(page.locator('.phantasi-feeds')).toBeVisible({ timeout: 20_000 })
-    await expect.poll(() => page.locator('.phantasi-site').count()).toBeGreaterThan(0)
-    const rail = page.locator('.phantasi-feeds__sites')
+    await page.evaluate(() => { history.pushState(null, '', '/library'); dispatchEvent(new PopStateEvent('popstate')) })
+    await expect(page.locator('.library-card-container').first()).toBeVisible({ timeout: 20_000 })
+    await expect.poll(() => page.locator('.library-card-container').count()).toBeGreaterThan(0)
+    const rail = page.locator('.library-card-container').first()
     await rail.hover()
     const started = Date.now()
     await page.mouse.wheel(500, 0)
@@ -117,8 +119,8 @@ test('real public data remains responsive across repeated page visits', async ({
   await writeFile(report, JSON.stringify({ browser: browserName, data: Object.fromEntries(inventory), metrics, forcedGcWindows, inputToTwoFramesMs: inputLatency, samples, pageErrors: errors, failedReads: Object.fromEntries(failedReads) }, null, 2))
   await testInfo.attach('live-performance', { path: report, contentType: 'application/json' })
   expect(errors).toEqual([])
-  expect(inventory.get('/api/phantasi/sources:sources')).toBeGreaterThan(0)
-  expect([...failedReads.keys()].filter(value => /\/api\/phantasi\/(?:sources|items)(?:$|:)/.test(value))).toEqual([])
+  expect(inventory.get('/api/library:items')).toBeGreaterThan(0)
+  expect([...failedReads.keys()].filter(value => /\/api\/library(?:$|:)/.test(value))).toEqual([])
   expect(samples.at(-1)!.sockets).toBeLessThanOrEqual(1)
   expect(samples.at(-1)!.nodes).toBeLessThanOrEqual(samples[1].nodes + 100)
   if (cdp) expect(samples.at(-1)!.retainedHeap! - samples[1].retainedHeap!).toBeLessThan(12 * 1024 * 1024)

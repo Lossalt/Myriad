@@ -23,7 +23,7 @@ describe('navigateAfterStageLeave', () => {
 
     const went: string[] = []
     assert.equal(navigateAfterStageLeave(() => went.push('/library')), true)
-    assert.equal(navigateAfterStageLeave(() => went.push('/journal')), true)
+    assert.equal(navigateAfterStageLeave(() => went.push('/studio')), true)
     assert.equal(navigateAfterStageLeave(() => went.push('/tapp')), true)
     assert.equal(leaves, 1)
     assert.deepEqual(went, [])

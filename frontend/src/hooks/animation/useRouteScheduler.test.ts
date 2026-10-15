@@ -11,24 +11,17 @@ const dir = dirname(fileURLToPath(import.meta.url))
 
 describe('pageIdFromPath', () => {
   it('第一段之下整棵子路由都是同一页', () => {
-    assert.equal(pageIdFromPath('/journal'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/notes'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/starred'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/friends'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/articles/12'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/topics/rust'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/feeds/3'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/workbench'), 'phantasi')
-    assert.equal(pageIdFromPath('/journal/workbench/feeds/add'), 'phantasi')
+    assert.equal(pageIdFromPath('/studio'), 'studio')
+    assert.equal(pageIdFromPath('/studio/notes'), 'studio')
     assert.equal(pageIdFromPath('/library'), 'library')
     assert.equal(pageIdFromPath('/library/anything'), 'library')
     assert.equal(pageIdFromPath('/tapp/run/1'), 'tapp')
     assert.equal(pageIdFromPath('/'), 'home')
-    assert.equal(resolvePageRouteAnimation('/journal').key, '/journal')
-    assert.equal(resolvePageRouteAnimation('/journal/notes').key, '/journal')
+    assert.equal(resolvePageRouteAnimation('/studio').key, '/studio')
+    assert.equal(resolvePageRouteAnimation('/studio/notes').key, '/studio')
     assert.equal(
-      resolvePageRouteAnimation('/journal/workbench/feeds/add').key,
-      '/journal',
+      resolvePageRouteAnimation('/studio/notes/new').key,
+      '/studio',
     )
   })
 

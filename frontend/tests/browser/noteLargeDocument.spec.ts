@@ -7,7 +7,7 @@ async function openEditor(page: Page, shape: string, size = 180_000) {
     if (route.request().url().includes('csrf-token')) { await route.fulfill({ json: { csrf_token: null } }); return }
     const body = route.request().postDataJSON() ?? {}
     const id = Number(/\/docs\/(\d+)/.exec(route.request().url())?.[1] ?? 1)
-    await route.fulfill({ json: { success: true, id: 100 + id, link: '/journal/notes/test', doc: {
+    await route.fulfill({ json: { success: true, id: 100 + id, link: '/studio/notes/test', doc: {
       id, item_id: null, title: body.title ?? 'Large note', content_md: body.content_md ?? '', topic: null, image: null,
       published_at: null, status: 'draft', scheduled_at: null, revision: ++revision, updated_at: 0, last_error: null,
     } } })

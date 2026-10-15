@@ -40,7 +40,6 @@ import { LocaleAccountSync } from './contexts/LocaleAccountSync'
 import { MusicPlayerProvider } from './contexts/MusicPlayerContext'
 import { NavigationProvider } from './contexts/NavigationContext'
 import { PageContentProvider } from './contexts/PageContentContext'
-import { ReadingListProvider } from './contexts/ReadingListContext'
 import { AgentPresenceHost } from './features/merope/presence/AgentPresenceHost'
 import { useRouteScheduler } from './hooks/animation/useRouteScheduler'
 import { isExlight, useAnimationLevel } from './hooks/useAnimationLevel'
@@ -74,7 +73,6 @@ import './styles/performance.css'
 const {
   home: Home,
   library: Library,
-  phantasi: Phantasi,
   studio: Studio,
   embedComments: EmbedComments,
   embedFriend: EmbedFriend,
@@ -601,30 +599,6 @@ function AppRoutes() {
             </RequireAuth>
           }
         />
-        {/* /journal/* 单路由，避免列表 ↔ 文章 remount 丢阅读器状态。 */}
-        <Route
-          path="/journal/*"
-          element={
-            <ModuleVisibilityGuard moduleKey="phantasi">
-              <NamespacedPage names={['phantasi']}>
-                <Phantasi />
-              </NamespacedPage>
-            </ModuleVisibilityGuard>
-          }
-        />
-        {/* DEV 专用磁贴预览。lazy() 必须写在 DEV 分支里面，否则动态 import 仍会打进生产 chunk。 */}
-        {import.meta.env.DEV && (
-          <Route
-            path="/dev/phantasi-tiles"
-            element={
-              <NamespacedPage names={['phantasi']}>
-                {React.createElement(
-                  lazy(() => import('./views/PhantasiTilePreview.tsx')),
-                )}
-              </NamespacedPage>
-            }
-          />
-        )}
         <Route
           path="/reports"
           element={
@@ -802,7 +776,6 @@ function AppOrEmbed() {
     <MusicPlayerProvider>
       <NavigationProvider>
         <PageContentProvider>
-          <ReadingListProvider>
             <Suspense fallback={null}>
               <AgentGlobalActions />
             </Suspense>
@@ -834,7 +807,6 @@ function AppOrEmbed() {
                 <PerformanceMonitor />
               </Suspense>
             )}
-          </ReadingListProvider>
         </PageContentProvider>
       </NavigationProvider>
     </MusicPlayerProvider>

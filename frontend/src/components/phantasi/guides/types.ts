@@ -8,19 +8,10 @@ export interface PhantasiGuidesCatalog {
   comments: SettingGuideEntry
   reviews: SettingGuideEntry
   media: SettingGuideEntry
-  sources: SettingGuideEntry
-  add: SettingGuideEntry
-  topics: SettingGuideEntry
   noteCategories: SettingGuideEntry
-  sourceCategories: SettingGuideEntry
-  rsshub: SettingGuideEntry
   notesIo: SettingGuideEntry
-  feedsIo: SettingGuideEntry
-  defaultSort: SettingGuideEntry
   wordpress: SettingGuideEntry
   halo: SettingGuideEntry
   typecho: SettingGuideEntry
   markdown: SettingGuideEntry
-  pipack: SettingGuideEntry
-  opml: SettingGuideEntry
 }

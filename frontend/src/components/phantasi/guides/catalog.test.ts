@@ -18,7 +18,7 @@ describe('phantasi guide catalog', () => {
     const en = getPhantasiGuidesCatalog('en-US')
     assert.ok(en.overview.what.includes('Admin console'))
     assert.ok(en.notesIo.what)
-    assert.ok(en.feedsIo.what)
+    assert.ok(en.markdown.what)
   })
 
   it('loads Chinese on demand and then serves it synchronously', async () => {

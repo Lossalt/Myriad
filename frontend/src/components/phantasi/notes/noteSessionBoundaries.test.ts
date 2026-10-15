@@ -132,7 +132,7 @@ for (const command of ['handleSave', 'handleSchedule', 'handleUnschedule'] as co
     globalThis.fetch = async (url, options) => {
       if (String(url).endsWith('/csrf-token')) return Response.json({ csrf_token: null })
       requests.push({ url: String(url), revision: JSON.parse(String(options?.body)).revision })
-      return Response.json({ success: true, id: 99, link: '/journal/articles/99', doc: doc(3, 'edited') })
+      return Response.json({ success: true, id: 99, link: '/blog/posts/n99/', doc: doc(3, 'edited') })
     }
     const revisionRef = { current: 1 }
     const hook = await mountNoteHook((fields: NoteCloudFields) => {

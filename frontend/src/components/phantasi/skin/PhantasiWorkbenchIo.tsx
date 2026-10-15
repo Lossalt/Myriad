@@ -181,32 +181,20 @@ export function WorkbenchIoPane({
   pane,
   back,
   docs,
-  sourceCount,
-  packBusy,
-  packProgress,
-  onExportPack,
-  onImportPack,
   notesBusy,
   notesKind,
   notesProgress,
   onExportNotes,
   onImportNotes,
-  admin,
 }: {
   pane: WorkbenchPane
   back: ReactNode
   docs: PhantasiNoteDoc[]
-  sourceCount: number
-  packBusy: boolean
-  packProgress: string | null
-  onExportPack: () => void
-  onImportPack: (file: File) => void
   notesBusy: boolean
   notesKind: NoteTransferKind | null
   notesProgress: string | null
   onExportNotes: (kind: NoteTransferKind) => void
   onImportNotes: (kind: NoteTransferKind, file: File) => void
-  admin?: ReactNode
 }) {
   const { t, format } = useI18n()
   const phantasi = t.phantasi
@@ -257,61 +245,6 @@ export function WorkbenchIoPane({
               />
             </SettingItemWrapper>
           ))}
-        </SettingGroupGrid>
-      </WorkbenchPage>
-    )
-  }
-
-  if (pane === 'feedsIo') {
-    return (
-      <WorkbenchPage
-        title={phantasi.workbenchNavTransfer}
-        icon={<PhantasiWorkbenchIcon kind="feeds-transfer" />}
-        back={back}
-        {...bindGuide('workbench.feedsIo', g.feedsIo)}
-      >
-        <SettingGroupGrid
-          columns={2}
-          variant="plain"
-          align="start"
-          minColumnWidth="16rem"
-          className="phantasi-workbench__io-grid"
-        >
-          <SettingItemWrapper
-            itemKey="transfer-pipack"
-            className="phantasi-workbench__io-item"
-            size="sm"
-            label={phantasi.workbenchPipack}
-            detail={phantasi.workbenchPipackHint}
-            {...bindGuide('workbench.pipack', g.pipack)}
-          >
-            <TransferActions
-              accept=".pipack,.zip,application/zip"
-              busy={packBusy}
-              canExport={sourceCount > 0}
-              progress={packProgress}
-              dropLabel={format(phantasi.workbenchDropNamed, {
-                name: phantasi.workbenchPipack,
-              })}
-              formatsLabel={format(phantasi.workbenchDropFormats, {
-                formats: '.pipack / .zip',
-              })}
-              startLabel={phantasi.startImport}
-              exportLabel={phantasi.exportPipack}
-              onExport={onExportPack}
-              onImport={onImportPack}
-            />
-          </SettingItemWrapper>
-          <SettingItemWrapper
-            itemKey="transfer-opml"
-            className="phantasi-workbench__io-item"
-            size="sm"
-            label={phantasi.workbenchOpml}
-            detail={phantasi.workbenchOpmlHint}
-            {...bindGuide('workbench.opml', g.opml)}
-          >
-            {admin}
-          </SettingItemWrapper>
         </SettingGroupGrid>
       </WorkbenchPage>
     )

@@ -29,59 +29,17 @@
     "frontend": "Les couvertures et images de site référencent ces fichiers.",
     "notes": "Un fichier encore utilisé ne se supprime pas."
   },
-  "sources": {
-    "what": "Ajouter, modifier, actualiser, supprimer des flux, activer le RSS des notes, et le tri par défaut.",
-    "chain": "① Ajoutez ou actualisez.\n② Le tri par défaut est enregistré sur cet appareil.\n③ Le RSS des notes est désactivé par défaut ; activez-le avant de partager.\n④ Deux catégories au plus.",
-    "frontend": "Le mur utilise ce tri et ces catégories.",
-    "notes": "Le mur sert à lire. Supprimez les sources ici."
-  },
-  "add": {
-    "what": "Ajouter un abonnement ou un lien simple.",
-    "chain": "① Choisissez le type.\n② Entrez l’adresse.\n③ La catégorie est facultative.",
-    "frontend": "Les nouveaux éléments apparaissent sur le mur ou la page amis.",
-    "notes": "Les listes en masse passent par Import / export."
-  },
   "noteCategories": {
     "what": "Noms de catégories de notes. Filtres et ajout en lot s’en servent.",
     "chain": "① Créez ou renommez.\n② Supprimer n’enlève que cette partie.\n③ Liens d’amis / Moi n’apparaissent pas ici.",
     "frontend": "Le mur de notes et cette liste filtrent par ces noms.",
     "notes": "Deux catégories par note."
   },
-  "sourceCategories": {
-    "what": "Noms de catégories de flux, y compris Liens d’amis et Moi.",
-    "chain": "① Créez ou renommez.\n② Supprimer n’enlève que cette partie.\n③ Les préréglages ne se changent ni ne se suppriment.",
-    "frontend": "La catégorie « liens amis » va à la page amis. Les RSS restent aussi sur le mur.",
-    "notes": "Deux catégories par abonnement."
-  },
-  "topics": {
-    "what": "Agrégats de sujets. Activez un sujet existant pour afficher une carte mixte sur les flux.",
-    "chain": "① Cherchez un sujet existant.\n② Activez l’interrupteur pour afficher la carte.\n③ Désactivez-le pour la cacher. Un sujet vide peut aussi être affiché.",
-    "frontend": "Les cartes mixtes fonctionnent comme Récents. Les tuiles se groupent encore par nombre d’articles.",
-    "notes": "Un sujet n’est ni une catégorie de source, ni une catégorie de note. La liste est commune au site."
-  },
-  "rsshub": {
-    "what": "Instances RSSHub utilisées pour s’abonner à une route.",
-    "chain": "① Ajoutez une URL d’instance.\n② Les abonnements RSSHub s’en servent.\n③ Vérifiez la santé ou changez le défaut.",
-    "frontend": "Visible quand vous ajoutez un flux RSSHub.",
-    "notes": "Une instance hors service : ces flux ne se récupèrent plus."
-  },
   "notesIo": {
     "what": "Faire entrer ou sortir des notes.",
     "chain": "① Choisissez un format.\n② Déposez un fichier, puis lancez l’import.\n③ L’export empaquete les notes actuelles.",
     "frontend": "Les imports arrivent dans la liste pour édition et publication.",
     "notes": "WordPress : WXR. Halo : JSON ou zip Markdown. Typecho : XML de sauvegarde, WXR aussi."
-  },
-  "feedsIo": {
-    "what": "Sauvegarder et échanger les abonnements.",
-    "chain": "① Le paquet sauvegarde tout le jeu.\n② OPML échange les listes avec d’autres lecteurs.\n③ Déposez un fichier, puis lancez l’import.",
-    "frontend": "Les sources importées apparaissent sur le mur.",
-    "notes": "Le paquet garde les réglages. OPML est surtout des adresses."
-  },
-  "defaultSort": {
-    "what": "Ordre par défaut du mur.",
-    "chain": "① Changez-le ici.\n② Enregistré sur cet appareil.\n③ Le mur s’ouvre dans cet ordre.",
-    "frontend": "Ordre des sources sur le mur.",
-    "notes": "Pas lié au compte. À refaire dans un autre navigateur."
   },
   "wordpress": {
     "what": "Sauvegardes WXR WordPress.",
@@ -106,17 +64,5 @@
     "chain": "① Déposez un .md ou .zip.\n② Lancez l’import.\n③ Ou exportez au même format.",
     "frontend": "Les imports arrivent dans la liste.",
     "notes": "L’en-tête devient titre, catégorie, etc."
-  },
-  "pipack": {
-    "what": "Sauvegarder et restaurer tout le jeu d’abonnements.",
-    "chain": "① Exportez un paquet.\n② Ou déposez un .pipack / .zip.\n③ Lancez l’import.",
-    "frontend": "Les sources importées apparaissent sur le mur.",
-    "notes": "Les réglages des sources voyagent avec le paquet."
-  },
-  "opml": {
-    "what": "Échanger des listes d’abonnements avec d’autres lecteurs.",
-    "chain": "① Exportez l’OPML.\n② Ou déposez un .opml.\n③ Lancez l’import.",
-    "frontend": "Les adresses importées apparaissent sur le mur.",
-    "notes": "Surtout des adresses. Les détails peuvent se perdre."
   }
 }

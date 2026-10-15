@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { isFullPageSitePath } from './navigateTarget'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..')
 
@@ -36,7 +37,7 @@ describe('router.navigate allow-list', () => {
     const live = [
       '/',
       '/library',
-      '/journal',
+      '/studio',
       '/reports',
       '/config',
       '/agent/settings',
@@ -63,6 +64,15 @@ describe('router.navigate allow-list', () => {
         `${route} must be allowed by VALID_ROUTER_PREFIXES (${prefixes.join(', ')})`,
       )
     }
+  })
+
+  it('allows the backend-served blog only as a full-page target', () => {
+    assert.ok(prefixes.includes('/blog'))
+    assert.ok(!appRoutes.some((path) => path === '/blog' || path.startsWith('/blog/')))
+    assert.ok(isFullPageSitePath('/blog'))
+    assert.ok(isFullPageSitePath('/blog/posts/hello/'))
+    assert.ok(!isFullPageSitePath('/blogroll'))
+    assert.ok(!isFullPageSitePath('/studio/blog'))
   })
 
   it('does not allow dead prefixes that 404 to home', () => {

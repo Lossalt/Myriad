@@ -12,15 +12,6 @@ export interface PageRouteAnimationMeta {
 export function resolvePageRouteAnimation(
   pathname: string,
 ): PageRouteAnimationMeta {
-  if (pathname === '/journal' || pathname.startsWith('/journal/')) {
-    return {
-      key: '/journal',
-      style: 'normal',
-      variant: 'page',
-      skipScroll: false,
-    }
-  }
-
   if (pathname.startsWith('/tapp/run')) {
     return {
       key: pathname,

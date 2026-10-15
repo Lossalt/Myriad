@@ -8,7 +8,6 @@ import {
   LuLink as Link,
 } from '@lib/icons'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 
 import { useI18n } from '../../contexts/I18nContext'
 import {
@@ -188,7 +187,6 @@ function FriendLinkAnchor({
 export const FriendLinksWidget = memo(
   ({ config, isEditMode, isPreview }: WidgetComponentProps) => {
     const { t, format, locale } = useI18n()
-    const navigate = useNavigate()
     const anim = useAnimationLevel()
     const { containerRef: sizeRef, scale, fontScale } = useWidgetSize(
       config.size,
@@ -445,7 +443,7 @@ export const FriendLinksWidget = memo(
       />
     )
 
-    const openPhantasi = useCallback(() => {
+    const openBlogFriends = useCallback(() => {
       if (!isEditMode && !isPreview) {
         void import('../../utils/analyticsEvents').then(
           ({ trackProductEvent, AnalyticsEvents }) => {
@@ -454,9 +452,9 @@ export const FriendLinksWidget = memo(
             })
           },
         )
-        navigate('/journal/friends')
+        window.location.assign('/blog/friends/')
       }
-    }, [isEditMode, isPreview, navigate])
+    }, [isEditMode, isPreview])
 
     // 打开交给链接本身（右键复制、中键新开、长按菜单），这里只记一笔点击。
     const trackFriendLink = useCallback(
@@ -509,7 +507,7 @@ export const FriendLinksWidget = memo(
           ) : !loading && visibleEntries.length === 0 ? (
             <button
               type="button"
-              onClick={openPhantasi}
+              onClick={openBlogFriends}
               className="absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-black/8 px-3 text-[10px] text-gray-400 dark:border-white/10 dark:text-gray-500"
             >
               {t.friendLinksWidget.emptyTitle}
@@ -620,7 +618,7 @@ export const FriendLinksWidget = memo(
           ) : !loading && visibleEntries.length === 0 ? (
             <button
               type="button"
-              onClick={openPhantasi}
+              onClick={openBlogFriends}
               className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-black/8 px-4 text-center dark:border-white/10"
             >
               <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -724,7 +722,7 @@ export const FriendLinksWidget = memo(
       >
         <button
           type="button"
-          onClick={openPhantasi}
+          onClick={openBlogFriends}
           className="group/header flex w-full shrink-0 cursor-pointer items-center gap-2 text-left"
           aria-label={t.friendLinksWidget.openPhantasi}
         >
@@ -755,7 +753,7 @@ export const FriendLinksWidget = memo(
           ) : !loading && visibleEntries.length === 0 ? (
             <button
               type="button"
-              onClick={openPhantasi}
+              onClick={openBlogFriends}
               className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-black/8 px-3 text-center dark:border-white/10"
             >
               <span className="text-xs font-medium text-gray-500 dark:text-gray-400">

@@ -38,7 +38,7 @@ test('document boots before React, removes only the SPA bypass, and loads every 
 test('deep links share one document and missing assets remain 404', async ({ request }) => {
   const home = await request.get('/')
   const shell = await home.text()
-  for (const path of ['/journal/articles/12', '/tapp/run/abc', '/agent/settings', '/config']) {
+  for (const path of ['/studio/notes', '/tapp/run/abc', '/agent/settings', '/config']) {
     const response = await request.get(path)
     expect(response.status()).toBe(200)
     expect(await response.text()).toBe(shell)

@@ -182,22 +182,6 @@
         "title": "컨트롤 패널",
         "body": "외관, 애니메이션, 언어. 시스템 설정을 엽니다. 이 사이트에서 음악을 재생합니다. 컨트롤과 알림을 전환합니다."
       },
-      "journal-search": {
-        "title": "검색",
-        "body": "키워드로 현재 콘텐츠를 필터링합니다. 키보드 아이콘을 눌러 단축키를 확인하세요."
-      },
-      "journal-sources": {
-        "title": "구독 소스",
-        "body": "피드나 친구 사이트를 둘러보세요. 소스를 선택하면 콘텐츠가 표시됩니다."
-      },
-      "journal-articles": {
-        "title": "글",
-        "body": "글 카드를 클릭하면 리더가 열립니다."
-      },
-      "journal-notes": {
-        "title": "노트",
-        "body": "노트를 둘러보고 카드를 클릭해 여세요."
-      },
       "library-filters": {
         "title": "필터",
         "body": "전체, 게임, 영상, 음악, 애니, 드라마, 책으로 걸러 봅니다. 접혀 있으면 라이브러리를 다시 여세요."
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp 바로가기",
     "gamePresence": "호요버스 게임 카드",
     "visitorStats": "방문자 통계",
-    "phantasiFeatured": "수첩 픽",
     "githubRepos": "GitHub 저장소",
     "githubReposField": "저장소",
     "githubReposFieldHint": "GitHub URL 또는 owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "게임, 영상, 음악을 한곳에",
     "platformProfile": "플랫폼 프로필과 리포트 생성",
     "phantasiReading": "수첩",
-    "phantasiDesc": "RSS 구독",
-    "phantasiFeature": "다중 소스, AI 보조",
+    "phantasiDesc": "공개 노트",
+    "phantasiFeature": "글과 이웃 링크",
     "tappApps": "Tapp 앱",
     "tappDesc": "확장",
     "tappFeature": "위젯, 도구, 확장"
@@ -729,6 +712,7 @@
         "reports": "리포트",
         "config": "설정",
         "tapp": "Tapp",
+        "studio": "작업대",
         "other": "이 페이지"
       }
     },

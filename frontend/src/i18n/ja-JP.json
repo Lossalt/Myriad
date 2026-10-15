@@ -182,22 +182,6 @@
         "title": "コントロールパネル",
         "body": "外観、アニメーション、言語。システム設定を開けます。このサイトで音楽を再生できます。「コントロール」と通知を切り替えます。"
       },
-      "journal-search": {
-        "title": "検索",
-        "body": "キーワードで現在の内容を絞り込みます。キーボードアイコンでショートカットを確認できます。"
-      },
-      "journal-sources": {
-        "title": "購読元",
-        "body": "フィードや友人のサイトを閲覧できます。購読元を選ぶと内容が表示されます。"
-      },
-      "journal-articles": {
-        "title": "記事",
-        "body": "記事カードをクリックするとリーダーが開きます。"
-      },
-      "journal-notes": {
-        "title": "ノート",
-        "body": "ノートを閲覧し、カードをクリックして開きます。"
-      },
       "library-filters": {
         "title": "分類",
         "body": "すべて、ゲーム、動画、音楽、アニメ、ドラマ、書籍で絞り込みます。閉じているときはライブラリをもう一度開きます。"
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp ショートカット",
     "gamePresence": "miHoYoゲームカード",
     "visitorStats": "アクセス解析",
-    "phantasiFeatured": "手帳ピック",
     "githubRepos": "GitHub リポジトリ",
     "githubReposField": "リポジトリ",
     "githubReposFieldHint": "GitHub URL または owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "ゲーム、映像、音楽を一か所に",
     "platformProfile": "プラットフォームレポートの生成と閲覧",
     "phantasiReading": "手帳",
-    "phantasiDesc": "RSS購読管理",
-    "phantasiFeature": "マルチソース、AI補助",
+    "phantasiDesc": "公開ノート",
+    "phantasiFeature": "記事と相互リンク",
     "tappApps": "Tapp アプリ",
     "tappDesc": "拡張アプリ",
     "tappFeature": "ウィジェット、ツール、拡張"
@@ -729,6 +712,7 @@
         "reports": "レポート",
         "config": "設定",
         "tapp": "Tapp",
+        "studio": "ワークベンチ",
         "other": "このページ"
       }
     },

@@ -82,13 +82,6 @@ describe('long-task guards', () => {
       new URL('../components/phantasi/notes/renderMath.ts', import.meta.url),
       'utf8',
     )
-    const tile = readFileSync(
-      new URL(
-        '../components/phantasi/tiles/PhantasiSourceTile.tsx',
-        import.meta.url,
-      ),
-      'utf8',
-    )
     const social = readFileSync(
       new URL(
         '../components/widgets/reportCard/platforms/social.tsx',
@@ -98,7 +91,6 @@ describe('long-task guards', () => {
     )
     assert.match(highlight, /yieldIfSliceExceeded/)
     assert.match(math, /yieldIfSliceExceeded/)
-    assert.match(tile, /runWhenIdle/)
     assert.match(social, /runWhenIdle/)
     const fit = readFileSync(
       new URL('../hooks/useFitText.ts', import.meta.url),
@@ -132,10 +124,6 @@ describe('long-task guards', () => {
       new URL('../components/phantasi/notes/noteVisual.ts', import.meta.url),
       'utf8',
     )
-    const render = readFileSync(
-      new URL('../components/phantasi/reader/contentRender.ts', import.meta.url),
-      'utf8',
-    )
     const preview = readFileSync(
       new URL(
         '../components/phantasi/notes/useNoteEditorPreview.ts',
@@ -147,7 +135,6 @@ describe('long-task guards', () => {
     assert.match(rss, /yieldIfSliceExceeded/)
     assert.match(visual, /export async function markdownToVisualHtmlAsync/)
     assert.match(visual, /VISUAL_HTML_SYNC_CHARS/)
-    assert.match(render, /processRssContentAsync/)
     assert.match(preview, /markdownToVisualHtmlAsync/)
     assert.match(preview, /VISUAL_HTML_SYNC_CHARS/)
   })

@@ -1,7 +1,6 @@
 import type { PhantasiNoteDoc } from '../../../types/phantasi'
 import type { ContentIoCopy } from './contentIo/contentIo'
-import type { NoteTransferKind } from './contentIo/types'
-import type { ImportProgress } from './modes/types'
+import type { ImportProgress, NoteTransferKind } from './contentIo/types'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../../contexts/I18nContext'

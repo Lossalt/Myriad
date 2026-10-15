@@ -27,7 +27,6 @@ export type BuiltinWidgetId =
   | 'tapp-shortcut'
   | 'game-presence'
   | 'visitor-stats'
-  | 'phantasi-featured'
   | 'github-repos'
 
 type WidgetsI18n = TranslationKeys['widgets']
@@ -65,7 +64,6 @@ export const BUILTIN_WIDGET_META: readonly BuiltinWidgetMeta[] = [
   { id: 'tapp-shortcut', defaultSize: '1x1', supportedSizes: ['1x1', '2x1', '2x2'], nameKey: 'tappShortcut' },
   { id: 'game-presence', defaultSize: '4x2', supportedSizes: ['4x2'], nameKey: 'gamePresence' },
   { id: 'visitor-stats', defaultSize: '4x2', supportedSizes: ['2x2', '4x2'], nameKey: 'visitorStats' },
-  { id: 'phantasi-featured', defaultSize: '4x4', supportedSizes: ['4x2', '4x4'], hosts: ['home'], nameKey: 'phantasiFeatured' },
   { id: 'github-repos', defaultSize: '2x2', supportedSizes: ['2x1', '2x2', '4x2'], nameKey: 'githubRepos' },
 ]
 

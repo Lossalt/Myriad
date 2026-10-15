@@ -182,22 +182,6 @@
         "title": "Control panel",
         "body": "Appearance, Animation, and language. Open system config. Play music on this site. Switch between Controls and Notifications."
       },
-      "journal-search": {
-        "title": "Search",
-        "body": "Filter the current content by keyword. Click the keyboard icon to view shortcuts."
-      },
-      "journal-sources": {
-        "title": "Sources",
-        "body": "Browse feeds or friend sites here. Select a source to view its content."
-      },
-      "journal-articles": {
-        "title": "Articles",
-        "body": "Click an article card to open the reader."
-      },
-      "journal-notes": {
-        "title": "Notes",
-        "body": "Browse notes here and click a card to open it."
-      },
       "library-filters": {
         "title": "Filters",
         "body": "Filter by All, Games, Videos, Music, Anime, TV Series, or Books. If collapsed, open Library again."
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp Shortcut",
     "gamePresence": "HoYoverse Game Card",
     "visitorStats": "Visitor Stats",
-    "phantasiFeatured": "Journal Picks",
     "githubRepos": "GitHub Repos",
     "githubReposField": "Repository",
     "githubReposFieldHint": "GitHub URL or owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "Games, films, and music in one place",
     "platformProfile": "Platform profiles and report generation",
     "phantasiReading": "Journal",
-    "phantasiDesc": "RSS Subscription",
-    "phantasiFeature": "Multi-source, AI Assist",
+    "phantasiDesc": "Public notes",
+    "phantasiFeature": "Posts and friend links",
     "tappApps": "Tapp Apps",
     "tappDesc": "Extensions",
     "tappFeature": "Widgets, Tools, Extensions"
@@ -729,6 +712,7 @@
         "reports": "Reports",
         "config": "Settings",
         "tapp": "Tapp",
+        "studio": "Workbench",
         "other": "this page"
       }
     },

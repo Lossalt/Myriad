@@ -13,6 +13,7 @@ import { useI18n } from '../../contexts/I18nContext'
 import { useLoopAnimation } from '../../hooks/animation'
 import { isExlight, useAnimationLevel } from '../../hooks/useAnimationLevel'
 import { useWidgetSize } from '../../hooks/useWidgetSize'
+import { isFullPageSitePath } from '../../services/agent/navigateTarget'
 import { ClampText, FitText } from './shared/FitText'
 import { GlowBackground } from './shared/GlowBackground'
 import { useWidgetRotation } from './shared/useWidgetRotation'
@@ -80,7 +81,7 @@ const WelcomeWidgetContent = memo(
           title: t.widgets.phantasiReading,
           description: t.widgets.phantasiDesc,
           features: [t.widgets.phantasiFeature],
-          path: '/journal',
+          path: '/blog/',
           color: '#f97316',
         },
         {
@@ -129,6 +130,10 @@ const WelcomeWidgetContent = memo(
 
     const handleGuideClick = useCallback(() => {
       if (!isEditMode && currentGuide) {
+        if (isFullPageSitePath(currentGuide.path)) {
+          window.location.assign(currentGuide.path)
+          return
+        }
         navigate(currentGuide.path)
       }
     }, [isEditMode, currentGuide, navigate])
@@ -197,7 +202,7 @@ const WelcomeWidgetContent = memo(
           </svg>
         )
       }
-      if (guide.path === '/journal') {
+      if (guide.path === '/blog/') {
         return (
           <svg
             className={iconClass}

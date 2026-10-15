@@ -36,7 +36,7 @@ test('auto-truncated body is not treated as an authored summary', () => {
       summary: `${body.slice(0, 200)}...`,
       plainText: body,
     },
-    '/journal',
+    '/studio/notes',
   )
   assert.equal(copy.summary, 'Harbour Notes')
   assert.equal(copy.hasBody, true)

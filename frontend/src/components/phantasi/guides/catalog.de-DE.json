@@ -29,59 +29,17 @@
     "frontend": "Notizcover und Seitenbilder verweisen auf diese Dateien.",
     "notes": "Noch genutzte Dateien lassen sich nicht löschen."
   },
-  "sources": {
-    "what": "Abos hinzufügen, ändern, aktualisieren, löschen, Notizen-RSS einschalten und Standard-Sortierung.",
-    "chain": "① Hinzufügen oder aktualisieren.\n② Die Standard-Sortierung liegt auf diesem Gerät.\n③ Notizen-RSS ist standardmäßig aus; erst einschalten, dann teilen.\n④ Höchstens zwei Kategorien.",
-    "frontend": "Die Abo-Wand nutzt diese Sortierung und Kategorien.",
-    "notes": "Die Wand ist zum Lesen. Quellen hier löschen."
-  },
-  "add": {
-    "what": "Ein Abo oder einen reinen Link hinzufügen.",
-    "chain": "① Typ wählen.\n② Adresse eintragen.\n③ Kategorie ist optional.",
-    "frontend": "Neue Einträge erscheinen auf der Abo-Wand oder der Freunde-Seite.",
-    "notes": "Ganze Listen über Import / Export."
-  },
   "noteCategories": {
     "what": "Notiz-Kategorienamen. Filter und Stapelzuweisung nutzen sie.",
     "chain": "① Anlegen oder umbenennen.\n② Löschen entfernt nur diesen Teil.\n③ Freundeslinks / Ich fehlen auf dieser Seite.",
     "frontend": "Notizwand und diese Liste filtern nach diesen Namen.",
     "notes": "Zwei Kategorien pro Notiz."
   },
-  "sourceCategories": {
-    "what": "Abo-Kategorienamen, inkl. Vorgaben Freundeslinks und Ich.",
-    "chain": "① Anlegen oder umbenennen.\n② Löschen entfernt nur diesen Teil.\n③ Vorgaben lassen sich nicht ändern oder löschen.",
-    "frontend": "Friend-Link-Kategorie erscheint bei Freunde. RSS bleibt auch auf der Abo-Wand.",
-    "notes": "Zwei Kategorien pro Abo."
-  },
-  "topics": {
-    "what": "Abo-Themenbündel. Vorhandene Themen einschalten, damit Mix-Karten auf der Abo-Seite erscheinen.",
-    "chain": "① Vorhandene Themen suchen.\n② Schalter an: Karte sichtbar.\n③ Schalter aus: Karte weg. Leere Themen dürfen auch an sein.",
-    "frontend": "Mix-Karten funktionieren wie Aktuell. Kacheln bündeln weiter nach Artikelzahl.",
-    "notes": "Ein Thema ist keine Quellen- und keine Notizkategorie. Die Liste gilt für die ganze Site."
-  },
-  "rsshub": {
-    "what": "RSSHub-Instanzen für das Abonnieren einer Route.",
-    "chain": "① Instanz-URL hinzufügen.\n② RSSHub-Abos nutzen sie.\n③ Gesundheit prüfen oder Standard wechseln.",
-    "frontend": "Erscheint beim Hinzufügen eines RSSHub-Abos.",
-    "notes": "Eine tote Instanz: diese Abos holen nichts mehr."
-  },
   "notesIo": {
     "what": "Notizen herein- oder herausholen.",
     "chain": "① Format wählen.\n② Datei ablegen, dann Import starten.\n③ Export packt die aktuellen Notizen.",
     "frontend": "Importe landen in der Liste zum Bearbeiten und Veröffentlichen.",
     "notes": "WordPress: WXR. Halo: JSON oder Markdown-Zip. Typecho: Backup-XML, WXR auch."
-  },
-  "feedsIo": {
-    "what": "Abos sichern und tauschen.",
-    "chain": "① Das Paket sichert das ganze Set.\n② OPML tauscht Listen mit anderen Readern.\n③ Datei ablegen, dann Import starten.",
-    "frontend": "Importierte Quellen erscheinen auf der Abo-Wand.",
-    "notes": "Das Paket behält Quelleneinstellungen. OPML ist vor allem Adressen."
-  },
-  "defaultSort": {
-    "what": "Standardreihenfolge der Abo-Wand.",
-    "chain": "① Hier ändern.\n② Auf diesem Gerät gespeichert.\n③ Die Wand öffnet in dieser Reihenfolge.",
-    "frontend": "Quellenreihenfolge auf der Abo-Wand.",
-    "notes": "Nicht an das Konto gebunden. In einem anderen Browser neu setzen."
   },
   "wordpress": {
     "what": "WordPress-WXR-Backups.",
@@ -106,17 +64,5 @@
     "chain": "① .md oder .zip ablegen.\n② Import starten.\n③ Oder im selben Format exportieren.",
     "frontend": "Importe landen in der Notizliste.",
     "notes": "Der Kopf wird zu Titel, Kategorie und ähnlichen Feldern."
-  },
-  "pipack": {
-    "what": "Das ganze Abo-Set sichern und einspielen.",
-    "chain": "① Paket exportieren.\n② Oder .pipack / .zip ablegen.\n③ Import starten.",
-    "frontend": "Importierte Quellen erscheinen auf der Abo-Wand.",
-    "notes": "Quelleneinstellungen reisen mit."
-  },
-  "opml": {
-    "what": "Abolisten mit anderen Readern tauschen.",
-    "chain": "① OPML exportieren.\n② Oder .opml ablegen.\n③ Import starten.",
-    "frontend": "Importierte Adressen erscheinen auf der Abo-Wand.",
-    "notes": "Vor allem Adressen. Feineinstellungen können fehlen."
   }
 }

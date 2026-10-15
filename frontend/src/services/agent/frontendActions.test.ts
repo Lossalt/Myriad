@@ -138,7 +138,7 @@ describe('frontendAction chain', () => {
   })
 
   it('dedupes the same action from step_completed and the final response', () => {
-    const action = { type: 'navigate' as const, path: '/journal', timestamp: 42 }
+    const action = { type: 'navigate' as const, path: '/library', timestamp: 42 }
     assert.equal(frontendActionDedupeKey(action), 'navigate:42')
     assert.equal(
       frontendActionDedupeKey(action),

@@ -182,22 +182,6 @@
         "title": "Panneau de contrôle",
         "body": "Apparence, animation et langue. Ouvrez les réglages système. Écoutez de la musique sur ce site. Alternez Contrôles et Notifications."
       },
-      "journal-search": {
-        "title": "Recherche",
-        "body": "Filtrez le contenu affiché par mot-clé. Cliquez sur le clavier pour voir les raccourcis."
-      },
-      "journal-sources": {
-        "title": "Sources",
-        "body": "Parcourez les flux ou les sites amis. Sélectionnez une source pour voir son contenu."
-      },
-      "journal-articles": {
-        "title": "Articles",
-        "body": "Cliquez sur une carte pour ouvrir l’article dans le lecteur."
-      },
-      "journal-notes": {
-        "title": "Notes",
-        "body": "Parcourez les notes et cliquez sur une carte pour l’ouvrir."
-      },
       "library-filters": {
         "title": "Filtres",
         "body": "Filtrez par Tout, Jeux, Vidéos, Musique, Anime, Séries ou Livres. S'ils sont repliés, rouvrez Bibliothèque."
@@ -544,7 +528,6 @@
     "tappShortcut": "Raccourci Tapp",
     "gamePresence": "Carte de jeu HoYoverse",
     "visitorStats": "Visites",
-    "phantasiFeatured": "Sélection Journal",
     "githubRepos": "Dépôts GitHub",
     "githubReposField": "Dépôt",
     "githubReposFieldHint": "URL GitHub ou owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "Jeux, films et musique au même endroit",
     "platformProfile": "Profils plateforme et génération de rapports",
     "phantasiReading": "Journal",
-    "phantasiDesc": "Abonnements RSS",
-    "phantasiFeature": "Multi-sources, aide IA",
+    "phantasiDesc": "Notes publiques",
+    "phantasiFeature": "Articles et liens",
     "tappApps": "Apps Tapp",
     "tappDesc": "Extensions",
     "tappFeature": "Widgets, outils, extensions"
@@ -729,6 +712,7 @@
         "reports": "Rapports",
         "config": "Réglages",
         "tapp": "Tapp",
+        "studio": "Atelier",
         "other": "cette page"
       }
     },

@@ -9,8 +9,7 @@ const dir = dirname(fileURLToPath(import.meta.url))
 describe('BatchCategoryPick', () => {
   it('没勾选也能打开下拉，空名单不把控件整段禁用', () => {
     const src = readFileSync(join(dir, 'BatchCategoryPick.tsx'), 'utf8')
-    const admin = readFileSync(join(dir, 'manager/PhantasiWorkbenchAdmin.tsx'), 'utf8')
-    const skin = readFileSync(join(dir, 'skin/PhantasiWorkbench.tsx'), 'utf8')
+    const notes = readFileSync(join(dir, 'skin/PhantasiWorkbenchNotes.tsx'), 'utf8')
     const list = readFileSync(
       join(dir, '../settings/ManagedList.tsx'),
       'utf8',
@@ -19,8 +18,8 @@ describe('BatchCategoryPick', () => {
     assert.match(src, /SettingTitleSelect/)
     assert.match(src, /searchable/)
     assert.doesNotMatch(src, /names\.length === 0/)
-    assert.doesNotMatch(admin, /sourceSelect\.picked === 0/)
-    assert.doesNotMatch(skin, /notesSelect\.picked === 0/)
+    assert.doesNotMatch(notes, /notesSelect\.picked === 0/)
+    assert.doesNotMatch(notes, /sourceSelect\.picked === 0/)
     assert.match(list, /managed-list-filter-tools/)
     assert.match(list, /managed-list-filter-tools-row/)
     assert.match(list, /managed-list-filter-expanded/)

@@ -22,7 +22,7 @@ describe('SPA document middleware', () => {
       })
       for (const url of [
         '/tapp/run/abc?x=1',
-        '/journal/articles/12',
+        '/studio/notes?keep=1',
         '/agent/settings',
         '/api/config/ui',
       ]) {

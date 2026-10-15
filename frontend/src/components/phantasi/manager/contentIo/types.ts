@@ -1,3 +1,9 @@
+export interface ImportProgress {
+  step: string
+  current: number
+  total: number
+}
+
 export type TransferNoteStatus = 'draft' | 'published'
 
 export interface TransferNote {

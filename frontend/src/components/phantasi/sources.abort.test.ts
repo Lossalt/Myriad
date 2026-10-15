@@ -18,11 +18,4 @@ describe('source catalog abort contract', () => {
       /export async function getStats\([\s\S]*options\?: \{ signal\?: AbortSignal; forceRefresh\?: boolean \}/,
     )
   })
-
-  it('catalog hooks cancel the in-flight turn on unmount', () => {
-    const src = readFileSync(join(dir, 'usePhantasiSources.ts'), 'utf8')
-    assert.match(src, /sourceTurns\.current\.cancel\(/)
-    assert.match(src, /view: scope === 'catalog' \? 'catalog' : undefined/)
-    assert.match(src, /scope === 'feeds' \|\| scope === 'notes' \|\| scope === 'sites'/)
-  })
 })

@@ -10,8 +10,8 @@ describe('PhantasiCategoryAdmin', () => {
   it('分类管理不进口皮，笔记和订阅各一页', () => {
     const src = readFileSync(join(dir, 'PhantasiCategoryAdmin.tsx'), 'utf8')
     const page =
-      readFileSync(join(dir, '../../../views/Phantasi.tsx'), 'utf8') +
-      readFileSync(join(dir, '../PhantasiWorkbenchLane.tsx'), 'utf8')
+      readFileSync(join(dir, '../../../views/Studio.tsx'), 'utf8') +
+      readFileSync(join(dir, '../../studio/StudioShell.tsx'), 'utf8')
     assert.match(src, /workbench-note-categories/)
     assert.match(src, /workbench-source-categories/)
     assert.match(src, /workbenchCategoryNoteUsage/)
@@ -36,9 +36,8 @@ describe('PhantasiCategoryAdmin', () => {
     assert.doesNotMatch(src, /from ['"].*phantasiApi['"]/)
     assert.match(page, /PhantasiCategoryAdmin/)
     assert.match(page, /usePhantasiCategories/)
-    assert.match(page, /pane === 'noteCategories'/)
-    assert.match(page, /pane === 'sourceCategories'/)
+    assert.match(page, /page="notes"/)
     assert.match(page, /categories\.noteRows/)
-    assert.match(page, /categories\.sourceRows/)
+    assert.doesNotMatch(page, /page="sources"/)
   })
 })

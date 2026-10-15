@@ -91,19 +91,6 @@ export const LIBRARY_TOURS: readonly TourDefinition[] = [
   ),
 ]
 
-export const JOURNAL_TOURS: readonly TourDefinition[] = [
-  '/journal',
-  '/journal/feeds',
-  '/journal/notes',
-  '/journal/friends',
-].flatMap((route) => pair('journal', route, [
-  { id: 'nav', anchor: 'nav' },
-  { id: 'journal-search', anchor: 'journal-search' },
-  { id: 'journal-sources', anchor: 'journal-sources' },
-  { id: 'journal-articles', anchor: 'journal-articles' },
-  { id: 'journal-notes', anchor: 'journal-notes' },
-]))
-
 export const REPORTS_TOURS: readonly TourDefinition[] = [
   {
     id: 'reports-visitor',
@@ -229,7 +216,6 @@ export const CONFIG_PERSONA_TOURS: readonly TourDefinition[] = [
 export const TOURS: readonly TourDefinition[] = [
   ...HOME_TOURS,
   ...LIBRARY_TOURS,
-  ...JOURNAL_TOURS,
   ...REPORTS_TOURS,
   ...TAPP_TOURS,
   ...TAPP_DETAIL_TOURS,

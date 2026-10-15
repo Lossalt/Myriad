@@ -29,59 +29,17 @@
     "frontend": "Note covers and site images reference these files.",
     "notes": "Files still in use cannot be deleted."
   },
-  "sources": {
-    "what": "Add, edit, refresh, delete feeds, turn on notes RSS, and set default sort.",
-    "chain": "① Add or refresh.\n② Default sort is stored on this device.\n③ Notes RSS is off by default; turn it on before sharing.\n④ Two categories max.",
-    "frontend": "The feed wall uses this sort and these categories.",
-    "notes": "The feed wall is for reading. Delete sources here."
-  },
-  "add": {
-    "what": "Add a feed or a plain link.",
-    "chain": "① Pick a type.\n② Enter the address.\n③ Category is optional.",
-    "frontend": "New items appear on the feed wall or friends page.",
-    "notes": "Bulk lists go through Import / Export."
-  },
   "noteCategories": {
     "what": "Note category names. Filters and batch-add use these.",
     "chain": "① Open a category to see its notes.\n② Create or rename.\n③ Deleting a name strips that part only. Friend Links / Me are not on this page.",
     "frontend": "Opening a category lists the notes in it. The note wall and this list filter by these names.",
     "notes": "Two categories per note."
   },
-  "sourceCategories": {
-    "what": "Feed category names, including presets Friend Links and Me.",
-    "chain": "① Open a category to see its feeds.\n② Create or rename.\n③ Deleting a name strips that part only. Presets cannot be changed or deleted.",
-    "frontend": "Opening a category lists the feeds in it. Friend Links also appear on friends.",
-    "notes": "Two categories per feed."
-  },
-  "topics": {
-    "what": "Subscription topic aggregates. At most three cards per row. Turn a topic on to show a mix card on Feeds.",
-    "chain": "① Search existing topics.\n② Open a card to see that topic’s articles.\n③ Turn the switch on to show a mix card on Feeds.",
-    "frontend": "Workbench opens the topic’s articles. Mix cards on Feeds work like Latest.",
-    "notes": "A topic is not a source category or a note category. The list is site-wide."
-  },
-  "rsshub": {
-    "what": "RSSHub instances used when you subscribe to a route.",
-    "chain": "① Add an instance URL.\n② RSSHub subscriptions use these.\n③ Check health or change the default.",
-    "frontend": "Shown when you add an RSSHub feed.",
-    "notes": "A down instance means those feeds will not fetch."
-  },
   "notesIo": {
     "what": "Move notes in or out.",
     "chain": "① Pick a format.\n② Drop a file, then start import.\n③ Export packs the current notes.",
     "frontend": "Imports land in the note list for edit and publish.",
     "notes": "WordPress uses WXR. Halo uses JSON or a Markdown zip. Typecho uses backup XML and also accepts WXR."
-  },
-  "feedsIo": {
-    "what": "Back up and exchange feeds.",
-    "chain": "① A subscription pack backs up the whole set.\n② OPML exchanges lists with other readers.\n③ Drop a file, then start import.",
-    "frontend": "Imported sources appear on the feed wall.",
-    "notes": "The subscription pack keeps source settings. OPML is mostly addresses."
-  },
-  "defaultSort": {
-    "what": "Default order of the feed wall.",
-    "chain": "① Change it here.\n② Stored on this device.\n③ The feed wall opens in this order.",
-    "frontend": "Source order on the feed wall.",
-    "notes": "Not tied to the account. Reset it in another browser."
   },
   "wordpress": {
     "what": "WordPress WXR backups.",
@@ -106,17 +64,5 @@
     "chain": "① Drop a .md or .zip file.\n② Start import.\n③ Or export in the same format.",
     "frontend": "Imports land in the note list.",
     "notes": "Front matter becomes title, category, and similar fields."
-  },
-  "pipack": {
-    "what": "Back up and restore the whole subscription set.",
-    "chain": "① Export a subscription pack.\n② Or drop a .pipack / .zip file.\n③ Start import.",
-    "frontend": "Imported sources appear on the feed wall.",
-    "notes": "Source settings travel with the pack."
-  },
-  "opml": {
-    "what": "Exchange subscription lists with other readers.",
-    "chain": "① Export OPML.\n② Or drop an .opml file.\n③ Start import.",
-    "frontend": "Imported addresses appear on the feed wall.",
-    "notes": "Mostly addresses. Extra settings may drop."
   }
 }

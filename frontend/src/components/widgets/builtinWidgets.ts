@@ -21,10 +21,6 @@ function lazyWidget<K extends string>(
   return lazyWithPreload(() => factory().then((m) => ({ default: m[name] })))
 }
 
-const PhantasiFeaturedWidget = lazyWidget(
-  () => import('../phantasi/tiles/PhantasiFeaturedTile'),
-  'PhantasiFeaturedWidget',
-)
 const FriendLinksWidget = lazyWidget(
   () => import('./FriendLinksWidget'),
   'FriendLinksWidget',
@@ -105,7 +101,6 @@ const WIDGET_COMPONENTS: Record<BuiltinWidgetId, ComponentType<WidgetComponentPr
   'tapp-shortcut': TappShortcutWidget,
   'game-presence': GamePresenceWidget,
   'visitor-stats': VisitorStatsWidget,
-  'phantasi-featured': PhantasiFeaturedWidget,
   'github-repos': GithubReposWidget,
 }
 

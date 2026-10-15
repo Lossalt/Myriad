@@ -182,22 +182,6 @@
         "title": "Bedienfeld",
         "body": "Aussehen, Animation und Sprache. Systemeinstellungen öffnen. Musik auf dieser Website abspielen. Zwischen Steuerung und Hinweisen wechseln."
       },
-      "journal-search": {
-        "title": "Suche",
-        "body": "Filtere die angezeigten Inhalte nach Stichwort. Das Tastatursymbol zeigt die Tastenkürzel."
-      },
-      "journal-sources": {
-        "title": "Quellen",
-        "body": "Durchsuche Feeds oder befreundete Websites. Wähle eine Quelle, um ihre Inhalte anzuzeigen."
-      },
-      "journal-articles": {
-        "title": "Artikel",
-        "body": "Klicke auf eine Artikelkarte, um den Reader zu öffnen."
-      },
-      "journal-notes": {
-        "title": "Notizen",
-        "body": "Durchsuche deine Notizen und klicke auf eine Karte, um sie zu öffnen."
-      },
       "library-filters": {
         "title": "Filter",
         "body": "Filtern nach Alle, Spiele, Videos, Musik, Anime, Serien oder Bücher. Wenn eingeklappt, Bibliothek erneut öffnen."
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp-Verknüpfung",
     "gamePresence": "HoYoverse-Spielkarte",
     "visitorStats": "Besucherstatistik",
-    "phantasiFeatured": "Journal",
     "githubRepos": "GitHub-Repos",
     "githubReposField": "Repository",
     "githubReposFieldHint": "GitHub-URL oder owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "Spiele, Filme und Musik an einem Ort",
     "platformProfile": "Plattformprofile und Berichte erzeugen",
     "phantasiReading": "Journal",
-    "phantasiDesc": "RSS-Abo",
-    "phantasiFeature": "Mehrere Quellen, KI-Hilfe",
+    "phantasiDesc": "Öffentliche Notizen",
+    "phantasiFeature": "Beiträge und Links",
     "tappApps": "Tapp-Apps",
     "tappDesc": "Erweiterungen",
     "tappFeature": "Widgets, Werkzeuge, Erweiterungen"
@@ -729,6 +712,7 @@
         "reports": "Berichte",
         "config": "Einstellungen",
         "tapp": "Tapp",
+        "studio": "Werkbank",
         "other": "diese Seite"
       }
     },

@@ -23,7 +23,6 @@ const editor = [
 ]
   .map((file) => readFileSync(join(dir, file), 'utf8'))
   .join('\n')
-const reader = readFileSync(join(dir, '../PhantasiReader.tsx'), 'utf8')
 
 describe('hasNoteWidgetMarkup', () => {
   it('认发布 HTML 里的占位，不靠一段纯文本', () => {
@@ -60,13 +59,11 @@ describe('hasNoteWidgetMarkup', () => {
     assert.doesNotMatch(mount, /getBuiltinWidgets|useTappWidgets/)
     assert.match(editor, /visualWidgets\.portals/)
     assert.match(editor, /previewWidgets\.portals/)
-    assert.match(reader, /noteWidgets\.portals/)
     assert.doesNotMatch(editor, /mountNoteWidgets/)
     assert.match(editor, /visualWidgets\.refresh\(\)/)
     assert.match(editor, /visualMarkdownStamp\.get\(el\) === contentMd/)
     assert.match(editor, /pane !== 'preview'/)
     assert.match(editor, /preloadNoteWidgets\(/)
-    assert.match(reader, /preloadNoteWidgets\(/)
     assert.match(editor, /hidden=\{!html\}/)
     assert.doesNotMatch(editor, /: html \? \(/)
   })

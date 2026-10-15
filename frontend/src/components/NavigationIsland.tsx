@@ -52,6 +52,8 @@ interface PrimaryNavItem {
   adminOnly?: boolean
   // seo: <a> 直接 navigate；否则 <button> 走 handleNavToPage（可展开二级）。
   asAnchor?: boolean
+  // 后端整页（/blog），点击不进 SPA。
+  fullPage?: boolean
 }
 
 const MIN_ISLAND_HEIGHT = 48
@@ -950,12 +952,11 @@ export function NavigationIsland() {
         },
         {
           id: 'phantasi',
-          path: '/journal',
+          path: '/blog/',
           icon: IconPhantasi,
           tooltip: t.nav.phantasiReading,
           ariaLabel: t.nav.phantasiReading,
-          // 手帐是 /journal/* 单路由，默认落在 /journal/feeds 等子路径。
-          matchPrefix: true,
+          fullPage: true,
           moduleKey: 'phantasi',
         },
         {
@@ -990,7 +991,7 @@ export function NavigationIsland() {
       ]
 
       return items.filter((item) => {
-        // 管理员的手帐入口换成工作台；访客仍走 /journal。
+        // 管理员走工作台；访客去公开博客。
         if (item.id === 'phantasi' && hasChecked && isAdmin) return false
         if (item.adminOnly && (!hasChecked || !isAdmin)) return false
         if (!item.moduleKey || !hasChecked) return true
@@ -1176,7 +1177,16 @@ export function NavigationIsland() {
                     className={`nav-group${i > 0 ? ' nav-group-spaced' : ''}`}
                     data-group={item.id}
                   >
-                    {item.asAnchor ? (
+                    {item.fullPage ? (
+                      <a
+                        href={item.path}
+                        className={className}
+                        data-tooltip={item.tooltip}
+                        aria-label={item.ariaLabel}
+                      >
+                        {item.icon}
+                      </a>
+                    ) : item.asAnchor ? (
                       <a
                         href={item.path}
                         className={className}

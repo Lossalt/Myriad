@@ -173,7 +173,7 @@ function resolveSameOriginOpenUrl(
     }
   }
 
-  // The caller path is host-rooted (e.g. `/journal/notes/1`); the declared base
+  // The caller path is host-rooted (e.g. `/library/items/1`); the declared base
   // only bounds how far under the host origin it may go.
   const path = request.path
   // WHATWG URL parsing removes literal and encoded dot segments. Reject them

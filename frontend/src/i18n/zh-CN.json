@@ -182,22 +182,6 @@
         "title": "控制面板",
         "body": "外观、动效与语言。可进入系统配置。可播放站内音乐。可切换「控制」与通知。"
       },
-      "journal-search": {
-        "title": "搜索",
-        "body": "输入关键词筛选当前内容。点击键盘图标查看快捷键。"
-      },
-      "journal-sources": {
-        "title": "订阅来源",
-        "body": "在这里浏览订阅或友邻来源，点击来源查看内容。"
-      },
-      "journal-articles": {
-        "title": "文章",
-        "body": "点击文章卡片进入阅读器。"
-      },
-      "journal-notes": {
-        "title": "笔记",
-        "body": "在这里浏览笔记，点击卡片打开。"
-      },
       "library-filters": {
         "title": "分类",
         "body": "按全部、游戏、视频、音乐、追番、追剧、书籍筛选。收起后再次点击资料库即可展开。"
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp 快捷方式",
     "gamePresence": "米哈游游戏卡片",
     "visitorStats": "访客统计",
-    "phantasiFeatured": "手帐精选",
     "githubRepos": "GitHub 仓库",
     "githubReposField": "仓库",
     "githubReposFieldHint": "GitHub 地址或 owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "游戏、影视、音乐收在一处",
     "platformProfile": "平台画像与报告生成",
     "phantasiReading": "手帐",
-    "phantasiDesc": "RSS 订阅管理",
-    "phantasiFeature": "多源聚合，AI 辅助",
+    "phantasiDesc": "公开笔记",
+    "phantasiFeature": "文章与友链",
     "tappApps": "Tapp 应用",
     "tappDesc": "扩展应用",
     "tappFeature": "小组件、工具、扩展"
@@ -729,6 +712,7 @@
         "reports": "报告",
         "config": "设置",
         "tapp": "Tapp",
+        "studio": "工作台",
         "other": "这一页"
       }
     },

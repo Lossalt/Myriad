@@ -158,7 +158,8 @@
     "pageLabels": {
       "/": "首页",
       "/library": "资料库",
-      "/journal": "手帐",
+      "/blog": "博客",
+      "/studio": "工作台",
       "/phantasi": "手帐",
       "/reports": "报告",
       "/config": "设置",

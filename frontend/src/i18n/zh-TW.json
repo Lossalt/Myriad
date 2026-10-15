@@ -182,22 +182,6 @@
         "title": "控制面板",
         "body": "外觀、動效與語言。可進入系統配置。可播放站內音樂。可切換「控制」與通知。"
       },
-      "journal-search": {
-        "title": "搜尋",
-        "body": "輸入關鍵字篩選目前內容。點擊鍵盤圖示查看快捷鍵。"
-      },
-      "journal-sources": {
-        "title": "訂閱來源",
-        "body": "在這裡瀏覽訂閱或友鄰來源，點擊來源查看內容。"
-      },
-      "journal-articles": {
-        "title": "文章",
-        "body": "點擊文章卡片進入閱讀器。"
-      },
-      "journal-notes": {
-        "title": "筆記",
-        "body": "在這裡瀏覽筆記，點擊卡片開啟。"
-      },
       "library-filters": {
         "title": "分類",
         "body": "按全部、遊戲、影片、音樂、追番、追劇、書籍篩選。收起後再次點選資料庫即可展開。"
@@ -544,7 +528,6 @@
     "tappShortcut": "Tapp 快捷方式",
     "gamePresence": "米哈遊遊戲卡片",
     "visitorStats": "訪客統計",
-    "phantasiFeatured": "手帳精選",
     "githubRepos": "GitHub 倉庫",
     "githubReposField": "倉庫",
     "githubReposFieldHint": "GitHub 地址或 owner/repo",
@@ -555,8 +538,8 @@
     "libraryFeature": "遊戲、影視、音樂收在一處",
     "platformProfile": "平臺畫像與報告生成",
     "phantasiReading": "手帳",
-    "phantasiDesc": "RSS 訂閱管理",
-    "phantasiFeature": "多源聚合，AI 輔助",
+    "phantasiDesc": "公開筆記",
+    "phantasiFeature": "文章與友鏈",
     "tappApps": "Tapp 應用",
     "tappDesc": "擴充套件應用",
     "tappFeature": "小元件、工具、擴充套件"
@@ -729,6 +712,7 @@
         "reports": "報告",
         "config": "設定",
         "tapp": "Tapp",
+        "studio": "工作臺",
         "other": "這一頁"
       }
     },

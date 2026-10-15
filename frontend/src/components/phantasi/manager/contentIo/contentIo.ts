@@ -1,6 +1,5 @@
 import type { PhantasiNoteDoc } from '../../../../types/phantasi'
-import type { ImportProgress } from '../modes'
-import type { NoteTransferKind, TransferNote } from './types'
+import type { ImportProgress, NoteTransferKind, TransferNote } from './types'
 import { formatCurrent } from '../../../../i18n/localeCopy'
 import * as phantasiApi from '../../../../services/phantasiApi'
 import { userFacingError } from '../../../../utils/userFacingError'

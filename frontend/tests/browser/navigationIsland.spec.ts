@@ -3,14 +3,17 @@ import { expect, test } from '@playwright/test'
 
 for (const width of [390, 1440]) {
   for (const action of ['back', 'escape']) {
-    test(`first ${action} after journal subroute stays in primary menu at ${width}px`, async ({ page }) => {
+    test(`first ${action} after library subroute stays in primary menu at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 })
       await page.route('**/api/**', route => route.fulfill({ json: {} }))
-      await page.route('**/journal', route => route.fulfill({
-        contentType: 'text/html',
-        body: '<!doctype html><meta charset="utf-8"><div id="root"></div>',
-      }))
-      await page.goto('/journal')
+      await page.route('**/library', route => {
+        if (new URL(route.request().url()).pathname !== '/library') return route.fallback()
+        return route.fulfill({
+          contentType: 'text/html',
+          body: '<!doctype html><meta charset="utf-8"><div id="root"></div>',
+        })
+      })
+      await page.goto('/library')
       const fixture = `/@fs${fileURLToPath(new URL('./fixture/navigationIsland.tsx', import.meta.url))}`
       await page.evaluate(async path => {
         const { mountNavigationIsland } = await import(path)
@@ -20,8 +23,8 @@ for (const width of [390, 1440]) {
       const island = page.locator('.dynamic-island')
       await expect(back).toBeVisible()
       await expect(island).not.toHaveAttribute('data-transitioning')
-      await page.getByRole('button', { name: 'Open notes' }).click()
-      await expect(page).toHaveURL(/\/journal\/notes$/)
+      await page.getByRole('button', { name: 'Open shelf' }).click()
+      await expect(page).toHaveURL(/\/library\/canvas$/)
       await expect(island).not.toHaveAttribute('data-transitioning')
       if (action === 'back') { await back.click()
 }
@@ -35,7 +38,7 @@ for (const width of [390, 1440]) {
       // Cross the delayed auto-expand window after the collapse finishes.
       await page.waitForTimeout(650)
       await expect(back).toHaveCount(0)
-      await page.locator('[data-group="phantasi"] button').click()
+      await page.locator('[data-group="library"] button').click()
       await expect(back).toBeVisible()
     })
   }
@@ -44,11 +47,14 @@ for (const width of [390, 1440]) {
 test('navigation chrome follows repeated mobile and desktop viewport changes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 })
   await page.route('**/api/**', route => route.fulfill({ json: {} }))
-  await page.route('**/journal', route => route.fulfill({
-    contentType: 'text/html',
-    body: '<!doctype html><meta charset="utf-8"><div id="root"></div>',
-  }))
-  await page.goto('/journal')
+  await page.route('**/library', route => {
+    if (new URL(route.request().url()).pathname !== '/library') return route.fallback()
+    return route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><meta charset="utf-8"><div id="root"></div>',
+    })
+  })
+  await page.goto('/library')
   const fixture = `/@fs${fileURLToPath(new URL('./fixture/navigationIsland.tsx', import.meta.url))}`
   await page.evaluate(async path => {
     const { mountNavigationIsland } = await import(path)

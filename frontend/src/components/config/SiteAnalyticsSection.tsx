@@ -201,7 +201,8 @@ function pageLabel(
   labels: Record<string, string | undefined>,
 ): string {
   if (labels[path]) return labels[path]!
-  if (path.startsWith('/journal/')) return labels['/journal'] || path
+  if (path === '/blog' || path.startsWith('/blog/')) return labels['/blog'] || path
+  if (path === '/studio' || path.startsWith('/studio/')) return labels['/studio'] || path
   if (path.startsWith('/tapp/')) return labels['/tapp/:id'] || path
   if (path.startsWith('/tapps/')) return labels['/tapps/:id'] || path
   return path

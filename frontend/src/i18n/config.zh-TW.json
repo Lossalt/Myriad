@@ -158,7 +158,8 @@
     "pageLabels": {
       "/": "首頁",
       "/library": "資料庫",
-      "/journal": "手帳",
+      "/blog": "部落格",
+      "/studio": "工作臺",
       "/phantasi": "手帳",
       "/reports": "報告",
       "/config": "設定",

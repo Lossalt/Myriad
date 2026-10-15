@@ -243,7 +243,7 @@ pub struct NewMediaBytes {
     pub filename: String,
     pub max_bytes: usize,
     pub derived_from_id: Option<i32>,
-    /// Workbench/journal stay public until the privacy stage lands.
+    /// Caller-selected. Site uploads default to private.
     pub exposure: MediaExposure,
 }
 

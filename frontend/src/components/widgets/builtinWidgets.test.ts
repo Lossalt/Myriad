@@ -59,7 +59,7 @@ test('note catalog uses hosts, not a special-case blacklist', () => {
   const panelIds = getBuiltinWidgets(widgetsI18n, 'control-panel').map(({ id }) => id)
   assert.ok(homeIds.includes('welcome'))
   assert.ok(homeIds.includes('friend-links'))
-  assert.ok(homeIds.includes('phantasi-featured'))
+  assert.ok(!homeIds.includes('phantasi-featured'))
   assert.ok(!homeIds.includes('phantasi-source'))
   assert.ok(!homeIds.includes('phantasi-topic'))
   assert.ok(panelIds.includes('welcome'))

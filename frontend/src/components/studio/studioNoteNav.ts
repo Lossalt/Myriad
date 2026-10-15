@@ -26,7 +26,7 @@ export async function openStudioNote(
   }
 }
 
-/** 文章公开地址以后端 item.link 为准，整页打开，不拼 /journal/articles。 */
+/** 文章公开地址以后端 item.link 为准，整页打开。 */
 export async function openPublishedItem(
   itemId: number,
   onError?: (message: string) => void,

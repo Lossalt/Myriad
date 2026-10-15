@@ -86,8 +86,6 @@ export const routeComponents = {
 
   library: lazyWithPreload(() => import('../views/Library')),
 
-  phantasi: lazyWithPreload(() => import('../views/Phantasi')),
-
   studio: lazyWithPreload(() => import('../views/Studio')),
 
   embedComments: lazyWithPreload(() => import('../views/EmbedComments')),
@@ -118,7 +116,6 @@ export const routeComponents = {
 /** Public landing routes only; guarded pages would fetch code the guard may reject. */
 const LANDING_ROUTES: readonly (readonly [RegExp, keyof typeof routeComponents, (() => Promise<unknown>)?])[] = [
   [/^\/$/, 'home', () => import('../views/homeWidgetPreload').then(m => m.warmHomeWidgets())],
-  [/^\/journal(?:\/|$)/, 'phantasi'],
   [/^\/library\/?$/, 'library'],
   [/^\/tapp\/?$/, 'tapp'],
   [/^\/tapp\/store\/?$/, 'tappStore'],

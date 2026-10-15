@@ -28,6 +28,7 @@ import { useThemePreference } from '../hooks/useThemePreference'
 
 import { useVisibleState } from '../hooks/useVisibleState'
 import { useWallpaper } from '../hooks/useWallpaper'
+import { isFullPageSitePath } from '../services/agent/navigateTarget'
 import { getDynamicContentProvider } from '../services/DynamicContentProvider'
 import { useBackgroundResidents } from '../tapp/runtime/backgroundResidentStore'
 import { emitAppEvent } from '../utils/appEvents'
@@ -372,6 +373,10 @@ const GlobalControlPanel: React.FC = () => {
       const wasArmed = historyArmedRef.current
       historyArmedRef.current = false
       collapsePanel()
+      if (isFullPageSitePath(path)) {
+        window.location.assign(path)
+        return
+      }
       navigate(path, { replace: wasArmed })
     },
     [collapsePanel, navigate],

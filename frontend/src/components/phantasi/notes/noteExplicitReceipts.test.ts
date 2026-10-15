@@ -61,13 +61,13 @@ for (const [command, status] of [
       await act(async () => hook.current.cloud.receiveRemote(submitted, 2, request?.client_request_id as string))
       assert.equal(hook.current.fields.contentMd, 'ab')
       await act(async () => {
-        response.resolve(Response.json({ success: true, id: 99, link: '/journal/articles/99', doc: responseDoc }))
+        response.resolve(Response.json({ success: true, id: 99, link: '/blog/posts/n99/', doc: responseDoc }))
         await operation
       })
       assert.equal(hook.current.fields.contentMd, 'ab')
       assert.equal(hook.current.docStatus, status)
     } finally {
-      response.resolve(Response.json({ success: true, id: 99, link: '/journal/articles/99', doc: responseDoc }))
+      response.resolve(Response.json({ success: true, id: 99, link: '/blog/posts/n99/', doc: responseDoc }))
       if (operation) await act(async () => operation)
       await hook.close()
       globalThis.fetch = originalFetch
@@ -127,7 +127,7 @@ it(`publishing preserves continued typing before onSaved unmounts (IME ${composi
     if (composing) cloudSession.compositionStart()
     await act(async () => edit({ ...base, contentMd: 'ab' }))
     await act(async () => {
-      response.resolve(Response.json({ success: true, id: 99, link: '/journal/articles/99', doc: published }))
+      response.resolve(Response.json({ success: true, id: 99, link: '/blog/posts/n99/', doc: published }))
       await Promise.resolve()
     })
     if (composing) {

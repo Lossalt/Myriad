@@ -348,11 +348,6 @@ export function StudioShell({
             pane="notesIo"
             back={back}
             docs={docs}
-            sourceCount={0}
-            packBusy={false}
-            packProgress={null}
-            onExportPack={() => {}}
-            onImportPack={() => {}}
             notesBusy={notesBusy}
             notesKind={notesKind}
             notesProgress={notesProgress}

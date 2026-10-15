@@ -21,3 +21,9 @@ export function isInSitePath(path: string): boolean {
     return false
   }
 }
+
+/** The blog is static HTML served by the backend, not an SPA route. */
+export function isFullPageSitePath(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0]
+  return pathname === '/blog' || pathname.startsWith('/blog/')
+}

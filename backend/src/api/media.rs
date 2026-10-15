@@ -231,7 +231,7 @@ async fn read_file_field(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn journal_upload_does_not_call_federation_store() {
+    fn upload_does_not_call_federation_store() {
         let src = include_str!("media.rs");
         assert!(!src.contains(concat!("store_federation", "_media")));
         assert!(src.contains("MediaService"));

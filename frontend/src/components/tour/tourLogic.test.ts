@@ -321,6 +321,7 @@ describe('tour hint copy', () => {
     home: '首页',
     library: '资料库',
     phantasi: 'Phantasi',
+    studio: '工作台',
     reports: '报告',
     tapp: 'Tapp',
     config: '配置',
@@ -331,6 +332,7 @@ describe('tour hint copy', () => {
     assert.equal(pageNameForPath('/', nav, '编辑模式', true), '编辑模式')
     assert.equal(pageNameForPath('/', nav, '编辑模式', false), '首页')
     assert.equal(pageNameForPath('/agent/settings', nav, '编辑模式', false), 'Agent')
+    assert.equal(pageNameForPath('/studio/notes', nav, '编辑模式', false), '工作台')
   })
 
   it('keeps library tour surfaces independent of settings pages', () => {
@@ -596,13 +598,18 @@ describe('page tours', () => {
     assert.equal(pickTour(TOURS, '/config', true)?.id, 'config-owner')
   })
 
-  it('registers journal boards without including readers or workbench', () => {
-    for (const route of ['/journal', '/journal/feeds', '/journal/notes', '/journal/friends']) {
-      assert.equal(pickTour(TOURS, route, true)?.id, 'journal-owner')
-      assert.equal(pickTour(TOURS, route, false)?.id, 'journal-visitor')
+  it('does not register tours for the retired journal routes', () => {
+    for (const route of [
+      '/journal',
+      '/journal/feeds',
+      '/journal/notes',
+      '/journal/friends',
+      '/journal/workbench',
+      '/journal/articles/1',
+    ]) {
+      assert.equal(pickTour(TOURS, route, true), null)
+      assert.equal(pickTour(TOURS, route, false), null)
     }
-    assert.equal(pickTour(TOURS, '/journal/workbench', true), null)
-    assert.equal(pickTour(TOURS, '/journal/articles/1', true), null)
     assert.equal(pickTour(TOURS, '/phantasi', true), null)
     assert.equal(pickTour(TOURS, '/phantasi/item/1', true), null)
   })

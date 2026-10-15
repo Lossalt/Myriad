@@ -101,38 +101,38 @@ describe('openUrlAllowlist', () => {
 
     const ok = resolveOpenUrl(
       [self],
-      { id: 'self', path: '/journal/notes/1' },
+      { id: 'self', path: '/library/items/1' },
       'https://sua17.cn',
     )
     assert.equal(ok.ok, true)
     if (ok.ok) {
-      assert.equal(ok.url, 'https://sua17.cn/journal/notes/1')
+      assert.equal(ok.url, 'https://sua17.cn/library/items/1')
       assert.equal(ok.match, 'same-origin')
     }
 
     const withQuery = resolveOpenUrl(
       [self],
-      { id: 'self', path: '/journal', query: { from: 'tapp' } },
+      { id: 'self', path: '/library', query: { from: 'tapp' } },
       'https://sua17.cn',
     )
     assert.equal(withQuery.ok, true)
     if (withQuery.ok) {
-      assert.equal(withQuery.url, 'https://sua17.cn/journal?from=tapp')
+      assert.equal(withQuery.url, 'https://sua17.cn/library?from=tapp')
     }
 
     // The same declaration follows whatever host it runs on, so it works on any
     // self-hosted domain instead of the package author's.
     const other = resolveOpenUrl(
       [self],
-      { id: 'self', path: '/journal' },
+      { id: 'self', path: '/library' },
       'https://other.example',
     )
     assert.equal(other.ok, true)
-    if (other.ok) assert.equal(other.url, 'https://other.example/journal')
+    if (other.ok) assert.equal(other.url, 'https://other.example/library')
 
     // No host origin available → reject.
     assert.equal(
-      resolveOpenUrl([self], { id: 'self', path: '/journal' }).ok,
+      resolveOpenUrl([self], { id: 'self', path: '/library' }).ok,
       false,
     )
 
@@ -166,21 +166,21 @@ describe('openUrlAllowlist', () => {
   it('rejects same-origin traversal before URL normalization', () => {
     const self: OpenUrlDeclaration = { id: 'self', url: '/', match: 'same-origin' }
     for (const path of [
-      '/journal/../config',
-      '/journal/%2e%2e/config',
-      '/journal/.%2e/config',
-      '/journal/%2E%2E/config',
-      '/journal/%2e%2e%2fconfig',
-      '/journal%2f..%2fconfig',
+      '/library/../config',
+      '/library/%2e%2e/config',
+      '/library/.%2e/config',
+      '/library/%2E%2E/config',
+      '/library/%2e%2e%2fconfig',
+      '/library%2f..%2fconfig',
       '../config',
-      '/journal/.. ',
-      '/journal/%5cconfig',
-      '/journal/%00',
-      '/journal/%0a',
-      '/journal/%7f',
-      '/journal/%',
-      '/journal/%zz',
-      '/journal/%ff',
+      '/library/.. ',
+      '/library/%5cconfig',
+      '/library/%00',
+      '/library/%0a',
+      '/library/%7f',
+      '/library/%',
+      '/library/%zz',
+      '/library/%ff',
     ]) {
       assert.equal(
         resolveOpenUrl([self], { id: 'self', path }, 'https://host.example').ok,
@@ -192,17 +192,17 @@ describe('openUrlAllowlist', () => {
 
   it('rejects invalid same-origin declarations even with a safe caller path', () => {
     for (const url of [
-      '/journal/../',
-      '/journal/%2e%2e/',
-      '/journal/.%2e/',
-      '/journal/%2e%2e%2fconfig',
-      '/journal/%5cconfig',
-      '/journal/%00',
-      '/journal/%zz',
-      '/journal/%ff',
-      '/journal#fragment',
-      '/journal notes',
-      '/journal/\nnotes',
+      '/library/../',
+      '/library/%2e%2e/',
+      '/library/.%2e/',
+      '/library/%2e%2e%2fconfig',
+      '/library/%5cconfig',
+      '/library/%00',
+      '/library/%zz',
+      '/library/%ff',
+      '/library#fragment',
+      '/library notes',
+      '/library/\nnotes',
       `/${'a'.repeat(2048)}`,
     ]) {
       const entry: OpenUrlDeclaration = { id: 'self', url, match: 'same-origin' }
@@ -213,26 +213,26 @@ describe('openUrlAllowlist', () => {
   })
 
   it('preserves same-origin prefix boundaries, safe encodings, and queries', () => {
-    const self: OpenUrlDeclaration = { id: 'self', url: '/journal', match: 'same-origin' }
+    const self: OpenUrlDeclaration = { id: 'self', url: '/library', match: 'same-origin' }
     const paths = [
-      '/journal',
-      '/journal/notes/1',
-      '/journal/%E7%AC%94%E8%AE%B0',
-      '/journal/100%25',
-      '/journal/v1..2',
-      '/journal/a%2Fb',
-      '/journal/notes?next=/a/../b&invalid=%zz',
+      '/library',
+      '/library/items/1',
+      '/library/%E7%AC%94%E8%AE%B0',
+      '/library/100%25',
+      '/library/v1..2',
+      '/library/a%2Fb',
+      '/library/items?next=/a/../b&invalid=%zz',
     ]
     for (const path of paths) {
       const result = resolveOpenUrl([self], { id: 'self', path }, 'https://host.example')
       assert.equal(result.ok, true, path)
       if (result.ok) assert.equal(result.url, `https://host.example${path}`)
     }
-    for (const path of ['/config', '/journal-other', '/journalistic/notes']) {
+    for (const path of ['/config', '/library-other', '/libraryistic/notes']) {
       assert.equal(resolveOpenUrl([self], { id: 'self', path }, 'https://host.example').ok, false, path)
     }
     const result = resolveOpenUrl(
-      [{ ...self, url: '/journal?from=manifest' }],
+      [{ ...self, url: '/library?from=manifest' }],
       { id: 'self', query: { next: '/a/../b' } },
       'http://localhost:5173',
     )
@@ -240,7 +240,7 @@ describe('openUrlAllowlist', () => {
     if (result.ok) {
       const url = new URL(result.url)
       assert.equal(url.origin, 'http://localhost:5173')
-      assert.equal(url.pathname, '/journal')
+      assert.equal(url.pathname, '/library')
       assert.equal(url.searchParams.get('from'), 'manifest')
       assert.equal(url.searchParams.get('next'), '/a/../b')
     }

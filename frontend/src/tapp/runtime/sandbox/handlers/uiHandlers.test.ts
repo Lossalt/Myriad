@@ -196,19 +196,19 @@ describe('registerUIHandlers openUrl', { concurrency: false }, () => {
         ]),
       )
       const opened = await invoke(bridge, 'ui.openUrl', [
-        { id: 'self', path: '/journal/notes/1' },
+        { id: 'self', path: '/library/items/1' },
       ])
       assert.deepEqual(opened, {
         success: true,
         data: {
           id: 'self',
-          url: 'https://sua17.cn/journal/notes/1',
+          url: 'https://sua17.cn/library/items/1',
           match: 'same-origin',
         },
       })
       assert.deepEqual(clicks, [
         {
-          href: 'https://sua17.cn/journal/notes/1',
+          href: 'https://sua17.cn/library/items/1',
           target: '_blank',
           rel: 'noopener noreferrer',
         },
@@ -230,12 +230,12 @@ describe('registerUIHandlers openUrl', { concurrency: false }, () => {
         bridge as unknown as TappBridge,
         instance('com.example.open-self-traversal', [
           { id: 'self', url: '/', match: 'same-origin' },
-          { id: 'invalid', url: '/journal/%2e%2e/', match: 'same-origin' },
+          { id: 'invalid', url: '/library/%2e%2e/', match: 'same-origin' },
         ]),
       )
       for (const request of [
-        { id: 'self', path: '/journal/../config' },
-        { id: 'self', path: '/journal/%2e%2e/config' },
+        { id: 'self', path: '/library/../config' },
+        { id: 'self', path: '/library/%2e%2e/config' },
         { id: 'invalid', path: '/config' },
       ]) {
         const result = await invoke(bridge, 'ui.openUrl', [request])

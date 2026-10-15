@@ -1,5 +1,4 @@
 import type { User } from '../contexts/AuthContext'
-import type { ReadingList } from '../contexts/ReadingListContext'
 import type { MusicPlayerWindowState } from '../hooks/musicPlayer/globalState'
 import type { Song } from './musicPlayer'
 
@@ -13,14 +12,6 @@ import type { Song } from './musicPlayer'
  */
 export interface AppEventMap {
   // Agent actions
-  'agent:open-phantasi-article': {
-    articleId?: string | number
-    articleLink?: string
-    openLatest?: boolean
-    /** Full payload for an article found by web search, which has no journal id. */
-    webSearchArticle?: Record<string, unknown> | null
-  } | undefined
-  'agent:set-reading-list': ReadingList
   'arael-open-manage': { tab?: 'heartbeat' | 'skills' | 'memory' }
   'arael-open-session': { sessionId: string, runId?: string, taskId?: string }
   'arael-persona-updated': void

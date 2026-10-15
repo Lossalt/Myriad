@@ -158,7 +158,8 @@
     "pageLabels": {
       "/": "ホーム",
       "/library": "ライブラリ",
-      "/journal": "手帳",
+      "/blog": "ブログ",
+      "/studio": "ワークベンチ",
       "/phantasi": "手帳",
       "/reports": "レポート",
       "/config": "設定",

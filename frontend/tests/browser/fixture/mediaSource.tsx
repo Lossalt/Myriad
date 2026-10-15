@@ -1,7 +1,7 @@
 import React from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { MediaPreview } from '../../../src/components/phantasi/skin/MediaPreview'
+import { MediaPreview } from '../../../src/components/media/MediaPreview'
 
 const root = createRoot(document.getElementById('root')!)
 window.mediaSourceTest = {
