@@ -23,7 +23,6 @@ import type {
   UpdateRsshubInstanceRequest,
   UpdateSourceRequest,
 } from '../types/phantasi'
-import { parseFeedTopicCards } from '../components/phantasi/logic/feedTopicCards'
 import { API_URL } from '../config'
 import { KeyedWrites } from '../utils/keyedWrites'
 import { phantasiItemState } from '../utils/phantasiItemState'
@@ -32,7 +31,6 @@ import { requestCache } from '../utils/requestCache'
 import { httpStatusMessage, isUselessErrorText } from '../utils/userFacingError'
 import { ApiError, apiService, parseApiErrorBody } from './api'
 import {
-  invalidatePhantasiBoardCache,
   invalidatePhantasiNoteDocsCache,
   invalidatePhantasiSourcesCache,
   invalidatePhantasiStatsCache,
@@ -158,11 +156,6 @@ export function invalidateSourcesCache(): void {
   invalidatePhantasiSourcesCache()
 }
 
-/** Source/note mutations only; not read/star. */
-function invalidateBoardPageCache(): void {
-  invalidatePhantasiBoardCache()
-}
-
 export async function addSource(
   req: AddSourceRequest,
   attributionHeaders?: PhantasiAttributionHeaders,
@@ -177,7 +170,7 @@ export async function addSource(
     headers: attributionHeaders,
   })
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   return data.source
 }
 
@@ -195,7 +188,7 @@ export async function updateSource(
     },
   )
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   return data.source
 }
 
@@ -208,7 +201,7 @@ export async function deleteSource(
     headers: attributionHeaders,
   })
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
 }
 
 export async function refreshSource(
@@ -222,7 +215,7 @@ export async function refreshSource(
   )
   if (!options?.skipCache) {
     invalidateSourcesCache()
-    invalidateBoardPageCache()
+    invalidatePhantasiNoteDocsCache()
   }
   return data.new_items
 }
@@ -236,7 +229,7 @@ export async function refreshSources(
     ids.map((id) => refreshSource(id, attributionHeaders, { skipCache: true })),
   )
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   const failed = results.find(result => result.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason
   return results.reduce((sum, result) => sum + (result.status === 'fulfilled' ? result.value : 0), 0)
@@ -284,7 +277,7 @@ export async function importOpml(
     signal: options?.signal,
   })
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   invalidateCategoriesCache()
   return { imported: data.imported, skipped: data.skipped }
 }
@@ -478,98 +471,6 @@ export async function getItem(
   return item
 }
 
-export interface SubscriptionTopicCatalog {
-  topics: string[]
-  cards: string[]
-}
-
-export async function listSubscriptionTopicCatalog(
-  attributionHeaders?: PhantasiAttributionHeaders,
-  options?: { signal?: AbortSignal; forceRefresh?: boolean },
-): Promise<SubscriptionTopicCatalog> {
-  options?.signal?.throwIfAborted()
-  const fetchCatalog = async (signal?: AbortSignal) => {
-    const data = await request<{
-      success: boolean
-      topics?: unknown
-      cards?: unknown
-    }>('/topics', {
-      headers: attributionHeaders,
-      signal,
-    })
-    return {
-      topics: parseFeedTopicCards(data.topics),
-      cards: parseFeedTopicCards(data.cards),
-    }
-  }
-  if (attributionHeaders) return fetchCatalog(options?.signal)
-  if (options?.forceRefresh) requestCache.delete(phantasiCacheKeys.topicCatalog)
-  const catalog = await requestCache.fetch(
-    phantasiCacheKeys.topicCatalog,
-    fetchCatalog,
-    CACHE_TTL.CATEGORIES,
-    false,
-    options?.signal,
-  )
-  options?.signal?.throwIfAborted()
-  return catalog
-}
-
-export async function listSubscriptionTopics(
-  attributionHeaders?: PhantasiAttributionHeaders,
-): Promise<string[]> {
-  return (await listSubscriptionTopicCatalog(attributionHeaders)).topics
-}
-
-export async function setFeedTopicCards(
-  cards: string[],
-): Promise<string[]> {
-  const data = await request<{ success: boolean; cards?: unknown }>(
-    '/topics/cards',
-    { method: 'PUT', body: JSON.stringify({ cards }) },
-  )
-  requestCache.delete(phantasiCacheKeys.topicCatalog)
-  return parseFeedTopicCards(data.cards)
-}
-
-function rememberItemTopic(id: number, topic: string | null): string | null {
-  requestCache.delete(phantasiCacheKeys.item(id))
-  requestCache.delete(phantasiCacheKeys.topicCatalog)
-  invalidateSourcesCache()
-  invalidateBoardPageCache()
-  return topic
-}
-
-export async function setItemTopic(
-  id: number,
-  topic: string | null,
-  attributionHeaders?: PhantasiAttributionHeaders,
-): Promise<string | null> {
-  const data = await request<{ success: boolean; topic: string | null }>(
-    `/items/${id}/topic`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ topic }),
-      headers: attributionHeaders,
-    },
-  )
-  return rememberItemTopic(id, data.topic ?? null)
-}
-
-export async function suggestItemTopic(
-  id: number,
-  attributionHeaders?: PhantasiAttributionHeaders,
-): Promise<string | null> {
-  const data = await request<{ success: boolean; topic: string | null }>(
-    `/items/${id}/suggest-topic`,
-    {
-      method: 'POST',
-      headers: attributionHeaders,
-    },
-  )
-  return rememberItemTopic(id, data.topic ?? null)
-}
-
 export async function getNotesRssSettings(): Promise<{ enabled: boolean }> {
   const data = await request<{ success: boolean; enabled: boolean }>(
     '/notes/rss',
@@ -601,7 +502,7 @@ export async function createNote(
     },
   )
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   return { id: data.id, link: data.link }
 }
 
@@ -621,7 +522,7 @@ export async function updateNote(
   )
   invalidateItemCache(id)
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   return { id: data.id, link: data.link }
 }
 
@@ -635,7 +536,7 @@ export async function deleteNote(
   })
   invalidateItemCache(id)
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
 }
 
 export async function listNoteDocs(
@@ -726,7 +627,6 @@ export async function updateNoteDocTopic(
   ).finally(invalidatePhantasiNoteDocsCache)
   if (data.doc.item_id != null) invalidateItemCache(data.doc.item_id)
   invalidateSourcesCache()
-  invalidateBoardPageCache()
   return data.doc
 }
 
@@ -745,7 +645,7 @@ export async function publishNoteDoc(
   })
   if (data.id) invalidateItemCache(data.id)
   invalidateSourcesCache()
-  invalidateBoardPageCache()
+  invalidatePhantasiNoteDocsCache()
   return { id: data.id, link: data.link, doc: data.doc }
 }
 

@@ -43,8 +43,6 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
             "/categories/{id}",
             put(feeds_sources::update_category).delete(feeds_sources::delete_category),
         )
-        .route("/topics", get(feeds_list::list_subscription_topics))
-        .route("/topics/cards", put(feeds_list::put_feed_topic_cards))
         // 笔记（站长自写内容；写路径一律管理员）
         .route(
             "/notes/rss",
@@ -118,11 +116,6 @@ pub fn create_phantasi_routes(app_state: crate::state::AppState) -> Router<crate
         // 文章获取
         .route("/items", get(feeds_list::list_items))
         .route("/items/{id}", get(reading_item::get_item))
-        .route("/items/{id}/topic", put(feeds_list::update_item_topic))
-        .route(
-            "/items/{id}/suggest-topic",
-            post(feeds_list::suggest_item_topic),
-        )
         // 阅读状态
         .route("/items/{id}/read", post(reading_mark::mark_read))
         .route("/items/{id}/unread", post(reading_mark::mark_unread))

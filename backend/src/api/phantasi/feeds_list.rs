@@ -1,173 +1,25 @@
-//! Phantasi feed items list and subscription topics.
+//! Phantasi feed items list.
 use crate::error::HttpError;
-use crate::extract::{AdminClaims, OptionalViewer};
+use crate::extract::OptionalViewer;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::StatusCode,
 };
-use myriad_phantasi::{
-    FEED_TOPIC_CARDS_KEY, feed_topic_cards_from_value, sanitize_feed_topic_cards,
-};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait, PaginatorTrait,
-    QueryFilter, QuerySelect, QueryTrait, Statement,
+    ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
+    QueryTrait,
 };
-use serde::Deserialize;
 use serde_json::json;
 
 use crate::models::entities::phantasi_sources::SourceType;
 use crate::models::entities::{phantasi_items, phantasi_sources, phantasi_user_states};
-use crate::services::phantasi_topics::{
-    TopicSuggestError, TopicWriteError, list_subscription_topic_names, normalize_topic_name,
-    set_subscription_item_topic, suggest_subscription_item_topic,
-};
 
 use super::helpers::{
     get_phantasi_viewer, materialize_source_icon, phantasi_http_err, phantasi_store_http,
     require_viewer_admin,
 };
-
-// 订阅主题
-
-#[derive(Deserialize)]
-pub(crate) struct UpdateItemTopicRequest {
-    topic: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct UpdateTopicCardsRequest {
-    cards: Vec<String>,
-}
-
-async fn load_feed_topic_cards(db: &impl ConnectionTrait) -> Vec<String> {
-    let result = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT value FROM configurations WHERE key = $1",
-            vec![FEED_TOPIC_CARDS_KEY.into()],
-        ))
-        .await;
-    match result {
-        Ok(Some(row)) => match row.try_get::<serde_json::Value>("", "value") {
-            Ok(value) => feed_topic_cards_from_value(&value),
-            Err(error) => {
-                tracing::warn!(%error, "failed to read feed topic cards");
-                Vec::new()
-            }
-        },
-        Ok(None) => Vec::new(),
-        Err(error) => {
-            tracing::warn!(%error, "failed to load feed topic cards");
-            Vec::new()
-        }
-    }
-}
-
-fn topic_write_http(err: TopicWriteError) -> HttpError {
-    match err {
-        TopicWriteError::NotFound => phantasi_http_err(StatusCode::NOT_FOUND, "Article not found"),
-        TopicWriteError::NoteItem => phantasi_http_err(
-            StatusCode::BAD_REQUEST,
-            "Note categories are edited in the note editor",
-        ),
-        TopicWriteError::Store => phantasi_store_http("update topic", "store failed"),
-    }
-}
-
-fn topic_suggest_http(err: TopicSuggestError) -> HttpError {
-    match err {
-        TopicSuggestError::NotFound => {
-            phantasi_http_err(StatusCode::NOT_FOUND, "Article not found")
-        }
-        TopicSuggestError::NoteItem => phantasi_http_err(
-            StatusCode::BAD_REQUEST,
-            "Note categories are edited in the note editor",
-        ),
-        TopicSuggestError::Unavailable => {
-            phantasi_http_err(StatusCode::SERVICE_UNAVAILABLE, "AI service unavailable")
-        }
-        TopicSuggestError::Failed => {
-            phantasi_http_err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to suggest topic")
-        }
-        TopicSuggestError::Store => phantasi_store_http("suggest topic", "store failed"),
-    }
-}
-
-/// 本站已有的订阅主题名。笔记分类不进这里。
-pub(crate) async fn list_subscription_topics(
-    State(db): State<DatabaseConnection>,
-    viewer: OptionalViewer,
-) -> Result<Json<serde_json::Value>, HttpError> {
-    let (_, is_admin) = get_phantasi_viewer(&viewer, &db).await?;
-    let topics = list_subscription_topic_names(&db, is_admin)
-        .await
-        .map_err(|e| phantasi_store_http("list topics", e))?;
-    let cards = sanitize_feed_topic_cards(&load_feed_topic_cards(&db).await, &topics);
-    Ok(Json(json!({
-        "success": true,
-        "topics": topics,
-        "cards": cards,
-    })))
-}
-
-/// 站长勾选哪些已有主题在订阅墙出混排卡。访客只读 GET `/topics` 里的 `cards`。
-pub(crate) async fn put_feed_topic_cards(
-    State(db): State<DatabaseConnection>,
-    _admin: AdminClaims,
-    Json(body): Json<UpdateTopicCardsRequest>,
-) -> Result<Json<serde_json::Value>, HttpError> {
-    let topics = list_subscription_topic_names(&db, true)
-        .await
-        .map_err(|e| phantasi_store_http("list topics", e))?;
-    let requested: Vec<String> = body
-        .cards
-        .iter()
-        .filter_map(|name| normalize_topic_name(name))
-        .collect();
-    let cards = sanitize_feed_topic_cards(&requested, &topics);
-    let config_service = crate::services::config_service::ConfigService::new(db);
-    if let Err(error) = config_service
-        .update_config(FEED_TOPIC_CARDS_KEY, json!(cards))
-        .await
-    {
-        tracing::error!(%error, "failed to save feed topic cards");
-        return Err(phantasi_http_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to save topic cards",
-        ));
-    }
-    Ok(Json(json!({ "success": true, "cards": cards })))
-}
-
-/// 站长手填订阅文章主题。笔记走编辑器，不走这条。
-pub(crate) async fn update_item_topic(
-    State(db): State<DatabaseConnection>,
-    _admin: AdminClaims,
-    Path(id): Path<i32>,
-    Json(body): Json<UpdateItemTopicRequest>,
-) -> Result<Json<serde_json::Value>, HttpError> {
-    let topic = set_subscription_item_topic(&db, id, body.topic.as_deref())
-        .await
-        .map_err(topic_write_http)?;
-    Ok(Json(json!({ "success": true, "topic": topic })))
-}
-
-/// 按正文建议主题并写回。站长可再手改。
-pub(crate) async fn suggest_item_topic(
-    State(db): State<DatabaseConnection>,
-    _admin: AdminClaims,
-    Path(id): Path<i32>,
-) -> Result<Json<serde_json::Value>, HttpError> {
-    let topic = suggest_subscription_item_topic(&db, id, true)
-        .await
-        .map_err(topic_suggest_http)?;
-    Ok(Json(json!({
-        "success": true,
-        "topic": topic,
-    })))
-}
 
 // 文章获取
 
@@ -414,19 +266,6 @@ pub(crate) async fn list_items(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn topic_catalog_exposes_enabled_cards() {
-        let src = include_str!("feeds_list.rs");
-        assert!(src.contains("FEED_TOPIC_CARDS_KEY"));
-        assert!(src.contains("\"cards\": cards"));
-        let put = src
-            .split("pub(crate) async fn put_feed_topic_cards")
-            .nth(1)
-            .expect("put_feed_topic_cards");
-        assert!(put.contains("_admin: AdminClaims"));
-        assert!(put.contains("sanitize_feed_topic_cards"));
-    }
-
     #[test]
     fn starred_filter_is_admin_only() {
         let src = include_str!("feeds_list.rs");

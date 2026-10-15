@@ -184,13 +184,6 @@ pub(crate) async fn store_feed_items(
         return Ok(inserted);
     }
 
-    let topic_db = db.clone();
-    let topic_ids: Vec<i32> = inserted.iter().map(|m| m.id).collect();
-    tokio::spawn(async move {
-        crate::services::phantasi_topics::recommend_topics_for_item_ids(&topic_db, &topic_ids)
-            .await;
-    });
-
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "UPDATE phantasi_sources SET item_count = item_count + $2, updated_at = $3::timestamptz \

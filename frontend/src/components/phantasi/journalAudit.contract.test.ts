@@ -23,7 +23,7 @@ describe('手帐审计契约', () => {
     const body = fnBody(api, 'refreshSources')
     assert.match(body, /skipCache: true/)
     assert.equal(body.split('invalidateSourcesCache()').length - 1, 1)
-    assert.equal(body.split('invalidateBoardPageCache()').length - 1, 1)
+    assert.equal(body.split('invalidatePhantasiNoteDocsCache()').length - 1, 1)
   })
 
   it('协同 WS 编辑帧不带正文，连接不跟正文重绑', () => {

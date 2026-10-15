@@ -3,12 +3,6 @@
 //! Path constants.
 //! No database, HTTP, or Axum.
 
-pub mod feed_topic_cards;
-
-pub use feed_topic_cards::{
-    FEED_TOPIC_CARDS_KEY, feed_topic_cards_from_value, sanitize_feed_topic_cards,
-};
-
 /// Public blog root. Notes are addressed under this prefix.
 pub const BLOG_PREFIX: &str = "/blog";
 
@@ -202,8 +196,6 @@ mod tests {
         assert_eq!(BLOG_PREFIX, "/blog");
         assert_eq!(NOTES_RSS_PATH, "/api/phantasi/notes.xml");
         assert_eq!(ARTICLE_OBJECT_PREFIX, "/phantasi");
-        assert_eq!(FEED_TOPIC_CARDS_KEY, "phantasi_feed_topic_cards");
-        assert!(!FEED_TOPIC_CARDS_KEY.contains("brew"));
     }
 
     #[test]

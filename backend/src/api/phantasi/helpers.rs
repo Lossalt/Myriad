@@ -630,7 +630,6 @@ mod tests {
             (include_str!("feeds_list.rs"), "list_items"),
             (include_str!("feeds_opml.rs"), "export_opml"),
             (include_str!("feeds_sources.rs"), "list_categories"),
-            (include_str!("feeds_list.rs"), "list_subscription_topics"),
             (include_str!("comments.rs"), "list_comments"),
             (include_str!("comments.rs"), "list_comment_replies"),
         ] {

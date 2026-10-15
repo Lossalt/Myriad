@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { loadNoteDocs } from '../components/phantasi/pageData'
 import { requestCache } from '../utils/requestCache'
-import { getCategories, getItem, getSources, getStats, listSubscriptionTopicCatalog } from './phantasiApi'
+import { getCategories, getItem, getSources, getStats } from './phantasiApi'
 
 it('cached reads stop their transport when the last caller leaves', async () => {
   const original = globalThis.fetch
@@ -20,7 +20,6 @@ it('cached reads stop their transport when the last caller leaves', async () => 
       (signal: AbortSignal) => getSources(undefined, { signal }),
       (signal: AbortSignal) => getCategories(undefined, { signal }),
       (signal: AbortSignal) => getStats(undefined, { signal }),
-      (signal: AbortSignal) => listSubscriptionTopicCatalog(undefined, { signal }),
       (signal: AbortSignal) => loadNoteDocs(signal),
     ]
     for (const read of reads) {
