@@ -1098,10 +1098,13 @@ impl End {
                     "soup_start" => "ask:soup_start",
                     "undercover_words" => "ask:undercover_words",
                     "undercover_judge" => "ask:undercover_judge",
-                    "undercover_voice" | "werewolf_voice" | "marks_voice" => "ask:voice",
-                    "undercover_her_move" | "werewolf_her_move" | "marks_her_move" => {
-                        "ask:her_move"
+                    "undercover_voice" | "werewolf_voice" | "avalon_voice" | "marks_voice" => {
+                        "ask:voice"
                     }
+                    "undercover_her_move"
+                    | "werewolf_her_move"
+                    | "avalon_her_move"
+                    | "marks_her_move" => "ask:her_move",
                     _ => "ask",
                 },
             ),
@@ -2961,4 +2964,324 @@ fn g1_werewolf_goes_on_after_a_restart() {
             .any(|line| line.contains("赢了。身份："))
     );
     end.check("werewolf_goes_on_after_a_restart");
+}
+
+/// The game of 阿瓦隆 on at a table, if it is one.
+fn avalon_of(seating: &flows::Seating) -> Option<&crate::avalon::Avalon> {
+    match seating.game.as_ref()? {
+        crate::hosting::SeatGame::Avalon(game) => Some(game),
+        _ => None,
+    }
+}
+
+/// How the players of a test play 阿瓦隆: the leader takes the first one
+/// open each pick; the first team of the game is turned down, every other
+/// one goes; the evil fail the first quest only; the assassin names the
+/// first of those open.
+fn avalon_player(seating: &flows::Seating, seat: usize) -> Option<String> {
+    use crate::avalon::Phase;
+    let game = avalon_of(seating)?;
+    Some(match &game.phase {
+        Phase::Vote { .. } if game.results.is_empty() && game.rejections == 0 => "1".into(),
+        Phase::Quest { .. } if game.results.is_empty() && game.roles[seat].evil() => "1".into(),
+        _ => "0".into(),
+    })
+}
+
+/// A member asks for 阿瓦隆 in a Telegram group: five join, each is
+/// whispered their role and whom they know, and it is played out from
+/// buttons: the first team is turned down and the next leader picks, how
+/// everyone voted is told, a quest fails to one card, the good win three
+/// and the assassin names someone. What a seat knows is whispered to it
+/// alone; no role is said in the group before the end.
+#[test]
+fn g1_avalon_is_played_with_buttons() {
+    let mut end = End::new();
+    end.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("好呀，我来主持\n[[game:avalon]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:voice",
+        2.0,
+        Answer::Asked {
+            raw: Some(r#"{"say":"为了亚瑟王，出发吧"}"#.into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "@bot 来玩阿瓦隆", true),
+    );
+    let people = [
+        (11, "阿明"),
+        (12, "小红"),
+        (13, "阿强"),
+        (14, "小李"),
+        (15, "大刘"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    play_out_by(&mut end, 110.0, 5000.0, &|_, _| None, &avalon_player);
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    let end_at = said
+        .iter()
+        .position(|line| line.contains("赢了。身份："))
+        .expect("it ends with every role told");
+    assert!(said[..end_at].iter().all(|line| !line.contains("身份：")));
+    assert!(
+        said.iter()
+            .any(|line| line.contains("没过半，这次没组成队"))
+    );
+    assert!(
+        said.iter().any(|line| line.contains("反对 阿明")),
+        "votes are told"
+    );
+    assert!(said.iter().any(|line| line.contains("任务失败")));
+    assert!(
+        said.iter()
+            .any(|line| line.contains("刺客") && line.contains("刺杀了"))
+    );
+    let table = last_table(&end);
+    let roles: Vec<String> = table["game"]["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|role| role.as_str().unwrap().to_string())
+        .collect();
+    let users: Vec<String> = people.iter().map(|(from, _)| from.to_string()).collect();
+    for (user, text) in whispers(&end) {
+        let role = roles[users.iter().position(|known| *known == user).unwrap()].as_str();
+        if text.contains("你看到的坏人") {
+            assert_eq!(role, "merlin", "{text}");
+        }
+        if text.contains("一个是梅林") {
+            assert_eq!(role, "percival", "{text}");
+        }
+        if text.contains("坏人同伴") {
+            assert!(["morgana", "assassin"].contains(&role), "{text}");
+        }
+    }
+    let buttons = end.steps.iter().any(|step| {
+        step["output"]["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|effect| effect["kind"] == "whisper" && effect["choices"].is_array())
+    });
+    assert!(buttons, "moves go out with buttons on Telegram");
+    end.check("avalon_is_played_with_buttons");
+}
+
+/// On QQ four join; she offers to take the fifth seat and all agree. She
+/// picks, votes and plays from her own seat's view alone: what she is
+/// asked holds her own role and never another's.
+#[test]
+fn g1_avalon_she_fills_a_seat() {
+    let mut end = End::new();
+    end.answer(
+        "identify",
+        0.0,
+        Answer::Identified {
+            who: Who::Stranger,
+            owner: Some(1),
+        },
+    );
+    end.answer(
+        "ask:group_stranger",
+        2.0,
+        Answer::Asked {
+            raw: Some("好\n[[game:avalon]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "label",
+        0.0,
+        Answer::Label {
+            label: "Arael".into(),
+        },
+    );
+    for _ in 0..60 {
+        end.answer(
+            "ask:her_move",
+            2.0,
+            Answer::Asked {
+                raw: Some(r#"{"n":0}"#.into()),
+                failure: None,
+            },
+        );
+    }
+    let qq = |id: i64, from: &str, name: &str, text: &str, addressed: bool| {
+        message_on("onebot", "77003", id, from, name, text, addressed)
+    };
+    heard(&mut end, 0.0, qq(1, "8001", "甲", "@bot 来玩阿瓦隆", true));
+    let people = [
+        ("8001", "甲"),
+        ("8002", "乙"),
+        ("8003", "丙"),
+        ("8004", "丁"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            qq(2 + index as i64, from, name, "加入", false),
+        );
+    }
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            100.0 + index as f64,
+            qq(10 + index as i64, from, name, "好", false),
+        );
+    }
+    play_out_by(&mut end, 110.0, 6000.0, &|_, _| None, &avalon_player);
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    assert!(said.iter().any(|line| line.contains("还差一个人")));
+    assert!(said.iter().any(|line| line.contains("赢了。身份：")));
+    let table = last_table(&end);
+    let hers = table["reachable"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|seat| seat["hers"] == true)
+        .unwrap();
+    let name = |role: &str| match role {
+        "merlin" => "梅林",
+        "percival" => "派西维尔",
+        "loyal" => "亚瑟的忠臣",
+        "morgana" => "莫甘娜",
+        _ => "刺客",
+    };
+    let mine = format!(
+        "你的身份：{}",
+        name(table["game"]["roles"][hers].as_str().unwrap())
+    );
+    let mut asked = 0;
+    for step in &end.steps {
+        for effect in step["output"]["effects"].as_array().into_iter().flatten() {
+            if effect["kind"] == "ask" && effect["operation"] == "avalon_her_move" {
+                asked += 1;
+                let text = effect.to_string();
+                assert!(text.contains(&mine), "{text}");
+                for role in ["梅林", "派西维尔", "亚瑟的忠臣", "莫甘娜", "刺客"] {
+                    let theirs = format!("你的身份：{role}");
+                    assert!(theirs == mine || !text.contains(&theirs), "{text}");
+                }
+            }
+            if effect["kind"] == "whisper" {
+                assert!(effect["choices"].is_null(), "no buttons on QQ");
+            }
+        }
+    }
+    assert!(asked > 0, "she moved as her seat");
+    end.check("avalon_she_fills_a_seat");
+}
+
+/// A game of 阿瓦隆 is on, its first team being voted on, when her end
+/// restarts: the table comes back as kept, everyone at it seated again, the
+/// votes already cast stand, and the game is played to its end.
+#[test]
+fn g1_avalon_goes_on_after_a_restart() {
+    let mut before = End::new();
+    before.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("来\n[[game:avalon]]".into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut before,
+        0.0,
+        message(1, 11, "阿明", "@bot 阿瓦隆", true),
+    );
+    let people = [
+        (11, "阿明"),
+        (12, "小红"),
+        (13, "阿强"),
+        (14, "小李"),
+        (15, "大刘"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut before,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    // The leader picks; two vote for it before the restart.
+    before.run(BASE + secs(100.0));
+    for _ in 0..2 {
+        let seating = before.group.seating.clone().unwrap();
+        let leader = avalon_of(&seating).unwrap().leader;
+        let now = before.now;
+        before.at(
+            now + secs(1.0),
+            Event::Whispered {
+                who: seating.reachable[leader].who.clone(),
+                text: "0".into(),
+                wait: seating.waited,
+            },
+        );
+        before.run(now + secs(2.0));
+    }
+    for voter in 0..2 {
+        let seating = before.group.seating.clone().unwrap();
+        let now = before.now;
+        before.at(
+            now + secs(1.0),
+            Event::Whispered {
+                who: seating.reachable[voter].who.clone(),
+                text: "0".into(),
+                wait: seating.waited,
+            },
+        );
+        before.run(now + secs(2.0));
+    }
+    let table = last_table(&before);
+    assert_eq!(table["game"]["phase"]["phase"], "vote");
+    assert_eq!(table["game"]["phase"]["votes"].as_array().unwrap().len(), 2);
+    let mut end = End::new();
+    end.now = before.now + secs(5.0);
+    end.at(
+        end.now,
+        Event::Restored {
+            lines: None,
+            spoke_up: Vec::new(),
+            table: Some(table),
+        },
+    );
+    let from = (end.now - BASE) as f64 / 1e6 + 1.0;
+    play_out_by(&mut end, from, 5000.0, &|_, _| None, &|_, _| {
+        Some("0".into())
+    });
+    assert!(end.group.seating.is_none(), "played to its end");
+    let seated = end.steps[0]["output"]["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|effect| effect["kind"] == "seat")
+        .count();
+    assert_eq!(seated, 5);
+    let said = said_in_group(&end);
+    assert!(said.iter().any(|line| line.contains("赢了。身份：")));
+    // The two who voted before the restart are not asked again.
+    let first_vote = said.iter().find(|line| line.starts_with("投票：")).unwrap();
+    assert!(first_vote.contains("赞成 阿明、小红"), "{first_vote}");
+    end.check("avalon_goes_on_after_a_restart");
 }

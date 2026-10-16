@@ -10,6 +10,7 @@ use serde_json::json;
 
 const TOKEN: &str = "g0-token";
 
+mod avalon;
 mod games;
 mod members;
 mod memory;

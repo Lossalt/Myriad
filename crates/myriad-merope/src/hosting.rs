@@ -509,6 +509,7 @@ pub mod marks {
 pub enum SeatGame {
     Undercover(crate::undercover::Undercover),
     Werewolf(crate::werewolf::Werewolf),
+    Avalon(crate::avalon::Avalon),
     #[cfg(any(test, feature = "test-games"))]
     Marks(marks::Marks),
 }
@@ -543,6 +544,14 @@ pub fn seat_kinds() -> Vec<SeatKind> {
             name: crate::werewolf::NAME,
             fewest: crate::werewolf::FEWEST,
             most: crate::werewolf::MOST,
+            prepares: false,
+            she_may_fill: true,
+        },
+        SeatKind {
+            kind: crate::avalon::KIND,
+            name: crate::avalon::NAME,
+            fewest: crate::avalon::FEWEST,
+            most: crate::avalon::MOST,
             prepares: false,
             she_may_fill: true,
         },
@@ -586,6 +595,10 @@ macro_rules! each {
                 type $R = crate::werewolf::Werewolf;
                 $body
             }
+            SeatGame::Avalon($game) => {
+                type $R = crate::avalon::Avalon;
+                $body
+            }
             #[cfg(any(test, feature = "test-games"))]
             SeatGame::Marks($game) => {
                 type $R = marks::Marks;
@@ -626,6 +639,7 @@ impl SeatGame {
             crate::werewolf::KIND => Some(Self::Werewolf(crate::werewolf::Werewolf::deal(
                 seats, rolls,
             ))),
+            crate::avalon::KIND => Some(Self::Avalon(crate::avalon::Avalon::deal(seats, rolls))),
             #[cfg(any(test, feature = "test-games"))]
             "marks" => Some(Self::Marks(marks::Marks::deal_to(seats, rolls))),
             _ => None,
@@ -636,7 +650,7 @@ impl SeatGame {
     pub fn used(&self) -> Option<String> {
         match self {
             Self::Undercover(game) => Some(game.used()),
-            Self::Werewolf(_) => None,
+            Self::Werewolf(_) | Self::Avalon(_) => None,
             #[cfg(any(test, feature = "test-games"))]
             Self::Marks(_) => None,
         }
@@ -675,6 +689,7 @@ impl SeatGame {
         match self {
             Self::Undercover(game) => game.outcome(),
             Self::Werewolf(game) => game.outcome(),
+            Self::Avalon(game) => game.outcome(),
             #[cfg(any(test, feature = "test-games"))]
             Self::Marks(_) => None,
         }
@@ -734,6 +749,7 @@ impl SeatGame {
         match self {
             Self::Undercover(game) => game.round,
             Self::Werewolf(game) => game.night,
+            Self::Avalon(game) => game.results.len() as u32 + 1,
             #[cfg(any(test, feature = "test-games"))]
             Self::Marks(_) => 0,
         }

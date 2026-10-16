@@ -40,6 +40,8 @@ pub async fn ask(
         "undercover_her_move" => "undercover_her_move",
         "werewolf_voice" => "werewolf_voice",
         "werewolf_her_move" => "werewolf_her_move",
+        "avalon_voice" => "avalon_voice",
+        "avalon_her_move" => "avalon_her_move",
         _ => "group_mind",
     };
     let voice = match voice {
