@@ -114,6 +114,30 @@ pub struct Seating {
     pub told: usize,
     #[serde(default)]
     pub moments: usize,
+    /// For a game whose seats learn things as it goes: how many of the
+    /// facts for each seat were whispered to it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub told_seats: Vec<usize>,
+    /// Secret waits (a move at night) each seat let pass in a row, apart
+    /// from the rest: the group is never told of those.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_misses: Vec<u32>,
+}
+
+impl Seating {
+    /// `seat` moved at a wait the table may know of (`public`), or at a
+    /// secret one: that run of waits it let pass is over, not the other (a
+    /// move at night must not spare anyone being named for the day's).
+    fn moved_now(&mut self, seat: usize, public: bool) {
+        let misses = if public {
+            &mut self.misses
+        } else {
+            &mut self.secret_misses
+        };
+        if let Some(missed) = misses.get_mut(seat) {
+            *missed = 0;
+        }
+    }
 }
 
 fn platform_of(who: &str) -> (&str, &str) {
@@ -280,6 +304,8 @@ pub(crate) fn open_sign_up(cx: &mut Cx, kind: &str, chat: Target, owner: i32) ->
         misses: Vec::new(),
         told: 0,
         moments: 0,
+        told_seats: Vec::new(),
+        secret_misses: Vec::new(),
     };
     arm(cx, &mut s, crate::hosting::SIGN_UP_SECONDS);
     cx.group.seating = Some(s);
@@ -368,9 +394,7 @@ fn heard_playing(cx: &mut Cx, mut s: Seating, who: &str, message: &Message) {
         if let Some(game) = s.game.as_mut() {
             game.spoke(seat, &message.text);
         }
-        if let Some(missed) = s.misses.get_mut(seat) {
-            *missed = 0;
-        }
+        s.moved_now(seat, true);
         s.timer = None;
         s.until = None;
         return after(cx, s);
@@ -419,12 +443,21 @@ fn timed_out(cx: &mut Cx, mut s: Seating) {
                 Some(Waiting::Choose(seats)) => seats,
                 _ => Vec::new(),
             };
+            let public = s.game.as_ref().is_none_or(SeatGame::public_wait);
+            if !public && s.secret_misses.len() < s.reachable.len() {
+                s.secret_misses.resize(s.reachable.len(), 0);
+            }
             let mut reminded = Vec::new();
             for seat in waited {
                 if s.reachable.get(seat).is_none_or(|sat| sat.hers) {
                     continue;
                 }
-                if let Some(missed) = s.misses.get_mut(seat) {
+                let misses = if public {
+                    &mut s.misses
+                } else {
+                    &mut s.secret_misses
+                };
+                if let Some(missed) = misses.get_mut(seat) {
                     *missed += 1;
                     if *missed == 2 {
                         reminded.push(seat);
@@ -437,8 +470,13 @@ fn timed_out(cx: &mut Cx, mut s: Seating) {
             tell_news(cx, &mut s);
             for seat in reminded {
                 let named = s.reachable[seat].clone();
-                let after = crate::hosting::reminder_after(&named.name);
-                tell_naming(cx, &s, "", &named, &after);
+                if public {
+                    let after = crate::hosting::reminder_after(&named.name);
+                    tell_naming(cx, &s, "", &named, &after);
+                } else {
+                    let line = crate::hosting::REMINDER_IN_PRIVATE.to_string();
+                    whisper(cx, &s, &named, line, Vec::new());
+                }
             }
             after(cx, s);
         }
@@ -682,17 +720,35 @@ fn start(cx: &mut Cx, mut s: Seating, game: SeatGame) {
             whisper(cx, &s, seat, dealt, Vec::new());
         }
     }
+    if game.news_in_private() {
+        s.told_seats = (0..s.reachable.len())
+            .map(|seat| game.dealt(seat).len())
+            .collect();
+    }
     s.game = Some(game);
     after(cx, s);
 }
 
-/// Say what everyone may know that was not said yet.
+/// Say what everyone may know that was not said yet; whisper each seat
+/// what is new for it alone (a game whose seats learn things as it goes).
 fn tell_news(cx: &mut Cx, s: &mut Seating) {
     let announced = s.game.as_ref().map(SeatGame::announced).unwrap_or_default();
     let news = announced[s.told.min(announced.len())..].join("\n");
     s.told = announced.len();
     if !news.is_empty() {
         tell(cx, s, &news);
+    }
+    for seat in 0..s.told_seats.len() {
+        let Some(game) = s.game.as_ref() else {
+            return;
+        };
+        let dealt = game.dealt(seat);
+        let new = dealt[s.told_seats[seat].min(dealt.len())..].join("\n");
+        s.told_seats[seat] = dealt.len();
+        let sat = s.reachable[seat].clone();
+        if !new.is_empty() && !sat.hers {
+            whisper(cx, s, &sat, new, Vec::new());
+        }
     }
 }
 
@@ -766,7 +822,11 @@ fn next_move(cx: &mut Cx, mut s: Seating) {
             if sat.hers {
                 ask_her(cx, &mut s, seat, false);
             } else {
-                let (before, after) = crate::hosting::speak_turn_lines(&s.name);
+                let (before, after) = s
+                    .game
+                    .as_ref()
+                    .map(SeatGame::speak_turn)
+                    .unwrap_or_else(|| crate::hosting::speak_turn_lines(&s.name));
                 tell_naming(cx, &s, &before, &sat, &after);
                 arm(cx, &mut s, time);
             }
@@ -951,13 +1011,12 @@ pub(crate) fn whispered(cx: &mut Cx, who: &str, text: &str, wait: Option<u64>) -
         return true;
     }
     let open = matches!(game.waiting(), Waiting::Choose(ref seats) if seats.contains(&seat));
+    let public = game.public_wait();
     match crate::hosting::read_move(text, &view).filter(|_| open) {
         Some(index) => {
             let choice = view.choices()[index].clone();
             game.take(seat, index, &mut cx.at.rolls);
-            if let Some(missed) = s.misses.get_mut(seat) {
-                *missed = 0;
-            }
+            s.moved_now(seat, public);
             let sat = s.reachable[seat].clone();
             whisper(
                 cx,

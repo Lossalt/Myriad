@@ -1098,8 +1098,10 @@ impl End {
                     "soup_start" => "ask:soup_start",
                     "undercover_words" => "ask:undercover_words",
                     "undercover_judge" => "ask:undercover_judge",
-                    "undercover_voice" | "marks_voice" => "ask:voice",
-                    "undercover_her_move" | "marks_her_move" => "ask:her_move",
+                    "undercover_voice" | "werewolf_voice" | "marks_voice" => "ask:voice",
+                    "undercover_her_move" | "werewolf_her_move" | "marks_her_move" => {
+                        "ask:her_move"
+                    }
                     _ => "ask",
                 },
             ),
@@ -2105,6 +2107,17 @@ fn play_out(
     said: &dyn Fn(usize, u32) -> Option<String>,
     chosen: &dyn Fn(usize) -> Option<String>,
 ) {
+    play_out_by(end, from, until, said, &|_, seat| chosen(seat));
+}
+
+/// The same, whoever has to choose choosing by the table as it stands.
+fn play_out_by(
+    end: &mut End,
+    from: f64,
+    until: f64,
+    said: &dyn Fn(usize, u32) -> Option<String>,
+    chosen: &dyn Fn(&flows::Seating, usize) -> Option<String>,
+) {
     use crate::hosting::Waiting;
     let mut at = from;
     let mut id = 500;
@@ -2114,11 +2127,7 @@ fn play_out(
             break;
         };
         if let Some(game) = seating.game.as_ref() {
-            let round = match game {
-                crate::hosting::SeatGame::Undercover(game) => game.round,
-                #[allow(unreachable_patterns)]
-                _ => 0,
-            };
+            let round = game.round();
             match game.waiting() {
                 Waiting::Speak(seat) if !seating.reachable[seat].hers => {
                     let sat = &seating.reachable[seat];
@@ -2143,7 +2152,7 @@ fn play_out(
                 Waiting::Choose(seats) => {
                     for seat in seats {
                         let sat = &seating.reachable[seat];
-                        let Some(text) = chosen(seat).filter(|_| !sat.hers) else {
+                        let Some(text) = chosen(&seating, seat).filter(|_| !sat.hers) else {
                             continue;
                         };
                         end.at(
@@ -2254,7 +2263,12 @@ fn g1_undercover_is_played_with_buttons() {
     let first_vote = end
         .steps
         .iter()
-        .flat_map(|step| step["output"]["effects"].as_array().cloned().unwrap_or_default())
+        .flat_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
         .find_map(|effect| effect["wait"].as_u64())
         .unwrap();
     end.at(
@@ -2520,4 +2534,431 @@ fn g1_undercover_goes_on_after_a_restart() {
     assert_eq!(seated, 4);
     assert!(said_in_group(&end).iter().any(|line| line.contains("赢了")));
     end.check("undercover_goes_on_after_a_restart");
+}
+
+/// The game of 狼人杀 on at a table, if it is one.
+fn werewolf_of(seating: &flows::Seating) -> Option<&crate::werewolf::Werewolf> {
+    match seating.game.as_ref()? {
+        crate::hosting::SeatGame::Werewolf(game) => Some(game),
+        _ => None,
+    }
+}
+
+/// The last table kept before it ended, as kept.
+fn last_table(end: &End) -> Value {
+    end.steps
+        .iter()
+        .rev()
+        .find_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|effect| {
+                    (effect["kind"] == "keepTable" && !effect["table"].is_null())
+                        .then(|| effect["table"].clone())
+                })
+        })
+        .unwrap()
+}
+
+/// Every whisper she sent, as (user, text).
+fn whispers(end: &End) -> Vec<(String, String)> {
+    end.steps
+        .iter()
+        .flat_map(|step| {
+            step["output"]["effects"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter(|effect| effect["kind"] == "whisper")
+        .map(|effect| {
+            (
+                effect["user"].as_str().unwrap_or("").to_string(),
+                effect["text"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect()
+}
+
+/// A member asks for 狼人杀 in a Telegram group: six join, each is
+/// whispered their role (the werewolves each other), and it is played out:
+/// at night the werewolves, the seer and the witch move in private from
+/// buttons (the witch saves the first night's knifed), by day everyone
+/// speaks in turn and votes from buttons, until a side wins and every role
+/// is told. What a seat learns at night is whispered to it alone; no role
+/// is said in the group before the end.
+#[test]
+fn g1_werewolf_is_played_with_buttons() {
+    let mut end = End::new();
+    end.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("好呀，我来当法官\n[[game:werewolf]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:voice",
+        2.0,
+        Answer::Asked {
+            raw: Some(r#"{"say":"天黑请闭眼，大家好运"}"#.into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut end,
+        0.0,
+        message(1, 11, "阿明", "@bot 来玩狼人杀", true),
+    );
+    let people = [
+        (11, "阿明"),
+        (12, "小红"),
+        (13, "阿强"),
+        (14, "小李"),
+        (15, "大刘"),
+        (16, "老王"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    play_out_by(
+        &mut end,
+        110.0,
+        5000.0,
+        &|seat, round| Some(format!("我是好人，第{round}天{seat}号")),
+        // The witch saves whom the first knife fell on; everyone else takes
+        // their first choice.
+        &|seating, seat| {
+            let game = werewolf_of(seating)?;
+            let choices = seating.game.as_ref()?.seat_view(seat).choices().to_vec();
+            let save = game.night == 1
+                && choices
+                    .get(1)
+                    .is_some_and(|choice| choice.starts_with("用解药"));
+            Some(if save { "1" } else { "0" }.into())
+        },
+    );
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    let end_at = said
+        .iter()
+        .position(|line| line.contains("赢了。身份："))
+        .expect("it ends with every role told");
+    assert!(
+        said[..end_at].iter().all(|line| !line.contains("身份：")),
+        "no role said in the group before the end"
+    );
+    assert!(
+        said.iter().any(|line| line.contains("平安夜")),
+        "the witch saved"
+    );
+    let table = last_table(&end);
+    let roles: Vec<String> = table["game"]["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|role| role.as_str().unwrap().to_string())
+        .collect();
+    let users: Vec<String> = people.iter().map(|(from, _)| from.to_string()).collect();
+    for (user, text) in whispers(&end) {
+        let seat = users.iter().position(|known| *known == user).unwrap();
+        let role = roles[seat].as_str();
+        if text.contains("验") && text.contains('：') && text.starts_with("第") {
+            assert_eq!(role, "seer", "{text}");
+        }
+        if text.contains("狼队友") {
+            assert_eq!(role, "werewolf", "{text}");
+        }
+        if text.contains("被刀的是") {
+            assert_eq!(role, "witch", "{text}");
+        }
+    }
+    let buttons = end.steps.iter().any(|step| {
+        step["output"]["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|effect| effect["kind"] == "whisper" && effect["choices"].is_array())
+    });
+    assert!(buttons, "moves go out with buttons on Telegram");
+    end.check("werewolf_is_played_with_buttons");
+}
+
+/// On QQ five join; she offers to take the sixth seat and all agree. She
+/// speaks and moves from her own seat's view alone; whoever is the seer
+/// (or the witch, when she is the seer) never moves: missing two nights in
+/// a row they are reminded in private, never named in the group for it.
+#[test]
+fn g1_werewolf_she_fills_a_seat() {
+    let mut end = End::new();
+    end.answer(
+        "identify",
+        0.0,
+        Answer::Identified {
+            who: Who::Stranger,
+            owner: Some(1),
+        },
+    );
+    end.answer(
+        "ask:group_stranger",
+        2.0,
+        Answer::Asked {
+            raw: Some("好\n[[game:werewolf]]".into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "label",
+        0.0,
+        Answer::Label {
+            label: "Arael".into(),
+        },
+    );
+    for _ in 0..30 {
+        end.answer(
+            "ask:her_move",
+            2.0,
+            Answer::Asked {
+                raw: Some(r#"{"say":"我先听听大家怎么说","n":0}"#.into()),
+                failure: None,
+            },
+        );
+    }
+    let qq = |id: i64, from: &str, name: &str, text: &str, addressed: bool| {
+        message_on("onebot", "77002", id, from, name, text, addressed)
+    };
+    heard(&mut end, 0.0, qq(1, "7001", "甲", "@bot 来玩狼人杀", true));
+    let people = [
+        ("7001", "甲"),
+        ("7002", "乙"),
+        ("7003", "丙"),
+        ("7004", "丁"),
+        ("7005", "戊"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            40.0 + index as f64,
+            qq(2 + index as i64, from, name, "加入", false),
+        );
+    }
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut end,
+            100.0 + index as f64,
+            qq(10 + index as i64, from, name, "好", false),
+        );
+    }
+    // The one who never moves: the seer, or the witch when she is the seer.
+    let idle = |game: &crate::werewolf::Werewolf, seating: &flows::Seating| {
+        use crate::werewolf::Role;
+        let human = |role: Role| {
+            (0..game.roles.len())
+                .find(|seat| game.roles[*seat] == role && !seating.reachable[*seat].hers)
+        };
+        human(Role::Seer).or_else(|| human(Role::Witch)).unwrap()
+    };
+    play_out_by(
+        &mut end,
+        110.0,
+        6000.0,
+        &|seat, round| Some(format!("{seat}号第{round}天：我是好人")),
+        &|seating, seat| {
+            use crate::werewolf::Role;
+            let game = werewolf_of(seating)?;
+            if seat == idle(game, seating)
+                && matches!(game.phase, crate::werewolf::Phase::Night { .. })
+            {
+                return None;
+            }
+            // By day the good vote out a werewolf, the werewolves a
+            // villager; the werewolves knife nobody the first two nights.
+            let choices = seating.game.as_ref()?.seat_view(seat).choices().to_vec();
+            let pick = |role: Role| {
+                (0..game.roles.len())
+                    .find(|other| game.alive[*other] && game.roles[*other] == role)
+                    .map(|other| seating.reachable[other].name.clone())
+                    .filter(|name| choices.contains(name))
+            };
+            let wolf = game.roles[seat] == Role::Werewolf;
+            let night = matches!(game.phase, crate::werewolf::Phase::Night { .. });
+            if wolf && night && game.night < 3 {
+                return Some("不刀".into());
+            }
+            Some(if wolf {
+                pick(Role::Villager).unwrap_or_else(|| "0".into())
+            } else {
+                pick(Role::Werewolf).unwrap_or_else(|| "0".into())
+            })
+        },
+    );
+    assert!(end.group.seating.is_none(), "over");
+    let said = said_in_group(&end);
+    assert!(said.iter().any(|line| line.contains("还差一个人")));
+    assert!(
+        said.iter().any(|line| line.contains("我先听听大家怎么说")),
+        "her speech"
+    );
+    let table = last_table(&end);
+    let roles = &table["game"]["roles"];
+    let hers = table["reachable"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|seat| seat["hers"] == true)
+        .unwrap();
+    let idle_role = if roles[hers] == "seer" {
+        "witch"
+    } else {
+        "seer"
+    };
+    let idle_seat = (0..6)
+        .find(|seat| roles[*seat] == idle_role && *seat != hers)
+        .unwrap();
+    let idle_user = table["reachable"][idle_seat]["who"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("onebot:")
+        .to_string();
+    let reminded = whispers(&end)
+        .iter()
+        .any(|(user, text)| *user == idle_user && text == crate::hosting::REMINDER_IN_PRIVATE);
+    assert!(reminded, "two nights let pass are reminded in private");
+    assert!(
+        said.iter()
+            .all(|line| !line.contains(crate::hosting::REMINDER_IN_PRIVATE)),
+        "night misses are never named in the group"
+    );
+    // What she was asked as her seat holds no other seat's role.
+    let mine = format!(
+        "你的身份：{}",
+        match roles[hers].as_str().unwrap() {
+            "werewolf" => "狼人",
+            "villager" => "村民",
+            "seer" => "预言家",
+            "witch" => "女巫",
+            _ => "猎人",
+        }
+    );
+    for step in &end.steps {
+        for effect in step["output"]["effects"].as_array().into_iter().flatten() {
+            if effect["kind"] == "ask" && effect["operation"] == "werewolf_her_move" {
+                let asked = effect.to_string();
+                assert!(asked.contains(&mine), "{asked}");
+                for role in ["狼人", "村民", "预言家", "女巫", "猎人"] {
+                    let theirs = format!("你的身份：{role}");
+                    assert!(theirs == mine || !asked.contains(&theirs), "{asked}");
+                }
+            }
+            if effect["kind"] == "whisper" {
+                assert!(effect["choices"].is_null(), "no buttons on QQ");
+            }
+        }
+    }
+    end.check("werewolf_she_fills_a_seat");
+}
+
+/// A game of 狼人杀 is on, in its first night, when her end restarts: the
+/// table comes back as kept, everyone at it seated again, the night goes on
+/// for the time it had left, and the game is played to its end.
+#[test]
+fn g1_werewolf_goes_on_after_a_restart() {
+    let mut before = End::new();
+    before.answer(
+        "ask:group_member",
+        2.0,
+        Answer::Asked {
+            raw: Some("来\n[[game:werewolf]]".into()),
+            failure: None,
+        },
+    );
+    heard(
+        &mut before,
+        0.0,
+        message(1, 11, "阿明", "@bot 狼人杀", true),
+    );
+    let people = [
+        (11, "阿明"),
+        (12, "小红"),
+        (13, "阿强"),
+        (14, "小李"),
+        (15, "大刘"),
+        (16, "老王"),
+    ];
+    for (index, (from, name)) in people.iter().enumerate() {
+        heard(
+            &mut before,
+            40.0 + index as f64,
+            message(2 + index as i64, *from, name, "加入", false),
+        );
+    }
+    // Into the first night; only some have moved when it restarts.
+    before.run(BASE + secs(100.0));
+    let seating = before.group.seating.as_ref().unwrap().clone();
+    let seer = werewolf_of(&seating)
+        .unwrap()
+        .roles
+        .iter()
+        .position(|role| *role == crate::werewolf::Role::Seer)
+        .unwrap();
+    before.at(
+        BASE + secs(101.0),
+        Event::Whispered {
+            who: seating.reachable[seer].who.clone(),
+            text: "0".into(),
+            wait: seating.waited,
+        },
+    );
+    before.run(BASE + secs(102.0));
+    let checked = whispers(&before)
+        .into_iter()
+        .map(|(_, text)| text)
+        .find(|text| text.starts_with("第1夜验"))
+        .unwrap();
+    let table = last_table(&before);
+    assert!(table["game"]["phase"]["phase"] == "night");
+    let mut end = End::new();
+    end.now = BASE + secs(110.0);
+    end.at(
+        end.now,
+        Event::Restored {
+            lines: None,
+            spoke_up: Vec::new(),
+            table: Some(table),
+        },
+    );
+    play_out(
+        &mut end,
+        111.0,
+        5000.0,
+        &|seat, round| Some(format!("第{round}天{seat}号：过")),
+        &|_| Some("0".into()),
+    );
+    assert!(end.group.seating.is_none(), "played to its end");
+    let seated = end.steps[0]["output"]["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|effect| effect["kind"] == "seat")
+        .count();
+    assert_eq!(seated, 6);
+    assert!(
+        whispers(&end)
+            .iter()
+            .all(|(_, text)| !text.contains(&checked)),
+        "a result already whispered before restart is not sent again"
+    );
+    assert!(
+        said_in_group(&end)
+            .iter()
+            .any(|line| line.contains("赢了。身份："))
+    );
+    end.check("werewolf_goes_on_after_a_restart");
 }

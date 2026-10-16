@@ -16,6 +16,7 @@ mod memory;
 mod seats;
 mod strangers;
 mod undercover;
+mod werewolf;
 
 fn line(chat: i64, id: i64, from: i64, name: &str, text: &str, addressed: bool) -> GroupLine {
     GroupLine::from(TelegramGroupMessage {

@@ -112,6 +112,23 @@ pub trait Rules {
     /// The rules as a player is told them, when she plays one.
     const RULES: &'static str = "";
 
+    /// Seats learn things as it goes (what they found at night), not only
+    /// what they were dealt: what is new for a seat is whispered to it.
+    const NEWS_IN_PRIVATE: bool = false;
+
+    /// Whether the table may know who the game waits for now: then one who
+    /// lets it pass twice is named in the group, else reminded in private
+    /// (a move at night would tell their role).
+    fn public_wait(_: &Self::State) -> bool {
+        true
+    }
+
+    /// Before and after the name of the seat whose turn it is to speak
+    /// (none: as [`speak_turn_lines`] has it).
+    fn speak_turn(_: &Self::State) -> Option<(String, String)> {
+        None
+    }
+
     /// What the game waits for now: by default, the seats with choices
     /// open choose.
     fn waiting(state: &Self::State) -> Waiting {
@@ -491,6 +508,7 @@ pub mod marks {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum SeatGame {
     Undercover(crate::undercover::Undercover),
+    Werewolf(crate::werewolf::Werewolf),
     #[cfg(any(test, feature = "test-games"))]
     Marks(marks::Marks),
 }
@@ -518,6 +536,14 @@ pub fn seat_kinds() -> Vec<SeatKind> {
             fewest: crate::undercover::FEWEST,
             most: crate::undercover::MOST,
             prepares: true,
+            she_may_fill: true,
+        },
+        SeatKind {
+            kind: crate::werewolf::KIND,
+            name: crate::werewolf::NAME,
+            fewest: crate::werewolf::FEWEST,
+            most: crate::werewolf::MOST,
+            prepares: false,
             she_may_fill: true,
         },
         #[cfg(any(test, feature = "test-games"))]
@@ -554,6 +580,10 @@ macro_rules! each {
         match $self {
             SeatGame::Undercover($game) => {
                 type $R = crate::undercover::Undercover;
+                $body
+            }
+            SeatGame::Werewolf($game) => {
+                type $R = crate::werewolf::Werewolf;
                 $body
             }
             #[cfg(any(test, feature = "test-games"))]
@@ -593,6 +623,9 @@ impl SeatGame {
                     seats, pair, rolls,
                 )))
             }
+            crate::werewolf::KIND => Some(Self::Werewolf(crate::werewolf::Werewolf::deal(
+                seats, rolls,
+            ))),
             #[cfg(any(test, feature = "test-games"))]
             "marks" => Some(Self::Marks(marks::Marks::deal_to(seats, rolls))),
             _ => None,
@@ -603,6 +636,7 @@ impl SeatGame {
     pub fn used(&self) -> Option<String> {
         match self {
             Self::Undercover(game) => Some(game.used()),
+            Self::Werewolf(_) => None,
             #[cfg(any(test, feature = "test-games"))]
             Self::Marks(_) => None,
         }
@@ -640,6 +674,7 @@ impl SeatGame {
     pub fn outcome(&self) -> Option<String> {
         match self {
             Self::Undercover(game) => game.outcome(),
+            Self::Werewolf(game) => game.outcome(),
             #[cfg(any(test, feature = "test-games"))]
             Self::Marks(_) => None,
         }
@@ -679,6 +714,29 @@ impl SeatGame {
 
     pub fn over(&self) -> bool {
         each!(self, game, R => R::over(game))
+    }
+
+    pub fn news_in_private(&self) -> bool {
+        each!(self, _game, R => R::NEWS_IN_PRIVATE)
+    }
+
+    pub fn public_wait(&self) -> bool {
+        each!(self, game, R => R::public_wait(game))
+    }
+
+    /// Before and after the name of the seat whose turn it is to speak.
+    pub fn speak_turn(&self) -> (String, String) {
+        each!(self, game, R => R::speak_turn(game)).unwrap_or_else(|| speak_turn_lines(self.kind()))
+    }
+
+    /// Which round or day it is, as a test plays it.
+    pub fn round(&self) -> u32 {
+        match self {
+            Self::Undercover(game) => game.round,
+            Self::Werewolf(game) => game.night,
+            #[cfg(any(test, feature = "test-games"))]
+            Self::Marks(_) => 0,
+        }
     }
 }
 
@@ -778,6 +836,7 @@ pub fn has_buttons(platform: &str) -> bool {
 pub fn how_to_speak(kind: &str) -> &'static str {
     match kind {
         crate::undercover::KIND => crate::undercover::HOW_TO_DESCRIBE,
+        crate::werewolf::KIND => crate::werewolf::HOW_TO_SPEAK,
         _ => "say one short line, as yourself.",
     }
 }
@@ -862,6 +921,10 @@ pub fn reminder_after(name: &str) -> String {
     let _ = name;
     " 你已经连着两次没动了，还在吗？".to_string()
 }
+
+/// The same, whispered to them, when the table may not know what they
+/// were waited for.
+pub const REMINDER_IN_PRIVATE: &str = "你已经连着两次没动了，还在吗？";
 
 /// It is a seat's turn to speak at the table: before and after its name.
 pub fn speak_turn_lines(game: &str) -> (String, String) {

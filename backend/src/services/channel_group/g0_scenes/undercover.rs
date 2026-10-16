@@ -18,7 +18,7 @@ fn table(venue: &str) -> Option<Seating> {
 /// The players at `venue`'s table, every 9.7 seconds until `until` (from
 /// now): whoever's turn it is to speak says `said(seat, round)` in the
 /// group (none: lets it pass); whoever has to choose whispers `chosen`.
-async fn play_out(
+pub(super) async fn play_out(
     venue: &str,
     platform: ChannelPlatform,
     chat: &str,
@@ -37,11 +37,7 @@ async fn play_out(
         let Some(game) = seating.game.as_ref() else {
             continue;
         };
-        let round = match game {
-            myriad_merope::hosting::SeatGame::Undercover(game) => game.round,
-            #[allow(unreachable_patterns)]
-            _ => 0,
-        };
+        let round = game.round();
         match game.waiting() {
             Waiting::Speak(seat) if !seating.reachable[seat].hers => {
                 let sat = &seating.reachable[seat];
@@ -68,12 +64,12 @@ async fn play_out(
     }
 }
 
-fn first(_: &Seating, _: usize) -> Option<String> {
+pub(super) fn first(_: &Seating, _: usize) -> Option<String> {
     Some("0".into())
 }
 
 /// What the scene's table was dealt, and what the group remembers of it.
-async fn remembered(db: &sea_orm::DatabaseConnection, venue: &str) {
+pub(super) async fn remembered(db: &sea_orm::DatabaseConnection, venue: &str) {
     use sea_orm::ConnectionTrait;
     let rows = db
         .query_all_raw(sea_orm::Statement::from_sql_and_values(

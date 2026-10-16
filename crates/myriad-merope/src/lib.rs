@@ -64,6 +64,7 @@ pub mod style;
 pub mod strangers;
 pub mod talk_shape;
 pub mod undercover;
+pub mod werewolf;
 pub mod taste;
 pub mod threads;
 pub mod timing;

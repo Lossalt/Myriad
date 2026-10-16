@@ -43,6 +43,9 @@ const TRAJECTORIES: &[(&str, &[u8])] = &[
     trajectory!("undercover_goes_on_after_a_restart"),
     trajectory!("undercover_is_played_with_buttons"),
     trajectory!("undercover_she_fills_a_seat"),
+    trajectory!("werewolf_goes_on_after_a_restart"),
+    trajectory!("werewolf_is_played_with_buttons"),
+    trajectory!("werewolf_she_fills_a_seat"),
 ];
 
 #[test]
