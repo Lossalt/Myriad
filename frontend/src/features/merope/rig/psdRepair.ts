@@ -1,7 +1,7 @@
 import type { Anime25DSourceReference, RasterLayer } from './anime25dImportTypes'
 import type { Anime25DPsdReconciliation } from './psdReconciliation'
 import type { RecoveredPiece } from './psdRepairLayers'
-import { analyzeAnime25DPsd, reportAnime25DPsdAnalysis } from './psdReconciliation'
+import { analyzeAnime25DPsd, regionFloor, reportAnime25DPsdAnalysis } from './psdReconciliation'
 import { closeGarmentGaps, droppedGarment, garmentEdge } from './psdRepairGarment'
 import { hairHolder, hasExpressionVariants, mergeByGroup, mountFor, overlayLayer, revealableBelow, withPixels } from './psdRepairLayers'
 import { addAntialiasedRim, alphaAt, closeMask, components, fillSmallHoles, meanCoveredDistance } from './psdRepairMasks'
@@ -225,8 +225,11 @@ export function repairAnime25DPsd(
         const { x, y } = at(target)
         return reference.data[(y * reference.width + x) * 4 + 3] >= 250
       })
-      if (shown.length < before.minArea || shown.length > maxGarmentArea) continue
+      if (shown.length < regionFloor(before, shown) || shown.length > maxGarmentArea) continue
       let mount = mountFor(before, shown, visible)
+      // Only an earring is let in under the portrait's size floor: a piece
+      // that small which does not hang from an ear is a speck of something else.
+      if (shown.length < before.minArea && mount.role !== 'earwear') continue
       if (mount.owner < 0 && mount.role === 'objects') mount = garmentEdge(before, shown, visible, reference) ?? mount
       let garment = false
       if (shown.length > maxArea) {

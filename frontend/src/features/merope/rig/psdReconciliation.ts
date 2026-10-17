@@ -2,7 +2,9 @@ import type {
   Anime25DSourceReference,
   RasterLayer,
 } from './anime25dImportTypes'
+import type { EarAccessoryMasks } from './psdEarAccessory'
 import type { RigRect } from './types'
+import { earAccessoryMasks } from './psdEarAccessory'
 
 /**
  * Why the rest composite disagrees with the source illustration at a spot:
@@ -110,6 +112,8 @@ export interface Anime25DPsdAnalysis {
   classes: Uint8Array
   /** Smallest region worth reporting or repairing. */
   minArea: number
+  /** Where an earring may be (earAccessoryMasks), so regionFloor is the bare pixel floor. */
+  ear: EarAccessoryMasks
   /** Every region above the size floor, largest first. */
   regions: Anime25DPsdAnalysisRegion[]
 }
@@ -210,9 +214,11 @@ export function analyzeAnime25DPsd(
     Math.round(compared * MIN_REGION_SHARE),
   )
   const flagged = classes.slice()
+  const ear = earAccessoryMasks(layers, bounds)
+  const floor = (members: readonly number[]) => regionFloor({ minArea, ear }, members)
   const regions =
     status === 'reconciled'
-      ? collectRegions(classes, bounds, minArea, (target, kind) => {
+      ? collectRegions(classes, bounds, floor, (target, kind) => {
           const index = kind === 'buried' ? covered[target] : top[target]
           return index >= 0 ? layers[index].role : null
         })
@@ -232,8 +238,19 @@ export function analyzeAnime25DPsd(
     flagged,
     classes,
     minArea,
+    ear,
     regions,
   }
+}
+
+/** The smallest a region of these pixels may be and still count: the bare floor for an earring, else minArea. */
+export function regionFloor(
+  analysis: Readonly<Pick<Anime25DPsdAnalysis, 'minArea' | 'ear'>>,
+  members: readonly number[],
+): number {
+  const { onEarring, belowEar } = analysis.ear
+  const earring = members.some((target) => onEarring[target] || belowEar[target])
+  return earring ? MIN_REGION_PIXELS : analysis.minArea
 }
 
 /** `repaired` marks changed pixels in reference space for the overview. */
@@ -435,7 +452,7 @@ function coveredMatch(
 function collectRegions(
   classes: Uint8Array,
   bounds: ContentBounds,
-  minArea: number,
+  floor: (members: readonly number[]) => number,
   roleAt: (target: number, kind: Anime25DPsdDefectKind) => string | null,
 ): Anime25DPsdAnalysisRegion[] {
   const { width, height } = bounds
@@ -472,7 +489,7 @@ function collectRegions(
       if (y > 0) visit(target - width)
       if (y < height - 1) visit(target + width)
     }
-    if (area < minArea) {
+    if (area < floor(members)) {
       for (const member of members) classes[member] = 0
       continue
     }

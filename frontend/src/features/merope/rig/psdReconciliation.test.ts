@@ -4,7 +4,7 @@ import type {
 } from './anime25dImportTypes'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { reconcileAnime25DPsd } from './psdReconciliation'
+import { analyzeAnime25DPsd, reconcileAnime25DPsd } from './psdReconciliation'
 
 type Rgb = readonly [number, number, number]
 type Box = readonly [number, number, number, number]
@@ -20,21 +20,22 @@ const INK: Rgb = [40, 30, 30]
 function reference(
   paint: (fill: (box: Box, color: Rgb) => void) => void,
   backdrop: (x: number, y: number) => Rgb = () => BACKDROP,
+  size = SIZE,
 ): Anime25DSourceReference {
-  const data = new Uint8ClampedArray(SIZE * SIZE * 4)
-  for (let y = 0; y < SIZE; y += 1) {
-    for (let x = 0; x < SIZE; x += 1) {
-      data.set([...backdrop(x, y), 255], (y * SIZE + x) * 4)
+  const data = new Uint8ClampedArray(size * size * 4)
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      data.set([...backdrop(x, y), 255], (y * size + x) * 4)
     }
   }
   paint(([left, top, width, height], color) => {
     for (let y = top; y < top + height; y += 1) {
       for (let x = left; x < left + width; x += 1) {
-        data.set([...color, 255], (y * SIZE + x) * 4)
+        data.set([...color, 255], (y * size + x) * 4)
       }
     }
   })
-  return { width: SIZE, height: SIZE, data }
+  return { width: size, height: size, data }
 }
 
 function layer(role: string, [left, top, width, height]: Box, color: Rgb) {
@@ -111,6 +112,54 @@ test('illustrated art that no layer carries is reported as missing', () => {
       },
     ],
   )
+})
+
+test('thin ear chains count on a large portrait while distant specks and regions below the pixel floor do not', () => {
+  const layers = [
+    layer('face', [240, 160, 320, 240], SKIN),
+    layer('topwear', [160, 400, 480, 320], CLOTH),
+    layer('ears', [220, 260, 20, 28], SKIN),
+    layer('ears', [560, 260, 20, 28], SKIN),
+    // An occluded ear still provides evidence for the chain beside it.
+    layer('front-hair', [560, 260, 20, 28], INK),
+  ]
+  const source = reference((fill) => {
+    for (const drawing of layers) {
+      const color = drawing.role === 'topwear' ? CLOTH : drawing.role === 'front-hair' ? INK : SKIN
+      fill([drawing.left, drawing.top, drawing.width, drawing.height], color)
+    }
+    fill([226, 288, 2, 32], EARRING)
+    fill([566, 288, 2, 32], EARRING)
+    fill([100, 300, 2, 32], EARRING)
+    fill([233, 288, 1, 32], EARRING)
+  }, undefined, 800)
+  const analysis = analyzeAnime25DPsd(layers, source)!
+  assert.ok(analysis.minArea > 64, 'the portrait-wide size floor exceeds the chain area')
+  assert.deepEqual(
+    analysis.regions.map(({ kind, area, box }) => ({ kind, area, box })),
+    [
+      { kind: 'missing', area: 64, box: { x: 226, y: 288, width: 2, height: 32 } },
+      { kind: 'missing', area: 64, box: { x: 566, y: 288, width: 2, height: 32 } },
+    ],
+  )
+})
+
+test('a sliver along an ear\'s side is not an earring and keeps the portrait-wide floor', () => {
+  const layers = [
+    layer('face', [240, 160, 320, 240], SKIN),
+    layer('topwear', [160, 400, 480, 320], CLOTH),
+    layer('ears', [220, 260, 20, 28], SKIN),
+  ]
+  const source = reference((fill) => {
+    for (const drawing of layers) {
+      fill([drawing.left, drawing.top, drawing.width, drawing.height], drawing.role === 'topwear' ? CLOTH : SKIN)
+    }
+    // The ear drawn a little wider than its layer: within the ear's height, hanging nowhere.
+    fill([216, 264, 4, 20], EARRING)
+  }, undefined, 800)
+  const analysis = analyzeAnime25DPsd(layers, source)!
+  assert.ok(analysis.minArea > 80)
+  assert.deepEqual(analysis.regions, [])
 })
 
 test('paint over the open backdrop is spurious, over enclosed pale art a mismatch', () => {

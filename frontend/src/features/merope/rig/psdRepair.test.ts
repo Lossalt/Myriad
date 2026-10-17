@@ -20,19 +20,20 @@ const allVisible = () => true
 
 function reference(
   paint: (fill: (box: Box, color: Rgb) => void) => void,
+  size = SIZE,
 ): Anime25DSourceReference {
-  const data = new Uint8ClampedArray(SIZE * SIZE * 4)
+  const data = new Uint8ClampedArray(size * size * 4)
   for (let index = 0; index < data.length; index += 4) {
     data.set([...BACKDROP, 255], index)
   }
   paint(([left, top, width, height], color) => {
     for (let y = top; y < top + height; y += 1) {
       for (let x = left; x < left + width; x += 1) {
-        data.set([...color, 255], (y * SIZE + x) * 4)
+        data.set([...color, 255], (y * size + x) * 4)
       }
     }
   })
-  return { width: SIZE, height: SIZE, data }
+  return { width: size, height: size, data }
 }
 
 function layer(
@@ -337,6 +338,52 @@ test('a dropped earring hangs from the ear', () => {
   )!
   assert.equal(earring.role, 'earwear')
   assert.equal(earring.group, 'head')
+})
+
+test('a thin chain below the portrait size floor is recovered on the ear, with distant specks left alone', () => {
+  const ear = layer('ears', [220, 260, 20, 28], SKIN, 'head')
+  const face = layer('face', [240, 160, 320, 240], SKIN, 'head')
+  const top = layer('topwear', [160, 400, 480, 320], CLOTH)
+  const result = repairAnime25DPsd(
+    [ear, face, top],
+    allVisible,
+    reference((fill) => {
+      fill([220, 260, 20, 28], SKIN)
+      fill([240, 160, 320, 240], SKIN)
+      fill([160, 400, 480, 320], CLOTH)
+      fill([226, 288, 2, 32], GEM)
+      fill([100, 300, 2, 32], GEM)
+    }, 800),
+    2,
+  )
+  const recovered = result.layers.filter((candidate) => candidate.id.startsWith('recovered-'))
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0].role, 'earwear')
+  assert.equal(recovered[0].group, 'head')
+  assert.deepEqual(pixel(recovered[0], 226, 319), [...GEM, 255])
+  assert.ok(recovered[0].left > 100, 'unrelated specks are not recovered')
+  assert.deepEqual(result.reconciliation?.repairs, { revealed: 0, recovered: 1 })
+})
+
+test('a small piece below an ear that lies on the hair, not hanging from the ear, is left alone', () => {
+  const ear = layer('ears', [220, 260, 20, 28], SKIN, 'head')
+  const hair = layer('back-hair', [190, 300, 80, 120], HAIR, 'head')
+  const face = layer('face', [240, 160, 320, 240], SKIN, 'head')
+  const top = layer('topwear', [160, 430, 480, 300], CLOTH)
+  const result = repairAnime25DPsd(
+    [hair, ear, face, top],
+    allVisible,
+    reference((fill) => {
+      fill([190, 300, 80, 120], HAIR)
+      fill([220, 260, 20, 28], SKIN)
+      fill([240, 160, 320, 240], SKIN)
+      fill([160, 430, 480, 300], CLOTH)
+      // Strand tips the hair layer drew another colour: below the ear but clear of it, on the hair.
+      fill([226, 302, 8, 8], GOLD)
+    }, 800),
+    2,
+  )
+  assert.equal(result.layers.filter((candidate) => candidate.id.startsWith('recovered-')).length, 0)
 })
 
 test('without a free layer slot recoveries are only reported', () => {
