@@ -25,7 +25,7 @@ pub async fn take_in(db: &DatabaseConnection, owner: i32, venue: &str, lines: Ve
     if !super::is_enabled().await || lines.iter().all(|line| line.hers) {
         return;
     }
-    let Ok(raw) = call::Ask::new(Voice::Judge, owner, "heard")
+    let Ok(raw) = call::Ask::new(Voice::Thorough, owner, "heard")
         .within(CALL_TIMEOUT)
         .json_raw(system(), &input(&lines), SCHEMA_NAME, &schema())
         .await

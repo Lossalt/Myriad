@@ -42,7 +42,7 @@ pub const SOURCE: &str = "stranger";
 const REGULAR_AFTER: i64 = 3;
 /// A note nobody has touched this long fades.
 const FADE_AFTER: chrono::Duration = chrono::Duration::days(60);
-const NOTE_TIMEOUT: Duration = Duration::from_secs(30);
+const NOTE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Runtime-registry namespace of the exchange counts.
 pub const TALKS_NAMESPACE: &str = "merope_stranger_talks";
 
@@ -163,7 +163,7 @@ pub(super) async fn prepare_note(
         .await
         .unwrap_or_default();
     let input = json!({ "name": stranger.name, "remembered": kept.as_ref().map(|row| row.content.as_str()), "exchanges": exchanges }).to_string();
-    let raw = super::call::Ask::new(super::call::Voice::HersAtLength, owner, NOTE_SCHEMA)
+    let raw = super::call::Ask::new(super::call::Voice::Thorough, owner, NOTE_SCHEMA)
         .within(NOTE_TIMEOUT)
         .json_raw(&note_system(&soul), &input, NOTE_SCHEMA, &note_schema())
         .await?;

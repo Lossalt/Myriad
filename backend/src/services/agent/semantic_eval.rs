@@ -1334,6 +1334,16 @@ fn is_judgment(case: &Case) -> bool {
     }
 }
 
+/// These calls now use her voice with high effort, and have room to think.
+fn thorough_seconds(case: &Case) -> Option<u64> {
+    match case.kind.as_str() {
+        "sense" => Some(25),
+        "memory" | "settle" | "heard" => Some(45),
+        "bits" | "stranger_note" => Some(60),
+        _ => None,
+    }
+}
+
 fn gated(case: &Case) -> bool {
     if case.kind != "event" {
         return false;
@@ -1995,6 +2005,21 @@ async fn run_semantic_suite() {
     } else {
         None
     };
+    let thorough = if mode == "live" && cases.iter().any(|case| thorough_seconds(case).is_some()) {
+        crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(Duration::from_secs(
+            diagnostic.unwrap_or(60),
+        )))
+        .await
+        .map(|analyzer| {
+            if std::env::var("MEROPE_SEMANTIC_THINKING").as_deref() == Ok("default") {
+                analyzer
+            } else {
+                analyzer.with_deep_thinking()
+            }
+        })
+    } else {
+        None
+    };
     if mode == "live" {
         let judge_model = crate::GLOBAL_DYNAMIC_CONFIG
             .read()
@@ -2040,6 +2065,16 @@ async fn run_semantic_suite() {
     let mut pending: std::collections::VecDeque<_> = cases.into();
     while let Some(case) = pending.pop_front() {
         let mut request = request(&case);
+        if let Some(seconds) = thorough_seconds(&case) {
+            request["thinking"] = json!({
+                "effort": if std::env::var("MEROPE_SEMANTIC_THINKING").as_deref() == Ok("default") {
+                    "default"
+                } else {
+                    "high"
+                },
+                "timeoutSeconds": diagnostic.map(|seconds| seconds + 1).unwrap_or(seconds),
+            });
+        }
         if let Some(probe) = &probe {
             request["diagnosticProbe"] = json!({"reasoning":probe,"maxTokens":2048});
         }
@@ -2087,6 +2122,8 @@ async fn run_semantic_suite() {
             }
         } else if let Some(analyzer) = if case.kind == "motion" {
             &director
+        } else if thorough_seconds(&case).is_some() {
+            &thorough
         } else if is_judgment(&case) {
             &judge
         } else {
@@ -2094,7 +2131,9 @@ async fn run_semantic_suite() {
         } {
             let result = tokio::time::timeout(
                 Duration::from_secs(diagnostic.map(|seconds| seconds + 1).unwrap_or(
-                    if case.kind == "touch" {
+                    if let Some(seconds) = thorough_seconds(&case) {
+                        seconds
+                    } else if case.kind == "touch" {
                         2
                     } else if case.kind == "motion" {
                         10
@@ -2254,7 +2293,7 @@ async fn run_semantic_suite() {
             "rubric":case.rubric,"outcome":outcome,"output":output,"grade":grade,"review":review,
             "latencyMs":latency,"firstTextMs":first_text_ms,"touchMetrics":touch_metrics,"directorMetrics":director_metrics,
             "probeObservation": if mode == "replay" { replay.iter().find(|r| r["id"] == case.id).and_then(|r| r.get("probeObservation")).cloned().unwrap_or(Value::Null) } else if probe.is_some() { json!(observation) } else { Value::Null },
-            "withinRequestBudget":latency.map(|ms| ms <= if case.kind == "motion" {9000} else if case.kind == "touch" {2000} else {4000})}),
+            "withinRequestBudget":latency.map(|ms| ms <= if let Some(seconds) = thorough_seconds(&case) {seconds * 1000} else if case.kind == "motion" {9000} else if case.kind == "touch" {2000} else {4000})}),
         );
     }
     let summary = summary(&rows);
@@ -2266,7 +2305,7 @@ async fn run_semantic_suite() {
         &json!({"version":1,"mode":mode,"syntheticOnly":true,
             "configuredLite":model_info,"diagnosticDeadlineSeconds":diagnostic,
             "persona":if HERS.get().is_some() {"hers"} else {"contract"},
-            "latencyScope":"model calls only: touch budget 2s, event 4s, director 9s; diagnostic deadline never changes production budgets; excludes transport-to-app, state lookup and rendering",
+            "latencyScope":"model calls only: touch budget 2s, event 4s, director 9s; thorough reading/memory 25-60s; diagnostic deadline never changes production budgets; excludes transport-to-app, state lookup and rendering",
         "summary":summary,"rows":rows}),
     )
     .unwrap();

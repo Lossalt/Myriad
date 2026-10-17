@@ -47,6 +47,7 @@ pub async fn ask(
     let voice = match voice {
         "hers" => Voice::Hers,
         "hersAtLength" => Voice::HersAtLength,
+        "thorough" => Voice::Thorough,
         _ => Voice::Judge,
     };
     let class = |failure: Failure| match failure {

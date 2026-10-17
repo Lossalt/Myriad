@@ -4,7 +4,8 @@
 //! A judgment (what to pick, whether a step is worth taking, whether a guess
 //! held) goes to the fast judging model. Anything in her own words goes to
 //! her voice, thinking a little as her chat replies do, or, where a call
-//! needs it, as long as the provider likes.
+//! needs it, as long as the provider likes. Making sense of what people
+//! mean, and what she keeps of it, is thought through.
 //!
 //! This is the one place Merope reaches the model and the cost ledger. The
 //! live appraisal keeps its own analyzer for its timing probes.
@@ -24,6 +25,10 @@ pub(super) enum Voice {
     Hers,
     /// Her voice, thinking as long as the provider likes.
     HersAtLength,
+    /// Her voice, thinking it through: making sense of what people mean,
+    /// and what she keeps of it. Slower; for calls where a wrong reading
+    /// costs more than the wait.
+    Thorough,
 }
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(45);
@@ -163,6 +168,12 @@ impl Ask {
                 crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(self.timeout))
                     .await
                     .ok_or_else(|| self.failed(Failure::Unavailable))?
+            }
+            Voice::Thorough => {
+                crate::services::ai::create_strict_lite_ai_analyzer_with_timeout(Some(self.timeout))
+                    .await
+                    .ok_or_else(|| self.failed(Failure::Unavailable))?
+                    .with_deep_thinking()
             }
         };
         Ok(Model {

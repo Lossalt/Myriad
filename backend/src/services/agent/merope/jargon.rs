@@ -27,7 +27,7 @@ const NAMESPACE: &str = "merope_jargon_watched";
 const WATCHED_FOR_DAYS: i64 = 30;
 /// A group's word no one brought up again in this long fades.
 const FADES_AFTER: chrono::Duration = chrono::Duration::days(90);
-const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const CALL_TIMEOUT: Duration = Duration::from_secs(45);
 /// Words of the groups read back.
 #[cfg(test)]
 const READ_BACK: u64 = 300;
@@ -164,7 +164,7 @@ fn work_out(venue: String, word: Watched) {
 /// group's own: what it usually means first, from the word alone, then the
 /// group's use beside it. Billed to `owner`.
 async fn own_meaning(owner: i32, term: &str, lines: &[String]) -> Option<String> {
-    let usual = call::Ask::new(Voice::Judge, owner, "word_usually")
+    let usual = call::Ask::new(Voice::Thorough, owner, "word_usually")
         .within(CALL_TIMEOUT)
         .json_raw(
             usual_system(),
@@ -176,7 +176,7 @@ async fn own_meaning(owner: i32, term: &str, lines: &[String]) -> Option<String>
         .ok()
         .and_then(|raw| parse_usual(&raw))
         .flatten();
-    let raw = call::Ask::new(Voice::Judge, owner, "word_here")
+    let raw = call::Ask::new(Voice::Thorough, owner, "word_here")
         .within(CALL_TIMEOUT)
         .json_raw(
             here_system(),

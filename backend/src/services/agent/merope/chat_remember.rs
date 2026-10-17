@@ -38,7 +38,7 @@ pub fn should_extract_chat_remember_against(user_text: &str, existing: &[String]
 }
 
 // Nobody waits on this: generous enough to ride out a stalled provider.
-const EXTRACT_TIMEOUT: Duration = Duration::from_secs(20);
+const EXTRACT_TIMEOUT: Duration = Duration::from_secs(45);
 const ALREADY_TIMEOUT: Duration = Duration::from_secs(15);
 /// A fact she had looks like a new one when this much of the shorter is in
 /// both, or this much and the new fact's subject is named in it.
@@ -442,7 +442,7 @@ pub(super) async fn extract(
         turn,
         input_at.with_timezone(&super::clock::zone()),
     );
-    let raw = super::call::Ask::new(super::call::Voice::Judge, user_id, "chat_remember")
+    let raw = super::call::Ask::new(super::call::Voice::Thorough, user_id, "chat_remember")
         .within(EXTRACT_TIMEOUT)
         .json_raw(
             &extract_system_prompt(&existing),

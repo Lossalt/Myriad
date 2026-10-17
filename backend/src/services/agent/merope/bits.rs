@@ -233,7 +233,7 @@ async fn review(
     input["lands"] = json!(lands_now.as_ref().map(|row| row.content.clone()));
     input["soreSpots"] = json!(super::sore::as_input(&sores, chrono::Utc::now()));
     let input = input.to_string();
-    let raw = super::call::Ask::new(super::call::Voice::HersAtLength, owner, SCHEMA_NAME)
+    let raw = super::call::Ask::new(super::call::Voice::Thorough, owner, SCHEMA_NAME)
         .within(std::time::Duration::from_secs(60))
         .json_raw(
             &system(&soul, matches!(circle, Circle::Group { .. })),
@@ -700,7 +700,7 @@ mod live {
             .await
             .unwrap_or_default();
         let raw =
-            super::super::call::Ask::new(super::super::call::Voice::HersAtLength, 1, SCHEMA_NAME)
+            super::super::call::Ask::new(super::super::call::Voice::Thorough, 1, SCHEMA_NAME)
                 .within(std::time::Duration::from_secs(90))
                 .json_raw(
                     &system(&soul, group),

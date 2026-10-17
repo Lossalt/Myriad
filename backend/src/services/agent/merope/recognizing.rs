@@ -28,7 +28,7 @@ const PEOPLE: i64 = 50;
 const MEMORIES: usize = 300;
 /// Typing this close to someone's own counts as typing like them.
 const TYPES_LIKE: f64 = 1.5;
-const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 fn group_venue(venue: &str) -> String {
     Audience::group(venue, 0).venue()
@@ -115,7 +115,7 @@ pub async fn consider(
         "typing": typing,
     })
     .to_string();
-    let Ok(raw) = call::Ask::new(Voice::Judge, owner, "recognizing")
+    let Ok(raw) = call::Ask::new(Voice::Thorough, owner, "recognizing")
         .within(CALL_TIMEOUT)
         .json_raw(&system(), &input, SCHEMA_NAME, &schema())
         .await

@@ -96,7 +96,7 @@ pub(in crate::services::agent::merope) async fn settle(
             .to_string(),
     );
     let raw =
-        super::super::call::Ask::new(super::super::call::Voice::Judge, user_id, "chat_settle")
+        super::super::call::Ask::new(super::super::call::Voice::Thorough, user_id, "chat_settle")
             .within(EXTRACT_TIMEOUT)
             .json_raw(
                 &myriad_merope::chat_remember::settle_system_prompt(&known),

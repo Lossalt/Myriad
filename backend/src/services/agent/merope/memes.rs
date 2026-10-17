@@ -16,7 +16,7 @@ use crate::services::agent::memory::unified;
 use myriad_merope::memes::{Known, SOURCE, known_in, read_kept, section};
 
 #[cfg(test)]
-const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 /// What she knows, read back: the latest this many.
 const READ_BACK: u64 = 500;
 
@@ -102,7 +102,7 @@ pub(super) async fn keep(
         DIGEST_SCHEMA, digest_input, digest_schema, digest_system, kept_line, parse_digest,
     };
     use serde_json::json;
-    let raw = call::Ask::new(Voice::Judge, owner, "meme")
+    let raw = call::Ask::new(Voice::Thorough, owner, "meme")
         .within(CALL_TIMEOUT)
         .json_raw(
             &digest_system(),
