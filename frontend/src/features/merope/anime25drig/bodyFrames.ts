@@ -276,6 +276,8 @@ export class Anime25DBodyFrames {
       torsoProfile: this.shellProfile.torso,
       torsoShellBlend: 0,
       torsoNeckOffsetX: 0,
+      neckBottom: anchors.neckBottom,
+      chestRegionCenterY: this.chestRegion.centerY,
       torsoShellRotation: this.torsoShellRotation,
       headTurn: null,
       keyedHead: false,

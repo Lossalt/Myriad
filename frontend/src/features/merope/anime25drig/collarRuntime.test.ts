@@ -119,6 +119,52 @@ test('applies the collar torso shell to the neck aperture mesh', () => {
   }
 })
 
+test('turns a figure\'s neck aperture at the neck\'s depth, as the neck itself turns', () => {
+  // Rows at the neck's foot, where only the body moves the opening.
+  const rest = new Float32Array([84, 152, 116, 152, 84, 160, 116, 160])
+  const pose: CollarMotionPose = {
+    neckPivotX: 100,
+    neckPivotY: 150,
+    neckFollowTop: 82,
+    neckFollowSpan: 70,
+    faceCenterY: 92,
+    faceScale: 0.82,
+    angleX: 0,
+    angleY: 0,
+    headRotationCosine: 1,
+    headRotationSine: 0,
+    bodyBreathOffset: 0,
+    headBreathOffset: 0,
+    ...neutralTorsoPose(),
+    torsoProfile: { enabled: true, blend: 1, centerX: 100, radiusX: 80, radiusZ: 48, neckDepth: 0.25 },
+    torsoShellRotation: { active: true, yawCosine: Math.cos(0.4), yawSine: Math.sin(0.4) },
+    torsoShellBlend: 1,
+  }
+  const still = clipMesh(rest)
+  deformCollarClipMesh(still, { ...pose, torsoShellBlend: 0 }, 1)
+  const turned = clipMesh(rest)
+  deformCollarClipMesh(turned, pose, 1)
+  for (let index = 0; index < rest.length; index += 2) {
+    const travel = turned.deformed[index] - still.deformed[index]
+    // The neck's own vertices at that height: torsoShellOffsetX at the figure's front depth there.
+    const neckTravel = anime25DTorsoShellOffsetX(
+      still.deformed[index],
+      pose.torsoProfile,
+      pose.torsoShellRotation,
+      1 - collarNeckHeadBlend(rest[index + 1], pose),
+      0.25 + 0.75 * smoothstepForTest((rest[index + 1] - 152) / (220 - 152)),
+    )
+    assert.ok(Math.abs(travel - neckTravel) < 1e-4, `vertex ${index / 2}: ${travel} vs ${neckTravel}`)
+    const trunkTravel = anime25DTorsoShellOffsetX(still.deformed[index], pose.torsoProfile, pose.torsoShellRotation, 1)
+    assert.ok(Math.abs(travel) < Math.abs(trunkTravel) * 0.6)
+  }
+})
+
+function smoothstepForTest(value: number): number {
+  const t = Math.min(1, Math.max(0, value))
+  return t * t * (3 - 2 * t)
+}
+
 test('uses one monotonic vertical follow field across the high collar', () => {
   const pose = { neckFollowTop: 82, neckFollowSpan: 70 }
   const top = collarNeckHeadBlend(82, pose)
@@ -226,9 +272,11 @@ function clipMesh(rest: Float32Array): CollarClipMesh {
 
 function neutralTorsoPose(): Pick<
   CollarMotionPose,
-  'torsoProfile' | 'torsoShellRotation' | 'torsoShellBlend' | 'torsoNeckOffsetX'
+  'torsoProfile' | 'torsoShellRotation' | 'torsoShellBlend' | 'torsoNeckOffsetX' | 'neckBottom' | 'chestRegionCenterY'
 > {
   return {
+    neckBottom: 152,
+    chestRegionCenterY: 220,
     torsoProfile: {
       enabled: false,
       blend: 0,

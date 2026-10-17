@@ -242,8 +242,9 @@ export function anime25DTorsoShellOffsetX(
   profile: Readonly<Anime25DTorsoShellProfile>,
   rotation: Readonly<Anime25DTorsoShellRotation>,
   blend: number,
+  depthScale = 1,
 ): number {
-  return torsoShellOffsetX(pointX, 0, profile, rotation, blend, null)
+  return torsoShellOffsetX(pointX, 0, profile, rotation, blend, null, 1, 1, depthScale)
 }
 
 export function resolveAnime25DTorsoChestShape(

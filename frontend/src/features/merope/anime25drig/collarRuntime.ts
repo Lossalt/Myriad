@@ -5,7 +5,7 @@ import type { Anime25DPlaybackLayer, Anime25DTorsoShellProfile } from './types'
 import { localToAtlasUv } from './atlasUv'
 import { carryOnFigure } from './figureSkeleton'
 import { headTurnNeckMove } from './headTurn'
-import { anime25DTorsoShellOffsetX } from './torsoDeformation'
+import { anime25DTorsoShellOffsetX, figureFrontDepth } from './torsoDeformation'
 import {
   createIndexedDeformableMesh,
   disposeIndexedDeformableMesh,
@@ -46,6 +46,9 @@ export interface CollarMotionPose {
   torsoShellRotation: Readonly<Anime25DTorsoShellRotation>
   torsoShellBlend: number
   torsoNeckOffsetX: number
+  /** The neck's foot and the chest's middle, between which a figure's front comes out from the neck's depth (figureFrontDepth). */
+  neckBottom: number
+  chestRegionCenterY: number
   /** The computed head, which the top of the neck follows at the jaw. */
   headTurn: Readonly<HeadTurn> | null
   /** A keyed head turns on a still body: the collar takes no part of the turn or the nod. */
@@ -242,11 +245,15 @@ export function deformCollarClipMesh(
       clip.deformed,
       index,
     )
+    // The neck the clip draws turns as near the axis as the neck's own mesh
+    // does: a figure's neck at its depth, not the whole trunk's, or the
+    // opening runs off sideways and the cloth behind shows through it.
     clip.deformed[index] += anime25DTorsoShellOffsetX(
       clip.deformed[index],
       pose.torsoProfile,
       pose.torsoShellRotation,
       pose.torsoShellBlend * (1 - headBlend),
+      figureFrontDepth(pose.torsoProfile, clip.rest[index + 1], pose.neckBottom, pose.chestRegionCenterY),
     )
     clip.deformed[index] += pose.torsoNeckOffsetX * headBlend
   }
