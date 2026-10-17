@@ -256,6 +256,16 @@ impl Gateway {
             Self::OpenAi | Self::Gemini | Self::OpenAiCompatible => None,
         }
     }
+
+    /// 这一家「多想」怎么说，与 [`Gateway::light_thinking`] 同一个参数、同样只写
+    /// 有把握的那一个。Anthropic 自家 API 不走这里（见
+    /// `AiAnalyzer::with_deep_thinking`）：它的网关在这里认作 OpenAI 兼容。
+    pub(super) fn deep_thinking(self) -> Option<(&'static str, serde_json::Value)> {
+        match self {
+            Self::OpenRouter => Some(("reasoning", serde_json::json!({ "effort": "high" }))),
+            Self::OpenAi | Self::Gemini | Self::OpenAiCompatible => None,
+        }
+    }
 }
 
 pub(super) fn gateway_of(provider: AiProvider, base_url: Option<&str>) -> Gateway {

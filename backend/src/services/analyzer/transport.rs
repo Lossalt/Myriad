@@ -60,6 +60,127 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn deep_thinking_reaches_messages_and_only_request_rejection_disables_it() {
+        use super::super::{AiAnalyzer, AiProvider};
+        use axum::{Json, Router, http::StatusCode, routing::post};
+        use serde_json::{Value, json};
+        use std::sync::Arc;
+
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let observed = requests.clone();
+        let router = Router::new().route(
+            "/v1/messages",
+            post(move |Json(body): Json<Value>| {
+                let observed = observed.clone();
+                async move {
+                    observed.lock().unwrap().push(body.clone());
+                    let status = match body["model"].as_str().unwrap() {
+                        "unauthorized" => StatusCode::UNAUTHORIZED,
+                        "limited" => StatusCode::TOO_MANY_REQUESTS,
+                        "unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+                        "legacy" if body.get("output_config").is_some() => StatusCode::BAD_REQUEST,
+                        _ => StatusCode::OK,
+                    };
+                    if status != StatusCode::OK {
+                        return (status, Json(json!({"error":"fixture failure"})));
+                    }
+                    (
+                        status,
+                        Json(json!({"content":[
+                            {"type":"thinking","thinking":"fixture reasoning"},
+                            {"type":"text","text":"{\"read\":true}"}
+                        ]})),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let analyzer = |model: &str| {
+            AiAnalyzer::new_with_timeout(
+                AiProvider::Anthropic,
+                String::new(),
+                model.to_string(),
+                Some(format!("http://{address}/v1")),
+                Duration::from_secs(2),
+            )
+        };
+
+        let ordinary = analyzer("supported").await;
+        ordinary
+            .analyze_json("read", "hello", "read", None)
+            .await
+            .unwrap();
+        let thorough = ordinary.with_deep_thinking();
+        assert_eq!(
+            thorough
+                .analyze_json("read", "hello", "read", None)
+                .await
+                .unwrap(),
+            r#"{"read":true}"#,
+            "thinking blocks must not become memory text",
+        );
+        {
+            let bodies = requests.lock().unwrap();
+            assert!(bodies[0].get("output_config").is_none());
+            assert!(bodies[0].get("thinking").is_none());
+            assert_eq!(bodies[0]["max_tokens"], 4096);
+            assert_eq!(bodies[1]["output_config"]["effort"], "high");
+            assert_eq!(bodies[1]["thinking"]["type"], "adaptive");
+            assert_eq!(bodies[1]["max_tokens"], 16_000);
+        }
+
+        requests.lock().unwrap().clear();
+        let legacy = analyzer("legacy").await.with_deep_thinking();
+        for _ in 0..2 {
+            legacy
+                .analyze_json("read", "hello", "read", None)
+                .await
+                .unwrap();
+        }
+        {
+            let bodies = requests.lock().unwrap();
+            assert_eq!(bodies.len(), 3, "one refusal, then two ordinary requests");
+            assert!(bodies[0].get("output_config").is_some());
+            for body in &bodies[1..] {
+                assert!(body.get("output_config").is_none());
+                assert!(body.get("thinking").is_none());
+            }
+        }
+
+        for (model, expected) in [
+            ("unauthorized", StatusCode::UNAUTHORIZED),
+            ("limited", StatusCode::TOO_MANY_REQUESTS),
+            ("unavailable", StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            requests.lock().unwrap().clear();
+            let failing = analyzer(model).await.with_deep_thinking();
+            for _ in 0..2 {
+                let error = failing
+                    .analyze_json("read", "hello", "read", None)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<super::super::client::ProviderHttpError>()
+                        .unwrap()
+                        .status,
+                    expected,
+                );
+            }
+            let bodies = requests.lock().unwrap();
+            assert_eq!(bodies.len(), 2, "no retry for {expected}");
+            assert!(
+                bodies
+                    .iter()
+                    .all(|body| body["output_config"]["effort"] == "high")
+            );
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn configured_text_protocol_controls_shape_and_optional_auth() {
         use axum::{Json, Router, http::HeaderMap, routing::post};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

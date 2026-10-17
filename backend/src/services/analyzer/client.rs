@@ -31,12 +31,19 @@ pub struct AiAnalyzer {
     /// Ask the gateway for as little thinking as it allows; see
     /// [`AiAnalyzer::with_light_thinking`].
     pub(super) light_thinking: bool,
+    /// Ask the model to think it through; see
+    /// [`AiAnalyzer::with_deep_thinking`].
+    pub(super) deep_thinking: bool,
     /// Most output a request asks for when it names none; see
     /// [`AiAnalyzer::with_output_cap`].
     pub(super) output_cap: Option<u32>,
 }
 
-/// 进程内记下 (base_url, model, structured|extras) 曾被 `rejected_request`；重启清空。
+/// The output limit of a deep-thinking ask that names none: the answer is
+/// short, the thinking before it is not.
+const DEEP_THINKING_MAX_TOKENS: u32 = 16_000;
+
+/// 进程内记下端点和模型拒绝的请求参数；重启清空。
 ///
 /// 阶梯本身没错，错在它没有记忆：不支持 `json_schema` 的网关上，每一次调用都
 /// 要先被拒一次再降级——等于给最弱的那批网关加了一笔常驻的往返税。记下来之后
@@ -61,7 +68,7 @@ pub(crate) fn cleanup_shape_memo() {
     }
 }
 
-/// 记忆分两类，因为它们是两组不同的参数，网关可能只拒其中一组。
+/// 各组参数单独记忆，网关可能只拒其中一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestShape {
     /// `response_format` / `responseSchema`
@@ -70,6 +77,8 @@ enum RequestShape {
     Extras,
     /// 只有「少想」参数（[`AiAnalyzer::with_light_thinking`]）
     LightThinking,
+    /// 只有「多想」参数（[`AiAnalyzer::with_deep_thinking`]）
+    DeepThinking,
 }
 
 impl RequestShape {
@@ -78,6 +87,7 @@ impl RequestShape {
             Self::StructuredOutput => "structured",
             Self::Extras => "extras",
             Self::LightThinking => "light-thinking",
+            Self::DeepThinking => "deep-thinking",
         }
     }
 }
@@ -323,6 +333,7 @@ impl AiAnalyzer {
             model,
             base_url,
             light_thinking: false,
+            deep_thinking: false,
             output_cap: None,
         }
     }
@@ -371,6 +382,36 @@ impl AiAnalyzer {
             return None;
         }
         self.gateway().light_thinking()
+    }
+
+    /// For calls where getting it right is worth the wait: reading what
+    /// people mean, and what she keeps of it. Sends the provider's "think it
+    /// through" parameter where it is known ([`Gateway::deep_thinking`];
+    /// Anthropic's own API: adaptive thinking with `output_config.effort`);
+    /// an endpoint that
+    /// refuses it is remembered and asked again without it. Overrides
+    /// [`AiAnalyzer::with_light_thinking`].
+    pub fn with_deep_thinking(mut self) -> Self {
+        self.deep_thinking = true;
+        self.light_thinking = false;
+        self
+    }
+
+    /// The deep-thinking parameter to send now, if any.
+    fn deep_thinking_param(&self) -> Option<(&'static str, serde_json::Value)> {
+        if !self.deep_thinking || self.refused(RequestShape::DeepThinking) {
+            return None;
+        }
+        if self.provider == AiProvider::Anthropic {
+            return Some(("output_config", serde_json::json!({ "effort": "high" })));
+        }
+        self.gateway().deep_thinking()
+    }
+
+    /// Whichever thinking parameter this analyzer asks for, if any.
+    fn thinking_param(&self) -> Option<(&'static str, serde_json::Value)> {
+        self.deep_thinking_param()
+            .or_else(|| self.light_thinking_param())
     }
 
     /// POST a streaming OpenAI-compatible body, with the light-thinking
@@ -605,7 +646,12 @@ impl AiAnalyzer {
         max_tokens: Option<u32>,
     ) -> std::result::Result<String, ProviderCallFailure> {
         let url = text_protocol::endpoint(self.provider, self.base_url.as_deref());
-        let body = text_protocol::request_body(
+        let deep = self
+            .deep_thinking_param()
+            .filter(|_| self.provider == AiProvider::Anthropic);
+        // Thinking counts against the output limit: room for it.
+        let max_tokens = max_tokens.or(deep.as_ref().map(|_| DEEP_THINKING_MAX_TOKENS));
+        let mut body = text_protocol::request_body(
             self.provider,
             &self.model,
             system,
@@ -614,6 +660,12 @@ impl AiAnalyzer {
             max_tokens,
             false,
         );
+        if let (Some(object), Some((key, value))) = (body.as_object_mut(), deep) {
+            object.insert(key.to_string(), value);
+            // Haiku 5.5 already thinks adaptively by default; models such
+            // as Sonnet 4.6 require it to be enabled explicitly.
+            object.insert("thinking".into(), serde_json::json!({ "type": "adaptive" }));
+        }
         let mut request = self.authenticate(self.client.post(&url));
         if self.provider == AiProvider::Anthropic {
             request = request.header("anthropic-version", "2023-06-01");
@@ -792,10 +844,24 @@ impl AiAnalyzer {
         } else {
             JsonMode::Structured(schema)
         };
+        let deep = self.deep_thinking_param().is_some();
         let light = self.light_thinking_param().is_some();
         let mut result = self
             .analyze_json_inner(system, prompt, schema_name, mode, None)
             .await;
+
+        // Drop a refused thinking parameter before trying without JSON
+        // enforcement: rejecting one says nothing about the other.
+        if deep
+            && result
+                .as_ref()
+                .is_err_and(ProviderCallFailure::rejected_request)
+        {
+            self.remember_refusal(RequestShape::DeepThinking);
+            result = self
+                .analyze_json_inner(system, prompt, schema_name, mode, None)
+                .await;
+        }
 
         // The think-little parameter goes first: a refusal of it says
         // nothing about structured output.
@@ -1188,7 +1254,7 @@ impl AiAnalyzer {
                 let thinking = if budget.is_some() {
                     self.gateway().light_thinking()
                 } else {
-                    self.light_thinking_param()
+                    self.thinking_param()
                 };
                 if let (Some(object), Some((key, value))) = (request_body.as_object_mut(), thinking)
                 {
@@ -1551,6 +1617,44 @@ mod image_request_tests {
         .await
         .with_light_thinking();
         assert!(unknown.light_thinking_param().is_none());
+    }
+
+    #[tokio::test]
+    async fn deep_thinking_is_asked_in_each_providers_own_words() {
+        let router = AiAnalyzer::new(
+            AiProvider::OpenAI,
+            String::new(),
+            "deep-thinking-test".into(),
+            Some("https://openrouter.ai/api/v1".into()),
+        )
+        .await
+        .with_light_thinking()
+        .with_deep_thinking();
+        assert_eq!(
+            router.thinking_param(),
+            Some(("reasoning", serde_json::json!({ "effort": "high" })))
+        );
+        let anthropic = AiAnalyzer::new(
+            AiProvider::Anthropic,
+            String::new(),
+            "deep-thinking-test".into(),
+            None,
+        )
+        .await;
+        assert!(anthropic.deep_thinking_param().is_none());
+        assert_eq!(
+            anthropic.with_deep_thinking().deep_thinking_param(),
+            Some(("output_config", serde_json::json!({ "effort": "high" })))
+        );
+        let unknown = AiAnalyzer::new(
+            AiProvider::OpenAI,
+            String::new(),
+            "deep-thinking-test".into(),
+            Some("https://llm.example/v1".into()),
+        )
+        .await
+        .with_deep_thinking();
+        assert!(unknown.thinking_param().is_none());
     }
 
     #[test]
