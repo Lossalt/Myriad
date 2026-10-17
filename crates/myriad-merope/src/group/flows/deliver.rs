@@ -3,6 +3,11 @@
 
 use super::*;
 
+/// Looking her draft over against what came meanwhile. At 8 seconds a
+/// third of these were cut off, and an unchecked draft goes out as it was,
+/// however far the talk had moved.
+const STILL_WITHIN_MS: u64 = 20_000;
+
 pub(crate) fn text_limit(platform: &str) -> usize {
     match platform {
         "discord" => myriad_agent_rules::channel::DISCORD_TEXT_LIMIT,
@@ -60,7 +65,7 @@ pub(crate) fn look_over(cx: &mut Cx, to: &Message, d: &mut Deliver) -> Next {
                 voice: "judge".into(),
                 owner: d.owner,
                 operation: "draft_still".into(),
-                timeout_ms: 8000,
+                timeout_ms: STILL_WITHIN_MS,
                 system: crate::draft::system(),
                 input: crate::draft::input(&d.said, &d.reply, &fresh),
                 schema_name: crate::draft::SCHEMA_NAME.into(),

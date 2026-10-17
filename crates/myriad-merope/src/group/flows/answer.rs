@@ -104,6 +104,10 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
                         return Next::Done(false);
                     };
                     a.owner = Some(owner);
+                    // Her reading of the talk is part of answering: the
+                    // first message is typed while she reads, as a
+                    // member's is.
+                    a.began = now;
                     a.stranger = Some(Stranger {
                         who: format!("{}:{}", a.message.platform, a.message.from),
                         name: a.message.display_name.chars().take(40).collect(),
@@ -188,7 +192,6 @@ pub(crate) fn answer_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>
             Sensed::Done(section) => sensed_stranger(cx, a, section),
         },
         (AnswerStage::StrangerTyping, Some(Answer::Typed)) => {
-            a.began = now;
             a.stage = AnswerStage::StrangerTurning;
             let (replying, replied) = reply_start(cx, a);
             a.replying = Some(Box::new(replying));
@@ -341,7 +344,7 @@ pub(crate) fn after_saying(cx: &mut Cx, a: &mut Answering, went_out: String) -> 
 
 /// Begin reading the talk before answering it (see `sense`).
 fn start_sensing(cx: &mut Cx, a: &mut Answering) -> Sensed {
-    let conversation = conversation(&a.transcript);
+    let conversation = conversation(&a.transcript, TRANSCRIPT_LINES);
     let (sensing, sensed) = sense_start(
         cx,
         a.message.venue(),
@@ -349,8 +352,14 @@ fn start_sensing(cx: &mut Cx, a: &mut Answering) -> Sensed {
         a.said.clone(),
         a.site_owner,
     );
+    a.unread = unread(&sensing, &sensed);
     a.sensing = Some(Box::new(sensing));
     sensed
+}
+
+/// Whether a reading she meant to do came to nothing.
+fn unread(sensing: &Sensing, sensed: &Sensed) -> bool {
+    matches!(sensed, Sensed::Done(_)) && sensing.owner.is_some() && sensing.sense.is_none()
 }
 
 fn sensing_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>) -> Sensed {
@@ -358,15 +367,26 @@ fn sensing_step(cx: &mut Cx, a: &mut Answering, answer: Option<Answer>) -> Sense
         return Sensed::Done(None);
     };
     let sensed = sense_step(cx, &mut sensing, answer);
+    a.unread = unread(&sensing, &sensed);
     if matches!(sensed, Sensed::Wait(_)) {
         a.sensing = Some(sensing);
     }
     sensed
 }
 
+/// Nobody asked her and she could not make sense of the talk: she keeps
+/// quiet rather than chime in on what she has not read (an answer unread
+/// was most of what went wrong when she joined in).
+fn unread_chime(a: &Answering) -> bool {
+    a.chime.is_some() && a.unread
+}
+
 /// Her reading done, a member's turn goes on: how people type there and
 /// how her lines differ, from the ledger.
 fn sensed_member(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> Next {
+    if unread_chime(a) {
+        return Next::Done(false);
+    }
     let now = cx.now();
     a.making_sense = section;
     a.room = room(cx.group, now);
@@ -377,6 +397,9 @@ fn sensed_member(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> Nex
 
 /// Her reading done, the answer to someone from outside goes on: typing.
 fn sensed_stranger(cx: &mut Cx, a: &mut Answering, section: Option<String>) -> Next {
+    if unread_chime(a) {
+        return Next::Done(false);
+    }
     a.sections.extend(section);
     a.stage = AnswerStage::StrangerTyping;
     let to = a.message.target();

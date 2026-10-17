@@ -13,8 +13,10 @@ use crate::making_sense as rules;
 
 /// Where what people there told her about herself is kept.
 pub(crate) const TOLD_SOURCE: &str = "about_me";
-/// The reading is done while she would be reading anyway.
-const READ_WITHIN_MS: u64 = 8_000;
+/// She thinks the reading through: misreading who a line is for and what
+/// it means costs more than a few seconds more (at 8 seconds most readings
+/// were cut off, and she answered unread).
+const READ_WITHIN_MS: u64 = 25_000;
 /// The same thing, still on the screen, is read again every turn: once in
 /// this long is being told once.
 const TOLD_ONCE_WITHIN_MINUTES: i64 = 30;
@@ -126,7 +128,7 @@ pub(crate) fn sense_step(cx: &mut Cx, s: &mut Sensing, answer: Option<Answer>) -
             Sensed::Wait(cx.effect(|id| Effect::Ask {
                 id,
                 how: AskKind::Json,
-                voice: "judge".into(),
+                voice: "thorough".into(),
                 owner,
                 operation: "group_making_sense".into(),
                 timeout_ms: READ_WITHIN_MS,

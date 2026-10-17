@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn what_they_typed_is_the_line_itself() {
         assert_eq!(
-            as_typed("（回复你说的：好）哈哈哈").as_deref(),
+            as_typed("（回复你之前说的「好」）哈哈哈").as_deref(),
             Some("哈哈哈")
         );
         assert_eq!(as_typed("[表情：歪头]"), None);

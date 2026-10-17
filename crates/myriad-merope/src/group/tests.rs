@@ -456,7 +456,10 @@ fn she_does_not_echo_the_reply_mark() {
         without_reply_mark("（回复 阿明）谁是你宝宝！"),
         "谁是你宝宝！"
     );
-    assert_eq!(without_reply_mark("（回复你说的：听完要是）断了"), "断了");
+    assert_eq!(
+        without_reply_mark("（回复你之前说的「听完要是」）断了"),
+        "断了"
+    );
     assert_eq!(
         without_reply_mark("谁暴躁了（回复一下）"),
         "谁暴躁了（回复一下）"
@@ -1349,6 +1352,14 @@ fn g1_she_says_nothing_when_what_she_has_cannot_be_read() {
             failure: None,
         },
     );
+    end.answer(
+        "ask:group_making_sense",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"goingOn":"阿明在约周五去吃那家火锅","theyMean":"在问大家去不去","aboutYou":null,"unsure":[]}"#.into()),
+            failure: None,
+        },
+    );
     heard(
         &mut end,
         0.0,
@@ -1362,6 +1373,76 @@ fn g1_she_says_nothing_when_what_she_has_cannot_be_read() {
     );
     end.run(BASE + secs(2400.0));
     end.check("she_says_nothing_when_what_she_has_cannot_be_read");
+}
+
+/// Nobody asked her and she could not make sense of the talk: she keeps
+/// quiet rather than chime in unread.
+#[test]
+fn g1_she_keeps_quiet_on_talk_she_could_not_read() {
+    for who in [
+        Who::Member {
+            user_id: 101,
+            bound: true,
+        },
+        Who::Stranger,
+    ] {
+        for (raw, failure) in [
+            (None, Some("timeout".into())),
+            (None, Some("unavailable".into())),
+            (Some("{}".into()), None),
+        ] {
+            let mut end = End::new();
+            // The glance and the answer both resolve who is there.
+            for _ in 0..2 {
+                end.answer(
+                    "identify",
+                    0.0,
+                    Answer::Identified {
+                        who: who.clone(),
+                        owner: Some(1),
+                    },
+                );
+            }
+            end.answer(
+                "ask:group_chime",
+                1.0,
+                Answer::Asked {
+                    raw: Some(
+                        r#"{"speak":"know","about":"那家店周五人多","basis":null,"unsure":[]}"#
+                            .into(),
+                    ),
+                    failure: None,
+                },
+            );
+            end.answer(
+                "ask:group_making_sense",
+                1.0,
+                Answer::Asked { raw, failure },
+            );
+            heard(
+                &mut end,
+                0.0,
+                message(1, 11, "阿明", "周五吃那家火锅吧", false),
+            );
+            heard(&mut end, 1.0, message(2, 11, "阿明", "大家觉得呢", false));
+            end.run(BASE + secs(2400.0));
+            let effects: Vec<&Value> = end
+                .steps
+                .iter()
+                .flat_map(|step| step["output"]["effects"].as_array().unwrap())
+                .collect();
+            assert!(
+                effects
+                    .iter()
+                    .any(|effect| effect["operation"] == "group_making_sense"),
+                "the attempted chime must reach reading for {who:?}"
+            );
+            assert!(
+                !effects.iter().any(|effect| effect["kind"] == "send"),
+                "she chimed in on talk she could not read for {who:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1451,6 +1532,14 @@ fn g1_she_speaks_up_unasked_and_reacts() {
         1.0,
         Answer::Asked {
             raw: Some(r#"{"speak":"react","about":"😁","basis":null,"unsure":["锅巴"]}"#.into()),
+            failure: None,
+        },
+    );
+    end.answer(
+        "ask:group_making_sense",
+        1.0,
+        Answer::Asked {
+            raw: Some(r#"{"goingOn":"阿明在约周五去吃那家火锅","theyMean":"在问大家去不去","aboutYou":null,"unsure":[]}"#.into()),
             failure: None,
         },
     );

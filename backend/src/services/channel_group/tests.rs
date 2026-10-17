@@ -100,7 +100,7 @@ fn a_group_is_its_venue_on_every_platform() {
     });
     assert_eq!(
         discord.to_message().said(),
-        "（回复你说的：听完要是）说到一半怎么没了"
+        "（回复你之前说的「听完要是」）说到一半怎么没了"
     );
     assert_eq!(discord.venue(), "discord:22");
     assert_eq!(discord.to_message().venue(), "discord:22");

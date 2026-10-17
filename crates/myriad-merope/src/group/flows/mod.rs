@@ -210,6 +210,9 @@ pub struct Answering {
     /// Her reading of the talk, while she does it.
     #[serde(default)]
     pub sensing: Option<Box<Sensing>>,
+    /// She meant to read the talk first and could not.
+    #[serde(default)]
+    pub unread: bool,
     /// Her answer to someone from outside, while she puts it together.
     #[serde(default)]
     pub replying: Option<Box<Replying>>,

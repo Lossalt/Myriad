@@ -291,6 +291,11 @@ async fn g0_she_says_nothing_when_what_she_has_cannot_be_read() {
         "group_chime",
         r#"{"speak":"know","about":"那家店周五人多","basis":null}"#,
     );
+    answer(
+        &mut world,
+        "group_making_sense",
+        r#"{"goingOn":"阿明在约周五去吃那家火锅","theyMean":"在问大家去不去","aboutYou":null}"#,
+    );
     her_turn(&mut world, 3.0, "周五那家人多，早点去");
     g0::enter(world);
     hear(line(chat, 1, 11, "阿明", "周五吃那家火锅吧", false)).await;

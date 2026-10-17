@@ -332,12 +332,12 @@ pub fn came_since(group: &Group, since: i64, from: &str) -> Vec<(String, String,
         .collect()
 }
 
-/// The conversation as a judgment reads it: the latest lines, hers as
-/// `you：…`.
-pub(super) fn conversation(lines: &[Spoken]) -> Vec<String> {
+/// The conversation as a judgment reads it: the latest `at_most` lines,
+/// hers as `you：…`.
+pub(super) fn conversation(lines: &[Spoken], at_most: usize) -> Vec<String> {
     lines
         .iter()
-        .skip(lines.len().saturating_sub(CONVERSATION_LINES))
+        .skip(lines.len().saturating_sub(at_most))
         .map(|line| {
             if line.role == "assistant" {
                 format!("you：{}", line.content)

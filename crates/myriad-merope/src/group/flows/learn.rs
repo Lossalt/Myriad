@@ -14,7 +14,7 @@ use super::*;
 
 /// What she knows of words and memes, read back: the latest this many.
 const KNOWN_READ: u64 = 500;
-const DIGEST_WITHIN_MS: u64 = 30_000;
+const DIGEST_WITHIN_MS: u64 = 45_000;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,7 +131,7 @@ fn digest(cx: &mut Cx, l: &mut Learning, found: String, url: String) -> String {
     cx.effect(|id| Effect::Ask {
         id,
         how: AskKind::Json,
-        voice: "judge".into(),
+        voice: "thorough".into(),
         owner,
         operation: "meme".into(),
         timeout_ms: DIGEST_WITHIN_MS,

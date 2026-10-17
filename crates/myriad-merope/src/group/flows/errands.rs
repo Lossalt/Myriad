@@ -178,6 +178,7 @@ pub(crate) fn start_answer(
         went_out: None,
         site_owner: None,
         sensing: None,
+        unread: false,
         replying: None,
         member: None,
     });

@@ -361,7 +361,7 @@ fn material(had: &[(String, String)]) -> Vec<crate::joining::Material> {
 pub(crate) fn judge_ask(cx: &mut Cx, judging: &mut Judging) -> String {
     let now = cx.now();
     let lines = transcript(cx.group, None, now);
-    let conversation = conversation(&lines);
+    let conversation = conversation(&lines, CONVERSATION_LINES);
     let late = cx
         .group
         .lines

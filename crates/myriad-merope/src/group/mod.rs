@@ -52,13 +52,14 @@ pub use rolls::Rolls;
 /// nothing in mind of.
 pub const VERSION: u32 = 1;
 
-/// Lines of a group she keeps in mind, and for how long.
-pub const TRANSCRIPT_LINES: usize = 30;
+/// Lines of a group she keeps in mind, and for how long. In a busy group
+/// thirty lines was a quarter of an hour: what someone brought up twenty
+/// minutes before was gone when they came back to it.
+pub const TRANSCRIPT_LINES: usize = 60;
 pub const TRANSCRIPT_FOR_SECONDS: i64 = 6 * 3600;
 pub const MAX_LINE_CHARS: usize = 500;
-/// Lines that spoke to her while she was busy, answered in order after: as
-/// many as the conversation she reads holds.
-pub const WAITING_LINES: usize = TRANSCRIPT_LINES;
+/// Lines that spoke to her while she was busy, answered in order after.
+pub const WAITING_LINES: usize = 30;
 /// Between two of her replies in the same group.
 pub const GROUP_PAUSE_SECONDS: f64 = 5.0;
 /// Lines that did not call her by name, in talk she is in: she looks once
@@ -80,7 +81,8 @@ pub const LATE_MINUTES: i64 = 3;
 /// soon after; she keeps this many of them in mind.
 pub const TAKEN_UP_WITHIN_SECONDS: f64 = 5.0 * 60.0;
 pub const SPOKE_UP_KEPT: usize = 8;
-/// Lines of the talk she looks at.
+/// Lines of the talk she looks at to decide whether to speak; making sense
+/// of it before she answers, she reads all she keeps.
 pub const CONVERSATION_LINES: usize = 15;
 /// Two bots answering each other never stop: this many of her replies in
 /// a row to the same one, all within the window, and she stops answering
@@ -146,10 +148,14 @@ impl Message {
         format!("{}:{}", self.platform, self.chat)
     }
 
-    /// What was said, with the line it replies to in front.
+    /// What was said, with the line it replies to in front. Her own line is
+    /// quoted as hers and said before: written 「回复你说的：…」 it read as
+    /// though they were saying her words back to her.
     pub fn said(&self) -> String {
         match &self.reply_to {
-            Some(quoted) if quoted.hers => format!("（回复你说的：{}）{}", quoted.text, self.text),
+            Some(quoted) if quoted.hers => {
+                format!("（回复你之前说的「{}」）{}", quoted.text, self.text)
+            }
             Some(quoted) => format!("（回复 {}：{}）{}", quoted.name, quoted.text, self.text),
             None => self.text.clone(),
         }
