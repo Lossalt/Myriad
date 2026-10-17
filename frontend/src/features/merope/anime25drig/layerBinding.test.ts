@@ -63,6 +63,22 @@ test('unextended player mesh and atlas UVs preserve upstream binding values', ()
   assert.deepEqual(enhanced.atlasUvs, atlasUvs(upstream.uv, source))
 })
 
+test('figure torso meshes keep their density when the canvas has extra room to sway', () => {
+  for (const role of ['topwear', 'collar-front', 'collar-back', 'legwear']) {
+    const source = playbackLayer({ name: role, role, group: 'body', w: 360, h: 300 })
+    const input = { source, face: ANCHORS.face, layerZ: 3, figure: true }
+    const fitted = buildAnime25DLayerBinding({ ...input, canvasWidth: CANVAS_WIDTH })
+    const padded = buildAnime25DLayerBinding({ ...input, canvasWidth: CANVAS_WIDTH * 3 })
+    if (role === 'legwear') {
+      assert.ok(padded.rest.length < fitted.rest.length, 'other body layers retain their existing density')
+    } else {
+      assert.deepEqual(padded.rest, fitted.rest, `${role} keeps the same sampling`)
+      assert.deepEqual(padded.atlasUvs, fitted.atlasUvs)
+      assert.deepEqual(padded.indices, fitted.indices)
+    }
+  }
+})
+
 test('eye curves have feature-scaled sampling while neutral UV coverage stays intact', () => {
   for (const role of ['eyewhite', 'eyelash', 'irides', 'eye-close', 'eye-close2', 'eyebrow']) {
     for (const scale of [0.5, 1, 2]) {

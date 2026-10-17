@@ -28,6 +28,7 @@ import { anime25DArmsTouch, anime25DHandTouchesHead, bindArmRig, bindArmRigMesh 
 import { buildFrontCollarContactModel } from './collarContact'
 import { createCollarClipMesh, disposeCollarClipMesh } from './collarRuntime'
 
+import { figureRestOf } from './figureSkeleton'
 import { headSilhouetteFromFace, headTurnFeatures } from './headTurn'
 import { plainHiddenCollars } from './hiddenCollar'
 import { shadeHiddenBackHair } from './hiddenHair'
@@ -300,6 +301,7 @@ export function compileAnime25DGpuLayers(
         extraGridX: collarContact?.gridX,
         extraGridY: collarContact?.gridY,
         faceShell: shellProfile.enabled && shellProfile.blend > 0 ? shellProfile : undefined,
+        figure: figureRestOf(playback.anchors) !== null,
       })
       bindings.set(source, binding)
       return binding

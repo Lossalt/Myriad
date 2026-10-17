@@ -18,6 +18,14 @@ const NECK_MESH_CELL = 28
 const FRONT_COLLAR_MESH_CELL = 22
 /** A head drawing's mesh cell, as a share of the face's width. */
 const HEAD_TURN_CELL = 0.03
+/**
+ * A bust's body layers are meshed to its canvas. A figure stands small on a
+ * wide canvas (room to sway), so the top and the collar cut from it, which
+ * turn as the torso's curved surface, are meshed to its face instead: a
+ * face this wide gets the cell a 768-wide canvas gets, a bust's density.
+ */
+const FIGURE_TORSO_FACE_WIDTH = 310
+const FIGURE_TORSO_ROLES = new Set(['topwear', 'collar-front', 'collar-back'])
 /** A piece cut out of its host has at least this many rows to bend over. */
 const CUT_PIECE_ROWS = 10
 
@@ -58,6 +66,8 @@ export interface Anime25DLayerBindingInput {
   extraGridX?: readonly number[]
   extraGridY?: readonly number[]
   faceShell?: Pick<Anime25DShellProfile, 'head' | 'faceProfile'>
+  /** A standing figure rather than a bust. */
+  figure?: boolean
 }
 
 export function buildAnime25DLayerBinding(
@@ -113,7 +123,9 @@ export function buildAnime25DLayerBinding(
     : headSurface
       ? extension(extensions, 'head-turn-mesh-density', Math.max(4, (input.face.x1 - input.face.x0) * HEAD_TURN_CELL))
       : (flexibleCell ?? (source.phys ? 30 : 42)) *
-        Math.max(0.6, input.canvasWidth / 768)
+        Math.max(0.6, input.figure && FIGURE_TORSO_ROLES.has(source.role)
+          ? (input.face.x1 - input.face.x0) / FIGURE_TORSO_FACE_WIDTH
+          : input.canvasWidth / 768)
   const morphingMouth =
     source.fade === 'mouthOpen' ||
     source.fade === 'mouthWide' ||
