@@ -303,6 +303,13 @@ pub fn create_agent_routes(app_state: crate::state::AppState) -> Router<crate::s
                 middleware::auth::auth_middleware,
             )),
         )
+        .route(
+            "/session/heard-cut-off",
+            post(mark_heard_cut_off).route_layer(from_fn_with_state(
+                app_state.clone(),
+                middleware::auth::auth_middleware,
+            )),
+        )
         // 向当前会话注入转向指令（需要认证）
         .route(
             "/session/steer",

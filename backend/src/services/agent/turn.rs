@@ -84,6 +84,9 @@ pub struct Spoken {
     state: Arc<AtomicU8>,
     /// Spoken aloud: the text runs ahead of what they heard.
     voice: bool,
+    /// Said aloud and cut off while still being written: how many of its
+    /// characters were heard, once the end saying it knows.
+    heard: Arc<std::sync::Mutex<Option<u64>>>,
 }
 
 /// A turn cut off partway, and what it had said.
@@ -92,6 +95,8 @@ pub struct CutOff {
     pub text: String,
     pub voice: bool,
     pub run_id: String,
+    /// How much of it was heard, when it was said aloud and cut off there.
+    pub heard_chars: Option<u64>,
 }
 
 impl Spoken {
@@ -120,11 +125,30 @@ impl Spoken {
             .compare_exchange(RUNNING, to, Ordering::AcqRel, Ordering::Acquire)
             .ok()?;
         let text = self.text.lock().ok()?.trim().to_string();
+        let heard_chars = self.heard();
         (!text.is_empty()).then(|| CutOff {
             text,
-            voice: self.voice,
+            voice: self.voice || heard_chars.is_some(),
             run_id: run_id.to_owned(),
+            heard_chars,
         })
+    }
+
+    /// They spoke over it while it was said aloud, this much heard.
+    pub fn note_heard(&self, chars: u64) {
+        if let Ok(mut heard) = self.heard.lock() {
+            *heard = Some(chars);
+        }
+    }
+
+    /// How much was heard, if it was cut off while said aloud.
+    pub fn heard(&self) -> Option<u64> {
+        self.heard.lock().ok().and_then(|heard| *heard)
+    }
+
+    /// Still being written: what is heard of it is kept with it.
+    fn running(&self) -> bool {
+        self.state.load(Ordering::Acquire) == RUNNING
     }
 
     /// Stopped with no newer turn: what this turn said, for it to save.
@@ -135,8 +159,9 @@ impl Spoken {
             .filter(|text| !text.is_empty())
     }
 
+    /// Said aloud: by a realtime voice, or cut off while read aloud.
     pub fn voice(&self) -> bool {
-        self.voice
+        self.voice || self.heard().is_some()
     }
 }
 
@@ -217,6 +242,23 @@ pub async fn cancel_chat_run(user_id: i32, session_id: &str, run_id: &str) -> bo
         let _ = slot.tx.send(());
     }
     true
+}
+
+/// They spoke over this run while it was read aloud, `heard` characters in.
+/// True when the run is still being written: the mark goes with whatever of
+/// it is saved. False once it is no longer live; its saved reply is marked
+/// instead. Only the caller's own run in that session.
+pub async fn note_heard(user_id: i32, session_id: &str, run_id: &str, heard: u64) -> bool {
+    let slots = CHAT_TURNS.lock().await;
+    let Some(slot) = slots.get(&(user_id, session_id.to_owned())) else {
+        return false;
+    };
+    if slot.run_id != run_id {
+        return false;
+    }
+    // Noted before the check: a run finishing in between still reads it.
+    slot.spoken.note_heard(heard);
+    slot.spoken.running()
 }
 
 /// Drop this Chat slot after it finishes, if a newer claim has not replaced it.
@@ -405,6 +447,7 @@ mod tests {
                 text: "我觉得海边挺好的，因为".into(),
                 voice: false,
                 run_id: "first".into(),
+                heard_chars: None,
             })
         );
         // The cut-off turn does not also save its whole reply.
@@ -423,6 +466,27 @@ mod tests {
         assert!(!third.spoken.finish());
         assert_eq!(third.spoken.stopped().as_deref(), Some("那我们"));
         assert!(third.spoken.voice());
+    }
+
+    #[tokio::test]
+    async fn a_run_read_aloud_and_cut_off_keeps_how_much_was_heard() {
+        let first = claim_speaking_turn(17, "s", "first", false).await;
+        first.spoken.push("我觉得海边挺好的，因为");
+        assert!(!note_heard(17, "s", "other", 4).await);
+        assert!(!note_heard(18, "s", "first", 4).await);
+        assert!(note_heard(17, "s", "first", 4).await);
+        let second = claim_speaking_turn(17, "s", "second", false).await;
+        assert!(first.cancelled.await.is_ok());
+        let cut = second.cut_off.expect("cut off");
+        assert!(cut.voice, "heard aloud, so maybe not heard to the end");
+        assert_eq!(cut.heard_chars, Some(4));
+
+        // Finished already: its saved reply is marked instead.
+        second.spoken.push("好。");
+        assert!(second.spoken.finish());
+        assert!(!note_heard(17, "s", "second", 1).await);
+        assert_eq!(second.spoken.heard(), Some(1));
+        assert!(second.spoken.voice());
     }
 
     #[tokio::test]

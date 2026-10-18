@@ -608,6 +608,56 @@ pub(crate) async fn cancel_chat_turn(
     Ok(Json(json!({ "success": cancelled })))
 }
 
+/// They spoke over her reply while it was read aloud in this browser, and
+/// she stopped `heardChars` characters in. Marks that reply as maybe not
+/// heard to the end: kept with the run if it is still being written, on the
+/// saved reply otherwise. Only the caller's own reply in their own session.
+pub(crate) async fn mark_heard_cut_off(
+    State(db): State<DatabaseConnection>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, HttpError> {
+    let user_id = parse_user_id(&claims)?;
+    let field = |name: &str| body.get(name).and_then(Value::as_str).unwrap_or("");
+    let (session_id, run_id) = (field("sessionId"), field("runId"));
+    let heard = body.get("heardChars").and_then(Value::as_u64);
+    let (Some(heard), false, false) = (heard, session_id.is_empty(), run_id.is_empty()) else {
+        return Err(HttpError::from((
+            StatusCode::BAD_REQUEST,
+            Json(AppError::public_json(
+                "Missing sessionId, runId or heardChars",
+            )),
+        )));
+    };
+    let owned = agent_sessions::Entity::find_by_id(session_id)
+        .filter(agent_sessions::Column::UserId.eq(user_id))
+        .one(&db)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "agent session store failed");
+            HttpError(AppError::internal("Failed to find session"))
+        })?
+        .is_some();
+    if !owned {
+        return Ok(Json(json!({ "success": false })));
+    }
+    if crate::services::agent::turn::note_heard(user_id, session_id, run_id, heard).await {
+        return Ok(Json(json!({ "success": true })));
+    }
+    let marked = crate::services::agent::sessions::mark_spoken_reply_cut_off_at(
+        &db,
+        session_id,
+        run_id,
+        Some(heard),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "could not mark a cut-off reply");
+        HttpError(AppError::internal("Failed to mark the reply"))
+    })?;
+    Ok(Json(json!({ "success": marked })))
+}
+
 /// Cancel every cancellable task for the user (Pending/Running/WaitingForInput/Paused), then `process`.
 pub(crate) async fn interrupt_session(
     State(db): State<DatabaseConnection>,

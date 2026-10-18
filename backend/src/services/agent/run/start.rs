@@ -149,12 +149,16 @@ pub(crate) async fn save_cut_off(
     text: &str,
     voice: bool,
     run_id: &str,
+    heard_chars: Option<u64>,
 ) {
-    let metadata = json!({
+    let mut metadata = json!({
         crate::services::agent::chat_prompt::CUT_OFF_KEY:
             crate::services::agent::chat_prompt::cut_off_kind(voice),
         "runId": run_id,
     });
+    if let Some(heard) = heard_chars {
+        metadata["heardChars"] = json!(heard);
+    }
     if let Err(error) = persist_assistant_message(db, session_id, None, text, Some(metadata)).await
     {
         tracing::warn!(%error, "[Agent API] Failed to save a cut-off reply");
@@ -173,7 +177,15 @@ pub(crate) async fn save_stopped(
     };
     if let Some(text) = spoken.stopped() {
         if !session_id.is_empty() {
-            save_cut_off(db, session_id, &text, spoken.voice(), run_id).await;
+            save_cut_off(
+                db,
+                session_id,
+                &text,
+                spoken.voice(),
+                run_id,
+                spoken.heard(),
+            )
+            .await;
         }
     }
 }
@@ -303,7 +315,15 @@ pub(crate) async fn start(
     };
     if let Some(cut) = chat_claim.as_ref().and_then(|claim| claim.cut_off.as_ref()) {
         if has_session {
-            save_cut_off(&db, &session_id, &cut.text, cut.voice, &cut.run_id).await;
+            save_cut_off(
+                &db,
+                &session_id,
+                &cut.text,
+                cut.voice,
+                &cut.run_id,
+                cut.heard_chars,
+            )
+            .await;
         }
     }
 
@@ -745,7 +765,7 @@ pub(crate) async fn start(
 
                     let parked_task_id = task_id.clone();
                     if !session_id_clone.is_empty() {
-                        let metadata = json!({
+                        let mut metadata = json!({
                             "suggestions": &api_response.suggestions,
                             "dataDisplay": &api_response.data_display,
                             "frontendAction": &api_response.frontend_action,
@@ -754,6 +774,14 @@ pub(crate) async fn start(
                             "taskId": if task_id.is_empty() { Value::Null } else { json!(task_id) },
                             "task": &api_response.task,
                         });
+                        // Written to the end, but they spoke over her while
+                        // it was read aloud: they may not have heard the end.
+                        if let Some(heard) = chat_spoken.as_ref().and_then(|spoken| spoken.heard())
+                        {
+                            metadata[crate::services::agent::chat_prompt::CUT_OFF_KEY] =
+                                json!(crate::services::agent::chat_prompt::cut_off_kind(true));
+                            metadata["heardChars"] = json!(heard);
+                        }
                         if let Err(e) = persist_assistant_message(
                             &db_clone,
                             &session_id_clone,
