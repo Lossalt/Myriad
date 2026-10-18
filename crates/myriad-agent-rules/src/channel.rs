@@ -1704,6 +1704,8 @@ pub struct TelegramPrivateText {
     pub chat_id: i64,
     pub text: String,
     pub images: Vec<ChannelImageRef>,
+    pub voices: Vec<ChannelVoiceRef>,
+    pub files: Vec<ChannelFileRef>,
 }
 
 /// Private-chat inline-button press. `data` is raw `callback_data`.
@@ -1731,7 +1733,8 @@ impl TelegramPrivateText {
             user_openid: self.from_id.to_string(),
             content: self.text.clone(),
             images: self.images.clone(),
-            ..Default::default()
+            voices: self.voices.clone(),
+            files: self.files.clone(),
         }
     }
 
@@ -2475,13 +2478,15 @@ fn telegram_private_text_from_update(update: &serde_json::Value) -> Option<Teleg
     let from_id = json_i64(from.get("id")?)?;
     let chat_id = json_i64(chat.get("id")?)?;
     let images = parse_telegram_photos(message);
+    let voices = parse_telegram_voice(message);
+    let files = parse_telegram_document(message);
     let text = message
         .get("text")
         .or_else(|| message.get("caption"))
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
-    if text.trim().is_empty() && images.is_empty() {
+    if text.trim().is_empty() && images.is_empty() && voices.is_empty() && files.is_empty() {
         return None;
     }
     let message_id = json_i64(message.get("message_id")?)?;
@@ -2492,7 +2497,50 @@ fn telegram_private_text_from_update(update: &serde_json::Value) -> Option<Teleg
         chat_id,
         text,
         images,
+        voices,
+        files,
     })
+}
+
+fn telegram_file_id(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("file_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// A voice note (`voice`, OGG/Opus), fetched later through `getFile`.
+fn parse_telegram_voice(message: &serde_json::Value) -> Vec<ChannelVoiceRef> {
+    message
+        .get("voice")
+        .and_then(telegram_file_id)
+        .map(|file_id| ChannelVoiceRef {
+            source: format!("tg:{file_id}"),
+            format: "ogg".into(),
+            said: None,
+        })
+        .into_iter()
+        .collect()
+}
+
+/// A sent file (`document`), fetched later through `getFile`.
+fn parse_telegram_document(message: &serde_json::Value) -> Vec<ChannelFileRef> {
+    let Some(document) = message.get("document") else {
+        return Vec::new();
+    };
+    let Some(file_id) = telegram_file_id(document) else {
+        return Vec::new();
+    };
+    vec![ChannelFileRef {
+        url: format!("tg:{file_id}"),
+        name: document
+            .get("file_name")
+            .and_then(|value| value.as_str())
+            .map(|name| name.trim().to_string())
+            .unwrap_or_default(),
+        size: document.get("file_size").and_then(json_u64).unwrap_or(0),
+    }]
 }
 
 fn parse_telegram_photos(message: &serde_json::Value) -> Vec<ChannelImageRef> {

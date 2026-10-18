@@ -3078,3 +3078,30 @@ mod channel_input {
         ));
     }
 }
+
+/// Each platform's private voices and files, as handles its worker fetches.
+mod private_attachments {
+    use myriad_agent_rules::channel::parse_telegram_private_texts;
+
+    #[test]
+    fn a_telegram_voice_and_document_are_kept_as_file_ids() {
+        let body = r#"{"ok": true, "result": [{
+            "update_id": 20,
+            "message": {
+                "message_id": 5,
+                "from": {"id": 1001},
+                "chat": {"id": 1001, "type": "private"},
+                "voice": {"file_id": "V1", "duration": 3, "mime_type": "audio/ogg"},
+                "document": {"file_id": "D1", "file_name": "a.txt", "file_size": 12}
+            }
+        }]}"#;
+        let texts = parse_telegram_private_texts(200, body).expect("updates");
+        assert_eq!(texts.len(), 1);
+        let inbound = texts[0].inbound();
+        assert_eq!(inbound.voices[0].source, "tg:V1");
+        assert_eq!(inbound.voices[0].format, "ogg");
+        assert_eq!(inbound.files[0].url, "tg:D1");
+        assert_eq!(inbound.files[0].name, "a.txt");
+        assert_eq!(inbound.files[0].size, 12);
+    }
+}

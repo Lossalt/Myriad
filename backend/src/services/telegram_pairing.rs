@@ -1,14 +1,15 @@
 //! Telegram DM pairing entry: classify inbound text, then shared pairing I/O.
 
 use myriad_agent_rules::channel::{
-    InboundC2cText, PAIRING_REQUIRED_REPLY, PairingLookup, TelegramPrivateCallback,
-    TelegramPrivateText,
+    ChannelFileRef, ChannelVoiceRef, InboundC2cText, PAIRING_REQUIRED_REPLY, PairingLookup,
+    TelegramPrivateCallback, TelegramPrivateText,
 };
 use sea_orm::{DatabaseConnection, DbErr};
 use tracing::warn;
 
 use crate::services::channel_pairing::{self, PrivateText, TELEGRAM};
 use crate::services::channel_platform::ChannelPlatform;
+use crate::services::channel_work::attachments::VoiceAudio;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
@@ -61,6 +62,27 @@ impl PrivateText for TelegramText<'_> {
 
     async fn reply(&self, _db: &DatabaseConnection, text: &str) {
         send_text(self.token, &self.event.chat_id_key(), text).await;
+    }
+
+    async fn voice_audio(&self, voice: &ChannelVoiceRef) -> Result<Option<VoiceAudio>, String> {
+        let Some(file_id) = voice.source.strip_prefix("tg:") else {
+            return Ok(None);
+        };
+        let (bytes, _) =
+            crate::services::telegram_bot::download_file_bytes(self.token, file_id).await?;
+        Ok(Some(VoiceAudio {
+            bytes,
+            format: voice.format.clone(),
+        }))
+    }
+
+    async fn file_bytes(&self, file: &ChannelFileRef) -> Result<Option<Vec<u8>>, String> {
+        let Some(file_id) = file.url.strip_prefix("tg:") else {
+            return Ok(None);
+        };
+        let (bytes, _) =
+            crate::services::telegram_bot::download_file_bytes(self.token, file_id).await?;
+        Ok(Some(bytes))
     }
 
     async fn start_work(
