@@ -1,7 +1,7 @@
 //! OneBot 私聊与群事件 → Myriad 入站。解析失败一律 `None`，不 panic。
 use crate::channel::{
-    CHANNEL_IMAGE_LIMIT, ChannelImageRef, InboundC2cText, QQ_TEXT_LIMIT, QuotedLine,
-    split_channel_text,
+    CHANNEL_IMAGE_LIMIT, ChannelFileRef, ChannelImageRef, ChannelVoiceRef, InboundC2cText,
+    QQ_TEXT_LIMIT, QuotedLine, split_channel_text,
 };
 use crate::onebot::wire::{RawEventJson, WireMessage, WireSegment};
 
@@ -29,7 +29,50 @@ pub fn decode_private_inbound(raw: &str) -> Option<InboundC2cText> {
         user_openid: user_id.to_string(),
         content: truncate_qq_text(&decode_segments_to_text(segments)),
         images: decode_images(segments),
+        voices: decode_voices(segments),
+        files: decode_files(segments),
     })
+}
+
+/// Voices kept per message; QQ sends one, the cap guards odd payloads.
+const VOICE_LIMIT: usize = 1;
+/// Files kept per message.
+const FILE_LIMIT: usize = 3;
+
+/// `record` segments. `source` is SnowLuma's `file` handle, which `get_record`
+/// takes back to fetch the audio.
+fn decode_voices(segments: &[WireSegment]) -> Vec<ChannelVoiceRef> {
+    segments
+        .iter()
+        .filter(|segment| segment.kind == "record")
+        .filter_map(|segment| {
+            let source = segment.str_field("file")?.trim().to_string();
+            (!source.is_empty()).then_some(ChannelVoiceRef { source })
+        })
+        .take(VOICE_LIMIT)
+        .collect()
+}
+
+/// `file` segments. A URL other than http(s) is dropped, leaving the file only
+/// named.
+fn decode_files(segments: &[WireSegment]) -> Vec<ChannelFileRef> {
+    segments
+        .iter()
+        .filter(|segment| segment.kind == "file")
+        .map(|segment| ChannelFileRef {
+            url: http_url(segment).unwrap_or_default(),
+            name: segment
+                .str_field("name")
+                .or_else(|| segment.str_field("file"))
+                .map(|name| name.trim().to_string())
+                .unwrap_or_default(),
+            size: segment
+                .i64_field("file_size")
+                .and_then(|size| u64::try_from(size).ok())
+                .unwrap_or(0),
+        })
+        .take(FILE_LIMIT)
+        .collect()
 }
 
 /// `Some(true)` when the payload is a private message reported as a CQ string.

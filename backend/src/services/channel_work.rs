@@ -41,6 +41,7 @@ use crate::services::runtime_registry::{self as shared_registry, RegistryIdentit
 const BINDING_TTL_SECS: i64 = 30 * 24 * 60 * 60;
 const TYPING_REFRESH: Duration = Duration::from_secs(4);
 
+pub(crate) mod attachments;
 mod chat;
 mod chat_images;
 mod chat_waiting;

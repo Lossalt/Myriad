@@ -97,6 +97,30 @@ pub fn encode_get_msg(message_id: &str) -> Option<Value> {
     }))
 }
 
+/// `get_record` with a server-side transcode to WAV; SnowLuma answers with
+/// `data.base64`. The transcode needs SnowLuma's ffmpeg support (uncertain on
+/// any given deployment); a failure is answered `failed`.
+pub fn encode_get_record_wav(file: &str) -> Option<Value> {
+    let file = file.trim();
+    if file.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "action": "get_record",
+        "params": {"file": file, "out_format": "wav"}
+    }))
+}
+
+/// `fetch_ptt_text`: QQ's own voice-to-text for a received voice message,
+/// answered `{text}`.
+pub fn encode_fetch_ptt_text(message_id: &str) -> Option<Value> {
+    let message_id = message_id.trim().parse::<i64>().ok()?;
+    Some(json!({
+        "action": "fetch_ptt_text",
+        "params": {"message_id": message_id}
+    }))
+}
+
 /// A reaction on a group message (SnowLuma `set_msg_emoji_like`, group only).
 /// An emoji is sent as its decimal code point; SnowLuma treats a code longer
 /// than three digits as a Unicode emoji rather than a QQ face id. Whether QQ

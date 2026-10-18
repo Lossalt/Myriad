@@ -357,13 +357,99 @@ pub struct ChannelImageRef {
     pub size: u64,
 }
 
+/// One inbound voice message. `source` is the platform's handle for it; only
+/// the platform that decoded it knows how to turn it into text.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChannelVoiceRef {
+    pub source: String,
+}
+
+/// One inbound file. `url` may be empty when the platform gives no download
+/// link; the file is then only named to her.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChannelFileRef {
+    pub url: String,
+    pub name: String,
+    pub size: u64,
+}
+
 /// Inbound C2C text after Gateway decoding. Images are platform URLs, not bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Voices and files are read into the input text before Work starts
+/// ([`compose_channel_input`]); Work itself only sees text and images.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InboundC2cText {
     pub msg_id: String,
     pub user_openid: String,
     pub content: String,
     pub images: Vec<ChannelImageRef>,
+    pub voices: Vec<ChannelVoiceRef>,
+    pub files: Vec<ChannelFileRef>,
+}
+
+impl InboundC2cText {
+    /// Something besides text and images came with it.
+    pub fn has_attachments(&self) -> bool {
+        !self.voices.is_empty() || !self.files.is_empty()
+    }
+}
+
+/// Files whose text is read into the input; others are only named.
+pub const CHANNEL_TEXT_FILE_BYTES: u64 = 256 * 1024;
+/// Characters of one file's text kept in the input.
+pub const CHANNEL_TEXT_FILE_CHARS: usize = 8_000;
+
+/// Whether a file of this name and size is read as text.
+pub fn channel_file_is_text(name: &str, size: u64) -> bool {
+    const TEXT: [&str; 14] = [
+        "txt", "md", "markdown", "csv", "tsv", "json", "log", "yaml", "yml", "toml", "xml", "html",
+        "ini", "srt",
+    ];
+    let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+    size <= CHANNEL_TEXT_FILE_BYTES && TEXT.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+/// What one file contributed: its text, or why it has none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelFileRead {
+    Text(String),
+    /// Not a text file, too large, or not downloadable: only named.
+    Named,
+}
+
+/// The input Work starts with: what they typed, then what each voice said,
+/// then each file (its text, or just its name). Empty when nothing is left.
+pub fn compose_channel_input(
+    content: &str,
+    voices: &[Option<String>],
+    files: &[(ChannelFileRef, ChannelFileRead)],
+) -> String {
+    let mut parts = Vec::new();
+    let typed = content.trim();
+    if !typed.is_empty() {
+        parts.push(typed.to_string());
+    }
+    for said in voices {
+        match said.as_deref().map(str::trim) {
+            Some(said) if !said.is_empty() => parts.push(format!("（语音）{said}")),
+            _ => parts.push("（发来一条语音，没能转成文字）".to_string()),
+        }
+    }
+    for (file, read) in files {
+        let name: String = file.name.trim().chars().take(120).collect();
+        let name = if name.is_empty() {
+            "文件".to_string()
+        } else {
+            name
+        };
+        match read {
+            ChannelFileRead::Text(text) => {
+                let text: String = text.chars().take(CHANNEL_TEXT_FILE_CHARS).collect();
+                parts.push(format!("（附件「{name}」）\n{}", text.trim_end()));
+            }
+            ChannelFileRead::Named => parts.push(format!("（发来文件「{name}」，内容未读取）")),
+        }
+    }
+    parts.join("\n\n")
 }
 
 /// Whether this openid already maps to a Myriad user. Lookup itself is I/O;
@@ -1630,6 +1716,7 @@ impl TelegramPrivateText {
             user_openid: self.from_id.to_string(),
             content: self.text.clone(),
             images: self.images.clone(),
+            ..Default::default()
         }
     }
 
@@ -1702,6 +1789,7 @@ impl InboundFeishuText {
             user_openid: self.open_id.clone(),
             content: self.content.clone(),
             images: self.images.clone(),
+            ..Default::default()
         }
     }
 
@@ -2910,6 +2998,7 @@ impl DiscordPrivateText {
             user_openid: self.author_id.clone(),
             content: self.text.clone(),
             images: self.images.clone(),
+            ..Default::default()
         }
     }
 }

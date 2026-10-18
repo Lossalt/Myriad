@@ -45,6 +45,7 @@ fn text(msg_id: &str, openid: &str, content: &str) -> InboundC2cText {
         user_openid: openid.to_string(),
         content: content.to_string(),
         images: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -2284,6 +2285,33 @@ mod onebot_decode {
     }
 
     #[test]
+    fn voice_and_file_segments_are_kept() {
+        let raw = json!({
+            "post_type": "message",
+            "message_type": "private",
+            "sub_type": "friend",
+            "message_id": -42,
+            "user_id": 20002,
+            "message": [
+                {"type":"record","data":{"file":"abc.amr","url":""}},
+                {"type":"file","data":{"file":"notes.md","name":"notes.md","file_size":120,
+                  "url":"https://example.com/notes.md","file_id":"f1"}},
+                {"type":"file","data":{"file":"a.zip","file_size":9,"url":""}}
+            ]
+        });
+        let inbound = decode_private_inbound(&raw.to_string()).expect("voice and files");
+        assert_eq!(inbound.msg_id, "-42");
+        assert_eq!(inbound.voices.len(), 1);
+        assert_eq!(inbound.voices[0].source, "abc.amr");
+        assert_eq!(inbound.files.len(), 2);
+        assert_eq!(inbound.files[0].name, "notes.md");
+        assert_eq!(inbound.files[0].size, 120);
+        assert_eq!(inbound.files[0].url, "https://example.com/notes.md");
+        assert_eq!(inbound.files[1].url, "");
+        assert!(inbound.has_attachments());
+    }
+
+    #[test]
     fn image_without_http_url_is_skipped() {
         let missing = json!({
             "post_type": "message",
@@ -2523,6 +2551,20 @@ mod onebot_encode {
         assert_eq!(payload["params"]["message_id"], -2147480000i64);
         assert!(payload.get("echo").is_none());
         assert!(encode_get_msg("abc").is_none());
+    }
+
+    #[test]
+    fn a_voice_is_fetched_as_wav_or_asked_for_its_text() {
+        use myriad_agent_rules::onebot::encode::{encode_fetch_ptt_text, encode_get_record_wav};
+        let record = encode_get_record_wav(" abc.amr ").expect("record");
+        assert_eq!(record["action"], "get_record");
+        assert_eq!(record["params"]["file"], "abc.amr");
+        assert_eq!(record["params"]["out_format"], "wav");
+        assert!(encode_get_record_wav(" ").is_none());
+        let ptt = encode_fetch_ptt_text("-7").expect("ptt");
+        assert_eq!(ptt["action"], "fetch_ptt_text");
+        assert_eq!(ptt["params"]["message_id"], -7);
+        assert!(encode_fetch_ptt_text("x").is_none());
     }
 
     #[test]
@@ -2917,4 +2959,62 @@ fn what_a_group_said_while_she_was_away_is_read_back_in_order_hers_included() {
     // Hers never address her; theirs do as live lines would.
     assert!(!past[1].line.addressed);
     assert!(past[2].line.addressed);
+}
+
+/// Voices and files read into the text Work starts with.
+mod channel_input {
+    use myriad_agent_rules::channel::{
+        CHANNEL_TEXT_FILE_BYTES, CHANNEL_TEXT_FILE_CHARS, ChannelFileRead, ChannelFileRef,
+        channel_file_is_text, compose_channel_input,
+    };
+
+    fn file(name: &str) -> ChannelFileRef {
+        ChannelFileRef {
+            url: String::new(),
+            name: name.into(),
+            size: 10,
+        }
+    }
+
+    #[test]
+    fn typed_text_then_voices_then_files() {
+        let input = compose_channel_input(
+            " 看看这个 ",
+            &[Some("明天几点开会".into()), None],
+            &[
+                (file("a.md"), ChannelFileRead::Text("# 标题\n".into())),
+                (file("b.zip"), ChannelFileRead::Named),
+            ],
+        );
+        assert_eq!(
+            input,
+            "看看这个\n\n（语音）明天几点开会\n\n（发来一条语音，没能转成文字）\n\n（附件「a.md」）\n# 标题\n\n（发来文件「b.zip」，内容未读取）"
+        );
+    }
+
+    #[test]
+    fn nothing_composes_to_empty() {
+        assert_eq!(compose_channel_input("  ", &[], &[]), "");
+    }
+
+    #[test]
+    fn long_file_text_is_cut() {
+        let long = "字".repeat(CHANNEL_TEXT_FILE_CHARS + 50);
+        let input = compose_channel_input("", &[], &[(file("x.txt"), ChannelFileRead::Text(long))]);
+        assert_eq!(
+            input.chars().filter(|c| *c == '字').count(),
+            CHANNEL_TEXT_FILE_CHARS
+        );
+    }
+
+    #[test]
+    fn only_small_text_files_are_read() {
+        assert!(channel_file_is_text("Notes.MD", 10));
+        assert!(!channel_file_is_text("a.pdf", 10));
+        assert!(!channel_file_is_text("noext", 10));
+        assert!(!channel_file_is_text(
+            "big.txt",
+            CHANNEL_TEXT_FILE_BYTES + 1
+        ));
+    }
 }

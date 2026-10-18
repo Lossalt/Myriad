@@ -155,6 +155,7 @@ mod tests {
             user_openid: "1001".into(),
             content: "帮我查天气".into(),
             images: Vec::new(),
+            ..Default::default()
         };
         let decision =
             ingest_channel_text(&event, PairingLookup::Unpaired, false, "discord", "1001");

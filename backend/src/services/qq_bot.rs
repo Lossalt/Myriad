@@ -546,6 +546,7 @@ fn inbound_c2c_from_dispatch(data: Option<&Value>) -> Option<InboundC2cText> {
         user_openid: user_openid.to_string(),
         content,
         images,
+        ..Default::default()
     })
 }
 

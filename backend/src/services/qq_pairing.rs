@@ -125,6 +125,7 @@ mod tests {
             user_openid: "oid".into(),
             content: "帮我查天气".into(),
             images: Vec::new(),
+            ..Default::default()
         };
         let decision = ingest_c2c_text(&event, PairingLookup::Unpaired, false);
         match decision {
