@@ -1882,14 +1882,14 @@ fn discord_server_lines_are_heard_and_those_to_her_are_marked() {
 }
 
 /// OneBot v11 wire 层：宽松解析是移植的核心价值。
-/// 各协议端（Lagrange / NapCat / LLOneBot）随时加字段，解不开的事件必须降级，绝不报错。
+/// 各协议端（SnowLuma / Lagrange / LLOneBot）随时加字段，解不开的事件必须降级，绝不报错。
 mod onebot_wire {
     use myriad_agent_rules::onebot::wire::{
         Inbound, RawEventJson, RespJson, WireMessage, value_as_string,
     };
     use serde_json::json;
 
-    /// NapCat 真实私聊事件（`messagePostFormat: "array"`）。
+    /// SnowLuma 私聊事件（`messageFormat: "array"`）。
     fn private_text_event() -> &'static str {
         r#"{
           "time": 1790000000, "self_id": 10001, "post_type": "message",
@@ -2003,48 +2003,39 @@ mod onebot_wire {
         assert_eq!(full.data["message_id"], 999);
     }
 
-    /// NapCat `OB11Response.createResponse` 的原样成功帧：`message` 与 `wording` 同时出现。
-    /// 解不开它，每个动作都等不到回执，超时后重试会把同一条消息反复发出去。
+    /// SnowLuma `okResponse` 的原样成功帧：只有 `status`/`retcode`/`data`，再挂回 `echo`。
+    /// 消息 id 是有符号 int32 哈希，常为负数。
     #[test]
-    fn napcat_response_with_message_and_wording_decodes() {
-        let ok = r#"{"status":"ok","retcode":0,"data":{"message_id":-2147480000},"message":"","wording":"","echo":"uuid-2","stream":"normal-action"}"#;
-        let full: RespJson = serde_json::from_str(ok).expect("a NapCat response decodes");
+    fn snowluma_response_decodes() {
+        let ok = r#"{"status":"ok","retcode":0,"data":{"message_id":-2147480000},"echo":"uuid-2"}"#;
+        let full: RespJson = serde_json::from_str(ok).expect("a SnowLuma response decodes");
         assert_eq!(full.status, "ok");
         assert_eq!(full.retcode, 0);
         assert_eq!(full.echo, json!("uuid-2"));
         assert_eq!(full.data["message_id"], -2147480000i64);
     }
 
-    /// NapCat `websocket-server.ts` 的 `authorize` 原样发出的拒绝帧：`echo` 是 `null`，不是缺失。
-    /// 它按响应解出来，所以拒绝必须在响应分支里认出来，否则 token 写错会被当成断线无限重连。
+    /// SnowLuma 流式动作的终帧同时带 `message` 与 `wording`。三个字段写成别名会让 serde
+    /// 报重复字段，每个动作都等不到回执，超时后重试会把同一条消息反复发出去。
     #[test]
-    fn napcat_token_refusal_is_a_response_that_refuses_the_connection() {
-        use myriad_agent_rules::onebot::rules::onebot_frame_refuses_connection;
-        let refusal = r#"{"status":"failed","retcode":1403,"data":null,"message":"token验证失败","wording":"token验证失败","echo":null,"stream":"normal-action"}"#;
-        let inbound: Inbound = serde_json::from_str(refusal).expect("the refusal decodes");
-        let Inbound::Resp(envelope) = inbound else {
-            panic!("`echo: null` is still a response");
-        };
-        let full: RespJson = serde_json::from_str(refusal).expect("full refusal decodes");
-        assert!(onebot_frame_refuses_connection(
-            &envelope.echo,
-            &full.status,
-            full.retcode
-        ));
+    fn snowluma_stream_frame_with_message_and_wording_decodes() {
+        let frame = r#"{"status":"failed","retcode":100,"data":{"type":"error","data_type":"error"},"wording":"boom","message":"boom","stream":"stream-action","echo":"uuid-3"}"#;
+        let full: RespJson = serde_json::from_str(frame).expect("a stream frame decodes");
+        assert_eq!(full.status, "failed");
+        assert_eq!(full.wording.as_deref(), Some("boom"));
+        assert_eq!(full.message.as_deref(), Some("boom"));
+    }
 
-        // One refused action carries our echo; it fails that action, not the socket.
-        assert!(!onebot_frame_refuses_connection(
-            &json!("uuid-1"),
-            "failed",
-            1403
-        ));
-        // A send failure (NapCat 1200) with no echo is not a credential problem.
-        assert!(!onebot_frame_refuses_connection(
-            &json!(null),
-            "failed",
-            1200
-        ));
-        assert!(!onebot_frame_refuses_connection(&json!(null), "ok", 0));
+    /// SnowLuma 解不开一帧请求时回 `failed`/1400 且不带 `echo`。它没有 echo 字段，
+    /// 按事件解出来，解码器认不出任何事件，于是被丢弃——不会被当成鉴权失败而断开。
+    #[test]
+    fn snowluma_bad_request_without_echo_is_not_an_event_she_reads() {
+        use myriad_agent_rules::onebot::decode::{decode_group_inbound, decode_private_inbound};
+        let bad = r#"{"status":"failed","retcode":1400,"data":null,"wording":"bad request"}"#;
+        let inbound: Inbound = serde_json::from_str(bad).expect("it decodes");
+        assert!(matches!(inbound, Inbound::Event(_)));
+        assert!(decode_private_inbound(bad).is_none());
+        assert!(decode_group_inbound(bad, 10001).is_none());
     }
 
     /// 站点内全链路是字符串，但 int64 必须先完整保住，不能经浮点。
@@ -2198,10 +2189,10 @@ mod onebot_decode {
         assert!(decode_group_ban(&message.to_string(), 10001).is_none());
     }
 
-    /// NapCat 的回复段只有 `id`（`api/msg.ts` 只写 `data: { id }`）。解码认不出是不是她，
-    /// 只留下 id 给工人用 `get_msg` 反查。
+    /// SnowLuma 的回复段只有 `id`（`element-codecs.ts` 的 `reply.toSegment` 只写
+    /// `data: { id }`）。解码认不出是不是她，只留下 id 给工人用 `get_msg` 反查。
     #[test]
-    fn napcat_reply_carries_only_an_id_to_look_up() {
+    fn snowluma_reply_carries_only_an_id_to_look_up() {
         use myriad_agent_rules::onebot::decode::decode_group_inbound;
         let raw = json!({
             "post_type": "message",
@@ -2397,14 +2388,14 @@ mod onebot_decode {
         assert_eq!(decode_segments_to_text(&[]), "");
     }
 
-    /// 回归：NapCat 实测会发出大于 `i32::MAX` 的 `message_id`（官方 issue #213 的报文里
-    /// 是 `3425462029`）。OneBot 规范写的是 int32，但按 int32 读会让整条事件解不开，
+    /// 回归：有协议端实测发过大于 `i32::MAX` 的 `message_id`（`3425462029`）。
+    /// OneBot 规范写的是 int32，但按 int32 读会让整条事件解不开，
     /// 于是用户的消息被静默丢弃。宽松层跟现实，不跟规范字面。
     #[test]
-    fn napcat_message_id_beyond_i32_is_not_dropped() {
+    fn message_id_beyond_i32_is_not_dropped() {
         let raw = r#"{"post_type":"message","message_type":"private","sub_type":"friend","message_id":3425462029,"user_id":10001,"message":[{"type":"text","data":{"text":"hi"}}]}"#;
         let inbound = decode_private_inbound(raw)
-            .expect("a real NapCat message_id must not drop the whole event");
+            .expect("a message_id beyond i32 must not drop the whole event");
         assert_eq!(inbound.msg_id, "3425462029");
         assert_eq!(inbound.content, "hi");
     }
@@ -2657,14 +2648,19 @@ mod onebot_rules {
         assert!(!onebot_group_allowed("555,abc", "555"));
     }
 
+    /// SnowLuma 在升级阶段拒绝：token 不对是 HTTP 401，路径不对是 HTTP 400。
     #[test]
     fn bad_token_is_permanent_not_retried() {
         assert_eq!(
-            classify_onebot_handshake(None, Some(1403)),
+            classify_onebot_handshake(Some(401)),
             ConnectFailureKind::Permanent
         );
         assert_eq!(
-            classify_onebot_handshake(Some(403), None),
+            classify_onebot_handshake(Some(400)),
+            ConnectFailureKind::Permanent
+        );
+        assert_eq!(
+            classify_onebot_handshake(Some(403)),
             ConnectFailureKind::Permanent
         );
     }
@@ -2672,11 +2668,11 @@ mod onebot_rules {
     #[test]
     fn unreachable_server_is_transient() {
         assert_eq!(
-            classify_onebot_handshake(Some(503), None),
+            classify_onebot_handshake(Some(503)),
             ConnectFailureKind::Transient
         );
         assert_eq!(
-            classify_onebot_handshake(None, None),
+            classify_onebot_handshake(None),
             ConnectFailureKind::Transient
         );
     }
@@ -2684,54 +2680,28 @@ mod onebot_rules {
     #[test]
     fn unknown_path_is_permanent() {
         assert_eq!(
-            classify_onebot_handshake(Some(404), None),
+            classify_onebot_handshake(Some(404)),
             ConnectFailureKind::Permanent
         );
     }
 
-    /// OneBot 标准把 1400/1401/1403/1404 对应 HTTP 400/401/403/404。
-    /// 整段都是「配置或请求本身不对」，重试无用；只有 1405 往后的 14xx 才可重试。
-    /// 漏掉 1404 会让路径写错时无限重试，正是这条测试要钉住的。
+    /// 4xx/5xx 的边界。
     #[test]
-    fn the_whole_documented_retcode_range_is_permanent() {
-        for retcode in 1400..=1404 {
-            assert_eq!(
-                classify_onebot_handshake(None, Some(retcode)),
-                ConnectFailureKind::Permanent,
-                "retcode {retcode} is a configuration fault"
-            );
-        }
-        for retcode in [1405, 1499, 1500] {
-            assert_eq!(
-                classify_onebot_handshake(None, Some(retcode)),
-                ConnectFailureKind::Transient,
-                "retcode {retcode} is retryable"
-            );
-        }
-    }
-
-    /// 4xx/5xx 的边界，以及 retcode 优先于 status 的优先级。
-    #[test]
-    fn status_boundaries_and_retcode_precedence() {
+    fn status_boundaries() {
         for status in [400, 499] {
             assert_eq!(
-                classify_onebot_handshake(Some(status), None),
+                classify_onebot_handshake(Some(status)),
                 ConnectFailureKind::Permanent,
                 "status {status}"
             );
         }
         for status in [399, 500, 599, 600] {
             assert_eq!(
-                classify_onebot_handshake(Some(status), None),
+                classify_onebot_handshake(Some(status)),
                 ConnectFailureKind::Transient,
                 "status {status}"
             );
         }
-        assert_eq!(
-            classify_onebot_handshake(Some(503), Some(1403)),
-            ConnectFailureKind::Permanent,
-            "a token rejection outranks a server-side status"
-        );
     }
 }
 
@@ -2845,6 +2815,22 @@ mod group_pictures {
         assert!(line.images.iter().all(|image| image.sticker));
         assert_eq!(line.images[1].hint.as_deref(), Some("[doge]"));
     }
+
+    /// SnowLuma 把商城表情报成带 `emoji_id` 的 `image` 段（`mface.toSegment`），
+    /// 它要按表情认，不按文件名认。
+    #[test]
+    fn a_snowluma_market_face_reported_as_an_image_is_a_sticker() {
+        let raw = r#"{"post_type":"message","message_type":"group","group_id":123,"user_id":456,"self_id":789,"message_id":-5,
+            "sender":{"nickname":"阿明","card":""},
+            "message":[{"type":"image","data":{"file":"e9-e9abc.gif","url":"https://gxh.vip.qq.com/club/item/parcel/item/e9/e9abc/raw300.gif",
+                "summary":"[doge]","sub_type":0,"emoji_id":"e9abc","emoji_package_id":1,"key":"k"}}]}"#;
+        let line = myriad_agent_rules::onebot::decode::decode_group_inbound(raw, 789)
+            .expect("a market face");
+        assert_eq!(line.images.len(), 1);
+        assert_eq!(line.images[0].key, "qq-mface:e9abc");
+        assert!(line.images[0].sticker);
+        assert_eq!(line.message_id, "-5");
+    }
 }
 
 #[test]
@@ -2894,7 +2880,7 @@ fn what_a_group_said_while_she_was_away_is_read_back_in_order_hers_included() {
     assert_eq!(action["params"]["group_id"], 1076198629i64);
     assert_eq!(action["params"]["count"], 50);
     assert!(encode_get_group_msg_history("not a group", 30).is_none());
-    // As NapCat answers: newest may come first, post_type may be missing.
+    // SnowLuma strips post_type and self_id from history; order is not relied on.
     let data = serde_json::json!({"messages": [
         {"message_type":"group","group_id":1076198629,"user_id":798494815,"self_id":3264977935i64,
          "message_id":3,"time":1790606210,"sender":{"nickname":"染川 瞳","card":""},

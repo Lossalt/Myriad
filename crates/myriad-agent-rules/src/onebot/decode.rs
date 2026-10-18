@@ -45,7 +45,7 @@ pub fn private_message_is_cq_string(raw: &str) -> bool {
 /// 群里的一行。`addressed` 为真表示 @ 了她。回复她的消息不算：那可能是在跟别人说，
 /// 由她和别的话一起读、自己判断（`reply_to.hers` 说明被回复的是她）。
 ///
-/// NapCat 的回复段只有 `{id}`，解码时认不出被回复的是不是她。这时 `reply_to` 为空、
+/// SnowLuma 的回复段只有 `{id}`，解码时认不出被回复的是不是她。这时 `reply_to` 为空、
 /// `reply_id` 带着那条消息的 id，由工人用 `get_msg` 反查后交给 [`decode_replied_message`]。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OneBotGroupLine {
@@ -210,9 +210,10 @@ pub fn decode_group_history(data: &serde_json::Value, self_id: i64) -> Vec<PastG
     past
 }
 
-/// Images (`image`) and QQ stickers (`mface`) in a group line. An image is
-/// known again by its file name, which QQ derives from its content; its URL
-/// is QQ's own download link.
+/// Images (`image`) and QQ stickers in a group line. An image is known again
+/// by its file name, which QQ derives from its content; its URL is QQ's own
+/// download link. SnowLuma reports a market face (商城表情) as an `image`
+/// carrying `emoji_id`; a bare `mface` segment is read the same way.
 fn group_images(segments: &[WireSegment]) -> Vec<crate::channel::GroupImage> {
     use crate::channel::{GROUP_IMAGES, GroupImage, ImageFetch};
     segments
@@ -225,8 +226,18 @@ fn group_images(segments: &[WireSegment]) -> Vec<crate::channel::GroupImage> {
                 .str_field("summary")
                 .map(|summary| summary.trim().chars().take(40).collect::<String>())
                 .filter(|summary| !summary.is_empty());
-            match segment.kind.as_str() {
-                "image" => Some(GroupImage {
+            let market_face = segment
+                .str_field("emoji_id")
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty());
+            match (segment.kind.as_str(), market_face) {
+                ("image" | "mface", Some(emoji_id)) => Some(GroupImage {
+                    key: format!("qq-mface:{emoji_id}"),
+                    hint: summary,
+                    sticker: true,
+                    fetch: ImageFetch::Url { url },
+                }),
+                ("image", None) => Some(GroupImage {
                     key: format!(
                         "qq:{}",
                         segment.str_field("file").unwrap_or_else(|| url.clone())
@@ -238,11 +249,8 @@ fn group_images(segments: &[WireSegment]) -> Vec<crate::channel::GroupImage> {
                     hint: summary,
                     fetch: ImageFetch::Url { url },
                 }),
-                "mface" => Some(GroupImage {
-                    key: format!(
-                        "qq-mface:{}",
-                        segment.str_field("emoji_id").unwrap_or_else(|| url.clone())
-                    ),
+                ("mface", None) => Some(GroupImage {
+                    key: format!("qq-mface:{url}"),
                     hint: summary,
                     sticker: true,
                     fetch: ImageFetch::Url { url },

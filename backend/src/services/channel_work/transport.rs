@@ -226,8 +226,8 @@ impl ChannelTransport {
                     .map_err(SendError::from)
             }
             Self::OneBot { user_id } => {
-                // NapCat cannot send a top-level markdown segment on a normal QQ
-                // account. Tables stay readable as plain text.
+                // SnowLuma sends markdown only as a flash-message card, not as
+                // a message segment. Tables stay readable as plain text.
                 let Some(action) =
                     myriad_agent_rules::onebot::encode::plan_private_delivery(user_id, chunk, &[])
                 else {
@@ -327,7 +327,7 @@ impl ChannelTransport {
             .await
             .map_err(SendError::from),
             Self::OneBot { user_id } => {
-                // NapCat fetches a `file` URL itself and cannot reach a site-relative
+                // SnowLuma fetches a `file` URL itself and cannot reach a site-relative
                 // image-cache path. Send the bytes already read, as other platforms do.
                 use base64::Engine as _;
                 let inline = format!(

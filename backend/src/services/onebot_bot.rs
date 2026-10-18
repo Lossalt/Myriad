@@ -1,8 +1,14 @@
 //! OneBot forward-WebSocket worker.
 //!
-//! NapCat is the server. This worker connects out, installs the live socket as
-//! the outbound sender, and hands private messages to pairing. Reconnect,
-//! credential rejection, and phase publishing stay in `bot_supervisor`.
+//! SnowLuma is the server (its `wsServers` entry, role `Universal`). This
+//! worker connects out, installs the live socket as the outbound sender, and
+//! hands private messages to pairing. Reconnect, credential rejection, and
+//! phase publishing stay in `bot_supervisor`.
+//!
+//! SnowLuma checks the token during the WebSocket upgrade: a wrong token is an
+//! HTTP 401 and a wrong path an HTTP 400, so the socket never opens. A token
+//! rotated on the SnowLuma side closes the open socket (1008); the reconnect
+//! then meets the 401.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,8 +22,7 @@ use myriad_agent_rules::onebot::decode::{
 };
 use myriad_agent_rules::onebot::encode::encode_get_msg;
 use myriad_agent_rules::onebot::rules::{
-    classify_onebot_handshake, onebot_frame_refuses_connection, onebot_group_allowed,
-    onebot_worker_intent,
+    classify_onebot_handshake, onebot_group_allowed, onebot_worker_intent,
 };
 use myriad_agent_rules::onebot::wire::{Inbound, RespJson};
 use serde::Serialize;
@@ -36,7 +41,7 @@ const READ_IDLE: Duration = Duration::from_secs(90);
 fn connect_failure(error: tokio_tungstenite::tungstenite::Error) -> ConnectFailureKind {
     match error {
         tokio_tungstenite::tungstenite::Error::Http(response) => {
-            classify_onebot_handshake(Some(response.status().as_u16()), None)
+            classify_onebot_handshake(Some(response.status().as_u16()))
         }
         _ => ConnectFailureKind::Transient,
     }
@@ -53,9 +58,8 @@ async fn group_allowed(group_id: &str) -> bool {
     onebot_group_allowed(&config.onebot_bot_group_ids, group_id)
 }
 
-/// NapCat also accepts the token as `?access_token=` and reads it first, so a
-/// deployer may put it in the URL. Logs and the status API show only the part
-/// before the query.
+/// SnowLuma also accepts the token as `?access_token=`, so a deployer may put
+/// it in the URL. Logs and the status API show only the part before the query.
 fn redacted_url(url: &str) -> String {
     url.split(['?', '#']).next().unwrap_or_default().to_string()
 }
@@ -273,18 +277,15 @@ async fn run_socket(
     outcome
 }
 
-/// `Some` means the socket must close with that failure kind.
+/// `Some` means the socket must close with that failure kind. A wrong token
+/// never reaches here: SnowLuma refuses it before the socket opens. A
+/// `failed` frame without our echo (SnowLuma answers an unparsable frame with
+/// 1400 and no echo) completes nothing and keeps the socket.
 async fn handle_text(text: &str) -> Option<ConnectFailureKind> {
     let inbound: Inbound = serde_json::from_str(text).ok()?;
     match inbound {
         Inbound::Resp(envelope) => {
             let response: RespJson = serde_json::from_str(text).ok()?;
-            // NapCat's token refusal arrives as a response with `echo: null`.
-            // A matched echo only fails that one action.
-            if onebot_frame_refuses_connection(&envelope.echo, &response.status, response.retcode) {
-                warn!(retcode = response.retcode, "OneBot handshake refused");
-                return Some(ConnectFailureKind::Permanent);
-            }
             onebot_send::complete_echo(
                 &envelope.echo,
                 &response.status,
@@ -295,18 +296,6 @@ async fn handle_text(text: &str) -> Option<ConnectFailureKind> {
             None
         }
         Inbound::Event(event) => {
-            // A heartbeat carries `status` as an object. Only a failed action
-            // envelope with no echo field at all is a handshake refusal.
-            if let Some(status) = event.status.as_ref().and_then(serde_json::Value::as_str)
-                && let Some(retcode) = event
-                    .extra
-                    .get("retcode")
-                    .and_then(serde_json::Value::as_i64)
-                && onebot_frame_refuses_connection(&serde_json::Value::Null, status, retcode)
-            {
-                warn!(retcode, "OneBot handshake refused");
-                return Some(ConnectFailureKind::Permanent);
-            }
             let raw = serde_json::to_string(event.as_ref()).ok()?;
             if !groups_enabled().await {
                 // Groups stay off until the deployer turns them on. A personal
@@ -353,7 +342,7 @@ async fn handle_text(text: &str) -> Option<ConnectFailureKind> {
                 static WARNED: AtomicBool = AtomicBool::new(false);
                 if !WARNED.swap(true, Ordering::Relaxed) {
                     warn!(
-                        "OneBot private message used CQ string format; set messagePostFormat to array"
+                        "OneBot private message used CQ string format; set messageFormat to array in SnowLuma"
                     );
                 }
                 return None;
@@ -444,7 +433,7 @@ async fn catch_up_groups() {
     .await;
 }
 
-/// NapCat's reply segment names only a message id. Look it up so the quoted
+/// SnowLuma's reply segment names only a message id. Look it up so the quoted
 /// line, and whether it was hers, reaches the group context. A failed lookup
 /// leaves the line as it was.
 async fn resolve_reply(mut group: OneBotGroupLine, self_id: i64) -> OneBotGroupLine {

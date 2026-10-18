@@ -51,7 +51,7 @@ impl ChannelPlatform {
     /// `user_identities.provider` of a pairing. Discord pairings are
     /// `discord_dm`: `discord` is the OAuth login / data-platform provider.
     /// OneBot is its own platform, not a second QQ transport: a QQ number
-    /// reached through NapCat is a different identity from the official bot's.
+    /// reached through SnowLuma is a different identity from the official bot's.
     pub const fn provider(self) -> &'static str {
         match self {
             Self::Qq => "qq",

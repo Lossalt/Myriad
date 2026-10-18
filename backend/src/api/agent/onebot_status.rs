@@ -1,6 +1,6 @@
 //! Admin-only OneBot status. There is no separate credential probe:
-//! a bad token is only visible after NapCat accepts the socket and
-//! then closes it.
+//! the worker's connect attempt is the probe. SnowLuma refuses a bad
+//! token at the WebSocket upgrade, which shows here as `rejected`.
 
 use super::*;
 use crate::error::HttpError;

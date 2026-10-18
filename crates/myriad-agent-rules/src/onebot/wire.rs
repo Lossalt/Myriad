@@ -5,7 +5,7 @@
 //! OneBot v11 wire 层类型(serde)。
 //!
 //! 所有结构都**宽松**:`#[serde(default)]`、`Option`,wire 枚举带 `#[serde(other)] Unknown` 分支。
-//! 我们绝不 `deny_unknown_fields`——协议实现(Lagrange / NapCat / LLOneBot)随时可能加字段,
+//! 我们绝不 `deny_unknown_fields`——协议实现(SnowLuma / Lagrange / LLOneBot)随时可能加字段,
 //! 解不开的事件必须降级为 `Event::Raw`,绝不报错。
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -108,8 +108,8 @@ pub struct RawEventJson {
     pub message_type: Option<String>,
     #[serde(default)]
     pub sub_type: Option<String>,
-    /// OneBot 规范写的是 `int32`，但 NapCat 实测会发出大于 `i32::MAX` 的值
-    /// （官方 issue #213 的报文里是 `3425462029`）。按 `i32` 读会让整条事件解不开，
+    /// OneBot 规范写的是 `int32`。SnowLuma 发的是有符号 int32 哈希（常为负数），
+    /// 但别的协议端实测发过大于 `i32::MAX` 的值，按 `i32` 读会让整条事件解不开，
     /// 所以这里放宽到 `i64`——宽松层跟现实，不跟规范字面。
     #[serde(default)]
     pub message_id: Option<i64>,
@@ -125,7 +125,7 @@ pub struct RawEventJson {
     pub sender: Option<WireSender>,
     #[serde(default)]
     pub font: Option<i32>,
-    /// LLOneBot/NapCat 私聊消息的会话内序号（与 message_id 并存的 typed seq）。
+    /// 消息的会话内序号（与 message_id 并存；SnowLuma 私聊群聊都带）。
     #[serde(default)]
     pub message_seq: Option<i64>,
 
@@ -174,7 +174,7 @@ pub struct RespJson {
     pub data: Value,
     #[serde(default)]
     pub echo: Value,
-    /// 部分实现在失败时放一段人类可读消息。三个字段各自独立:NapCat 每个响应都同时带
+    /// 部分实现在失败时放一段人类可读消息。三个字段各自独立:SnowLuma 的流式帧同时带
     /// `message` 和 `wording`,写成别名会让 serde 报重复字段,整帧解不开。
     #[serde(default)]
     pub message: Option<String>,

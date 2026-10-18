@@ -237,9 +237,9 @@ pub(super) async fn send_typing(line: &GroupLine, token: &str) {
             let _ = crate::services::discord_bot::send_typing(token, &line.chat).await;
         }
         ChannelPlatform::OneBot => {
-            // Group typing is not a documented NapCat action. Private typing
-            // uses `set_input_status` with a user id, which a group line has
-            // no reason to poke.
+            // SnowLuma's `set_input_status` covers friend chats only (it
+            // takes a user id and sends chat type 0); a group has no typing
+            // action to call.
         }
         ChannelPlatform::Qq | ChannelPlatform::Feishu => {}
     }

@@ -1,7 +1,8 @@
 //! OneBot outbound over the worker's live WebSocket.
 //!
-//! NapCat accepts a connection and then speaks actions on that same socket.
-//! A second connection would not replace it, so delivery cannot open its own.
+//! SnowLuma accepts a `Universal` connection and then speaks actions on that
+//! same socket. A second connection would not replace it, so delivery cannot
+//! open its own.
 //! The worker installs a sender while the socket is up and removes it on close.
 //!
 //! Each action gets an `echo`. The matching response completes that delivery.
@@ -75,7 +76,7 @@ fn fail_all(live: Live, reason: &str) {
 /// Send one action and wait for its `echo`.
 ///
 /// `Ok(None)` means the action was accepted. `Ok(Some(Permanent))` means
-/// NapCat answered `failed`: it tried this action and refused it. A missing
+/// SnowLuma answered `failed`: it tried this action and refused it. A missing
 /// socket, a write failure, a timeout, or a close is `Err`: retryable, and it
 /// does not close the socket. A handshake refusal has no echo and is
 /// classified by the worker.
@@ -129,9 +130,10 @@ fn action_result(status: &str, retcode: i64) -> ActionResult {
     if status == "ok" || status == "async" || retcode == 0 {
         return Ok(None);
     }
-    // NapCat answers `failed` with 1400 for bad params and 1200 for anything the
-    // action threw: not a friend, risk control, a file it cannot read. Retrying
-    // the same item cannot change that, and a retried item holds the session's
+    // SnowLuma answers `failed` with 1400 for bad params, 1404 for an unknown
+    // action, and 100 for anything the action threw: not a friend, risk
+    // control, a file it cannot read, a message it does not know. Retrying the
+    // same item cannot change that, and a retried item holds the session's
     // outbox until it expires. Only a missing answer is worth retrying.
     if status == "failed" {
         return Ok(Some(ConnectFailureKind::Permanent));
@@ -243,8 +245,8 @@ mod tests {
                 .cloned()
                 .expect("echo")
         };
-        // NapCat's catch-all for a thrown action. Retrying would pin the outbox.
-        complete_echo(&json!(echo), "failed", 1200, Value::Null).await;
+        // SnowLuma's catch-all for a thrown action. Retrying would pin the outbox.
+        complete_echo(&json!(echo), "failed", 100, Value::Null).await;
         assert_eq!(
             refused.await.expect("join"),
             Ok(Some(ConnectFailureKind::Permanent))

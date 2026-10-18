@@ -8,7 +8,7 @@ pub fn encode_text_segment(text: &str) -> Value {
 }
 
 /// `{"type":"image","data":{"file":…}}`。`file` 接受 URL 或 `base64://…`，不走 `data.url`。
-/// 站内图片 NapCat 取不到，调用方应先读出字节再以 `base64://` 发。
+/// SnowLuma 优先读 `file`。站内图片它取不到，调用方应先读出字节再以 `base64://` 发。
 pub fn encode_image_segment(url: &str) -> Value {
     json!({"type": "image", "data": {"file": url}})
 }
@@ -45,9 +45,9 @@ pub fn encode_group_message(group_id: &str, segments: &[Value]) -> Option<Value>
 
 /// `set_input_status`，只发正在输入。
 ///
-/// NapCat `SetInputStatus.ts` 的 `payloadExample` 把 `event_type` 写成 `1`，
-/// `napcat-core` 再原样传给 `sendShowInputStatusReq`。源码没有取消取值，
-/// `typing == false` 返回 `None`，不发明一个 `0`。
+/// SnowLuma 把 `event_type` 原样放进 OIDB 0xcd4，只支持好友会话。它缺省按 `0` 处理、
+/// 注释称 `0` 为取消，但取消的实际效果未经验证（uncertain），
+/// 所以 `typing == false` 仍返回 `None`，只发 `1`。
 pub fn encode_typing(user_id: &str, typing: bool) -> Option<Value> {
     if !typing {
         return None;
@@ -64,7 +64,7 @@ pub fn encode_typing(user_id: &str, typing: bool) -> Option<Value> {
 
 /// 文本在前，图片随后，最多 [`CHANNEL_IMAGE_LIMIT`] 张。全空则 `None`。
 ///
-/// 只发 text 段：NapCat 的 markdown 段只能套在双层合并转发里，普通 QQ 号直接发不出去。
+/// 只发 text 段：SnowLuma 的 markdown 只能作为闪传卡片发，不能当普通消息段。
 pub fn plan_private_delivery(user_id: &str, text: &str, images: &[String]) -> Option<Value> {
     let text = text.trim();
     let mut segments = Vec::new();
@@ -77,9 +77,8 @@ pub fn plan_private_delivery(user_id: &str, text: &str, images: &[String]) -> Op
     encode_private_message(user_id, &segments)
 }
 
-/// `get_msg`。NapCat 群消息里的回复段只有 `id`，被回复的是谁、说了什么要靠它反查。
 /// The latest `count` messages of a group, for catching up on what was said
-/// while she was not connected.
+/// while she was not connected. SnowLuma answers `{"messages": [...]}`.
 pub fn encode_get_group_msg_history(group_id: &str, count: u32) -> Option<Value> {
     let group_id = group_id.trim().parse::<i64>().ok()?;
     Some(json!({
@@ -88,6 +87,8 @@ pub fn encode_get_group_msg_history(group_id: &str, count: u32) -> Option<Value>
     }))
 }
 
+/// `get_msg`。SnowLuma 群消息里的回复段只有 `id`，被回复的是谁、说了什么要靠它反查。
+/// 消息 id 是有符号 int32 哈希，常为负数。
 pub fn encode_get_msg(message_id: &str) -> Option<Value> {
     let message_id = message_id.trim().parse::<i64>().ok()?;
     Some(json!({
@@ -96,9 +97,10 @@ pub fn encode_get_msg(message_id: &str) -> Option<Value> {
     }))
 }
 
-/// A reaction on a group message (NapCat `set_msg_emoji_like`). An emoji is
-/// sent as its code point, which NapCat passes on as an emoji reaction
-/// rather than a QQ face id; whether QQ takes a given emoji is QQ's.
+/// A reaction on a group message (SnowLuma `set_msg_emoji_like`, group only).
+/// An emoji is sent as its decimal code point; SnowLuma treats a code longer
+/// than three digits as a Unicode emoji rather than a QQ face id. Whether QQ
+/// takes a given emoji is QQ's.
 pub fn encode_set_msg_emoji_like(message_id: &str, emoji: &str) -> Option<Value> {
     let message_id = message_id.trim().parse::<i64>().ok()?;
     let mut chars = emoji.trim().trim_end_matches('\u{fe0f}').chars();

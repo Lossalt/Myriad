@@ -543,7 +543,7 @@ pub struct DynamicConfig {
     pub feishu_bot_app_id: String,
     pub feishu_bot_app_secret: Option<String>,
 
-    /// OneBot 11 办事通道（正向 WebSocket，对接 NapCat 等协议端）。默认关。
+    /// OneBot 11 办事通道（正向 WebSocket，对接 SnowLuma 的 wsServers）。默认关。
     /// ws_url 是路由信息，可读回；access_token 只写。
     pub onebot_bot_enabled: bool,
     pub onebot_bot_ws_url: String,
