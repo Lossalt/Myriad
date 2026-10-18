@@ -1765,6 +1765,8 @@ pub struct InboundFeishuText {
     pub chat_id: String,
     pub content: String,
     pub images: Vec<ChannelImageRef>,
+    pub voices: Vec<ChannelVoiceRef>,
+    pub files: Vec<ChannelFileRef>,
 }
 
 /// Feishu interactive-card button press. `data` is `action.value.data`.
@@ -1807,7 +1809,8 @@ impl InboundFeishuText {
             user_openid: self.open_id.clone(),
             content: self.content.clone(),
             images: self.images.clone(),
-            ..Default::default()
+            voices: self.voices.clone(),
+            files: self.files.clone(),
         }
     }
 
@@ -1870,8 +1873,46 @@ fn parse_feishu_images(message: &serde_json::Value) -> Vec<ChannelImageRef> {
     }]
 }
 
+/// An `audio` or `file` message's resource, as `feishu:<message_id>/<file_key>`
+/// for the backend to download with its own token. Audio is kept as `ogg`
+/// (Feishu voice is Opus; the container is `uncertain`).
+fn parse_feishu_media(
+    message_id: &str,
+    msg_type: &str,
+    raw_content: &str,
+) -> (Vec<ChannelVoiceRef>, Vec<ChannelFileRef>) {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw_content) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Some(key) = json_trimmed_str(&parsed, "file_key") else {
+        return (Vec::new(), Vec::new());
+    };
+    let source = format!("feishu:{message_id}/{key}");
+    match msg_type {
+        "audio" => (
+            vec![ChannelVoiceRef {
+                source,
+                format: "ogg".to_string(),
+                said: None,
+            }],
+            Vec::new(),
+        ),
+        "file" => (
+            Vec::new(),
+            vec![ChannelFileRef {
+                url: source,
+                name: json_trimmed_str(&parsed, "file_name")
+                    .unwrap_or("file")
+                    .to_string(),
+                size: 0,
+            }],
+        ),
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
 /// Parse `im.message.receive_v1`. Drops bots, groups, unknown `message_type`,
-/// and empty text without images. Only `text` and `image` enter Work. Missing
+/// and empty messages. `text`, `image`, `audio` and `file` enter Work. Missing
 /// `open_id` falls back to `user_id`; both are kept on `identity_keys` so
 /// pairing can alias them. `event_id` comes from the event header for dedup.
 pub fn parse_feishu_message_receive(
@@ -1912,7 +1953,7 @@ pub fn parse_feishu_message_receive(
         .unwrap_or("");
     let content = match msg_type {
         "text" => feishu_text_from_content(raw_content),
-        "image" => String::new(),
+        "image" | "audio" | "file" => String::new(),
         _ => return None,
     };
     let images = if msg_type == "image" {
@@ -1920,7 +1961,8 @@ pub fn parse_feishu_message_receive(
     } else {
         Vec::new()
     };
-    if content.trim().is_empty() && images.is_empty() {
+    let (voices, files) = parse_feishu_media(message_id, msg_type, raw_content);
+    if content.trim().is_empty() && images.is_empty() && voices.is_empty() && files.is_empty() {
         return None;
     }
     Some(InboundFeishuText {
@@ -1931,6 +1973,8 @@ pub fn parse_feishu_message_receive(
         chat_id: chat_id.to_string(),
         content,
         images,
+        voices,
+        files,
     })
 }
 

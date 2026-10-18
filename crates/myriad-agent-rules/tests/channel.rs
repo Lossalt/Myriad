@@ -1440,21 +1440,6 @@ fn feishu_image_message_becomes_image_ref() {
 
 #[test]
 fn feishu_unknown_message_type_drops() {
-    let file = serde_json::json!({
-        "sender": {
-            "sender_id": { "open_id": "ou_file" },
-            "sender_type": "user"
-        },
-        "message": {
-            "message_id": "om_file",
-            "chat_id": "oc_file",
-            "chat_type": "p2p",
-            "message_type": "file",
-            "content": "{\"file_key\":\"file_abc\"}"
-        }
-    });
-    assert!(parse_feishu_message_receive("e", &file).is_none());
-
     let post = serde_json::json!({
         "sender": {
             "sender_id": { "open_id": "ou_post" },
@@ -3082,9 +3067,43 @@ mod channel_input {
 /// Each platform's private voices and files, as handles its worker fetches.
 mod private_attachments {
     use myriad_agent_rules::channel::{
-        discord_private_text_from_create, parse_http_media_attachments,
-        parse_telegram_private_texts,
+        discord_private_text_from_create, parse_feishu_message_receive,
+        parse_http_media_attachments, parse_telegram_private_texts,
     };
+
+    fn feishu_p2p(msg_type: &str, content: &str) -> serde_json::Value {
+        serde_json::json!({
+            "sender": { "sender_id": { "open_id": "ou_a" }, "sender_type": "user" },
+            "message": {
+                "message_id": "om_a",
+                "chat_id": "oc_a",
+                "chat_type": "p2p",
+                "message_type": msg_type,
+                "content": content
+            }
+        })
+    }
+
+    #[test]
+    fn a_feishu_audio_and_file_become_resource_handles() {
+        let audio = feishu_p2p("audio", r#"{"file_key":"file_v","duration":3000}"#);
+        let inbound = parse_feishu_message_receive("e", &audio)
+            .expect("audio")
+            .inbound();
+        assert_eq!(inbound.voices[0].source, "feishu:om_a/file_v");
+        assert_eq!(inbound.voices[0].format, "ogg");
+        assert!(inbound.files.is_empty());
+
+        let file = feishu_p2p("file", r#"{"file_key":"file_d","file_name":"a.csv"}"#);
+        let inbound = parse_feishu_message_receive("e", &file)
+            .expect("file")
+            .inbound();
+        assert_eq!(inbound.files[0].url, "feishu:om_a/file_d");
+        assert_eq!(inbound.files[0].name, "a.csv");
+
+        let keyless = feishu_p2p("file", r#"{"file_name":"a.csv"}"#);
+        assert!(parse_feishu_message_receive("e", &keyless).is_none());
+    }
 
     #[test]
     fn a_qq_voice_prefers_its_wav_url_and_keeps_its_transcript() {

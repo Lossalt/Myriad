@@ -1,6 +1,7 @@
 //! Feishu p2p pairing entry: classify inbound text, then shared pairing I/O.
 
 use myriad_agent_rules::channel::{
+    CHANNEL_TEXT_FILE_BYTES, CHANNEL_VOICE_BYTES, ChannelFileRef, ChannelVoiceRef,
     FeishuCardCallback, InboundC2cText, InboundFeishuText, PAIRING_REQUIRED_REPLY,
     PairingBindResult, PairingLookup, session_key,
 };
@@ -9,6 +10,7 @@ use tracing::warn;
 
 use crate::services::channel_pairing::{self, FEISHU, PrivateText};
 use crate::services::channel_platform::ChannelPlatform;
+use crate::services::channel_work::attachments::VoiceAudio;
 
 pub use crate::services::channel_pairing::{IssuedPairingCode, PairingStatus};
 
@@ -78,6 +80,35 @@ impl PrivateText for FeishuText {
         send_text(&self.event.chat_id_key(), text).await;
     }
 
+    async fn voice_audio(&self, voice: &ChannelVoiceRef) -> Result<Option<VoiceAudio>, String> {
+        let Some((message_id, key)) = feishu_resource(&voice.source) else {
+            return Ok(None);
+        };
+        let bytes = crate::services::feishu_bot_api::download_file_bytes(
+            message_id,
+            key,
+            CHANNEL_VOICE_BYTES,
+        )
+        .await?;
+        Ok(Some(VoiceAudio {
+            bytes,
+            format: voice.format.clone(),
+        }))
+    }
+
+    async fn file_bytes(&self, file: &ChannelFileRef) -> Result<Option<Vec<u8>>, String> {
+        let Some((message_id, key)) = feishu_resource(&file.url) else {
+            return Ok(None);
+        };
+        crate::services::feishu_bot_api::download_file_bytes(
+            message_id,
+            key,
+            CHANNEL_TEXT_FILE_BYTES as usize,
+        )
+        .await
+        .map(Some)
+    }
+
     async fn start_work(
         &self,
         db: &DatabaseConnection,
@@ -101,6 +132,14 @@ impl PrivateText for FeishuText {
         )
         .await;
     }
+}
+
+/// `feishu:<message_id>/<file_key>` from the rules parser.
+fn feishu_resource(handle: &str) -> Option<(&str, &str)> {
+    handle
+        .strip_prefix("feishu:")?
+        .split_once('/')
+        .filter(|(message_id, key)| !message_id.is_empty() && !key.is_empty())
 }
 
 /// Worker entry: interactive-card button. Always start Work after pairing.

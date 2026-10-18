@@ -106,6 +106,71 @@ pub async fn download_image_bytes(
     .map_err(|err| format!("{err:?}"))
 }
 
+/// A message's `file` resource (audio or attachment), at most `max` bytes.
+/// Errors carry no token or response body.
+pub async fn download_file_bytes(
+    message_id: &str,
+    file_key: &str,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    if message_id.is_empty() || file_key.is_empty() {
+        return Err("empty file_key".into());
+    }
+    with_auth(|auth| {
+        let key = file_key.to_string();
+        let message_id = message_id.to_string();
+        async move { download_file_raw(&auth, &message_id, &key, max).await }
+    })
+    .await
+    .map_err(|err| format!("{err:?}"))
+}
+
+async fn download_file_raw(
+    auth_header: &str,
+    message_id: &str,
+    file_key: &str,
+    max: usize,
+) -> Result<Vec<u8>, ConnectFailureKind> {
+    let client = http_client::get_global_client().await;
+    let url = message_resource_url(message_id, file_key, "file")?;
+    let mut resp = client
+        .get(url)
+        .timeout(HTTP_TIMEOUT)
+        .header("Authorization", auth_header)
+        .send()
+        .await
+        .map_err(|err| {
+            warn!(
+                error = %redact_secrets(&err.to_string()),
+                "Feishu file download request failed"
+            );
+            ConnectFailureKind::Transient
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        parse_feishu_openapi(status.as_u16(), &text)?;
+        return Err(ConnectFailureKind::Transient);
+    }
+    if resp.content_length().is_some_and(|len| len > max as u64) {
+        return Err(ConnectFailureKind::Permanent);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|err| {
+        warn!(
+            error = %redact_secrets(&err.to_string()),
+            "Feishu file download body failed"
+        );
+        ConnectFailureKind::Transient
+    })? {
+        if bytes.len() + chunk.len() > max {
+            return Err(ConnectFailureKind::Permanent);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn with_auth<T, F, Fut>(f: F) -> Result<T, ConnectFailureKind>
 where
     F: Fn(String) -> Fut,
@@ -128,7 +193,7 @@ async fn download_image_raw(
     image_key: &str,
 ) -> Result<(Vec<u8>, String), ConnectFailureKind> {
     let client = http_client::get_global_client().await;
-    let url = message_resource_url(message_id, image_key)?;
+    let url = message_resource_url(message_id, image_key, "image")?;
     let resp = client
         .get(url)
         .timeout(HTTP_TIMEOUT)
@@ -265,9 +330,11 @@ async fn bot_enabled() -> bool {
     GLOBAL_DYNAMIC_CONFIG.read().await.feishu_bot_enabled
 }
 
+/// `kind` is the resource `type`: `image`, or `file` for audio and files.
 fn message_resource_url(
     message_id: &str,
-    image_key: &str,
+    key: &str,
+    kind: &str,
 ) -> Result<reqwest::Url, ConnectFailureKind> {
     let mut url = reqwest::Url::parse(&format!("{API_BASE}/im/v1/messages/"))
         .map_err(|_| ConnectFailureKind::Permanent)?;
@@ -276,8 +343,8 @@ fn message_resource_url(
         .pop_if_empty()
         .push(message_id)
         .push("resources")
-        .push(image_key);
-    url.query_pairs_mut().append_pair("type", "image");
+        .push(key);
+    url.query_pairs_mut().append_pair("type", kind);
     Ok(url)
 }
 
@@ -285,10 +352,12 @@ fn message_resource_url(
 mod resource_tests {
     #[test]
     fn downloads_message_resources_and_escapes_ids() {
-        let url = super::message_resource_url("om_123", "img/a?b").unwrap();
+        let url = super::message_resource_url("om_123", "img/a?b", "image").unwrap();
         assert_eq!(
             url.as_str(),
             "https://open.feishu.cn/open-apis/im/v1/messages/om_123/resources/img%2Fa%3Fb?type=image"
         );
+        let url = super::message_resource_url("om_123", "file_v", "file").unwrap();
+        assert!(url.as_str().ends_with("/resources/file_v?type=file"));
     }
 }
