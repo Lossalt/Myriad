@@ -63,7 +63,7 @@ pub(super) fn unique_push(out: &mut Vec<String>, tag: &str) {
     }
 }
 
-pub(super) fn persona_pool_labels(language: &str) -> Vec<String> {
+pub(in crate::services::agent) fn persona_pool_labels(language: &str) -> Vec<String> {
     localize_report_seed_keys(
         &PERSONA_POOL_KEYS
             .iter()
