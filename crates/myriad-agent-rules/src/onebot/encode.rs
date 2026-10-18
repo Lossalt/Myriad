@@ -141,6 +141,25 @@ pub fn encode_get_record_wav(file: &str) -> Option<Value> {
     }))
 }
 
+/// `get_private_file_url` (NapCat / SnowLuma extension, not OneBot v11) for a
+/// private file whose segment came without a URL. SnowLuma needs the
+/// `file_hash` from that segment; an empty one is left out.
+pub fn encode_get_private_file_url(user_id: &str, file_id: &str, file_hash: &str) -> Option<Value> {
+    let file_id = file_id.trim();
+    if file_id.is_empty() {
+        return None;
+    }
+    let mut params = serde_json::Map::new();
+    if let Ok(user_id) = user_id.trim().parse::<i64>() {
+        params.insert("user_id".into(), json!(user_id));
+    }
+    params.insert("file_id".into(), json!(file_id));
+    if !file_hash.trim().is_empty() {
+        params.insert("file_hash".into(), json!(file_hash.trim()));
+    }
+    Some(json!({"action": "get_private_file_url", "params": params}))
+}
+
 /// `fetch_ptt_text`: QQ's own voice-to-text for a received voice message,
 /// answered `{text}`.
 pub fn encode_fetch_ptt_text(message_id: &str) -> Option<Value> {

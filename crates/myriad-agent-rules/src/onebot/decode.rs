@@ -72,12 +72,22 @@ fn decode_voices(segments: &[WireSegment]) -> Vec<ChannelVoiceRef> {
 
 /// `file` segments. A URL other than http(s) is dropped, leaving the file only
 /// named.
+///
+/// Without one, a `file_id` (with SnowLuma's `file_hash`) becomes a handle
+/// from [`encode_file_handle`] that the worker trades for a download URL.
 fn decode_files(segments: &[WireSegment]) -> Vec<ChannelFileRef> {
     segments
         .iter()
         .filter(|segment| segment.kind == "file")
         .map(|segment| ChannelFileRef {
-            url: http_url(segment).unwrap_or_default(),
+            url: http_url(segment)
+                .or_else(|| {
+                    encode_file_handle(
+                        &segment.str_field("file_id").unwrap_or_default(),
+                        &segment.str_field("file_hash").unwrap_or_default(),
+                    )
+                })
+                .unwrap_or_default(),
             name: segment
                 .str_field("name")
                 .or_else(|| segment.str_field("file"))
@@ -90,6 +100,89 @@ fn decode_files(segments: &[WireSegment]) -> Vec<ChannelFileRef> {
         })
         .take(crate::channel::CHANNEL_FILE_LIMIT)
         .collect()
+}
+
+const FILE_HANDLE: &str = "onebot-file:";
+
+/// `onebot-file:<file_hash>/<file_id>` for a private file with no URL. The
+/// hash may be empty; a hash with a `/` cannot be told apart and is dropped.
+pub fn encode_file_handle(file_id: &str, file_hash: &str) -> Option<String> {
+    let file_id = file_id.trim();
+    let file_hash = file_hash.trim();
+    if file_id.is_empty() {
+        return None;
+    }
+    let file_hash = if file_hash.contains('/') {
+        ""
+    } else {
+        file_hash
+    };
+    Some(format!("{FILE_HANDLE}{file_hash}/{file_id}"))
+}
+
+/// `(file_id, file_hash)` back from [`encode_file_handle`].
+pub fn decode_file_handle(handle: &str) -> Option<(&str, &str)> {
+    let (file_hash, file_id) = handle.strip_prefix(FILE_HANDLE)?.split_once('/')?;
+    (!file_id.is_empty()).then_some((file_id, file_hash))
+}
+
+/// Where a `get_record` answer has the audio. SnowLuma (with `out_format`)
+/// answers `base64`; other implementations may give only a `url`, or only a
+/// `file` path on their own disk, which the site cannot read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordAudio {
+    Base64 { data: String, format: String },
+    Url { url: String, format: String },
+}
+
+/// `asked` is the `out_format` requested. The format of a URL is taken from
+/// the answer's `out_format`, else the `file` or URL extension, else `asked`.
+pub fn decode_record_audio(data: &serde_json::Value, asked: &str) -> Option<RecordAudio> {
+    let field = |key: &str| {
+        data.get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(b64) = field("base64") {
+        let format = field("out_format").unwrap_or(asked).to_ascii_lowercase();
+        return Some(RecordAudio::Base64 {
+            data: b64.to_string(),
+            format,
+        });
+    }
+    let url =
+        field("url").filter(|url| url.starts_with("http://") || url.starts_with("https://"))?;
+    let ext_of = |name: &str| {
+        let path = name.split(['?', '#']).next().unwrap_or("");
+        let file = path.rsplit('/').next().unwrap_or("");
+        file.rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .filter(|ext| {
+                matches!(
+                    ext.as_str(),
+                    "wav"
+                        | "mp3"
+                        | "ogg"
+                        | "opus"
+                        | "amr"
+                        | "silk"
+                        | "m4a"
+                        | "flac"
+                        | "spx"
+                        | "wma"
+                )
+            })
+    };
+    let format = field("out_format")
+        .map(str::to_ascii_lowercase)
+        .or_else(|| field("file").and_then(ext_of))
+        .or_else(|| ext_of(url))
+        .unwrap_or_else(|| asked.to_string());
+    Some(RecordAudio::Url {
+        url: url.to_string(),
+        format,
+    })
 }
 
 /// `Some(true)` when the payload is a private message reported as a CQ string.

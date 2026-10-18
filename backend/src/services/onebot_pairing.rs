@@ -1,6 +1,6 @@
 //! OneBot private-chat pairing. The QQ number is the identity key.
 
-use myriad_agent_rules::channel::{ChannelVoiceRef, InboundC2cText};
+use myriad_agent_rules::channel::{ChannelFileRef, ChannelVoiceRef, InboundC2cText};
 use sea_orm::DatabaseConnection;
 
 use crate::services::channel_pairing::{self, PrivateText};
@@ -51,6 +51,23 @@ impl PrivateText for OneBotText {
         ptt_text(&self.inbound.msg_id).await
     }
 
+    async fn file_bytes(&self, file: &ChannelFileRef) -> Result<Option<Vec<u8>>, String> {
+        let Some((file_id, file_hash)) =
+            myriad_agent_rules::onebot::decode::decode_file_handle(&file.url)
+        else {
+            return crate::services::channel_work::attachments::fetch_public_file(file).await;
+        };
+        let Some(url) = private_file_url(&self.inbound.user_openid, file_id, file_hash).await
+        else {
+            return Ok(None);
+        };
+        crate::services::channel_work::attachments::fetch_public_file(&ChannelFileRef {
+            url,
+            ..file.clone()
+        })
+        .await
+    }
+
     async fn start_work(
         &self,
         db: &DatabaseConnection,
@@ -72,22 +89,63 @@ impl PrivateText for OneBotText {
     }
 }
 
-/// SnowLuma transcodes a voice to WAV and answers `data.base64`. The
-/// transcode needs its ffmpeg support (uncertain on a given deployment).
+/// `get_record` asking for WAV. SnowLuma transcodes and answers `base64`
+/// (needs its ffmpeg; uncertain on a given deployment). When that is refused,
+/// the plain `get_record` is asked again for a URL. An answer with only a
+/// local `file` path is no audio: that disk is not the site's. A voice left
+/// without audio falls back to `fetch_ptt_text`.
 async fn record_wav(source: &str) -> Result<Option<VoiceAudio>, String> {
-    use base64::Engine;
-    let Some(action) = myriad_agent_rules::onebot::encode::encode_get_record_wav(source) else {
+    use myriad_agent_rules::onebot::decode::{RecordAudio, decode_record_audio};
+    use myriad_agent_rules::onebot::encode::encode_get_record_wav;
+    let Some(action) = encode_get_record_wav(source) else {
         return Ok(None);
     };
-    let data = crate::services::onebot_send::call_action(action).await?;
-    Ok(data
-        .get("base64")
+    let data = match crate::services::onebot_send::call_action(action.clone()).await {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::warn!(%error, "OneBot get_record wav refused; asking without transcode");
+            let mut plain = action;
+            if let Some(params) = plain["params"].as_object_mut() {
+                params.remove("out_format");
+            }
+            crate::services::onebot_send::call_action(plain).await?
+        }
+    };
+    match decode_record_audio(&data, "wav") {
+        Some(RecordAudio::Base64 { data, format }) => {
+            use base64::Engine;
+            Ok(base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .ok()
+                .map(|bytes| VoiceAudio { bytes, format }))
+        }
+        Some(RecordAudio::Url { url, format }) => {
+            crate::services::channel_work::attachments::fetch_public_voice(&ChannelVoiceRef {
+                source: url,
+                format,
+                said: None,
+            })
+            .await
+        }
+        None => Ok(None),
+    }
+}
+
+/// `get_private_file_url` for a private file whose segment had no URL. Not
+/// every implementation has it; a refusal leaves the file only named.
+async fn private_file_url(user_id: &str, file_id: &str, file_hash: &str) -> Option<String> {
+    let action = myriad_agent_rules::onebot::encode::encode_get_private_file_url(
+        user_id, file_id, file_hash,
+    )?;
+    let data = crate::services::onebot_send::call_action(action)
+        .await
+        .map_err(|error| tracing::warn!(%error, "OneBot get_private_file_url failed"))
+        .ok()?;
+    data.get("url")
         .and_then(serde_json::Value::as_str)
-        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
-        .map(|bytes| VoiceAudio {
-            bytes,
-            format: "wav".into(),
-        }))
+        .map(str::trim)
+        .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+        .map(str::to_string)
 }
 
 /// QQ's own voice-to-text for a received voice message (`fetch_ptt_text`).

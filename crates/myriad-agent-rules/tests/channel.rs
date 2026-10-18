@@ -2332,6 +2332,71 @@ mod onebot_decode {
     }
 
     #[test]
+    fn a_file_without_url_keeps_its_id_and_hash_as_a_handle() {
+        use myriad_agent_rules::onebot::decode::{decode_file_handle, encode_file_handle};
+        let raw = json!({
+            "post_type": "message",
+            "message_type": "private",
+            "sub_type": "friend",
+            "message_id": 3,
+            "user_id": 20002,
+            "message": [
+                {"type":"file","data":{"file":"a.txt","file_size":5,"url":"",
+                  "file_id":"uuid-1","file_hash":"md5x"}},
+                {"type":"file","data":{"file":"b.txt","file_id":"uuid-2"}}
+            ]
+        });
+        let inbound = decode_private_inbound(&raw.to_string()).expect("files");
+        assert_eq!(
+            decode_file_handle(&inbound.files[0].url),
+            Some(("uuid-1", "md5x"))
+        );
+        assert_eq!(
+            decode_file_handle(&inbound.files[1].url),
+            Some(("uuid-2", ""))
+        );
+        assert_eq!(decode_file_handle("https://example.com/a.txt"), None);
+        assert_eq!(encode_file_handle(" ", "h"), None);
+        assert_eq!(
+            encode_file_handle("id", "a/b").as_deref(),
+            Some("onebot-file:/id")
+        );
+    }
+
+    #[test]
+    fn a_record_answer_gives_base64_or_a_url_but_never_a_local_path() {
+        use myriad_agent_rules::onebot::decode::{RecordAudio, decode_record_audio};
+        assert_eq!(
+            decode_record_audio(&json!({"base64":"UklG","out_format":"wav"}), "wav"),
+            Some(RecordAudio::Base64 {
+                data: "UklG".into(),
+                format: "wav".into()
+            })
+        );
+        assert_eq!(
+            decode_record_audio(
+                &json!({"file":"x.amr","url":"https://q.example/r?fid=1"}),
+                "wav"
+            ),
+            Some(RecordAudio::Url {
+                url: "https://q.example/r?fid=1".into(),
+                format: "amr".into()
+            })
+        );
+        assert_eq!(
+            decode_record_audio(&json!({"url":"https://q.example/a.mp3"}), "wav"),
+            Some(RecordAudio::Url {
+                url: "https://q.example/a.mp3".into(),
+                format: "mp3".into()
+            })
+        );
+        assert_eq!(
+            decode_record_audio(&json!({"file":"/data/voice/x.wav"}), "wav"),
+            None
+        );
+    }
+
+    #[test]
     fn image_without_http_url_is_skipped() {
         let missing = json!({
             "post_type": "message",
@@ -2610,6 +2675,20 @@ mod onebot_encode {
         assert_eq!(ptt["action"], "fetch_ptt_text");
         assert_eq!(ptt["params"]["message_id"], -7);
         assert!(encode_fetch_ptt_text("x").is_none());
+    }
+
+    #[test]
+    fn a_private_file_url_is_asked_with_its_hash() {
+        use myriad_agent_rules::onebot::encode::encode_get_private_file_url;
+        let action = encode_get_private_file_url("20002", "uuid-1", "md5x").expect("action");
+        assert_eq!(action["action"], "get_private_file_url");
+        assert_eq!(action["params"]["user_id"], 20002);
+        assert_eq!(action["params"]["file_id"], "uuid-1");
+        assert_eq!(action["params"]["file_hash"], "md5x");
+        let bare = encode_get_private_file_url("x", "uuid-2", "").expect("bare");
+        assert!(bare["params"].get("user_id").is_none());
+        assert!(bare["params"].get("file_hash").is_none());
+        assert!(encode_get_private_file_url("1", " ", "").is_none());
     }
 
     #[test]
