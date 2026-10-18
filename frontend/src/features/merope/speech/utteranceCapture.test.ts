@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { UtteranceCapture } from './utteranceCapture'
+import {
+  ENDPOINT_CEILING_SECONDS,
+  ENDPOINT_FLOOR_SECONDS,
+  UtteranceCapture,
+} from './utteranceCapture'
 
 function feed(
   capture: UtteranceCapture,
@@ -113,4 +117,65 @@ test('a short sound starts an utterance without confirming it', () => {
   assert.equal(events.filter((event) => event.started).length, 1)
   assert.equal(events.some((event) => event.confirmed), false)
   assert.equal(events.filter((event) => event.ended).length, 1)
+})
+
+/** Quiet until the utterance ends, then this much more before speaking again. */
+function endThenWait(capture: UtteranceCapture, ms: number) {
+  let ended = 0
+  for (let i = 0; i < 200 && ended === 0; i += 1)
+    ended += feed(capture, 10, 0.001, 160).filter((e) => e.utterance).length
+  assert.equal(ended, 1)
+  feed(capture, ms, 0.001, 160)
+}
+
+test('someone who picks a sentence up again right after it ended is given longer pauses', () => {
+  const capture = new UtteranceCapture(16_000)
+  assert.equal(capture.endpointDelay, ENDPOINT_FLOOR_SECONDS)
+  for (let i = 0; i < 12; i += 1) {
+    feed(capture, 300, 0.08, 160)
+    endThenWait(capture, 250)
+  }
+  const learned = capture.endpointDelay
+  assert.ok(learned > ENDPOINT_FLOOR_SECONDS + 0.1, `learned ${learned}`)
+  assert.ok(learned <= ENDPOINT_CEILING_SECONDS)
+
+  // The pause that used to split the sentence no longer does.
+  feed(capture, 300, 0.08, 160)
+  assert.equal(feed(capture, 600, 0.001, 160).some((e) => e.ended), false)
+})
+
+test('short pauses inside sentences bring the endpoint back toward the floor', () => {
+  const capture = new UtteranceCapture(16_000)
+  for (let i = 0; i < 6; i += 1) {
+    feed(capture, 300, 0.08, 160)
+    endThenWait(capture, 250)
+  }
+  const raised = capture.endpointDelay
+  feed(capture, 300, 0.08, 160)
+  for (let i = 0; i < 20; i += 1) {
+    feed(capture, 300, 0.001, 160)
+    feed(capture, 300, 0.08, 160)
+  }
+  assert.ok(capture.endpointDelay < raised)
+  assert.ok(capture.endpointDelay >= ENDPOINT_FLOOR_SECONDS)
+})
+
+test('a long silence after a sentence is not a pause to learn from', () => {
+  const capture = new UtteranceCapture(16_000)
+  for (let i = 0; i < 6; i += 1) {
+    feed(capture, 300, 0.08, 160)
+    endThenWait(capture, 1_500)
+  }
+  assert.equal(capture.endpointDelay, ENDPOINT_FLOOR_SECONDS)
+})
+
+test('a reply in between is a new turn, not a pause to learn from', () => {
+  const capture = new UtteranceCapture(16_000)
+  for (let i = 0; i < 6; i += 1) {
+    feed(capture, 300, 0.08, 160)
+    endThenWait(capture, 0)
+    feed(capture, 100, 0.001, 160, true)
+    feed(capture, 150, 0.001, 160)
+  }
+  assert.equal(capture.endpointDelay, ENDPOINT_FLOOR_SECONDS)
 })
