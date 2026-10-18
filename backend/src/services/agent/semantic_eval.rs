@@ -2568,7 +2568,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 146;
+const MIND_CASES: usize = 140;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -2579,11 +2579,6 @@ fn mind_cases_run_through_production_sections_and_contracts() {
         .collect();
     assert_eq!(mind.len(), MIND_CASES);
     let by_id = |id: &str| mind.iter().find(|case| case.id == id).unwrap();
-    // Contrast personas reach the tested model in place of hers.
-    let cold = request(by_id("mind-persona-cold-vent"));
-    let cold = cold["input"].as_str().unwrap();
-    assert!(cold.contains("You are 阿苔.") && cold.contains("话很少，冷淡"));
-    assert!(cold.contains("Do not output AI-flavored"));
     let meme = request(by_id("mind-meme-sticker-make"));
     assert_eq!(meme["schemaName"], myriad_merope::stickers::MEME_SCHEMA);
     assert!(meme["input"].as_str().unwrap().contains("何意味"));
@@ -2691,6 +2686,12 @@ fn mind_cases_run_through_production_sections_and_contracts() {
 
 #[test]
 fn cases_use_production_contracts_and_replay_hashes_include_rubrics() {
+    // A case's own persona reaches the tested model even with no history.
+    let own: Case = serde_json::from_value(json!({"id":"x","kind":"chat","input":"在吗",
+        "rubric":"r","persona":["阿苔","话很少。"]}))
+    .unwrap();
+    let input = request(&own)["input"].as_str().unwrap().to_string();
+    assert!(input.contains("You are 阿苔.") && input.contains("话很少。"));
     let cases = cases();
     assert_eq!(
         cases.iter().filter(|c| c.kind != "touch").count(),
