@@ -531,6 +531,7 @@ fn is_mind_case(case: &Case) -> bool {
         || case.writing_first.is_some()
         || case.known.is_some()
         || !case.elsewhere.is_empty()
+        || case.persona.is_some()
 }
 
 /// A group turn as production builds it: the group's lines, named, as the
@@ -2567,7 +2568,7 @@ fn motion_semantics_require_grounded_output_and_real_review() {
     assert_eq!(input["rig"]["activeBehaviors"][0]["function"], "uncertain");
 }
 
-const MIND_CASES: usize = 140;
+const MIND_CASES: usize = 146;
 
 #[test]
 fn mind_cases_run_through_production_sections_and_contracts() {
@@ -2578,6 +2579,11 @@ fn mind_cases_run_through_production_sections_and_contracts() {
         .collect();
     assert_eq!(mind.len(), MIND_CASES);
     let by_id = |id: &str| mind.iter().find(|case| case.id == id).unwrap();
+    // Contrast personas reach the tested model in place of hers.
+    let cold = request(by_id("mind-persona-cold-vent"));
+    let cold = cold["input"].as_str().unwrap();
+    assert!(cold.contains("You are 阿苔.") && cold.contains("话很少，冷淡"));
+    assert!(cold.contains("Do not output AI-flavored"));
     let meme = request(by_id("mind-meme-sticker-make"));
     assert_eq!(meme["schemaName"], myriad_merope::stickers::MEME_SCHEMA);
     assert!(meme["input"].as_str().unwrap().contains("何意味"));
