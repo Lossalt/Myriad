@@ -256,6 +256,34 @@ pub async fn synthesize_minimax_tts(
     Ok((audio?, resolved.voice))
 }
 
+/// Whether `provider` is given audio in `format` at all. QQ's amr/silk go
+/// only to Tencent; the others are sent the common containers their APIs list.
+pub fn provider_accepts_format(provider: SpeechProviderKind, format: &str) -> bool {
+    let format = format.to_ascii_lowercase();
+    match provider {
+        SpeechProviderKind::Tencent => {
+            matches!(
+                format.as_str(),
+                "wav" | "mp3" | "m4a" | "ogg" | "amr" | "silk"
+            )
+        }
+        SpeechProviderKind::OpenAi | SpeechProviderKind::OpenRouter => {
+            matches!(
+                format.as_str(),
+                "wav" | "mp3" | "m4a" | "ogg" | "flac" | "webm"
+            )
+        }
+        SpeechProviderKind::Gemini => matches!(format.as_str(), "wav" | "mp3" | "ogg" | "flac"),
+        // MiniMax has no ASR; which fallback runs is decided later, so only
+        // what every fallback takes.
+        SpeechProviderKind::MiniMax => matches!(format.as_str(), "wav" | "mp3" | "ogg"),
+    }
+}
+
+pub async fn accepts_format(format: &str) -> bool {
+    provider_accepts_format(configured_provider().await, format)
+}
+
 pub async fn transcribe_bytes(
     audio: Vec<u8>,
     format: &str,
@@ -278,7 +306,7 @@ pub async fn transcribe_bytes(
             let request = AsrRequest {
                 eng_ser_vice_type: engine.to_string(),
                 source_type: 1,
-                voice_format: format.to_string(),
+                voice_format: tencent_voice_format(format),
                 data: Some(BASE64.encode(&audio)),
                 data_len: Some(audio.len() as i32),
                 ..Default::default()
@@ -620,7 +648,7 @@ async fn fallback_transcribe_bytes(
         let request = AsrRequest {
             eng_ser_vice_type: engine.to_string(),
             source_type: 1,
-            voice_format: format.to_string(),
+            voice_format: tencent_voice_format(format),
             data: Some(BASE64.encode(&audio)),
             data_len: Some(audio.len() as i32),
             ..Default::default()
@@ -886,6 +914,14 @@ fn normalize_model_slug(provider: SpeechProviderKind, model: &str) -> String {
     format!("openai/{trimmed}")
 }
 
+/// Tencent ASR names Ogg Opus `ogg-opus`; other containers keep their name.
+fn tencent_voice_format(format: &str) -> String {
+    match format.to_ascii_lowercase().as_str() {
+        "ogg" | "opus" => "ogg-opus".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn audio_mime(format: &str) -> &'static str {
     match format.to_ascii_lowercase().as_str() {
         "mp3" | "mpeg" | "mpga" => "audio/mpeg",
@@ -952,6 +988,24 @@ fn fail(provider: SpeechProviderKind, error: String) -> SpeechTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qq_voice_containers_go_only_to_tencent() {
+        assert!(provider_accepts_format(SpeechProviderKind::Tencent, "silk"));
+        assert!(provider_accepts_format(SpeechProviderKind::Tencent, "AMR"));
+        assert!(!provider_accepts_format(SpeechProviderKind::OpenAi, "silk"));
+        assert!(!provider_accepts_format(SpeechProviderKind::Gemini, "amr"));
+        assert!(!provider_accepts_format(
+            SpeechProviderKind::MiniMax,
+            "silk"
+        ));
+        assert!(provider_accepts_format(
+            SpeechProviderKind::OpenRouter,
+            "ogg"
+        ));
+        assert_eq!(tencent_voice_format("ogg"), "ogg-opus");
+        assert_eq!(tencent_voice_format("silk"), "silk");
+    }
 
     #[test]
     fn parses_provider_kinds() {

@@ -11,7 +11,7 @@ use std::time::Duration;
 use myriad_agent_rules::channel::{
     CHANNEL_FILE_LIMIT, CHANNEL_TEXT_FILE_BYTES, CHANNEL_VOICE_BYTES, CHANNEL_VOICE_LIMIT,
     ChannelFileRead, ChannelFileRef, ChannelVoiceRef, InboundC2cText, channel_file_is_text,
-    compose_channel_input,
+    channel_voice_format, compose_channel_input,
 };
 use tracing::warn;
 
@@ -69,12 +69,18 @@ async fn transcribe(audio: VoiceAudio) -> Option<String> {
     if audio.bytes.is_empty() || audio.bytes.len() > CHANNEL_VOICE_BYTES {
         return None;
     }
-    let format = if audio.format.is_empty() {
-        "ogg"
-    } else {
-        audio.format.as_str()
+    // Unknown audio, or a container the speech service does not take, is not
+    // sent: the platform's own transcript is asked instead.
+    let Some(format) = channel_voice_format(&audio.format, &audio.bytes) else {
+        warn!(declared = %audio.format, "channel voice format unknown; not transcribed");
+        return None;
     };
-    match crate::services::speech_runtime::transcribe_bytes(audio.bytes, format, Some("zh")).await {
+    if !crate::services::speech_runtime::accepts_format(&format).await {
+        warn!(%format, "channel voice format not taken by speech service; not transcribed");
+        return None;
+    }
+    match crate::services::speech_runtime::transcribe_bytes(audio.bytes, &format, Some("zh")).await
+    {
         Ok(said) => Some(said.trim().to_string()).filter(|said| !said.is_empty()),
         Err(error) => {
             warn!(%error, "channel voice transcription failed");

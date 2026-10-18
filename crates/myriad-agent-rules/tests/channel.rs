@@ -3085,7 +3085,7 @@ fn what_a_group_said_while_she_was_away_is_read_back_in_order_hers_included() {
 mod channel_input {
     use myriad_agent_rules::channel::{
         CHANNEL_TEXT_FILE_BYTES, CHANNEL_TEXT_FILE_CHARS, ChannelFileRead, ChannelFileRef,
-        channel_file_is_text, compose_channel_input,
+        channel_file_is_text, channel_voice_format, compose_channel_input, sniff_voice_format,
     };
 
     fn file(name: &str) -> ChannelFileRef {
@@ -3125,6 +3125,36 @@ mod channel_input {
             input.chars().filter(|c| *c == '字').count(),
             CHANNEL_TEXT_FILE_CHARS
         );
+    }
+
+    #[test]
+    fn voice_bytes_name_their_container() {
+        assert_eq!(sniff_voice_format(b"RIFF\0\0\0\0WAVEfmt "), Some("wav"));
+        assert_eq!(sniff_voice_format(b"OggS\0\x02"), Some("ogg"));
+        assert_eq!(sniff_voice_format(b"ID3\x04"), Some("mp3"));
+        assert_eq!(sniff_voice_format(&[0xFF, 0xFB, 0x90]), Some("mp3"));
+        assert_eq!(sniff_voice_format(b"#!AMR\n"), Some("amr"));
+        assert_eq!(sniff_voice_format(b"\x02#!SILK_V3"), Some("silk"));
+        assert_eq!(sniff_voice_format(b"\0\0\0\x20ftypM4A "), Some("m4a"));
+        // AAC ADTS shares the sync word but has layer bits 00.
+        assert_eq!(sniff_voice_format(&[0xFF, 0xF1, 0x50]), None);
+        assert_eq!(sniff_voice_format(b"hello"), None);
+        assert_eq!(sniff_voice_format(b""), None);
+    }
+
+    #[test]
+    fn voice_format_prefers_bytes_and_never_guesses() {
+        // Bytes win over a wrong declaration.
+        assert_eq!(
+            channel_voice_format("wav", b"#!AMR\n").as_deref(),
+            Some("amr")
+        );
+        assert_eq!(
+            channel_voice_format(" OPUS ", b"??").as_deref(),
+            Some("ogg")
+        );
+        assert_eq!(channel_voice_format("", b"??"), None);
+        assert_eq!(channel_voice_format("wma", b"??"), None);
     }
 
     #[test]

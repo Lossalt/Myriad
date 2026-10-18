@@ -383,6 +383,53 @@ pub struct ChannelFileRef {
 
 /// Bytes of one voice fetched for transcription.
 pub const CHANNEL_VOICE_BYTES: usize = 10 * 1024 * 1024;
+/// The container of fetched voice audio, from its leading bytes. None when
+/// the bytes are none of the containers a speech service is ever given.
+pub fn sniff_voice_format(bytes: &[u8]) -> Option<&'static str> {
+    let at = |offset: usize, magic: &[u8]| bytes.get(offset..offset + magic.len()) == Some(magic);
+    if at(0, b"RIFF") && at(8, b"WAVE") {
+        Some("wav")
+    } else if at(0, b"OggS") {
+        Some("ogg")
+    } else if at(0, b"fLaC") {
+        Some("flac")
+    } else if at(0, b"ID3")
+        || (bytes.len() > 1 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0 && bytes[1] & 0x06 != 0)
+    {
+        Some("mp3")
+    } else if at(4, b"ftyp") {
+        Some("m4a")
+    } else if at(0, &[0x1A, 0x45, 0xDF, 0xA3]) {
+        Some("webm")
+    } else if at(0, b"#!AMR") {
+        Some("amr")
+    } else if at(0, b"#!SILK") || at(1, b"#!SILK") {
+        Some("silk")
+    } else {
+        None
+    }
+}
+
+/// The format a voice is transcribed as: what its bytes show, else what the
+/// platform declared when it is a known container. None when neither says,
+/// so unknown audio is not sent under a guessed name.
+pub fn channel_voice_format(declared: &str, bytes: &[u8]) -> Option<String> {
+    if let Some(sniffed) = sniff_voice_format(bytes) {
+        return Some(sniffed.to_string());
+    }
+    let declared = declared.trim().to_ascii_lowercase();
+    let declared = match declared.as_str() {
+        "opus" | "oga" => "ogg",
+        "mpeg" | "mpga" => "mp3",
+        other => other,
+    };
+    matches!(
+        declared,
+        "wav" | "mp3" | "ogg" | "flac" | "m4a" | "webm" | "amr" | "silk"
+    )
+    .then(|| declared.to_string())
+}
+
 /// Voices read per message.
 pub const CHANNEL_VOICE_LIMIT: usize = 1;
 /// Files read per message.
