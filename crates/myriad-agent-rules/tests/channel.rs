@@ -3082,8 +3082,40 @@ mod channel_input {
 /// Each platform's private voices and files, as handles its worker fetches.
 mod private_attachments {
     use myriad_agent_rules::channel::{
-        discord_private_text_from_create, parse_telegram_private_texts,
+        discord_private_text_from_create, parse_http_media_attachments,
+        parse_telegram_private_texts,
     };
+
+    #[test]
+    fn a_qq_voice_prefers_its_wav_url_and_keeps_its_transcript() {
+        let rows = serde_json::json!([
+            {
+                "content_type": "voice",
+                "filename": "a.silk",
+                "url": "https://multimedia.nt.qq.com.cn/a.silk",
+                "voice_wav_url": "https://multimedia.nt.qq.com.cn/a.wav",
+                "asr_refer_text": " 你好 "
+            },
+            {
+                "content_type": "file",
+                "filename": "a.md",
+                "size": 9,
+                "url": "https://multimedia.nt.qq.com.cn/a.md"
+            },
+            {
+                "content_type": "image/png",
+                "filename": "a.png",
+                "url": "https://multimedia.nt.qq.com.cn/a.png"
+            }
+        ]);
+        let (voices, files) = parse_http_media_attachments(Some(&rows));
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].source, "https://multimedia.nt.qq.com.cn/a.wav");
+        assert_eq!(voices[0].format, "wav");
+        assert_eq!(voices[0].said.as_deref(), Some("你好"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "a.md");
+    }
 
     #[test]
     fn a_discord_dm_audio_and_text_file_are_kept() {

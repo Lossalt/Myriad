@@ -538,7 +538,9 @@ fn inbound_c2c_from_dispatch(data: Option<&Value>) -> Option<InboundC2cText> {
         .unwrap_or("")
         .to_string();
     let images = myriad_agent_rules::channel::parse_qq_c2c_images(data);
-    if content.trim().is_empty() && images.is_empty() {
+    let (voices, files) =
+        myriad_agent_rules::channel::parse_http_media_attachments(data.get("attachments"));
+    if content.trim().is_empty() && images.is_empty() && voices.is_empty() && files.is_empty() {
         return None;
     }
     Some(InboundC2cText {
@@ -546,7 +548,8 @@ fn inbound_c2c_from_dispatch(data: Option<&Value>) -> Option<InboundC2cText> {
         user_openid: user_openid.to_string(),
         content,
         images,
-        ..Default::default()
+        voices,
+        files,
     })
 }
 
