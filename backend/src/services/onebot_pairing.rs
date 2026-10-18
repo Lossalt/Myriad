@@ -100,18 +100,20 @@ async fn record_wav(source: &str) -> Result<Option<VoiceAudio>, String> {
     let Some(action) = encode_get_record_wav(source) else {
         return Ok(None);
     };
-    let data = match crate::services::onebot_send::call_action(action.clone()).await {
-        Ok(data) => data,
+    // `asked` is the format the answer is in unless it says otherwise; after
+    // the untranscoded retry that is unknown.
+    let (data, asked) = match crate::services::onebot_send::call_action(action.clone()).await {
+        Ok(data) => (data, "wav"),
         Err(error) => {
             tracing::warn!(%error, "OneBot get_record wav refused; asking without transcode");
             let mut plain = action;
             if let Some(params) = plain["params"].as_object_mut() {
                 params.remove("out_format");
             }
-            crate::services::onebot_send::call_action(plain).await?
+            (crate::services::onebot_send::call_action(plain).await?, "")
         }
     };
-    match decode_record_audio(&data, "wav") {
+    match decode_record_audio(&data, asked) {
         Some(RecordAudio::Base64 { data, format }) => {
             use base64::Engine;
             Ok(base64::engine::general_purpose::STANDARD
