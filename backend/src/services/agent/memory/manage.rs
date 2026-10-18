@@ -17,7 +17,7 @@ use sea_orm::{
 
 use crate::models::entities::agent_memories;
 
-use super::unified::{OWN_EXPERIENCE, OWN_VENUE, OWN_VIEW, normalize_content};
+use super::unified::{MemoryKind, OWN_EXPERIENCE, OWN_VENUE, OWN_VIEW, normalize_content};
 
 /// Whose memory a row is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +61,7 @@ pub fn category(row: &agent_memories::Model) -> &'static str {
             "game" => "game",
             "bit" => "bit",
             "thread" => "thread",
+            "work" if row.kind == MemoryKind::Done.as_str() => "done",
             "work" => "work",
             _ => "other",
         },
@@ -168,6 +169,11 @@ mod tests {
         assert_eq!((whose(&fact), category(&fact)), (Whose::Person(7), "chat"));
         let bit = row(Some(7), "private", "bit");
         assert_eq!(category(&bit), "bit");
+        let lesson = row(Some(7), "private", "work");
+        assert_eq!(category(&lesson), "work");
+        let mut done = row(Some(7), "private", "work");
+        done.kind = "done".into();
+        assert_eq!(category(&done), "done");
 
         // A group's rows are the group's, whichever member they are kept with.
         let learned = row(Some(7), "group:telegram:-100123", "chat");

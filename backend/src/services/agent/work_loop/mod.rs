@@ -170,12 +170,10 @@ impl Agent {
             .insert("_task_id".into(), json!(task.task_id));
         // Memory is recalled for the person this turn serves, in front of that
         // person only. The loop passes it on as untrusted reference data.
-        match super::memory::unified::recall(
+        match super::memory::work_memory::recall_for_run(
             &self.db,
             request.user_id,
-            &super::memory::unified::Audience::private(request.user_id),
-            Some(&request.raw_input),
-            &super::memory::unified::MemoryKind::FOR_WORK,
+            &request.raw_input,
             4,
         )
         .await
@@ -361,6 +359,7 @@ impl Agent {
                         user_input: &state.request.raw_input,
                         recipe,
                         success: state.task.status == TaskStatus::Completed,
+                        reply: &state.final_text,
                         step_results: Some(&state.task.step_results),
                     },
                 )

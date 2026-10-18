@@ -1753,8 +1753,8 @@ async fn what_the_app_did_becomes_part_of_her() {
         json!({ "code": "bad_id", "ref": bad })
     );
 
-    // A failed run they started, correcting her: a fact and a lesson, the
-    // step whose outcome is unknown no lesson.
+    // A failed run they started, correcting her: what was done, a fact and a
+    // lesson, the step whose outcome is unknown no lesson.
     let failed = json!({
         "kind": "work", "started": "owner", "status": "failed",
         "input": "不是，周报应该按日期排", "reply": "没能写进去。", "endedAt": 1_760_140_880_000_i64,
@@ -1778,7 +1778,14 @@ async fn what_the_app_did_becomes_part_of_her() {
         .unwrap();
     let mut kinds: Vec<&str> = rows.iter().map(|row| row.kind.as_str()).collect();
     kinds.sort();
-    assert_eq!(kinds, ["fact", "lesson"], "{rows:?}");
+    assert_eq!(kinds, ["done", "fact", "lesson"], "{rows:?}");
+    let done = rows.iter().find(|row| row.kind == "done").unwrap();
+    assert!(
+        done.content
+            .ends_with("Tried for them, failed: 不是，周报应该按日期排 | Result: 没能写进去。"),
+        "{}",
+        done.content
+    );
     for row in &rows {
         assert_eq!(row.user_id, Some(OWNER));
         assert_eq!(row.source, "work");
@@ -1799,9 +1806,10 @@ async fn what_the_app_did_becomes_part_of_her() {
         .all(&site.db)
         .await
         .unwrap();
-    assert_eq!(again.len(), 2);
+    assert_eq!(again.len(), 3);
 
-    // Stopped part way, and scheduled: taken, nothing learned from the first.
+    // Stopped part way, and scheduled: taken, nothing learned from the first,
+    // what was done kept of the second.
     for (id, started, status) in [
         ("exp_2", "owner", "cancelled"),
         ("exp_3", "schedule", "completed"),
@@ -1824,7 +1832,9 @@ async fn what_the_app_did_becomes_part_of_her() {
         .all(&site.db)
         .await
         .unwrap();
-    assert_eq!(after.len(), 2);
+    assert_eq!(after.len(), 4);
+    assert!(after.iter().any(|row| row.kind == "done"
+        && row.content.ends_with("Done for them: 整理下载文件夹")));
 
     // Not one: what it cannot read is said so, and nothing is taken.
     for (id, body, code) in [

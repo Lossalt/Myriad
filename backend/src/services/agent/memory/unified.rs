@@ -66,6 +66,10 @@ pub enum MemoryKind {
     /// Something she found out on her own, in her own words. Kept with the
     /// audience of the conversation that made her curious.
     Knowledge,
+    /// Something Work did for the person: what was asked and how it ended,
+    /// with the run's record as evidence. One per finished run; recalled
+    /// only when what is asked now names it (see [`named_done`]).
+    Done,
 }
 
 impl MemoryKind {
@@ -77,6 +81,7 @@ impl MemoryKind {
             Self::Pattern => "pattern",
             Self::Narrative => "narrative",
             Self::Knowledge => "knowledge",
+            Self::Done => "done",
         }
     }
 

@@ -14,6 +14,8 @@ pub(crate) struct MemoryRecordParams<'a> {
     pub(crate) user_input: &'a str,
     pub(crate) recipe: &'a Recipe,
     pub(crate) success: bool,
+    /// 这一轮最后说的话（完成或失败时给对方看的那段）。
+    pub(crate) reply: &'a str,
     /// 实际步骤执行结果（用于丰富记忆提取的上下文）
     pub(crate) step_results: Option<&'a std::collections::HashMap<String, StepResult>>,
 }
@@ -62,6 +64,7 @@ pub(crate) async fn record_execution_memory(params: MemoryRecordParams<'_>) {
             .map(|step| step.capability_id.clone())
             .collect(),
         success: params.success,
+        reply: Some(params.reply.to_string()).filter(|reply| !reply.trim().is_empty()),
         origin: None,
     };
     let db = params.db.clone();

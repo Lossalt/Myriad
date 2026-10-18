@@ -21,7 +21,6 @@ use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::services::agent::memory::unified::{self, Audience, MemoryKind};
 use crate::services::agent::memory::work_memory;
 use crate::services::runtime_registry::{self as registry, RegistryIdentity};
 
@@ -156,6 +155,7 @@ impl Experience {
                 .map(|capability| capability.chars().take(128).collect())
                 .collect(),
             success: self.status == Status::Completed,
+            reply: self.reply.clone().filter(|reply| !reply.trim().is_empty()),
             origin: Some(device_id.to_string()),
         }
     }
@@ -319,16 +319,7 @@ async fn write_once(
 /// The owner's Work memories that fit `query`, as the site's own Work
 /// recalls them (four, in front of the owner alone).
 pub(super) async fn recall(db: &DatabaseConnection, owner: i32, query: &str) -> Vec<String> {
-    match unified::recall(
-        db,
-        owner,
-        &Audience::private(owner),
-        Some(query),
-        &MemoryKind::FOR_WORK,
-        RECALLED,
-    )
-    .await
-    {
+    match work_memory::recall_for_run(db, owner, query, RECALLED).await {
         Ok(memories) => memories
             .iter()
             .map(|memory| memory.content.chars().take(RECALLED_CHARS).collect())

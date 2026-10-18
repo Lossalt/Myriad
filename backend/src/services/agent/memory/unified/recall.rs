@@ -272,6 +272,28 @@ pub async fn named_among<C: ConnectionTrait>(
         .collect()
 }
 
+/// What Work did for the person that `query` names, at most `limit`, best
+/// first; none when it names none. A record of each run is kept, so they
+/// never fill the budget as recent context: an old run comes back only when
+/// what is asked now is about it.
+pub async fn named_done<C: ConnectionTrait>(
+    db: &C,
+    user_id: i32,
+    present: &Audience,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MemoryRecord>, DbErr> {
+    if user_id <= 0 {
+        return Ok(Vec::new());
+    }
+    let rows = rows_for(db, user_id, present, &[MemoryKind::Done]).await?;
+    Ok(named_among(db, rows, query, limit)
+        .await
+        .into_iter()
+        .map(MemoryRecord::from)
+        .collect())
+}
+
 /// Let the mind wander over a person's memories that `present` may hear:
 /// start from what is still on the mind (else somewhere recent), drift a few
 /// steps along association, and return where it settled. `avoid` holds ids

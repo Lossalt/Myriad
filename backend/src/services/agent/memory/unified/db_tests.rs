@@ -365,3 +365,60 @@ async fn a_memory_comes_to_mind_by_when_it_was_kept_for_and_is_said_as_it_was() 
         .collect();
     assert_eq!(missing, ["养了一只叫年糕的猫"]);
 }
+
+#[tokio::test]
+async fn what_was_done_comes_back_only_when_what_is_asked_names_it() {
+    let Some(db) = temp_db().await else {
+        return;
+    };
+    let done = |content: &str| NewMemory {
+        user_id: 7,
+        kind: MemoryKind::Done,
+        content: content.into(),
+        evidence: Some(r#"{"asked":"x"}"#.into()),
+        speaker: Speaker::Agent,
+        source: "work",
+        audience: Audience::private(7),
+        importance: 0.4,
+        concepts: Vec::new(),
+    };
+    remember(
+        &db,
+        done("2026-10-01 Done for them: 把周报按日期整理成表格"),
+    )
+    .await
+    .unwrap();
+    remember(
+        &db,
+        done("2026-10-02 Done for them: 订了下周去大阪的新干线"),
+    )
+    .await
+    .unwrap();
+    remember(&db, fact(7, "喜欢靠窗的座位")).await.unwrap();
+    let present = Audience::private(7);
+    let named: Vec<String> = named_done(&db, 7, &present, "上次那份周报", 2)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.content)
+        .collect();
+    assert_eq!(named, ["2026-10-01 Done for them: 把周报按日期整理成表格"]);
+    assert!(
+        named_done(&db, 7, &present, "今天天气怎么样", 2)
+            .await
+            .unwrap()
+            .is_empty(),
+        "nothing done is brought up when nothing names it"
+    );
+    // Not someone else's, and not with what she knows of them.
+    assert!(
+        named_done(&db, 8, &Audience::private(8), "周报", 2)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let about = recall(&db, 7, &present, None, &MemoryKind::ABOUT_PERSON, 8)
+        .await
+        .unwrap();
+    assert!(about.iter().all(|row| row.kind != "done"));
+}
