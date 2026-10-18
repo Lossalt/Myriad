@@ -53,22 +53,20 @@ pub fn private_temp_group(raw: &str) -> Option<String> {
     Some(group_id.to_string())
 }
 
-/// Voices kept per message; QQ sends one, the cap guards odd payloads.
-const VOICE_LIMIT: usize = 1;
-/// Files kept per message.
-const FILE_LIMIT: usize = 3;
-
 /// `record` segments. `source` is SnowLuma's `file` handle, which `get_record`
-/// takes back to fetch the audio.
+/// takes back to fetch the audio; the format is whatever it transcodes to.
 fn decode_voices(segments: &[WireSegment]) -> Vec<ChannelVoiceRef> {
     segments
         .iter()
         .filter(|segment| segment.kind == "record")
         .filter_map(|segment| {
             let source = segment.str_field("file")?.trim().to_string();
-            (!source.is_empty()).then_some(ChannelVoiceRef { source })
+            (!source.is_empty()).then(|| ChannelVoiceRef {
+                source,
+                ..Default::default()
+            })
         })
-        .take(VOICE_LIMIT)
+        .take(crate::channel::CHANNEL_VOICE_LIMIT)
         .collect()
 }
 
@@ -90,7 +88,7 @@ fn decode_files(segments: &[WireSegment]) -> Vec<ChannelFileRef> {
                 .and_then(|size| u64::try_from(size).ok())
                 .unwrap_or(0),
         })
-        .take(FILE_LIMIT)
+        .take(crate::channel::CHANNEL_FILE_LIMIT)
         .collect()
 }
 

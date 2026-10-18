@@ -357,21 +357,36 @@ pub struct ChannelImageRef {
     pub size: u64,
 }
 
-/// One inbound voice message. `source` is the platform's handle for it; only
-/// the platform that decoded it knows how to turn it into text.
+/// One inbound voice message. `source` is where its audio is: an http(s)
+/// URL, or a platform handle (`tg:<file_id>`, `feishu:<message>/<key>`,
+/// SnowLuma's record name) only that platform's worker can fetch.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ChannelVoiceRef {
     pub source: String,
+    /// The audio container as the speech service names it (`ogg`, `wav`,
+    /// `silk`, ...). Empty when unknown.
+    pub format: String,
+    /// What the platform itself heard, when it says; used when the site's
+    /// own transcription gives nothing.
+    pub said: Option<String>,
 }
 
-/// One inbound file. `url` may be empty when the platform gives no download
-/// link; the file is then only named to her.
+/// One inbound file. `url` is an http(s) URL or a platform handle like a
+/// voice's `source`; empty when there is no way to fetch it, and the file
+/// is then only named to her.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ChannelFileRef {
     pub url: String,
     pub name: String,
     pub size: u64,
 }
+
+/// Bytes of one voice fetched for transcription.
+pub const CHANNEL_VOICE_BYTES: usize = 10 * 1024 * 1024;
+/// Voices read per message.
+pub const CHANNEL_VOICE_LIMIT: usize = 1;
+/// Files read per message.
+pub const CHANNEL_FILE_LIMIT: usize = 3;
 
 /// Inbound C2C text after Gateway decoding. Images are platform URLs, not bytes.
 /// Voices and files are read into the input text before Work starts

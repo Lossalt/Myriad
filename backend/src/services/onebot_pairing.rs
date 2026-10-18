@@ -1,10 +1,11 @@
 //! OneBot private-chat pairing. The QQ number is the identity key.
 
-use myriad_agent_rules::channel::{InboundC2cText, compose_channel_input};
+use myriad_agent_rules::channel::{ChannelVoiceRef, InboundC2cText};
 use sea_orm::DatabaseConnection;
 
 use crate::services::channel_pairing::{self, PrivateText};
 use crate::services::channel_platform::ChannelPlatform;
+use crate::services::channel_work::attachments::VoiceAudio;
 
 struct OneBotText {
     inbound: InboundC2cText,
@@ -42,6 +43,14 @@ impl PrivateText for OneBotText {
         }
     }
 
+    async fn voice_audio(&self, voice: &ChannelVoiceRef) -> Result<Option<VoiceAudio>, String> {
+        record_wav(&voice.source).await
+    }
+
+    async fn platform_voice_text(&self, _voice: &ChannelVoiceRef) -> Option<String> {
+        ptt_text(&self.inbound.msg_id).await
+    }
+
     async fn start_work(
         &self,
         db: &DatabaseConnection,
@@ -49,35 +58,12 @@ impl PrivateText for OneBotText {
         input: &str,
         session_key: &str,
     ) {
-        // Voices and files are read only now, once the sender is paired:
-        // pairing never transcribes or downloads for a stranger.
-        let input = if self.inbound.has_attachments() {
-            let mut voices = Vec::with_capacity(self.inbound.voices.len());
-            for voice in &self.inbound.voices {
-                voices.push(voice_text(&voice.source, &self.inbound.msg_id).await);
-            }
-            let files =
-                crate::services::channel_work::attachments::read_files(&self.inbound.files).await;
-            compose_channel_input(input, &voices, &files)
-        } else {
-            input.to_string()
-        };
-        // Other segments are dropped by the decoder. A paired sender would
-        // otherwise start Work with an empty input and no reply.
-        if input.trim().is_empty() && self.inbound.images.is_empty() {
-            self.reply(
-                db,
-                "这条消息里没有能读的内容：目前只认文字、图片、语音和文件。",
-            )
-            .await;
-            return;
-        }
         crate::services::onebot_work::start_paired_work_with_images(
             db,
             user_id,
             &self.inbound.user_openid,
             &self.inbound.user_openid,
-            &input,
+            input,
             &self.inbound.images,
             session_key,
             self.temp_group.as_deref(),
@@ -86,33 +72,28 @@ impl PrivateText for OneBotText {
     }
 }
 
-/// What one voice said: SnowLuma transcodes it to WAV for the site's speech
-/// service; failing that, QQ's own voice-to-text is asked.
-async fn voice_text(source: &str, message_id: &str) -> Option<String> {
-    use crate::services::onebot_send::call_action;
+/// SnowLuma transcodes a voice to WAV and answers `data.base64`. The
+/// transcode needs its ffmpeg support (uncertain on a given deployment).
+async fn record_wav(source: &str) -> Result<Option<VoiceAudio>, String> {
     use base64::Engine;
-    use myriad_agent_rules::onebot::encode::{encode_fetch_ptt_text, encode_get_record_wav};
+    let Some(action) = myriad_agent_rules::onebot::encode::encode_get_record_wav(source) else {
+        return Ok(None);
+    };
+    let data = crate::services::onebot_send::call_action(action).await?;
+    Ok(data
+        .get("base64")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+        .map(|bytes| VoiceAudio {
+            bytes,
+            format: "wav".into(),
+        }))
+}
 
-    if let Some(action) = encode_get_record_wav(source) {
-        match call_action(action).await {
-            Ok(data) => {
-                let audio = data
-                    .get("base64")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
-                if let Some(audio) = audio {
-                    if let Some(text) =
-                        crate::services::channel_work::attachments::transcribe_voice(audio, "wav")
-                            .await
-                    {
-                        return Some(text);
-                    }
-                }
-            }
-            Err(error) => tracing::warn!(%error, "OneBot get_record failed"),
-        }
-    }
-    let data = call_action(encode_fetch_ptt_text(message_id)?)
+/// QQ's own voice-to-text for a received voice message (`fetch_ptt_text`).
+async fn ptt_text(message_id: &str) -> Option<String> {
+    let action = myriad_agent_rules::onebot::encode::encode_fetch_ptt_text(message_id)?;
+    let data = crate::services::onebot_send::call_action(action)
         .await
         .map_err(|error| tracing::warn!(%error, "OneBot fetch_ptt_text failed"))
         .ok()?;

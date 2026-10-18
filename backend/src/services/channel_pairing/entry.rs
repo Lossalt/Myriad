@@ -4,14 +4,15 @@
 use std::future::Future;
 
 use myriad_agent_rules::channel::{
-    InboundC2cText, InboundDecision, PairingBindResult, PairingLookup, ingest_channel_text,
-    pairing_bind_reply_for, session_key,
+    ChannelFileRef, ChannelVoiceRef, InboundC2cText, InboundDecision, PairingBindResult,
+    PairingLookup, ingest_channel_text, pairing_bind_reply_for, session_key,
 };
 use sea_orm::{DatabaseConnection, DbErr};
 use tracing::{info, warn};
 
 use super::{PairingChannel, consume_code, lookup_openid};
 use crate::services::channel_platform::ChannelPlatform;
+use crate::services::channel_work::attachments::{self, VoiceAudio};
 
 /// One inbound private text, and how its platform answers and hands it on.
 pub(crate) trait PrivateText: Send + Sync {
@@ -49,6 +50,34 @@ pub(crate) trait PrivateText: Send + Sync {
 
     fn reply(&self, db: &DatabaseConnection, text: &str) -> impl Future<Output = ()> + Send;
 
+    /// The audio behind one of its voices. A public http(s) URL is fetched by
+    /// default; a platform overrides this for its own handles, with its
+    /// credentials kept on the backend. `Ok(None)`: no audio to be had.
+    fn voice_audio(
+        &self,
+        voice: &ChannelVoiceRef,
+    ) -> impl Future<Output = Result<Option<VoiceAudio>, String>> + Send {
+        attachments::fetch_public_voice(voice)
+    }
+
+    /// The platform's own transcript of a voice, asked when the site's speech
+    /// service heard nothing. None by default.
+    fn platform_voice_text(
+        &self,
+        _voice: &ChannelVoiceRef,
+    ) -> impl Future<Output = Option<String>> + Send {
+        async { None }
+    }
+
+    /// The bytes of one of its files (only small text files are asked for).
+    /// A public http(s) URL is fetched by default, like a voice.
+    fn file_bytes(
+        &self,
+        file: &ChannelFileRef,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, String>> + Send {
+        attachments::fetch_public_file(file)
+    }
+
     fn start_work(
         &self,
         db: &DatabaseConnection,
@@ -57,6 +86,9 @@ pub(crate) trait PrivateText: Send + Sync {
         session_key: &str,
     ) -> impl Future<Output = ()> + Send;
 }
+
+/// A paired sender's message with nothing in it she can read.
+const NOTHING_READABLE_REPLY: &str = "这条消息里没有能读的内容：目前只认文字、图片、语音和文件。";
 
 pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
     let platform = T::PLATFORM;
@@ -122,6 +154,13 @@ pub(crate) async fn handle_private_text<T: PrivateText>(text: T) {
             session_key,
             ..
         } => {
+            // Voices and files are read only now, once the sender is paired:
+            // pairing never fetches or transcribes for a stranger.
+            let input = attachments::compose_input(&text, &input).await;
+            if input.trim().is_empty() && text.inbound().images.is_empty() {
+                text.reply(&db, NOTHING_READABLE_REPLY).await;
+                return;
+            }
             // Held by this id while she is not on the site (D3).
             let held_as = if has_id { claimed } else { String::new() };
             crate::services::channel_work::held::INBOUND
@@ -147,6 +186,13 @@ mod tests {
         assert!(
             claim < game && game < lookup,
             "a game's move is taken after the claim and before pairing"
+        );
+        let decide = handle.find("ingest_channel_text(").expect("decide");
+        let start = handle.find("InboundDecision::StartWork").expect("start");
+        let read = handle.find("attachments::compose_input(").expect("attachments");
+        assert!(
+            decide < start && start < read,
+            "voices and files are fetched only for a paired sender"
         );
 
         for (name, source) in [
