@@ -124,7 +124,7 @@ async fn publish_status(phase: OneBotPhase, fingerprint: &CredentialFingerprint)
     } else {
         Some(redacted_url(&fingerprint.ws_url))
     };
-    if !fingerprint.enabled || fingerprint.ws_url.is_empty() || !fingerprint.has_token {
+    if !fingerprint.enabled || fingerprint.ws_url.is_empty() {
         snap.last_inbound_at = None;
     }
 }
@@ -168,7 +168,7 @@ impl CredentialFingerprint {
     }
 
     fn intent(&self) -> WorkerIntent {
-        onebot_worker_intent(self.enabled, &self.ws_url, self.has_token)
+        onebot_worker_intent(self.enabled, &self.ws_url)
     }
 }
 
@@ -218,11 +218,6 @@ async fn run_socket(
     fingerprint: &CredentialFingerprint,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<(), ConnectFailureKind> {
-    let token = fingerprint
-        .token
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .ok_or(ConnectFailureKind::Permanent)?;
     if fingerprint.ws_url.is_empty() {
         return Err(ConnectFailureKind::Permanent);
     }
@@ -231,10 +226,11 @@ async fn run_socket(
         .as_str()
         .into_client_request()
         .map_err(|_| ConnectFailureKind::Permanent)?;
-    if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+    // No token, no header: an implementation that wants one answers 401.
+    if let Some(token) = fingerprint.token.as_deref() {
+        let value = HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| ConnectFailureKind::Permanent)?;
         request.headers_mut().insert("Authorization", value);
-    } else {
-        return Err(ConnectFailureKind::Permanent);
     }
 
     let (socket, _response) = tokio_tungstenite::connect_async(request)
@@ -489,9 +485,15 @@ mod tests {
         assert_eq!(ready.intent(), WorkerIntent::Run);
         let off = CredentialFingerprint {
             enabled: false,
-            ..ready
+            ..ready.clone()
         };
         assert_eq!(off.intent(), WorkerIntent::Stop);
+        let tokenless = CredentialFingerprint {
+            has_token: false,
+            token: None,
+            ..ready
+        };
+        assert_eq!(tokenless.intent(), WorkerIntent::Run);
     }
 
     #[test]

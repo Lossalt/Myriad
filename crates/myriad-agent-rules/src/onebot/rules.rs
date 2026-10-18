@@ -2,9 +2,11 @@
 
 use crate::channel::{ChannelCapabilities, ConnectFailureKind, WorkerIntent};
 
-/// 开关打开、`ws_url` 去空白后非空、且已配置 token → 运行；否则停止。
-pub fn onebot_worker_intent(enabled: bool, ws_url: &str, has_token: bool) -> WorkerIntent {
-    if enabled && !ws_url.trim().is_empty() && has_token {
+/// 开关打开、`ws_url` 去空白后非空 → 运行；否则停止。
+/// token 可选（OneBot v11 里 access token 本就可选）：没填就不带 `Authorization`，
+/// 协议端要求 token 时会在握手阶段回 401，按凭据被拒处理。
+pub fn onebot_worker_intent(enabled: bool, ws_url: &str) -> WorkerIntent {
+    if enabled && !ws_url.trim().is_empty() {
         WorkerIntent::Run
     } else {
         WorkerIntent::Stop

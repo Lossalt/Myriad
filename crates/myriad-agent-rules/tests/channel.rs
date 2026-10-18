@@ -2741,21 +2741,17 @@ mod onebot_rules {
     };
 
     #[test]
-    fn onebot_worker_runs_only_with_switch_url_and_token() {
+    fn onebot_worker_runs_with_switch_and_url_and_the_token_is_optional() {
         assert_eq!(
-            onebot_worker_intent(true, "ws://127.0.0.1:3001", true),
+            onebot_worker_intent(true, "ws://127.0.0.1:3001"),
             WorkerIntent::Run
         );
         assert_eq!(
-            onebot_worker_intent(false, "ws://127.0.0.1:3001", true),
+            onebot_worker_intent(false, "ws://127.0.0.1:3001"),
             WorkerIntent::Stop
         );
-        assert_eq!(onebot_worker_intent(true, "", true), WorkerIntent::Stop);
-        assert_eq!(onebot_worker_intent(true, "   ", true), WorkerIntent::Stop);
-        assert_eq!(
-            onebot_worker_intent(true, "ws://127.0.0.1:3001", false),
-            WorkerIntent::Stop
-        );
+        assert_eq!(onebot_worker_intent(true, ""), WorkerIntent::Stop);
+        assert_eq!(onebot_worker_intent(true, "   "), WorkerIntent::Stop);
     }
 
     #[test]
