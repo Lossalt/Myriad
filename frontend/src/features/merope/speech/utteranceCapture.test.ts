@@ -91,3 +91,26 @@ test('a loud interruption can continue quietly after playback stops', () => {
     1,
   )
 })
+
+test('speech is confirmed as meant once, after half a second of voice', () => {
+  const capture = new UtteranceCapture(16_000)
+  const opening = feed(capture, 200, 0.2, 128, true)
+  assert.equal(opening.some((event) => event.started), true)
+  assert.equal(opening.some((event) => event.confirmed), false)
+  const meant = feed(capture, 400, 0.2, 128, true)
+  assert.equal(meant.filter((event) => event.confirmed).length, 1)
+  const ended = feed(capture, 600, 0, 128)
+  assert.equal(ended.some((event) => event.confirmed), false)
+  assert.equal(ended.filter((event) => event.utterance).length, 1)
+})
+
+test('a short sound starts an utterance without confirming it', () => {
+  const capture = new UtteranceCapture(16_000)
+  const events = [
+    ...feed(capture, 250, 0.2, 128, true),
+    ...feed(capture, 600, 0, 128),
+  ]
+  assert.equal(events.filter((event) => event.started).length, 1)
+  assert.equal(events.some((event) => event.confirmed), false)
+  assert.equal(events.filter((event) => event.ended).length, 1)
+})

@@ -66,10 +66,12 @@ export function playTtsBuffer(
   let source: AudioBufferSourceNode | null = null
   let analyser: AnalyserNode | null = null
   let raf = 0
+  let unheld = (): void => {}
 
   const stop = (): void => {
     if (stopped) return
     stopped = true
+    unheld()
     if (raf) cancelAnimationFrame(raf)
     try {
       source?.stop()
@@ -90,6 +92,8 @@ export function playTtsBuffer(
     .then(async (decoded) => {
       if (stopped) return
       // Do not spend its phrase preparation or hold a predicted mouth pose while resume is pending
+      if (ctx === sharedContext) await whenSpeechAudioReleased()
+      if (stopped) return
       if (ctx.state === 'suspended') await ctx.resume()
       if (stopped) return
       analyser = ctx.createAnalyser()
@@ -102,20 +106,25 @@ export function playTtsBuffer(
         new ArrayBuffer(analyser.fftSize),
       )
       const startedAt = ctx.currentTime
-      const startedAtMs = wallNow()
+      let startedAtMs = wallNow()
       const prosodyInput = {
         utteranceId: `tts-${segment.segmentId}`,
         text: segment.text,
         locale: segment.locale,
         startedAtMs,
       }
-      hooks.onProsody?.(
-        alignTextProsody(prosodyInput, {
-          durationMs: Math.round(decoded.duration * 1_000),
-          accents: [],
-        }),
-        { startedAtMs },
-      )
+      let lastProsody = alignTextProsody(prosodyInput, {
+        durationMs: Math.round(decoded.duration * 1_000),
+        accents: [],
+      })
+      hooks.onProsody?.(lastProsody, { startedAtMs })
+      // A hold pauses the voice; its gestures move later by as long.
+      unheld = onSpeechAudioReleased((heldMs) => {
+        if (stopped) return
+        startedAtMs += heldMs
+        prosodyInput.startedAtMs = startedAtMs
+        hooks.onProsody?.(lastProsody, { startedAtMs })
+      })
       void compiled.then((cues) => {
         if (stopped) return
         // The mouth keeps to the voice: its start, its end and its pauses.
@@ -125,12 +134,12 @@ export function playTtsBuffer(
         spans = alignVisemeTimelineToAudio(cues, decoded.duration, voicing)
         const audioProsody = speechProsodyTimeline(spans, decoded.duration)
         const elapsedMs = Math.max(0, wallNow() - startedAtMs)
-        const timeline = alignTextProsody(prosodyInput, {
+        const timeline = (lastProsody = alignTextProsody(prosodyInput, {
           ...audioProsody,
           accents: audioProsody.accents.filter(
             (accent) => accent.offsetMs >= elapsedMs + 140,
           ),
-        }, textTimeOnAudio(segment.text, voicing))
+        }, textTimeOnAudio(segment.text, voicing)))
         hooks.onProsody?.(timeline, {
           startedAtMs,
         })
@@ -138,8 +147,9 @@ export function playTtsBuffer(
       const tick = (): void => {
         if (stopped || !analyser) return
         const elapsed = Math.max(0, ctx.currentTime - startedAt)
-        const sample =
-          sampleDecodedMouth(
+        const sample = held
+          ? HELD_MOUTH
+          : sampleDecodedMouth(
             decoded,
             spans,
             elapsed,
@@ -249,7 +259,7 @@ export function playPcmStream(
   }
   const tick = (): void => {
     if (stopped) return
-    const sample = analyserMouth(analyser, bins, [], 0)
+    const sample = held ? HELD_MOUTH : analyserMouth(analyser, bins, [], 0)
     hooks.onEnergy(sample.energy ?? 0, sample)
     raf = requestAnimationFrame(tick)
   }
@@ -260,7 +270,8 @@ export function playPcmStream(
       const read = pcmSamples(carry, bytes)
       carry = read.carry
       if (read.samples.length === 0) return
-      if (ctx.state === 'suspended') void ctx.resume()
+      if (ctx.state === 'suspended' && !(held && ctx === sharedContext))
+        void ctx.resume()
       const buffer = ctx.createBuffer(1, read.samples.length, PCM_STREAM_SAMPLE_RATE)
       buffer.getChannelData(0).set(read.samples)
       const source = ctx.createBufferSource()
@@ -350,12 +361,60 @@ let sharedContext: AudioContext | null = null
 function speechAudioContext(): AudioContext {
   if (!sharedContext || sharedContext.state === 'closed') {
     sharedContext = new AudioContext()
+    if (held) void sharedContext.suspend().catch(() => {})
   }
   return sharedContext
 }
 
 export function speechAudioContextOpen(): boolean {
   return Boolean(sharedContext && sharedContext.state !== 'closed')
+}
+
+/**
+ * Held: her voice stops where it is, without being thrown away. The shared
+ * context is suspended, so every source and the stream schedule freeze in
+ * place and continue from the same sample on release.
+ */
+let held = false
+let heldAtMs = 0
+const releaseListeners = new Set<(heldMs: number) => void>()
+/** A held voice leaves the mouth shut, not frozen mid-syllable. */
+const HELD_MOUTH: SpeechArticulation = { energy: 0, viseme: 'rest', amount: 0 }
+let releaseWaiters: (() => void)[] = []
+
+/** Voice that has not started yet waits too: it starts once released. */
+export function holdSpeechAudio(): void {
+  if (held) return
+  held = true
+  heldAtMs = monotonicNow()
+  if (sharedContext?.state === 'running')
+    void sharedContext.suspend().catch(() => {})
+}
+
+export function releaseSpeechAudio(): void {
+  if (!held) return
+  held = false
+  const heldMs = Math.max(0, monotonicNow() - heldAtMs)
+  const waiters = releaseWaiters
+  releaseWaiters = []
+  for (const wake of waiters) wake()
+  if (sharedContext?.state === 'suspended')
+    void sharedContext.resume().catch(() => {})
+  for (const listener of [...releaseListeners]) listener(heldMs)
+}
+
+function onSpeechAudioReleased(listener: (heldMs: number) => void): () => void {
+  releaseListeners.add(listener)
+  return () => releaseListeners.delete(listener)
+}
+
+export function speechAudioHeld(): boolean {
+  return held
+}
+
+function whenSpeechAudioReleased(): Promise<void> {
+  if (!held) return Promise.resolve()
+  return new Promise((resolve) => releaseWaiters.push(resolve))
 }
 
 export function sampleMouth(

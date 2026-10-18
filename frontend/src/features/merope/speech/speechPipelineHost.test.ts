@@ -270,3 +270,26 @@ test('an explicitly disabled speech status is a successful refresh', async (t) =
   assert.equal(await host.refreshStatus(), false)
   assert.equal(host.speechEnabled, false)
 })
+
+test('a hold needs something of hers to hold, and cancelling lets it go', () => {
+  const host = new SpeechPipelineHost()
+  host.applyStatus({
+    available: true,
+    tts_enabled: true,
+    persona_speech_enabled: true,
+  })
+  assert.equal(host.hold(), false)
+  assert.equal(host.held, false)
+
+  host.pipeline.enqueue = () => {}
+  Object.defineProperty(host.pipeline, 'playing', { get: () => true })
+  host.pipeline.cancel = () => true
+  assert.equal(host.hold(), true)
+  assert.equal(host.held, true)
+  host.resume()
+  assert.equal(host.held, false)
+
+  host.hold()
+  host.cancel()
+  assert.equal(host.held, false, 'the next voice must not wait on a cut off')
+})

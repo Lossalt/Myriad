@@ -13,7 +13,13 @@ import { dispatchMeropeSpeech } from './speechEvents'
 import { SpeechSegmenter } from './speechSegmenter'
 import { estimateAutoSpeechDurationMs } from './textTiming'
 import { TtsPipeline } from './ttsPipeline'
-import { playPcmStream, playTtsBuffer } from './ttsPlayer'
+import {
+  holdSpeechAudio,
+  playPcmStream,
+  playTtsBuffer,
+  releaseSpeechAudio,
+  speechAudioHeld,
+} from './ttsPlayer'
 import { patchVoicePresence } from './voicePresence'
 
 export function personaSpeechFlags(status: {
@@ -301,11 +307,36 @@ export class SpeechPipelineHost {
     this.cancelledAt = nowMs()
     const streamStopped = this.stopStream(messageId)
     const stopped = this.pipeline.cancel(messageId) || streamStopped
+    // Stopped first, so nothing cut off is heard as the hold lets go; the
+    // next voice must not wait on a hold nobody will release.
+    if (!messageId) releaseSpeechAudio()
     if (!stopped) {
       this.cancelledAt = null
       return
     }
     this.noteSilence()
+  }
+
+  /**
+   * Someone started talking over her: her voice stops where it is but is
+   * kept, until it is known whether they meant to cut in. False when there
+   * was nothing of hers to hold.
+   */
+  hold(): boolean {
+    if (speechAudioHeld()) return true
+    if (!this.stream && !this.pipeline.playing && this.pipeline.queueLength === 0)
+      return false
+    holdSpeechAudio()
+    return true
+  }
+
+  /** It was a cough, a door, a word that was not one: she goes on. */
+  resume(): void {
+    releaseSpeechAudio()
+  }
+
+  get held(): boolean {
+    return speechAudioHeld()
   }
 
   private async synthesize(

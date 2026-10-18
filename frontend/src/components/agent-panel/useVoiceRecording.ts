@@ -15,6 +15,7 @@ import {
   isSubmittableTranscript,
   pcmToWav,
 } from '../../features/merope/speech/audioWav'
+import { BargeIn } from '../../features/merope/speech/bargeIn'
 import { getSpeechPipeline } from '../../features/merope/speech/speechPipelineHost'
 import { TranscriptionQueue } from '../../features/merope/speech/transcriptionQueue'
 import { UtteranceCapture } from '../../features/merope/speech/utteranceCapture'
@@ -121,6 +122,14 @@ export function useVoiceRecording(
   const openingRef = useRef(false)
   const mountedRef = useRef(true)
   const utteranceStartedRef = useRef(0)
+  const interruptionRef = useRef<BargeIn | null>(null)
+  if (!interruptionRef.current) {
+    interruptionRef.current = new BargeIn({
+      hold: () => getSpeechPipeline().hold(),
+      resume: () => getSpeechPipeline().resume(),
+      cancel: () => getSpeechPipeline().cancel(),
+    })
+  }
   const onResultRef = useRef(onResult)
   onResultRef.current = onResult
   const localeRef = useRef(locale)
@@ -129,13 +138,16 @@ export function useVoiceRecording(
     text: string
     timing: VoiceInputTiming
     heard?: string
+    settle?: (words: boolean) => void
   }> | null>(null)
   /** Her voice is Omni's: she hears recordings herself (no ASR). */
   const omniRef = useRef(false)
   if (!transcriptionRef.current) {
     transcriptionRef.current = new TranscriptionQueue({
-      onResult: ({ text, timing, heard }) => {
-        if (!mountedRef.current || !isSubmittableTranscript(text)) return
+      onResult: ({ text, timing, heard, settle }) => {
+        const words = isSubmittableTranscript(text)
+        settle?.(words)
+        if (!mountedRef.current || !words) return
         stageVoiceInputTrace(timing)
         if (heard) noteHeardVoice(heard, text)
         onResultRef.current(text)
@@ -177,8 +189,16 @@ export function useVoiceRecording(
   }, [])
 
   const transcribe = useCallback(
-    (pcmData: Float32Array[], sampleRate: number, startedAt: number) => {
-      if (pcmData.length === 0) return
+    (
+      pcmData: Float32Array[],
+      sampleRate: number,
+      startedAt: number,
+      settle?: (words: boolean) => void,
+    ) => {
+      if (pcmData.length === 0) {
+        settle?.(false)
+        return
+      }
       const inputEnded = performance.now()
       const engine = LOCALE_ENGINE_MAP[localeRef.current] || '16k_zh'
       transcriptionRef.current!.enqueue(async (signal) => {
@@ -195,6 +215,7 @@ export function useVoiceRecording(
           return {
             text: result.success ? (result.text?.trim() ?? '') : '',
             heard,
+            settle,
             timing: {
               input_started: startedAt,
               input_ended: inputEnded,
@@ -215,6 +236,7 @@ export function useVoiceRecording(
         const text = result.success ? (result.text?.trim() ?? '') : ''
         return {
           text,
+          settle,
           timing: {
             input_started: startedAt,
             input_ended: inputEnded,
@@ -237,17 +259,22 @@ export function useVoiceRecording(
       }
 
       const event = recorder.capture.push(frame, getVoicePresence().ttsPlaying)
+      const interruption = interruptionRef.current!
       if (event.started) {
         utteranceStartedRef.current = performance.now()
         patchVoicePresence({ userSpeaking: true })
-        getSpeechPipeline().cancel()
+        interruption.begin()
       }
+      if (event.confirmed) interruption.confirm()
       if (event.ended) patchVoicePresence({ userSpeaking: false })
+      if (event.ended && !event.utterance) interruption.dismiss()
       if (event.utterance) {
+        const settle = interruption.awaitWords()
         transcribe(
           event.utterance.pcm,
           event.utterance.sampleRate,
           utteranceStartedRef.current,
+          settle,
         )
       }
     },
@@ -348,6 +375,7 @@ export function useVoiceRecording(
     conversationRef.current = false
     setConversation(false)
     transcriptionRef.current!.reset()
+    interruptionRef.current!.reset()
     patchVoicePresence({ listening: false, userSpeaking: false })
     if (convoRtcRef.current && fromConversation) {
       isRecordingRef.current = false
@@ -388,6 +416,7 @@ export function useVoiceRecording(
         setIsRecording(false)
       }
       transcriptionRef.current!.reset()
+      interruptionRef.current!.reset()
       const ticket = ++lifecycleRef.current
       openingRef.current = true
       try {
@@ -452,6 +481,7 @@ export function useVoiceRecording(
       lifecycleRef.current += 1
       openingRef.current = false
       transcriptionRef.current!.reset()
+      interruptionRef.current!.reset()
       if (
         agoraConversationActive() ||
         (convoRtcRef.current && conversationRef.current)

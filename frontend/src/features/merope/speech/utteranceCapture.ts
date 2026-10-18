@@ -5,6 +5,20 @@ export interface CapturedUtterance {
   sampleRate: number
 }
 
+/**
+ * Speech this long is taken as meant: what it interrupts is cut off. Shorter
+ * sounds only hold her voice until the words are known.
+ */
+export const CONFIRM_INTERRUPTION_SECONDS = 0.5
+
+export interface CaptureEvent {
+  started: boolean
+  /** Voiced long enough to be meant, reported once per utterance. */
+  confirmed: boolean
+  ended: boolean
+  utterance?: CapturedUtterance
+}
+
 export class UtteranceCapture {
   private preRoll: Float32Array[] = []
   private preSamples = 0
@@ -14,6 +28,7 @@ export class UtteranceCapture {
   private quietSamples = 0
   private voicedSamples = 0
   private active = false
+  private confirmed = false
   private threshold = 0.035
 
   constructor(readonly sampleRate: number) {}
@@ -21,12 +36,8 @@ export class UtteranceCapture {
   push(
     frame: Float32Array,
     playback: boolean,
-  ): {
-    started: boolean
-    ended: boolean
-    utterance?: CapturedUtterance
-  } {
-    if (frame.length === 0) return { started: false, ended: false }
+  ): CaptureEvent {
+    if (frame.length === 0) return idle()
     const rms = frameRms(frame)
     if (!this.active) {
       this.preRoll.push(frame)
@@ -48,7 +59,7 @@ export class UtteranceCapture {
         rms >= this.threshold ? this.openSamples + frame.length : 0
       // A single loud click must not immediately stop the reply.
       if (this.openSamples < this.sampleRate * (playback ? 0.16 : 0.12)) {
-        return { started: false, ended: false }
+        return idle()
       }
       this.active = true
       this.clip = this.preRoll
@@ -57,7 +68,7 @@ export class UtteranceCapture {
       this.preSamples = 0
       this.voicedSamples = this.openSamples
       this.quietSamples = 0
-      return { started: true, ended: false }
+      return { ...idle(), started: true, confirmed: this.confirm() }
     }
 
     this.clip.push(frame)
@@ -69,13 +80,25 @@ export class UtteranceCapture {
     } else {
       this.quietSamples += frame.length
     }
+    const confirmed = this.confirm()
     if (
       this.quietSamples < this.sampleRate * 0.55 &&
       this.clipSamples < this.sampleRate * 20
     ) {
-      return { started: false, ended: false }
+      return { ...idle(), confirmed }
     }
-    return { started: false, ended: true, utterance: this.finish() }
+    return { ...idle(), confirmed, ended: true, utterance: this.finish() }
+  }
+
+  private confirm(): boolean {
+    if (
+      this.confirmed ||
+      this.voicedSamples < this.sampleRate * CONFIRM_INTERRUPTION_SECONDS
+    ) {
+      return false
+}
+    this.confirmed = true
+    return true
   }
 
   finish(): CapturedUtterance | undefined {
@@ -96,5 +119,10 @@ export class UtteranceCapture {
     this.quietSamples = 0
     this.voicedSamples = 0
     this.active = false
+    this.confirmed = false
   }
+}
+
+function idle(): CaptureEvent {
+  return { started: false, confirmed: false, ended: false }
 }
