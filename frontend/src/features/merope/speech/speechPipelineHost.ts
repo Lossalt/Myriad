@@ -1,6 +1,7 @@
 import type { SpeechStatus } from '../../../services/speechApi'
 import type { MeropeSpeechSource } from './speechEvents'
 import type { SpeechInterruptMode, SpeechSegment } from './speechSegmenter'
+import type { SpeechCutOff } from './ttsPipeline'
 import {
   getSpeechStatus,
   openVoiceStream,
@@ -50,6 +51,7 @@ export class SpeechPipelineHost {
   private readonly fedMessageIds = new Set<string>()
   private readonly cancelledMessageIds = new Set<string>()
   private ownVoice = false
+  private readonly cutOffListeners = new Set<(cut: SpeechCutOff) => void>()
   /** Her own voice playing for a reply, if one is. */
   private stream: { messageId: string; stop: () => void } | null = null
 
@@ -78,7 +80,8 @@ export class SpeechPipelineHost {
 
   /** Invalidate status probes too: a late old-account response cannot re-enable TTS. */
   resetSubject(): void {
-    this.cancel()
+    // The old account's reply is not reported under the new one.
+    this.stop()
     this.applyStatus({
       available: false,
       tts_enabled: false,
@@ -100,7 +103,7 @@ export class SpeechPipelineHost {
     this.ttsReady = flags.ttsReady
     const wasEnabled = this.enabled
     this.enabled = flags.speechEnabled && (flags.ttsReady || this.ownVoice)
-    if (wasEnabled && !this.enabled) this.cancel()
+    if (wasEnabled && !this.enabled) this.stop()
   }
 
   /** Explicit refreshes report request failures so settings can retry them. */
@@ -295,7 +298,25 @@ export class SpeechPipelineHost {
     return true
   }
 
+  /**
+   * A reply read aloud stopped partway: told with how much of it was said,
+   * so it is kept as maybe not heard to the end.
+   */
+  onCutOff(listener: (cut: SpeechCutOff) => void): () => void {
+    this.cutOffListeners.add(listener)
+    return () => this.cutOffListeners.delete(listener)
+  }
+
+  /** They cut her off, by speaking over her or by a new turn. */
   cancel(messageId?: string): void {
+    const cut = this.pipeline.cutOffPoint(messageId)
+    this.stop(messageId)
+    if (!cut) return
+    for (const listener of [...this.cutOffListeners]) listener(cut)
+  }
+
+  /** Stopped without anyone cutting her off: speech off, account changed. */
+  private stop(messageId?: string): void {
     if (messageId) {
       rememberMessage(this.cancelledMessageIds, messageId)
       this.fedMessageIds.delete(messageId)
@@ -364,7 +385,7 @@ export class SpeechPipelineHost {
     audio: ArrayBuffer,
     segment: SpeechSegment,
     onEnded: () => void,
-  ): { stop: () => void } {
+  ): { stop: () => void, progress?: () => number } {
     const generation = segment.generation
     const source = segment.source ?? 'reply'
     const utteranceId = `tts-${segment.segmentId}`
@@ -426,6 +447,7 @@ export class SpeechPipelineHost {
       },
     })
     return {
+      progress: handle.progress,
       stop: () => {
         handle.stop()
         dispatchMeropeSpeech({

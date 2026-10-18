@@ -35,6 +35,8 @@ export interface TtsPlaybackDependencies {
 
 export interface TtsPlayHandle {
   stop: () => void
+  /** How far into the audio it has played, 0 to 1; 0 before it starts. */
+  progress?: () => number
 }
 
 const FFT = 256
@@ -67,6 +69,7 @@ export function playTtsBuffer(
   let analyser: AnalyserNode | null = null
   let raf = 0
   let unheld = (): void => {}
+  let played = (): number => 0
 
   const stop = (): void => {
     if (stopped) return
@@ -106,6 +109,11 @@ export function playTtsBuffer(
         new ArrayBuffer(analyser.fftSize),
       )
       const startedAt = ctx.currentTime
+      // A held context stands still, so a hold is not counted as heard.
+      played = () =>
+        decoded.duration > 0
+          ? Math.min(1, Math.max(0, (ctx.currentTime - startedAt) / decoded.duration))
+          : 0
       let startedAtMs = wallNow()
       const prosodyInput = {
         utteranceId: `tts-${segment.segmentId}`,
@@ -173,7 +181,7 @@ export function playTtsBuffer(
       hooks.onEnded()
     })
 
-  return { stop }
+  return { stop, progress: () => played() }
 }
 
 export interface PcmStreamHandle {

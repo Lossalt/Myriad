@@ -293,3 +293,25 @@ test('a hold needs something of hers to hold, and cancelling lets it go', () => 
   host.cancel()
   assert.equal(host.held, false, 'the next voice must not wait on a cut off')
 })
+
+test('cutting her off reports where; turning speech off does not', () => {
+  const host = new SpeechPipelineHost()
+  host.applyStatus({
+    available: true,
+    tts_enabled: true,
+    persona_speech_enabled: true,
+  })
+  const cuts: unknown[] = []
+  const stop = host.onCutOff((cut) => cuts.push(cut))
+  host.pipeline.cutOffPoint = () => ({ messageId: 'm', heardChars: 3 })
+  host.pipeline.cancel = () => true
+  host.cancel()
+  assert.deepEqual(cuts, [{ messageId: 'm', heardChars: 3 }])
+  host.applyStatus({
+    available: true,
+    tts_enabled: true,
+    persona_speech_enabled: false,
+  })
+  assert.equal(cuts.length, 1)
+  stop()
+})

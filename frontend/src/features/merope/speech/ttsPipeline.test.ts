@@ -359,3 +359,40 @@ test('a throwing synthesis adapter does not strand the next segment', async () =
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(played, ['good'])
 })
+
+test('a reply cut off while read aloud reports how much of it was said', async () => {
+  let progress = 0
+  const ends: (() => void)[] = []
+  const pipeline = new TtsPipeline({
+    synthesize: (item) => Promise.resolve(buffer(item.text)),
+    play: (_audio, _item, end) => {
+      ends.push(end)
+      return { stop() {}, progress: () => progress }
+    },
+  })
+  pipeline.enqueue([segment(1, '我觉得海边'), segment(2, '挺好的，因为')])
+  assert.deepEqual(pipeline.cutOffPoint(), { messageId: 'msg-1', heardChars: 0 })
+  await new Promise((resolve) => setImmediate(resolve))
+  progress = 0.4
+  assert.deepEqual(pipeline.cutOffPoint(), { messageId: 'msg-1', heardChars: 2 })
+  ends.shift()!()
+  progress = 0.5
+  assert.deepEqual(pipeline.cutOffPoint('msg-1'), {
+    messageId: 'msg-1',
+    heardChars: 8,
+  })
+  assert.equal(pipeline.cutOffPoint('other'), null)
+  ends.shift()!()
+  assert.equal(pipeline.cutOffPoint(), null, 'said to the end')
+})
+
+test('words shown instead of a voice are not reported as cut off', async () => {
+  const pipeline = new TtsPipeline({
+    synthesize: () => Promise.resolve(null),
+    play: () => ({ stop() {} }),
+    fallback: () => ({ stop() {} }),
+  })
+  pipeline.enqueue([segment(1, 'shown')])
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(pipeline.cutOffPoint(), null)
+})

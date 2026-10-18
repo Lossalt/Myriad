@@ -8,6 +8,14 @@ import {
 
 export interface TtsAudioHandle {
   stop: () => void
+  /** How far into its audio it has played, 0 to 1. */
+  progress?: () => number
+}
+
+/** Where a reply read aloud was stopped: this many of its characters said. */
+export interface SpeechCutOff {
+  messageId: string
+  heardChars: number
 }
 
 export interface TtsPipelineHost {
@@ -51,6 +59,9 @@ export class TtsPipeline {
   private handle: TtsAudioHandle | null = null
   private playingMessageId: string | null = null
   private playSeq = 0
+  /** The reply being read aloud, and how much of it has been said in full. */
+  private said = { messageId: '', chars: 0, voiced: false }
+  private playingText = ''
 
   constructor(private readonly host: TtsPipelineHost) {}
 
@@ -119,6 +130,38 @@ export class TtsPipeline {
     markTurnTraceOnce('tts_queued', { n: segments.length })
     this.noteQueue()
     this.pumpSynth()
+  }
+
+  /**
+   * Where the reply being read aloud stands right now, if it is not said to
+   * the end yet: what was played in full, and as much of the segment playing
+   * as was heard. Counted in the characters read aloud, without markup.
+   */
+  cutOffPoint(messageId?: string): SpeechCutOff | null {
+    const id = messageId ?? this.playingMessageId ?? this.nextMessageId()
+    if (!id || !this.isBusyWith(id)) return null
+    // Not started yet: none of it was heard.
+    if (this.said.messageId !== id) return { messageId: id, heardChars: 0 }
+    // Only a voice can be talked over; words shown are seen whole.
+    if (!this.said.voiced) return null
+    const playing =
+      this.playingMessageId === id && this.handle?.progress
+        ? Math.floor(this.playingText.length * this.handle.progress())
+        : 0
+    return { messageId: id, heardChars: this.said.chars + playing }
+  }
+
+  /** The reply whose next segment comes up first. */
+  private nextMessageId(): string | null {
+    let next: { playId: number, messageId: string } | null = null
+    const consider = (playId: number, messageId: string) => {
+      if (!next || playId < next.playId) next = { playId, messageId }
+    }
+    for (const item of this.pending) consider(item.playId, item.segment.messageId)
+    for (const [playId, slot] of this.ready) consider(playId, slot.segment.messageId)
+    for (const [playId, task] of this.synthesis)
+      consider(playId, task.segment.messageId)
+    return (next as { messageId: string } | null)?.messageId ?? null
   }
 
   cancel(messageId?: string): boolean {
@@ -246,6 +289,10 @@ export class TtsPipeline {
       return
     }
     this.playingMessageId = slot.segment.messageId
+    if (this.said.messageId !== slot.segment.messageId)
+      this.said = { messageId: slot.segment.messageId, chars: 0, voiced: false }
+    if (slot.audio) this.said.voiced = true
+    this.playingText = slot.segment.text
     const playSeq = ++this.playSeq
     let ended = false
     markTurnTraceOnce('playback_started')
@@ -253,6 +300,8 @@ export class TtsPipeline {
     const onEnded = () => {
       if (playSeq !== this.playSeq) return
       ended = true
+      if (this.said.messageId === slot.segment.messageId)
+        this.said.chars += slot.segment.text.length
       this.handle = null
       this.playingMessageId = null
       this.noteQueue()

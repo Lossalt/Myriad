@@ -56,6 +56,7 @@ import {
   attachLiveBody,
   captureTurnBody,
   deliverTurnLine,
+  onTurnSpeechCutOff,
   openTurnReply,
   openTurnSpeech,
   setFaceMood,
@@ -649,6 +650,22 @@ export const AgentEngine: React.FC = () => {
   useEffect(() => {
     setAgentSessionId(sessionId)
   }, [sessionId])
+
+  // A Chat reply read aloud and talked over is kept as maybe not heard to
+  // the end, with how much of it was said.
+  useEffect(
+    () =>
+      onTurnSpeechCutOff(({ messageId, heardChars }) => {
+        const message = messagesRef.current.chat.find((m) => m.id === messageId)
+        const runId = message?.taskExecution?.runId
+        const chatSessionId = sessionIdsByModeRef.current.chat
+        if (!runId || !chatSessionId) return
+        void agentService
+          .markHeardCutOff(chatSessionId, runId, heardChars)
+          .catch(() => {})
+      }),
+    [messagesRef],
+  )
 
   const interruptCurrentTask = useCallback(async () => {
     const current = getAgentPanelMode()

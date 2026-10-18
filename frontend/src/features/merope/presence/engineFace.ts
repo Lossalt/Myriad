@@ -197,6 +197,13 @@ export function stopTurnSpeech(messageId: string): void {
   getSpeechPipeline().cancel(messageId)
 }
 
+/** A reply read aloud was talked over: which, and how much of it was said. */
+export function onTurnSpeechCutOff(
+  listener: (cut: { messageId: string, heardChars: number }) => void,
+): () => void {
+  return getSpeechPipeline().onCutOff(listener)
+}
+
 export function turnSpeechAlreadyFed(messageId: string): boolean {
   return getSpeechPipeline().alreadyFed(messageId)
 }

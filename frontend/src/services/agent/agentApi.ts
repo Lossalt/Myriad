@@ -1208,6 +1208,19 @@ class AgentService {
     return apiService.post(`${this.baseUrl}/session/interrupt`, { input })
   }
 
+  /** Her reply was read aloud here and talked over, `heardChars` in. */
+  async markHeardCutOff(
+    sessionId: string,
+    runId: string,
+    heardChars: number,
+  ): Promise<{ success: boolean }> {
+    return apiService.post(`${this.baseUrl}/session/heard-cut-off`, {
+      sessionId,
+      runId,
+      heardChars,
+    })
+  }
+
   async cancelChatTurn(sessionId: string): Promise<{ success: boolean }> {
     return apiService.post(`${this.baseUrl}/session/cancel-chat`, { sessionId })
   }
