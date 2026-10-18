@@ -17,8 +17,8 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use myriad_agent_rules::channel::{ConnectFailureKind, WorkerIntent};
 use myriad_agent_rules::onebot::decode::{
-    OneBotGroupLine, decode_group_ban, decode_group_inbound, decode_private_inbound,
-    decode_replied_message, private_message_is_cq_string,
+    OneBotGroupLine, decode_account_online, decode_group_ban, decode_group_inbound,
+    decode_private_inbound, decode_replied_message, private_message_is_cq_string,
 };
 use myriad_agent_rules::onebot::encode::encode_get_msg;
 use myriad_agent_rules::onebot::rules::{
@@ -82,6 +82,9 @@ pub struct OneBotStatus {
     pub has_token: bool,
     pub ws_url: Option<String>,
     pub last_inbound_at: Option<String>,
+    /// Whether the QQ account is logged in, as SnowLuma's last heartbeat or
+    /// lifecycle event said. `None` until one arrives on this socket.
+    pub account_online: Option<bool>,
 }
 
 static SNAPSHOT: OnceLock<RwLock<OneBotStatus>> = OnceLock::new();
@@ -95,6 +98,7 @@ fn snapshot() -> &'static RwLock<OneBotStatus> {
             has_token: false,
             ws_url: None,
             last_inbound_at: None,
+            account_online: None,
         })
     })
 }
@@ -105,6 +109,11 @@ pub async fn current_status() -> OneBotStatus {
 
 async fn publish_status(phase: OneBotPhase, fingerprint: &CredentialFingerprint) {
     let mut snap = snapshot().write().await;
+    // Online is published once per new socket; any other phase means no
+    // socket. Either way the last socket's word on the account no longer holds.
+    if snap.phase != phase || phase == OneBotPhase::Online {
+        snap.account_online = None;
+    }
     snap.phase = phase;
     snap.enabled = fingerprint.enabled;
     snap.has_url = !fingerprint.ws_url.is_empty();
@@ -117,6 +126,14 @@ async fn publish_status(phase: OneBotPhase, fingerprint: &CredentialFingerprint)
     if !fingerprint.enabled || fingerprint.ws_url.is_empty() || !fingerprint.has_token {
         snap.last_inbound_at = None;
     }
+}
+
+async fn mark_account_online(online: bool) {
+    let mut snap = snapshot().write().await;
+    if snap.account_online != Some(online) {
+        info!(online, "OneBot QQ account status changed");
+    }
+    snap.account_online = Some(online);
 }
 
 async fn mark_inbound() {
@@ -297,6 +314,10 @@ async fn handle_text(text: &str) -> Option<ConnectFailureKind> {
         }
         Inbound::Event(event) => {
             let raw = serde_json::to_string(event.as_ref()).ok()?;
+            if let Some(online) = decode_account_online(&raw) {
+                mark_account_online(online).await;
+                return None;
+            }
             if !groups_enabled().await {
                 // Groups stay off until the deployer turns them on. A personal
                 // QQ number is already in many groups; recording all of them

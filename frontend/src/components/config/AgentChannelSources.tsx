@@ -1036,13 +1036,18 @@ function OneBotChannelCard({
     return () => window.clearInterval(timer)
   }, [loadStatus])
 
-  const phase = botPhaseLabel(status?.phase, {
-    online: t.config.onebotBotPhaseOnline,
-    connecting: t.config.onebotBotPhaseConnecting,
-    reconnecting: t.config.onebotBotPhaseReconnecting,
-    rejected: t.config.onebotBotPhaseRejected,
-    offline: t.config.onebotBotPhaseOffline,
-  })
+  // The socket can stay open while the QQ account behind it is offline.
+  const accountOffline =
+    status?.phase === 'online' && status.accountOnline === false
+  const phase = accountOffline
+    ? t.config.onebotBotPhaseAccountOffline
+    : botPhaseLabel(status?.phase, {
+        online: t.config.onebotBotPhaseOnline,
+        connecting: t.config.onebotBotPhaseConnecting,
+        reconnecting: t.config.onebotBotPhaseReconnecting,
+        rejected: t.config.onebotBotPhaseRejected,
+        offline: t.config.onebotBotPhaseOffline,
+      })
 
   return (
     <ChannelCardFrame
@@ -1059,7 +1064,9 @@ function OneBotChannelCard({
       {...bindGuide('agent.onebotBot', g.agent.onebotBot)}
       badge={
         <SettingTitleTag
-          variant={status?.phase === 'rejected' ? 'danger' : 'muted'}
+          variant={
+            status?.phase === 'rejected' || accountOffline ? 'danger' : 'muted'
+          }
           title={t.config.onebotBotHint}
         >
           {phase}
@@ -1130,7 +1137,7 @@ function OneBotChannelCard({
       (status?.hasUrl || status?.hasToken) ? (
         <ChannelPairingPanel
           channel="onebot"
-          receiveReady={status?.phase === 'online'}
+          receiveReady={status?.phase === 'online' && !accountOffline}
         />
       ) : null}
     </ChannelCardFrame>

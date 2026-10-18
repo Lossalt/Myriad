@@ -303,6 +303,8 @@ export interface OneBotStatus {
   hasToken: boolean
   wsUrl?: string | null
   lastInboundAt?: string | null
+  /** SnowLuma's last heartbeat: whether the QQ account itself is logged in. */
+  accountOnline?: boolean | null
 }
 
 export type OneBotPairingStatus = QqPairingStatus

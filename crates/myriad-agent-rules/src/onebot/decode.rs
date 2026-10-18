@@ -85,6 +85,24 @@ pub fn private_message_is_cq_string(raw: &str) -> bool {
         && matches!(event.message, Some(WireMessage::Cq(_)))
 }
 
+/// Whether the QQ account is logged in, from a heartbeat or lifecycle meta
+/// event (`status.online`). The socket being open says only that SnowLuma
+/// is up; the account can be kicked offline while it stays open. `None` for
+/// any other event or a status without `online`.
+pub fn decode_account_online(raw: &str) -> Option<bool> {
+    let event: RawEventJson = serde_json::from_str(raw).ok()?;
+    if event.post_type.as_deref() != Some("meta_event") {
+        return None;
+    }
+    if !matches!(
+        event.meta_event_type.as_deref(),
+        Some("heartbeat" | "lifecycle")
+    ) {
+        return None;
+    }
+    event.status?.get("online")?.as_bool()
+}
+
 /// 群里的一行。`addressed` 为真表示 @ 了她。回复她的消息不算：那可能是在跟别人说，
 /// 由她和别的话一起读、自己判断（`reply_to.hers` 说明被回复的是她）。
 ///

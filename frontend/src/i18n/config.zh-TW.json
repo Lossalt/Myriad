@@ -2176,6 +2176,7 @@
   "onebotBotPhaseOnline": "在線",
   "onebotBotPhaseRejected": "憑證無效",
   "onebotBotPhaseReconnecting": "重連中",
+  "onebotBotPhaseAccountOffline": "QQ 帳號離線",
   "onebotBotCredentialLabel": "憑證",
   "onebotBotReceiveLabel": "收發",
   "onebotBotIdentityLabel": "位址",

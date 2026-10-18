@@ -20,5 +20,6 @@ pub async fn get_onebot_bot_status(
         "hasToken": status.has_token,
         "wsUrl": status.ws_url,
         "lastInboundAt": status.last_inbound_at,
+        "accountOnline": status.account_online,
     })))
 }

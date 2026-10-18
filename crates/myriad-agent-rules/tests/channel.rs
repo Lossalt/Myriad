@@ -2285,6 +2285,27 @@ mod onebot_decode {
     }
 
     #[test]
+    fn heartbeat_and_lifecycle_tell_whether_the_account_is_online() {
+        use myriad_agent_rules::onebot::decode::decode_account_online;
+        let beat = |kind: &str, online: bool| {
+            json!({"post_type":"meta_event","meta_event_type":kind,
+                   "status":{"online":online,"good":online},"interval":30000})
+            .to_string()
+        };
+        assert_eq!(
+            decode_account_online(&beat("heartbeat", false)),
+            Some(false)
+        );
+        assert_eq!(decode_account_online(&beat("lifecycle", true)), Some(true));
+        assert_eq!(decode_account_online(&beat("other", true)), None);
+        assert_eq!(decode_account_online(private_text_event()), None);
+        assert_eq!(
+            decode_account_online(r#"{"post_type":"meta_event","meta_event_type":"heartbeat"}"#),
+            None
+        );
+    }
+
+    #[test]
     fn voice_and_file_segments_are_kept() {
         let raw = json!({
             "post_type": "message",

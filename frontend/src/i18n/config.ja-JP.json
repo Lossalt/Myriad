@@ -2074,6 +2074,7 @@
   "onebotBotPhaseOnline": "Online",
   "onebotBotPhaseRejected": "Invalid credentials",
   "onebotBotPhaseReconnecting": "Reconnecting",
+  "onebotBotPhaseAccountOffline": "QQ アカウントがオフライン",
   "onebotBotCredentialLabel": "Credentials",
   "onebotBotReceiveLabel": "Messaging",
   "onebotBotIdentityLabel": "Address",
