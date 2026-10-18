@@ -2554,6 +2554,18 @@ mod onebot_encode {
     }
 
     #[test]
+    fn a_reply_segment_quotes_a_message_id() {
+        use myriad_agent_rules::onebot::encode::encode_reply_segment;
+        assert_eq!(
+            encode_reply_segment("-2147480000").unwrap(),
+            json!({"type": "reply", "data": {"id": "-2147480000"}})
+        );
+        assert!(encode_reply_segment("0").is_none());
+        assert!(encode_reply_segment("").is_none());
+        assert!(encode_reply_segment("abc").is_none());
+    }
+
+    #[test]
     fn a_voice_is_fetched_as_wav_or_asked_for_its_text() {
         use myriad_agent_rules::onebot::encode::{encode_fetch_ptt_text, encode_get_record_wav};
         let record = encode_get_record_wav(" abc.amr ").expect("record");

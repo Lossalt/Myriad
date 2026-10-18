@@ -13,6 +13,17 @@ pub fn encode_image_segment(url: &str) -> Value {
     json!({"type": "image", "data": {"file": url}})
 }
 
+/// `{"type":"reply","data":{"id":…}}`, quoting a message. SnowLuma ids are
+/// signed int32 hashes, often negative; `0` and a non-number quote nothing.
+pub fn encode_reply_segment(message_id: &str) -> Option<Value> {
+    let id = message_id
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id != 0)?;
+    Some(json!({"type": "reply", "data": {"id": id.to_string()}}))
+}
+
 /// `send_private_msg`。`user_id` 按 i64 写入，不经浮点；空段或非法 id 返回 `None`。
 pub fn encode_private_message(user_id: &str, segments: &[Value]) -> Option<Value> {
     if segments.is_empty() {

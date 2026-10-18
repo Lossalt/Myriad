@@ -65,10 +65,14 @@ pub(super) async fn send_reply(
             .await
         }
         ChannelPlatform::OneBot => {
-            let Some(action) = myriad_agent_rules::onebot::encode::encode_group_message(
-                &line.chat,
-                &mentions::onebot_segments(pieces),
-            ) else {
+            use myriad_agent_rules::onebot::encode::{encode_group_message, encode_reply_segment};
+            let mut segments = Vec::new();
+            if quoting {
+                // A line whose id cannot be quoted is still answered, unquoted.
+                segments.extend(encode_reply_segment(&line.message_id));
+            }
+            segments.extend(mentions::onebot_segments(pieces));
+            let Some(action) = encode_group_message(&line.chat, &segments) else {
                 return Err(ConnectFailureKind::Permanent);
             };
             match crate::services::onebot_send::send_action(action).await {
