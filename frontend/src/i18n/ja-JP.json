@@ -1382,7 +1382,7 @@
     "feishuUnpairConfirm": "解除すると、この Feishu アカウントはあなたの Agent を動かせなくなります。解除しますか？",
     "feishuUnpairFailed": "Feishu の連携を解除できませんでした。",
     "onebotPairingTitle": "OneBot Work",
-    "onebotPairingHint": "Generate a one-time code and send it to the QQ account logged into NapCat. This is not QQ login.",
+    "onebotPairingHint": "Generate a one-time code and send it to the QQ account connected to SnowLuma. This is not QQ login.",
     "onebotPairingLoadFailed": "OneBot pairing status could not load.",
     "onebotPairingIssueFailed": "The pairing code could not be generated.",
     "onebotPairingCopyFailed": "The pairing code could not be copied.",
