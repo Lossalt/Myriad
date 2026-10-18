@@ -21,6 +21,9 @@ pub enum ChannelTransport {
     },
     OneBot {
         user_id: String,
+        /// Set when they wrote from a group's temp session (临时会话):
+        /// replies go back through it, and there is no typing mark.
+        temp_group: Option<String>,
     },
 }
 
@@ -69,11 +72,13 @@ impl ChannelTransport {
                 remaining_passive_replies: 0,
                 typing: false,
             },
-            Self::OneBot { .. } => DeliveryContext {
+            Self::OneBot { temp_group, .. } => DeliveryContext {
                 inbound_msg_id: None,
                 passive_window_open: false,
                 remaining_passive_replies: 0,
-                typing: myriad_agent_rules::onebot::rules::onebot_worker_supports_typing(),
+                // SnowLuma's typing mark is for friend chats only.
+                typing: temp_group.is_none()
+                    && myriad_agent_rules::onebot::rules::onebot_worker_supports_typing(),
             },
             Self::Qq { inbound_msg_id, .. } => DeliveryContext {
                 inbound_msg_id: inbound_msg_id.clone(),
@@ -100,7 +105,14 @@ impl ChannelTransport {
                 }
             }
             Self::Qq { .. } | Self::Feishu { .. } => {}
-            Self::OneBot { user_id } => {
+            Self::OneBot {
+                temp_group: Some(_),
+                ..
+            } => {}
+            Self::OneBot {
+                user_id,
+                temp_group: None,
+            } => {
                 let Some(action) = myriad_agent_rules::onebot::encode::encode_typing(user_id, true)
                 else {
                     return;
@@ -225,7 +237,10 @@ impl ChannelTransport {
                     .await
                     .map_err(SendError::from)
             }
-            Self::OneBot { user_id } => {
+            Self::OneBot {
+                user_id,
+                temp_group,
+            } => {
                 // SnowLuma sends markdown only as a flash-message card, not as
                 // a message segment. Tables stay readable as plain text.
                 let Some(action) =
@@ -233,6 +248,10 @@ impl ChannelTransport {
                 else {
                     return Ok(());
                 };
+                let action = myriad_agent_rules::onebot::encode::via_temp_session(
+                    action,
+                    temp_group.as_deref(),
+                );
                 map_onebot_send(crate::services::onebot_send::send_action(action).await)
             }
         }
@@ -326,7 +345,10 @@ impl ChannelTransport {
             )
             .await
             .map_err(SendError::from),
-            Self::OneBot { user_id } => {
+            Self::OneBot {
+                user_id,
+                temp_group,
+            } => {
                 // SnowLuma fetches a `file` URL itself and cannot reach a site-relative
                 // image-cache path. Send the bytes already read, as other platforms do.
                 use base64::Engine as _;
@@ -341,6 +363,10 @@ impl ChannelTransport {
                 ) else {
                     return Ok(());
                 };
+                let action = myriad_agent_rules::onebot::encode::via_temp_session(
+                    action,
+                    temp_group.as_deref(),
+                );
                 map_onebot_send(crate::services::onebot_send::send_action(action).await)
             }
         }
@@ -576,11 +602,24 @@ impl std::fmt::Display for SendError {
 /// Persistable routing information. No token or credential can enter the registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum ChannelAddress {
-    Telegram { chat_id: String },
-    Discord { channel_id: String },
-    Qq { openid: String },
-    Feishu { chat_id: String },
-    OneBot { user_id: String },
+    Telegram {
+        chat_id: String,
+    },
+    Discord {
+        channel_id: String,
+    },
+    Qq {
+        openid: String,
+    },
+    Feishu {
+        chat_id: String,
+    },
+    OneBot {
+        user_id: String,
+        /// Absent in addresses stored before temp sessions were answered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temp_group: Option<String>,
+    },
 }
 
 impl ChannelTransport {
@@ -598,8 +637,12 @@ impl ChannelTransport {
             Self::Feishu { chat_id } => ChannelAddress::Feishu {
                 chat_id: chat_id.clone(),
             },
-            Self::OneBot { user_id } => ChannelAddress::OneBot {
+            Self::OneBot {
+                user_id,
+                temp_group,
+            } => ChannelAddress::OneBot {
                 user_id: user_id.clone(),
+                temp_group: temp_group.clone(),
             },
         }
     }
@@ -632,8 +675,12 @@ impl ChannelAddress {
             Self::Feishu { chat_id } => Some(ChannelTransport::Feishu {
                 chat_id: chat_id.clone(),
             }),
-            Self::OneBot { user_id } => Some(ChannelTransport::OneBot {
+            Self::OneBot {
+                user_id,
+                temp_group,
+            } => Some(ChannelTransport::OneBot {
                 user_id: user_id.clone(),
+                temp_group: temp_group.clone(),
             }),
         }
     }

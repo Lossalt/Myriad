@@ -88,6 +88,25 @@ pub fn plan_private_delivery(user_id: &str, text: &str, images: &[String]) -> Op
     encode_private_message(user_id, &segments)
 }
 
+/// Route a `send_private_msg` into the temp session (临时会话) opened from
+/// `group_id`, for someone who is not her friend. SnowLuma takes it only when
+/// that person has opened the session; otherwise QQ refuses the send.
+/// `None`, an invalid id, or another action leaves `action` as it was.
+pub fn via_temp_session(mut action: Value, group_id: Option<&str>) -> Value {
+    let Some(group_id) = group_id
+        .and_then(|id| id.trim().parse::<i64>().ok())
+        .filter(|id| *id > 0)
+    else {
+        return action;
+    };
+    if action["action"] == "send_private_msg"
+        && let Some(params) = action["params"].as_object_mut()
+    {
+        params.insert("group_id".into(), json!(group_id));
+    }
+    action
+}
+
 /// The latest `count` messages of a group, for catching up on what was said
 /// while she was not connected. SnowLuma answers `{"messages": [...]}`.
 pub fn encode_get_group_msg_history(group_id: &str, count: u32) -> Option<Value> {

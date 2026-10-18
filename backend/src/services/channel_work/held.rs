@@ -358,6 +358,7 @@ mod tests {
         super::super::ChannelSink {
             transport: super::super::transport::ChannelTransport::OneBot {
                 user_id: "20002".into(),
+                temp_group: None,
             },
             binding: crate::services::channel_pairing::ChannelBinding {
                 user_id: 41,

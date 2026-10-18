@@ -2269,8 +2269,22 @@ mod onebot_decode {
     }
 
     #[test]
-    fn group_temp_session_is_dropped() {
-        assert!(decode_private_inbound(&with_message("private", "group", "message")).is_none());
+    fn group_temp_session_is_a_private_inbound_with_its_group() {
+        use myriad_agent_rules::onebot::decode::private_temp_group;
+        let raw = json!({
+            "post_type": "message",
+            "message_type": "private",
+            "sub_type": "group",
+            "message_id": 1,
+            "user_id": 20002,
+            "message": [{"type":"text","data":{"text":"hi"}}],
+            "sender": {"user_id": 20002, "nickname": "陌生人", "group_id": 555}
+        })
+        .to_string();
+        let inbound = decode_private_inbound(&raw).expect("temp session");
+        assert_eq!(inbound.content, "hi");
+        assert_eq!(private_temp_group(&raw).as_deref(), Some("555"));
+        assert_eq!(private_temp_group(private_text_event()), None);
     }
 
     #[test]
@@ -2572,6 +2586,19 @@ mod onebot_encode {
         assert_eq!(payload["params"]["message_id"], -2147480000i64);
         assert!(payload.get("echo").is_none());
         assert!(encode_get_msg("abc").is_none());
+    }
+
+    #[test]
+    fn a_temp_session_reply_names_its_group() {
+        use myriad_agent_rules::onebot::encode::via_temp_session;
+        let plain = plan_private_delivery("10001", "hi", &[]).unwrap();
+        let temp = via_temp_session(plain.clone(), Some("555"));
+        assert_eq!(temp["params"]["group_id"], 555);
+        assert_eq!(temp["params"]["user_id"], 10001);
+        assert_eq!(via_temp_session(plain.clone(), None), plain);
+        assert_eq!(via_temp_session(plain.clone(), Some("0")), plain);
+        let group = encode_group_message("1", &[encode_text_segment("x")]).unwrap();
+        assert_eq!(via_temp_session(group.clone(), Some("555")), group);
     }
 
     #[test]

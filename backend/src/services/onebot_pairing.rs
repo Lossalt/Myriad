@@ -8,6 +8,8 @@ use crate::services::channel_platform::ChannelPlatform;
 
 struct OneBotText {
     inbound: InboundC2cText,
+    /// The group of a temp-session message; replies go back through it.
+    temp_group: Option<String>,
 }
 
 impl PrivateText for OneBotText {
@@ -29,6 +31,10 @@ impl PrivateText for OneBotText {
         ) else {
             return;
         };
+        let action = myriad_agent_rules::onebot::encode::via_temp_session(
+            action,
+            self.temp_group.as_deref(),
+        );
         match crate::services::onebot_send::send_action(action).await {
             Ok(None) => {}
             Ok(Some(_)) => tracing::warn!("OneBot pairing reply refused"),
@@ -74,6 +80,7 @@ impl PrivateText for OneBotText {
             &input,
             &self.inbound.images,
             session_key,
+            self.temp_group.as_deref(),
         )
         .await;
     }
@@ -117,6 +124,10 @@ async fn voice_text(source: &str, message_id: &str) -> Option<String> {
 }
 
 /// Worker entry for one decoded private message.
-pub async fn handle_inbound(inbound: InboundC2cText) {
-    channel_pairing::handle_private_text(OneBotText { inbound }).await;
+pub async fn handle_inbound(inbound: InboundC2cText, temp_group: Option<String>) {
+    channel_pairing::handle_private_text(OneBotText {
+        inbound,
+        temp_group,
+    })
+    .await;
 }

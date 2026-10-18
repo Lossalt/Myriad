@@ -90,6 +90,9 @@ pub struct WireSender {
     pub nickname: Option<String>,
     #[serde(default)]
     pub card: Option<String>,
+    /// The source group of a temp-session private message.
+    #[serde(default)]
+    pub group_id: Option<i64>,
 }
 
 /// 统一的入站事件外层封包。每个字段都保持可选,因为具体形态取决于 `post_type`;`extra` 兜住其余

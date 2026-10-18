@@ -12,6 +12,7 @@ pub async fn start_paired_work_with_images(
     input: &str,
     images: &[myriad_agent_rules::channel::ChannelImageRef],
     session_key: &str,
+    temp_group: Option<&str>,
 ) {
     channel_work::handle_text_with_images(
         db,
@@ -23,6 +24,7 @@ pub async fn start_paired_work_with_images(
         session_key,
         ChannelTransport::OneBot {
             user_id: user_qq.to_string(),
+            temp_group: temp_group.map(str::to_string),
         },
     )
     .await;

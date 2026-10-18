@@ -5,7 +5,8 @@ use crate::channel::{
 };
 use crate::onebot::wire::{RawEventJson, WireMessage, WireSegment};
 
-/// 只保留私聊文本消息。群、群临时会话、机器人自己发出的事件都丢掉。
+/// 只保留私聊消息：好友与群临时会话（`sub_type: group`，来源群见
+/// [`private_temp_group`]）。群消息、机器人自己发出的事件都丢掉。
 pub fn decode_private_inbound(raw: &str) -> Option<InboundC2cText> {
     let event: RawEventJson = serde_json::from_str(raw).ok()?;
     if event.post_type.as_deref() != Some("message") {
@@ -15,7 +16,7 @@ pub fn decode_private_inbound(raw: &str) -> Option<InboundC2cText> {
         return None;
     }
     match event.sub_type.as_deref() {
-        Some("friend" | "other") => {}
+        Some("friend" | "other" | "group") => {}
         _ => return None,
     }
     let user_id = event.user_id?;
@@ -32,6 +33,24 @@ pub fn decode_private_inbound(raw: &str) -> Option<InboundC2cText> {
         voices: decode_voices(segments),
         files: decode_files(segments),
     })
+}
+
+/// The group a temp-session private message came from (`sender.group_id`),
+/// which a reply must name. `None` for a friend's message.
+pub fn private_temp_group(raw: &str) -> Option<String> {
+    let event: RawEventJson = serde_json::from_str(raw).ok()?;
+    if event.message_type.as_deref() != Some("private")
+        || event.sub_type.as_deref() != Some("group")
+    {
+        return None;
+    }
+    let group_id = event
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.group_id)
+        .or(event.group_id)
+        .filter(|id| *id > 0)?;
+    Some(group_id.to_string())
 }
 
 /// Voices kept per message; QQ sends one, the cap guards odd payloads.

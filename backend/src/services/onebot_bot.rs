@@ -19,6 +19,7 @@ use myriad_agent_rules::channel::{ConnectFailureKind, WorkerIntent};
 use myriad_agent_rules::onebot::decode::{
     OneBotGroupLine, decode_account_online, decode_group_ban, decode_group_inbound,
     decode_private_inbound, decode_replied_message, private_message_is_cq_string,
+    private_temp_group,
 };
 use myriad_agent_rules::onebot::encode::encode_get_msg;
 use myriad_agent_rules::onebot::rules::{
@@ -369,11 +370,12 @@ async fn handle_text(text: &str) -> Option<ConnectFailureKind> {
                 return None;
             }
             let decoded = decode_private_inbound(&raw)?;
+            let temp_group = private_temp_group(&raw);
             let permit = bot_ingress::try_acquire(bot_ingress::Channel::OneBot, raw.len())?;
             mark_inbound().await;
             tokio::spawn(async move {
                 let _permit = permit;
-                crate::services::onebot_pairing::handle_inbound(decoded).await;
+                crate::services::onebot_pairing::handle_inbound(decoded, temp_group).await;
             });
             None
         }
