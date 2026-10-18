@@ -3052,6 +3052,8 @@ pub struct DiscordPrivateText {
     pub channel_id: String,
     pub text: String,
     pub images: Vec<ChannelImageRef>,
+    pub voices: Vec<ChannelVoiceRef>,
+    pub files: Vec<ChannelFileRef>,
 }
 
 impl DiscordPrivateText {
@@ -3061,7 +3063,8 @@ impl DiscordPrivateText {
             user_openid: self.author_id.clone(),
             content: self.text.clone(),
             images: self.images.clone(),
-            ..Default::default()
+            voices: self.voices.clone(),
+            files: self.files.clone(),
         }
     }
 }
@@ -3217,7 +3220,8 @@ pub fn discord_private_text_from_create(
         .unwrap_or("")
         .to_string();
     let images = parse_http_image_attachments(data.get("attachments"));
-    if text.trim().is_empty() && images.is_empty() {
+    let (voices, files) = parse_http_media_attachments(data.get("attachments"));
+    if text.trim().is_empty() && images.is_empty() && voices.is_empty() && files.is_empty() {
         return None;
     }
     Some(DiscordPrivateText {
@@ -3226,6 +3230,8 @@ pub fn discord_private_text_from_create(
         channel_id: json_snowflake(data.get("channel_id"))?,
         text,
         images,
+        voices,
+        files,
     })
 }
 
@@ -3351,6 +3357,95 @@ pub fn discord_group_message_from_create(
 /// QQ C2C `attachments` that look like images. Non-image / javascript URLs drop.
 pub fn parse_qq_c2c_images(data: &serde_json::Value) -> Vec<ChannelImageRef> {
     parse_http_image_attachments(data.get("attachments"))
+}
+
+/// Voices and files among Discord or QQ attachment rows; images are
+/// [`parse_http_image_attachments`]'s. A voice is `audio/*` or QQ's bare
+/// `voice`; QQ's `voice_wav_url` is preferred over its SILK `url`, and its
+/// `asr_refer_text` (QQ's own transcript, not always present) is kept.
+/// Videos are skipped; anything else with a URL is a file.
+pub fn parse_http_media_attachments(
+    value: Option<&serde_json::Value>,
+) -> (Vec<ChannelVoiceRef>, Vec<ChannelFileRef>) {
+    let mut voices = Vec::new();
+    let mut files = Vec::new();
+    let Some(rows) = value.and_then(|value| value.as_array()) else {
+        return (voices, files);
+    };
+    let http = |row: &serde_json::Value, key: &str| {
+        row.get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+            .map(str::to_string)
+    };
+    for row in rows {
+        let mime = row
+            .get("content_type")
+            .or_else(|| row.get("contentType"))
+            .and_then(|value| value.as_str())
+            .map(|mime| mime.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let name = row
+            .get("filename")
+            .or_else(|| row.get("name"))
+            .and_then(|value| value.as_str())
+            .map(|name| name.trim().to_string())
+            .unwrap_or_default();
+        let ext = name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .unwrap_or_default();
+        if mime.starts_with("image/")
+            || mime.starts_with("video/")
+            || matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp")
+        {
+            continue;
+        }
+        if mime == "voice" || mime.starts_with("audio/") {
+            if voices.len() >= CHANNEL_VOICE_LIMIT {
+                continue;
+            }
+            let said = row
+                .get("asr_refer_text")
+                .and_then(|value| value.as_str())
+                .map(|said| said.trim().to_string())
+                .filter(|said| !said.is_empty());
+            let (source, format) = match (http(row, "voice_wav_url"), http(row, "url")) {
+                (Some(wav), _) => (wav, "wav".to_string()),
+                (None, Some(url)) => {
+                    let format = match mime.as_str() {
+                        "audio/ogg" | "audio/opus" => "ogg".to_string(),
+                        "audio/mpeg" | "audio/mp3" => "mp3".to_string(),
+                        "audio/wav" | "audio/x-wav" => "wav".to_string(),
+                        _ => ext.clone(),
+                    };
+                    (url, format)
+                }
+                (None, None) => (String::new(), String::new()),
+            };
+            if source.is_empty() && said.is_none() {
+                continue;
+            }
+            voices.push(ChannelVoiceRef {
+                source,
+                format,
+                said,
+            });
+            continue;
+        }
+        let Some(url) = http(row, "url").or_else(|| http(row, "proxy_url")) else {
+            continue;
+        };
+        if files.len() < CHANNEL_FILE_LIMIT {
+            files.push(ChannelFileRef {
+                url,
+                name,
+                size: row.get("size").and_then(json_u64).unwrap_or(0),
+            });
+        }
+    }
+    (voices, files)
 }
 
 fn parse_http_image_attachments(value: Option<&serde_json::Value>) -> Vec<ChannelImageRef> {

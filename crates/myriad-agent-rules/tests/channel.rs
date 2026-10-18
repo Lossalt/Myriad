@@ -3081,7 +3081,45 @@ mod channel_input {
 
 /// Each platform's private voices and files, as handles its worker fetches.
 mod private_attachments {
-    use myriad_agent_rules::channel::parse_telegram_private_texts;
+    use myriad_agent_rules::channel::{
+        discord_private_text_from_create, parse_telegram_private_texts,
+    };
+
+    #[test]
+    fn a_discord_dm_audio_and_text_file_are_kept() {
+        let dm = serde_json::json!({
+            "id": "11",
+            "channel_id": "22",
+            "channel_type": 1,
+            "author": { "id": "33", "bot": false },
+            "content": "",
+            "attachments": [
+                {
+                    "id": "a1",
+                    "filename": "voice-message.ogg",
+                    "content_type": "audio/ogg",
+                    "size": 900,
+                    "url": "https://cdn.discordapp.com/attachments/1/2/voice-message.ogg"
+                },
+                {
+                    "id": "a2",
+                    "filename": "notes.txt",
+                    "content_type": "text/plain; charset=utf-8",
+                    "size": 34,
+                    "url": "https://cdn.discordapp.com/attachments/1/3/notes.txt"
+                }
+            ]
+        });
+        let inbound = discord_private_text_from_create(&dm, "99")
+            .expect("media dm")
+            .inbound();
+        assert_eq!(inbound.voices.len(), 1);
+        assert_eq!(inbound.voices[0].format, "ogg");
+        assert!(inbound.voices[0].source.ends_with("voice-message.ogg"));
+        assert_eq!(inbound.files.len(), 1);
+        assert_eq!(inbound.files[0].name, "notes.txt");
+        assert_eq!(inbound.files[0].size, 34);
+    }
 
     #[test]
     fn a_telegram_voice_and_document_are_kept_as_file_ids() {
